@@ -6,6 +6,7 @@ import bookHistoryDao from '../../database/dao/BookHistoryDao'
 import { BookHistory } from '../../database/entities/BookHistory'
 import { Books } from '../../database/entities/Books'
 import { router } from '@kit.ArkUI'
+import AppRouter, { RouteName } from '../../common/router/AppRouter'
 import clickUtil from '../../common/utils/ClickUtils'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
@@ -76,10 +77,8 @@ export default struct ReadShow {
           .padding({left:55,right:30})
           .onClick(()=>{
             clickUtil.preventClick(()=>{
-              router.pushUrl({
-                url: 'pages/view/BookDetailPage',
-                params: this.book
-              })
+              // 迁 Navigation 第 2 期：详情页已改为 NavDestination，改走路由门面
+              AppRouter.push(RouteName.BOOK_DETAIL, this.book)
             })
           })
 
@@ -96,6 +95,21 @@ export default struct ReadShow {
       .padding(10)
       .width('95%')
       .backgroundColor('rgb(182,134,102)')
+      // 入场 / 退场过渡（2026-09-21）。原来这张"上次阅读"卡片是**硬出现、硬消失**的
+      // （`Index.ets` 里 `if (this.showReadShow)` 直接挂载/卸载）。
+      // 官方 `transition` 的正确用法是进入与退出分别声明、各自带 `.animation()`，
+      // 本工程 `readStatistics.ets` / `readStatisticsDataList.ets` 已有同款可用的先例写法。
+      // 这里：进场 = 淡入 + 自下方 12vp 上浮（300ms EaseOut）；退场 = 淡出 + 下移 8vp（220ms EaseIn）。
+      // 纯增量的 `.transition()` 属性，不动任何布局/状态 ⇒ 零回归风险；
+      // 不想要这个动效时删掉这一整段即可。
+      .transition(
+        TransitionEffect.asymmetric(
+          TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: 12 }).animation({ duration: 300, curve: Curve.EaseOut })),
+          TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseIn })
+            .combine(TransitionEffect.translate({ y: 8 }).animation({ duration: 220, curve: Curve.EaseIn }))
+        )
+      )
     }
   }
 }

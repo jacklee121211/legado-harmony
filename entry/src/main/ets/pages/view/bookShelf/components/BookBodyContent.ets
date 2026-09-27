@@ -4,12 +4,14 @@
  * @className: BookBodyContent
  */
 import groupTypeComponent from '../../../../componets/group/GroupType'
+import { Haptics } from '../../../../common/utils/Haptics';
 import IndexSearchType from '../../../../componets/head/IndexSearchType'
-import { router } from '@kit.ArkUI'
+import AppRouter, { RouteName, BookManageRouteParam } from '../../../../common/router/AppRouter'
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import BookContentRefresh from './BookContentRefresh'
 import bookHistoryUtils from '../../../../common/utils/BookHistoryUtils'
 import { showMessage } from '../../../../componets/common/promptShow'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 @Component
 export default struct BookBodyContent {
@@ -26,6 +28,8 @@ export default struct BookBodyContent {
   @State bookBodyIndex: number = 0
   tabsBookBodyController: TabsController = new TabsController();
   @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0
+  /** App 级夜间开关：只为触发重绘（取色走 NightMode/ShelfColors） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
     Column() {
       Flex(
@@ -44,6 +48,7 @@ export default struct BookBodyContent {
               IndexSearchType({ title: this.title, searchValue: this.searchValue })
               IndexSearchType({ title: '浏览历史', searchValue: this.searchValue })
                 .onClick(() => {
+                  Haptics.tap();
                   this.GROUP = '标签'
                   this.searchValue = '浏览历史'
                 })
@@ -52,20 +57,26 @@ export default struct BookBodyContent {
                 this.ExhibitBuilder()
                 Text('管理')
                   .onClick(() => {
-                    router.pushUrl({
-                      url: 'pages/view/bookShelf/Manage/BookManagePage',
-                      params: {
-                        currentIndex: this.currentIndex,
-                        EXHIBIT: this.EXHIBIT,
-                        bookTypeNumber: this.bookTypeNumber
-                      }
-                    })
+                    Haptics.tap();
+                    // 迁 Navigation 第 4 期：管理页已改为 NavDestination，改走路由门面。
+                    AppRouter.push(RouteName.BOOK_MANAGE, {
+                      currentIndex: this.currentIndex,
+                      EXHIBIT: this.EXHIBIT,
+                      bookTypeNumber: this.bookTypeNumber
+                    } as BookManageRouteParam)
                   })
-                  .fontColor('rgba(0,0,0,0.5)')
+                  .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.6)' : 'rgba(0,0,0,0.5)')
                   .fontSize(15)
                   .fontWeight(400)
               }
             }
+            // ── 2026-09-23「书架顶部向沉浸光感看齐」（用户选 A：调到最像）──────────────
+            // 自绘内容拿不到真材质（官方生效范围见 `IndexShelf` 顶部同款注释）⇒ 通用属性模拟，
+            // 取值与阅读页胶囊一致：半透明底 + COMPONENT_ULTRA_THICK + 圆角 20。
+            .backgroundColor(ShelfColors.surface())
+            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+            .borderRadius(20)
+            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           }
         }
         .scrollBar(BarState.Off)
@@ -75,6 +86,7 @@ export default struct BookBodyContent {
           Row() {
             Text('清空')
               .onClick(() => {
+                Haptics.tap();
                 if (this.IndexShelf != null) {
                   this.IndexShelf.open()
                 }
@@ -111,6 +123,11 @@ export default struct BookBodyContent {
         .scrollable(false)
         .barWidth(0)
         .barHeight(0)
+        // ⚠️ 2026-09-23 撤掉这里给"分组栏让位"的 top margin：
+        //   分组栏本来就有一套让位逻辑 —— `BookContentRefresh` 的根节点写着
+        //   `.margin({ top: searchView === '浏览历史' ? 0 : 30 })`（那边的"30"就是留给分组栏的）。
+        //   我上一版在**这里**又加了 `shelfGroupRowH + 4` ⇒ **两处叠加**（30 + 40 + 4 ≈ 74）
+        //   ⇒ 用户反馈「间隙还是大」。现在统一到 `BookContentRefresh` 那一处按实测高度算。
         .onChange((index) => {
           this.tabsBookBodyController.changeIndex(index)
           this.bookBodyIndex = index
@@ -153,12 +170,13 @@ export default struct BookBodyContent {
         if (item !== this.GROUP) {
           IndexSearchType({ title: item, searchValue: this.searchValue })
             .onClick(() => {
+              Haptics.tap();
               this.GROUP = item
             })
           Divider()
             .vertical(true)
             .height(15)
-            .color('#989797')
+            .color(ShelfColors.line())
             .opacity(0.5)
             .strokeWidth(1)
         }
@@ -172,12 +190,13 @@ export default struct BookBodyContent {
         if (item !== this.EXHIBIT) {
           IndexSearchType({ title: item, searchValue: this.searchValue })
             .onClick(() => {
+              Haptics.tap();
               this.EXHIBIT = item
             })
           Divider()
             .vertical(true)
             .height(15)
-            .color('#989797')
+            .color(ShelfColors.line())
             .opacity(0.5)
             .strokeWidth(1)
         }

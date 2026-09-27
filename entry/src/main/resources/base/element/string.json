@@ -1,6 +1,14 @@
 {
   "string": [
     {
+      "name": "shortcut_quick_listen",
+      "value": "快速听书"
+    },
+    {
+      "name": "shortcut_quick_read",
+      "value": "快速阅读"
+    },
+    {
       "name": "module_desc",
       "value": "module description"
     },
@@ -10,7 +18,7 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "喵阅"
     },
     {
       "name": "select_all",

@@ -6,10 +6,9 @@
   "author": "",
   "license": "",
   "dependencies": {
-    '@ohos/colorLibrary': 'file:../commons/colorLibrary',
-//    '@ohos/reader': 'file:../reader',
-    '@ohos/readerLibrary': 'file:../readerLibrary',
+    "colorlibrary": "file:../commons/colorLibrary",
     "@pura/harmony-utils": "^1.0.8"
-  }
+  },
+  "devDependencies": {},
+  "dynamicDependencies": {}
 }
-

@@ -1,5 +1,6 @@
-import router from '@ohos.router';
 import bookListManage from './bookManage/bookListManage';
+import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
+import { Haptics } from '../../../../common/utils/Haptics';
 import {showMessage} from '../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../componets/common/confirmDialog';
 import BookFolderManages from './bookManage/BookFolderManages';
@@ -20,26 +21,30 @@ import { WorksLists } from '../../../../database/entities/WorksLists';
 import worksListsUtils from '../../../../common/utils/WorksListsUtils';
 import { ThemeItem } from '../../../../common/model/Theme';
 import { ThemeStorageKey } from '../../../../common/constants/Theme';
+import AppRouter, { BookManageRouteParam } from '../../../../common/router/AppRouter';
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode';
 
-class routerParams {
-  currentIndex:number
-  EXHIBIT:string
-  bookTypeNumber:number
-  constructor(param:routerParams) {
-    this.currentIndex = param.currentIndex
-    this.EXHIBIT = param.EXHIBIT
-    this.bookTypeNumber = param.bookTypeNumber
-  }
-}
 /**
  * 管理跳转页面
+ *
+ * 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`，
+ * 参数由 `Index.appRoutes()` 经 `initParam` 注入（原来是 `router.getParams()`）。
  */
-@Entry
 @Component
-struct BookManagePage {
-  @State currentIndex: number = (router.getParams() as routerParams).currentIndex
-  @State EXHIBIT: string = (router.getParams() as routerParams).EXHIBIT
-  @State bookTypeNumber:number = (router.getParams() as routerParams).bookTypeNumber
+export default struct BookManagePage {
+  /**
+   * 由 `Index.appRoutes()` 注入；未注入时用零值占位
+   * （原来这里会直接崩，因为 `router.getParams()` 返回 undefined 时取属性就抛了）。
+   *
+   * ⚠️ 字段名**不能**叫 `initParam` —— 编译器原文告警：
+   *    「Methods, properties and accessors in structures decorated by '@Component'
+   *      and '@ComponentV2' cannot have name as 'initParam'.」
+   * 所以新建的页面一律用 `routeParam`。
+   */
+  routeParam: BookManageRouteParam = { currentIndex: 0, EXHIBIT: '', bookTypeNumber: 0 }
+  @State currentIndex: number = 0
+  @State EXHIBIT: string = ''
+  @State bookTypeNumber:number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @State isAddShelfShow:boolean = false
@@ -53,6 +58,8 @@ struct BookManagePage {
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   //判断是否全部置顶或取消置顶
   selectIsAllTop(){
     let allTopNumber = 0
@@ -100,10 +107,12 @@ struct BookManagePage {
   }
   //书籍
   getBookList(){
+    // pageSize=0 ⇒ 全量（BooksDao.searchPage 约定）：管理页必须列出全部书籍，
+    // 旧实现 (1,100) 在批量导入超过 100 本时只显示前 100 本。
     booksDao.searchPage({
       type:this.currentIndex,
       bookGroup:this.bookTypeNumber
-    },1,100).then((val)=>{
+    },1,0).then((val)=>{
       this.bookList = val
     })
   }
@@ -115,8 +124,23 @@ struct BookManagePage {
       this.bookGroups = val
     })
   }
+  /**
+   * 注入路由参数（迁 Navigation 第 4 期）。
+   *
+   * 原来这三个值是在**字段初始化器**里 `(router.getParams() as routerParams).xxx` 取的。
+   * 迁后参数改由 `Index.appRoutes()` 经 `initParam` 传入，而字段初始化器执行时
+   * `routeParam` 已就绪，理论上也能直接读；这里放 `aboutToAppear` 是为了与其它
+   * 已迁移页面（`BookDetailPage` / `ReaderPage3`）保持**同一种注入惯例**。
+   */
+  aboutToAppear(): void {
+    this.currentIndex = this.routeParam.currentIndex
+    this.EXHIBIT = this.routeParam.EXHIBIT
+    this.bookTypeNumber = this.routeParam.bookTypeNumber
+    this.pageInit()
+  }
+
   //初始
-  onPageShow(): void {
+  pageInit(): void {
     if (this.bookTypeNumber === 1) {
       this.getGroupList()
       this.isMoveStatus = 1
@@ -133,40 +157,60 @@ struct BookManagePage {
   @State showNumber:number = 0
   @State bookOrFolder:number = 0
   build() {
+    // ── 底部手势条沉浸（2026-09-25 修复「暗色模式下底部是个单独的黑色条」）──────────
+    // 根因：内层 Column 用 `.margin({ bottom: bottomRectHeight })` **让出**了系统导航条
+    //   那一条（真机实测 ≈27.85vp，见 `WindowAbility.ets:183`），让出之后**没有任何节点
+    //   去画它** ⇒ 露出窗口自己的底色。窗口底色我们从未设置过：
+    //   SDK 原文（`@ohos.window.d.ts:6411-6412`，`setWindowBackgroundColor`）
+    //     「If this API is not called, the default background color of the window is
+    //       **'#FFF0F0F0'** in light mode and **'#FF1A1A1A'** in dark mode.」
+    //   ⇒ 日间 #F0F0F0 / 夜间 #1A1A1A。暗色下它紧贴在 `ShelfColors.card()`（#26262A）
+    //     的底栏下面，就是用户看到的那条"独立黑条"。
+    // 修法：外面再套一层 Column 铺满并刷**与底栏同色**（`ShelfColors.card()`），
+    //   让底栏的底色**延伸到手势条区域**（这才是"沉浸"的语义），内层 Column 原样不动
+    //   （margin / 渐变 / 圆角全部保留，视觉与改造前一致）。
+    // 回退：删掉外层这一层（把内层 Column 提回 build 根），即回到改造前行为。
     Column(){
-      Header({
-        customLeftBuilder: () => {
-          this.selectAll()
-        },
-        title:`已选${this.checkListNumber.length}项`,
-        customRightBuilder: () => {
-          this.complete()
-        }
-      })
       Column(){
-        this.bookManage()
-      }
-      .layoutWeight(1)
-      .backgroundColor(Color.White)
-      Flex()
-        .bindSheet($$this.isCatalogAddShelf, this.dialogCatalogAddShelf(), {
-          height:400,
-          dragBar: true,
-          showClose: false,
-          onDisappear: () => {
-            this.isCatalogAddShelf = false
+        Header({
+          customLeftBuilder: () => {
+            this.selectAll()
+          },
+          title:`已选${this.checkListNumber.length}项`,
+          customRightBuilder: () => {
+            this.complete()
           }
         })
+        Column(){
+          this.bookManage()
+        }
+        .layoutWeight(1)
+        .backgroundColor(ShelfColors.pageBg())
+        Flex()
+          .bindSheet($$this.isCatalogAddShelf, this.dialogCatalogAddShelf(), {
+            height:400,
+            dragBar: true,
+            showClose: false,
+            onDisappear: () => {
+              this.isCatalogAddShelf = false
+            }
+          })
+      }
+      .margin({
+        bottom:this.bottomRectHeight
+      })
+      .linearGradient({
+        direction: GradientDirection.Bottom, // 渐变方向
+        // 暗色档走 ShelfColors 的深色渐变（对齐 MyCenter 顶部渐变的做法）
+        colors: [[ShelfColors.gradientStart(this.theme.mainColor), 0.0],
+          [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]] // 数组末尾元素占比小于1时满足重复着色效果
+      })
+      .borderRadius({ bottomRight: 5, bottomLeft: 5 })
     }
-    .margin({
-      bottom:this.bottomRectHeight
-    })
-    .linearGradient({
-      direction: GradientDirection.Bottom, // 渐变方向
-      colors: [[this.theme.mainColor, 0.1],[this.theme.secondColor, 0.2]] // 数组末尾元素占比小于1时满足重复着色效果
-    })
-    .borderRadius({ bottomRight: 5, bottomLeft: 5 })
-
+    .width('100%')
+    .height('100%')
+    // 手势条那一带的填充色 = 紧挨着它的底栏底色 ⇒ 接缝消失（暗色下也不再露窗口的 #1A1A1A）
+    .backgroundColor(ShelfColors.card())
   }
   //主要操作页面
   @Builder bookManage(){
@@ -216,13 +260,13 @@ struct BookManagePage {
         .scrollBar(BarState.Off)
       }
       Column(){
-        Divider()
+        Divider().color(ShelfColors.line())
         if (this.bookTypeNumber === 5){
           this.footerDel()
         } else {
           this.footerTitle()
         }
-      }.backgroundColor(Color.White)
+      }.backgroundColor(ShelfColors.card())
     }
   }
   //书单弹窗
@@ -249,6 +293,7 @@ struct BookManagePage {
         .select(this.allCheck)
         .selectedColor(this.theme.mainColor)
         .onClick(() => {
+          Haptics.tap();
           if (this.verificationDate()) {
             return
           }
@@ -316,7 +361,9 @@ struct BookManagePage {
       Text('完成')
     }
     .onClick(async () => {
-      router.back()
+      Haptics.tap();
+      // 迁 Navigation 第 4 期：本页现在是 NavDestination ⇒ 必须走门面返回。
+      AppRouter.back()
       setTimeout(()=>{
         this.refreshData()
         this.isBookRefreshing++
@@ -328,6 +375,7 @@ struct BookManagePage {
     Column(){
       Text('删除').fontSize(16).fontWeight(500).lineHeight(24).fontColor('#EF4444')
     }.onClick(()=>{
+      Haptics.tap();
       if (this.checkListNumber.length <= 0) {
         showMessage('请选择要操作的内容');
         return
@@ -362,20 +410,22 @@ struct BookManagePage {
               Column({
                 space:5
               }){
-                Image(item.icon).width(25)
+                Image(item.icon).width(25).fillColor(ShelfColors.icon())
                 Text(this.topTitle).fontSize(14).fontWeight(500)
               }
               .onClick(()=>{
+                Haptics.tap();
                 this.bookInfoButton(item.id)
               })
             } else {
               Column({
                 space:5
               }){
-                Image(item.icon).width(25)
+                Image(item.icon).width(25).fillColor(ShelfColors.icon())
                 Text(item.title).fontSize(14).fontWeight(500)
               }
               .onClick(()=>{
+                Haptics.tap();
                 this.bookInfoButton(item.id)
               })
             }
@@ -386,7 +436,7 @@ struct BookManagePage {
         top:10,
         bottom:10
       })
-      .backgroundColor(Color.White)
+      .backgroundColor(ShelfColors.card())
     }
   //底部操作栏功能
   bookInfoButton(index:number){
@@ -442,6 +492,8 @@ struct BookManagePage {
     gridCount: 4,
     customStyle: false,
     cornerRadius: 25,
+    // 2026-09-25 用户反馈：删除确认弹窗材质与全局统一（原 options 漏了 systemMaterial）
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
   })
   //删除功能
   manageDelete(){

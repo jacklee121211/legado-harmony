@@ -2,6 +2,7 @@
  * 新建/修改书单
  */
 import CommonConstants from '../../../../../common/constants/CommonConstants'
+import { Haptics } from '../../../../../common/utils/Haptics';
 import PaddingConstants from '../../../../../common/constants/PaddingConstants'
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
@@ -14,11 +15,14 @@ import { WorksBookList } from '../../../../../database/entities/WorksBookList'
 import { WorksLists, WORK_BOOK_LIST_STATUS } from '../../../../../database/entities/WorksLists'
 import shareWorksBook from '../../../dialog/shareWorksBook'
 import newAddShelf from './newAddShelf'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
 export default struct newBookShelf{
   @StorageLink('topRectHeight') topRectHeight: number = 0
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
+  /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走资源 token / `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   @Prop currentIndex:number
   @State TextRecommend:Record<number, string> = {}
   @State delCache:boolean = false
@@ -142,7 +146,7 @@ export default struct newBookShelf{
           Image($r('app.media.return_left'))
             .width(25)
             .height(25)
-            .fillColor('rgba(0, 0, 0, 0.88)')
+            .fillColor(ShelfColors.icon())
             .onClick(()=>{
               if (this.workBookListStatus !== 2) {
                 this.changeShowNumber(0)
@@ -158,13 +162,13 @@ export default struct newBookShelf{
           Row({
             space:24
           }){
-            Image($r('app.media.edit_black')).width(25)
+            Image($r('app.media.edit_black')).width(25).fillColor(ShelfColors.icon())
               .onClick(()=>{
-                this.workBookListStatus = 2
+                Haptics.tap(); this.workBookListStatus = 2
               })
-            Image($r('app.media.edit_share')).width(25)
+            Image($r('app.media.edit_share')).width(25).fillColor(ShelfColors.icon())
               .onClick(()=>{
-                this.shareShelfBookDialog?.open()
+                Haptics.tap(); this.shareShelfBookDialog?.open()
               })
           }
           .visibility(this.workBookListStatus === 1?Visibility.Visible:Visibility.None)
@@ -199,14 +203,14 @@ export default struct newBookShelf{
           if (this.workBookListStatus !== 1){
             Stack() {
               TextInput({ text: this.workBookList.worksName ?? '', placeholder: `请输入书单名称` })
-                .placeholderColor('#73000000')
+                .placeholderColor($r('app.string.color_black_45'))
                 .maxLength(20)
                 .placeholderFont({ size: 14, weight: 400 })
                 .caretColor(this.theme.mainColor)
                 .height(38)
                 .margin({ top: 10, bottom: 10 })
                 .fontSize(14)
-                .fontColor('#E0000000')
+                .fontColor($r('app.string.color_black_88'))
                 .borderRadius(4)
                 .onChange((value: string) => {
                   this.workBookList.worksName = value
@@ -214,7 +218,7 @@ export default struct newBookShelf{
 
               Text(`${this.workBookList.worksName?.length ?? 0}/20`)
                 .fontSize(14)
-                .fontColor('#73000000')
+                .fontColor($r('app.string.color_black_45'))
                 .position({ top: 20, right: 10 })
             }.width('80%')
 
@@ -223,9 +227,8 @@ export default struct newBookShelf{
               placeholder:'书单描述'
             })
               .borderRadius(4)
-              .fontColor('#E0000000')
               .caretColor(this.theme.mainColor)
-              .placeholderColor('#73000000')
+              .placeholderColor($r('app.string.color_black_45'))
               .width('80%')
               .fontSize(14)
               .fontWeight(500)
@@ -238,9 +241,9 @@ export default struct newBookShelf{
                 this.workBookList.worksDescribe = value
               })
           } else {
-            Text(this.workBookList.worksName).fontSize(16).fontWeight(500).lineHeight(26).fontColor('rgba(0, 0, 0, 0.88)')
+            Text(this.workBookList.worksName).fontSize(16).fontWeight(500).lineHeight(26).fontColor($r('app.string.color_black_88'))
             Text(this.workBookList.worksDescribe)
-              .fontSize(14).fontWeight(500).lineHeight(26).fontColor('rgba(0, 0, 0, 0.88)')
+              .fontSize(14).fontWeight(500).lineHeight(26).fontColor($r('app.string.color_black_88'))
               .margin({top:12})
           }
 
@@ -262,13 +265,13 @@ export default struct newBookShelf{
       .alignItems(HorizontalAlign.Start)
 
       if (this.workBookListStatus !== 1){
-        Divider().strokeWidth(0.5)
+        Divider().strokeWidth(0.5).color(ShelfColors.line())
         Flex({
           justifyContent:FlexAlign.Center
         }){
           this.newFooter()
         }
-        .backgroundColor(Color.White)
+        .backgroundColor(ShelfColors.card())
       }
       Flex()
         .bindContentCover($$this.isShowAddBook, this.newAddBook(), {
@@ -299,7 +302,7 @@ export default struct newBookShelf{
         lastBookIds:this.newBookIds
       })
     }
-    .backgroundColor(Color.White)
+    .backgroundColor(ShelfColors.pageBg())
   }
 
   @Builder newFooter(){
@@ -314,15 +317,15 @@ export default struct newBookShelf{
          space:5
        }){
          Image($r('app.media.add_new_fill')).width(20).height(20)
-         Text('添加书籍').fontSize(16).fontWeight(500).fontColor('rgba(0, 0, 0, 0.45)').textAlign(TextAlign.Center)
+         Text('添加书籍').fontSize(16).fontWeight(500).fontColor($r('app.string.color_black_45')).textAlign(TextAlign.Center)
        }
       }
       .width('40%')
       .height(38)
       .borderRadius(20)
-      .backgroundColor('rgba(0, 0, 0, 0.04)')
+      .backgroundColor(ShelfColors.chip())
       .onClick(()=>{
-        this.isShowAddBook = true
+        Haptics.tap(); this.isShowAddBook = true
       })
       Flex({
         justifyContent:FlexAlign.Center,
@@ -401,7 +404,7 @@ export default struct newBookShelf{
           Text(book.intro)
             .fontSize(12)
             .lineHeight(20)
-            .fontColor('rgba(0, 0, 0, 0.45)')
+            .fontColor($r('app.string.color_black_45'))
             .textOverflow({
               overflow:TextOverflow.Ellipsis
             })
@@ -416,15 +419,15 @@ export default struct newBookShelf{
             }
             .padding({left:6,right:6,top:5,bottom:5}).backgroundColor(this.theme.secondColor).borderRadius(10)
             Row(){
-              Text('玄幻').fontSize(10).fontWeight(400).fontColor('rgba(0, 0, 0, 0.45)')
+              Text('玄幻').fontSize(10).fontWeight(400).fontColor($r('app.string.color_black_45'))
             }
             .fontStyles()
             Row(){
-              Text('完本').fontSize(10).fontWeight(400).fontColor('rgba(0, 0, 0, 0.45)')
+              Text('完本').fontSize(10).fontWeight(400).fontColor($r('app.string.color_black_45'))
             }
             .fontStyles()
             Row(){
-              Text('380万字').fontSize(10).fontWeight(400).fontColor('rgba(0, 0, 0, 0.45)')
+              Text('380万字').fontSize(10).fontWeight(400).fontColor($r('app.string.color_black_45'))
             }.fontStyles()
           }
         }
@@ -457,7 +460,7 @@ export default struct newBookShelf{
         }){
           Text('清空').textAlign(TextAlign.End).fontColor(this.theme.mainColor)
         }.onClick(()=>{
-          this.TextRecommend[book.id ?? 0] = ''
+          Haptics.tap(); this.TextRecommend[book.id ?? 0] = ''
         })
       }
     }
@@ -496,6 +499,6 @@ export default struct newBookShelf{
 
 @Styles function fontStyles() {
   .padding({left:6,right:6,top:5,bottom:5})
-  .backgroundColor('rgba(0, 0, 0, 0.06)')
+  .backgroundColor(ShelfColors.chip())
   .borderRadius(10)
 }

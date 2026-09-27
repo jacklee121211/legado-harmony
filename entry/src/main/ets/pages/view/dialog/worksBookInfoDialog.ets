@@ -1,10 +1,12 @@
 import worksListsUtils from '../../../common/utils/WorksListsUtils'
+import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 import confirmDialogExample from '../../../componets/common/confirmDialog'
 import InsideCircleIcon from '../../../componets/common/InsideCircleIcon'
 import { buttonList } from '../../../componets/dataList/buttonList'
 import { WorksLists } from '../../../database/entities/WorksLists'
 import newBookShelf from '../bookShelf/Manage/bookManage/newBookShelf'
 import shareWorksBook from './shareWorksBook'
+import { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
 
 @CustomDialog
 /**
@@ -12,6 +14,17 @@ import shareWorksBook from './shareWorksBook'
  */
 export default struct worksBookInfoDialog{
   controller?: CustomDialogController
+
+  /**
+   * 弹窗背板（2026-09-21 接入沉浸光感，2026-09-22 改悬空四圆角 + 系统真材质）。
+   * 第二个参数传 `true` ⇒ 内容层**一个背景属性都不设**，让弹窗层材质透出来；
+   * 前提是调用方已把 `customStyle` 设为 `false`（见 `WorksBookLists.ets` 调用点）。
+   * 依据与完整说明见 `MaterialColumnModifier` 注释。
+   *
+   * 注意：同文件 `showEditBook()` 那个是**全屏** `bindContentCover`，
+   * 按官方功耗文档「控制弹窗尺寸」（避免接近全屏）**刻意不加**材质。
+   */
+  private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
   //推送提醒
   @Prop works:WorksLists
   @State buttonListInfo:buttonList[] = [
@@ -25,7 +38,7 @@ export default struct worksBookInfoDialog{
 
   build() {
     Column(){
-      Divider().strokeWidth(0.5).padding({bottom:16})
+      Divider().strokeWidth(0.5).color(ShelfColors.line()).padding({bottom:16})
       GridRow({
         columns:4
       }){
@@ -49,13 +62,13 @@ export default struct worksBookInfoDialog{
                 }
               })
           }
-        })
+        }, (item: buttonList): string => 'bl' + item.id)
 
       }
-      Divider().strokeWidth(0.5).padding({bottom:16})
+      Divider().strokeWidth(0.5).color(ShelfColors.line()).padding({bottom:16})
       Column(){
         Text('取消')
-          .fontColor('rgba(0, 0, 0, 0.88)')
+          .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)')
           .fontSize(16)
           .fontWeight(400)
           .lineHeight(24)
@@ -75,8 +88,11 @@ export default struct worksBookInfoDialog{
           }
         })
     }
-    .borderRadius({topLeft:20,topRight:20})
-    .backgroundColor(Color.White)
+    // 四角都圆（原来只圆上面两个角、下面两个角贴底）⇒ 配合调用点的
+    // `cornerRadius: 20` + `offset{dx:0,dy:-16}` 形成悬空四圆角矩形。
+    // 依据见 `BookInfos.ets` / `MaterialColumnModifier` 的注释。
+    .borderRadius(20)
+    .attributeModifier(this.surface)
     .width('100%')
   }
   @State isShowEditBook:boolean = false
@@ -96,7 +112,7 @@ export default struct worksBookInfoDialog{
         lastWorkBookList:this.works
       })
     }
-    .backgroundColor(Color.White)
+    .backgroundColor(ShelfColors.pageBg())
   }
 
   //分享弹窗

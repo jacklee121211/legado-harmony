@@ -1,0 +1,1511 @@
+/**
+ * TTS 朗读引擎（对齐 PC 版管线：合成 → MP3 解码 → 标点停顿 PCM 拼接 → AudioRenderer 流播）。
+ *
+ * - 一条 run() 协程按"章 → 段"推进；pause/resume 只是播放器级操作，绝不重启协程；
+ * - 800 字大块合成（请求数与 PC 一致），停顿在 PCM 内完成，零切换间隙；
+ * - 面板"当前句"由 WordBoundary + 拼接后时间轴换算，句级更新；
+ * - 只有 stop/seek 需要打断协程（sessionGen + abort）；
+ * - 预取只预合成（写缓存），失败打日志不静默；AI 男女声识别每章一批。
+ */
+import { avSession as avSessionKit } from '@kit.AVSessionKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { wantAgent, common } from '@kit.AbilityKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { bookParser } from '@kit.ReaderKit';
+import { util } from '@kit.ArkTS';
+import { synthesizeOnce, hasSpeakableText, WordSpan } from './EdgeTtsClient';
+import { splitParagraphIntoSegments, splitSegmentsIntoChunks, SpeakSegment } from './SentenceSplitter';
+import { buildChapterNodes } from './ChapterNodes';
+import { TtsPrefs } from './TtsPrefs';
+import { classifyDialogueGenders, SpeakerItem } from './TtsSpeaker';
+import { decodeMp3ToPcm } from './NativeDecoder';
+import { computePausePoints, applyPauses, buildSentenceTimeline, lookupOrigMs } from './PauseSplicer';
+import { PcmPlayer, INTERRUPT_REBUILD_WHEN_STUCK } from './PcmPlayer';
+
+const DOMAIN = 0x0001;
+const TAG = 'TtsEngine';
+/** 连续失败多少段后自动暂停 */
+const FAIL_STREAK_PAUSE = 5;
+/** 单章合成块上限，防御异常大章节 */
+const MAX_CHUNKS_PER_CHAPTER = 300;
+
+/**
+ * ── T1-B 长时任务安全生命周期开关 ────────────────────────────────────────
+ * **默认 false = 旧行为**（只用 `bgRunning` 做守卫）。后台/系统行为无法本地验证，
+ * 故新路径默认关闭；真机验证通过后再改为 true。任何异常改回 false 即完全回退。
+ *
+ * **旧实现的竞态（代码级可证）**：
+ *   `startBackground()` 的 `bgRunning = true` 写在 `startBackgroundRunning(...).then()` **里面**，
+ *   即**异步完成后**才置位；而 `stopBackground()` 的守卫是 `if (!TtsEngine.bgRunning) return;`。
+ *   ⇒ 在"启动链尚未落地"的窗口内调用 `stopBackground()`，会被**直接跳过**，
+ *     随后 `bgRunning` 又被置为 `true` —— 应用**永久持有一个 AUDIO_PLAYBACK 长时任务**。
+ *
+ * **为什么必须修（官方原文）**：
+ *   documentId `最佳实践/应用功耗优化/后台任务低功耗/后台软件资源合理使用/后台音频播放合理使用/bpta-reasonable-audio-playback-use`：
+ *     "申请音频播放长时任务的应用退到后台后，**禁止不写入数据或写入静音数据等恶意行为**。"
+ *     "**约束**：系统检测到应用后台行为时，将**挂起或清理应用**。"
+ *   另 documentId `.../后台软件资源使用/standard-background-software` 同款表述。
+ *
+ * **新路径做法**：把整条启动链（`getWantAgent` + `startBackgroundRunning`）记进 `bgStarting`；
+ *   `stopBackground()` 若发现启动仍在进行，则**等它落地后立刻取消**（无论成败），
+ *   保证"停止"这一意图最终一定生效。
+ *
+ * 验证点（翻 true 后真机验证）：
+ *  1. 播放后**立刻**停止 → 日志不应出现"长时任务残留"（可用 `devecocli log` 观察 backgroundTaskManager 相关日志），
+ *     且退到后台后系统不再把应用视为持任务状态；
+ *  2. 正常长时间后台朗读**不受影响**（不得出现播放中被挂起）；
+ *  3. 自然读完（全书/定时章节数/睡眠定时）后长时任务确实被取消。
+ */
+const BG_TASK_SAFE_LIFECYCLE: boolean = false;
+
+/**
+ * ── T1-C1 长时任务「通知可见性」开关 ────────────────────────────────────────
+ * **默认 false = 旧行为**（`startBackgroundRunning(ctx, BackgroundMode.AUDIO_PLAYBACK, agent)`，
+ * 返回 `Promise<void>`，**拿不到 notificationId**）。
+ * 新路径改用返回 `ContinuousTaskNotification` 的重载，把 notificationId 打进日志。
+ *
+ * 官方 SDK 证据（真机 SDK，非 ohpm 缓存）：
+ *   `D:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\ets\api\@ohos.resourceschedule.backgroundTaskManager.d.ts`
+ *   - L771 `function startBackgroundRunning(context: Context, bgModes: string[], wantAgent: WantAgent): Promise<ContinuousTaskNotification>;`（@since 12）
+ *   - L314/340 `interface ContinuousTaskNotification { ... notificationId: number; }`（@since 12）
+ *     其中 notificationId 的字段说明原文为 "ID of the continuous-task notification."
+ *   - L153「Continuous task ID. **The default value is -1.**」⇒ `-1` 系官方语义中的"未赋值/无效"哨兵
+ *   - L764 `@throws { BusinessError } 9800006 - Notification verification failed for a continuous task.`
+ *
+ * 真机日志线索（`日志.md`，tag `C01711/...CONTINUOUS_TASK` 经官方 FAQ
+ * `FAQ/程序框架/后台任务开发_Background_Tasks/如何查询后台任务中短时任务_长时任务_延迟任务_后台代理提醒相关的系统日志/faqs-background-tasks-9`
+ * 确认即"长时任务"）：
+ *   L988   23:03:10.241 `[StartBackgroundRunningExecuteCB:306] notification 42,  continuousTaskId 280`  → 锁屏 2 分 22 秒未被杀
+ *   L12401 23:06:07.128 `[StartBackgroundRunningExecuteCB:306] notification -1,  continuousTaskId 281`  → 停止后仅 13 秒即再次申请
+ *   L19502 23:53:05.901 `[StartBackgroundRunningExecuteCB:306] notification 43,  continuousTaskId 282`
+ * 且本文件自身 `bg task err` / `wantAgent err` 在 `日志.md` 中**零命中** ⇒ 旧重载 Promise 成功返回、
+ * `notification -1` 发生在系统内部，应用侧**不可见**。
+ *
+ * `bgModes` 取值证据（documentId `开发指南/Background_Tasks_Kit_后台任务开发服务/长时任务_ArkTS/continuous-task`，
+ * 「表1 长时任务类型」：`AUDIO_PLAYBACK` 对应**配置项** `audioPlayback`）。
+ *
+ * 验证点（翻 true 后真机验证）：
+ *  1. 日志应出现 `bg task started notificationId=<>=0 的数> taskId=<>=0 的数>`；
+ *  2. 若翻 true 后拿到 `notificationId=-1`，说明系统确实没给通知（问题复现），需转向提交工单；
+ *  3. 若拿到正数且后台不再被杀，则根因确认为"通知未创建"。
+ * 任何异常改回 false 即完全回退（旧重载，行为逐字不变）。
+ */
+const BG_TASK_NOTIFICATION_AWARE: boolean = false;
+
+/**
+ * ── T1-C2 长时任务「重复申请最小间隔」保护 ──────────────────────────────────
+ * **默认 false = 旧行为**（立即申请，不做任何延时）。
+ * 新路径：若距上次 `stopBackground()` 不足 `BG_TASK_MIN_RESTART_INTERVAL_MS`，
+ * 则**延后**到间隔满足后再申请（而不是放弃申请——放弃会导致彻底没有后台保护）。
+ *
+ * 官方依据（documentId `开发指南/Background_Tasks_Kit_后台任务开发服务/Background_Tasks_Kit接入规范/bgtask-design-formula`，
+ * 「长时任务使用基本原则」原文）：
+ *   「**不得在用户主动停止（通过删除长时任务通知、删除AVSession通知等方式）并取消长时任务后，立即再次申请长时任务。**」
+ *   「不得在系统检测到应用不合理使用长时任务，并取消/暂停长时任务后，立即再次申请长时任务。」
+ * 真机日志对应：`日志.md` L11011 `23:05:54.527 [RequestStopBackgroundRunning:201] ... continuousTaskId: -1.`
+ *   → L12401 `23:06:07.128`，间隔仅 **13.399 秒**。
+ *
+ * 验证点（翻 true 后真机验证）：
+ *  1. 播放→停止→立刻再播放，日志应出现 `bg restart deferred <ms>`，且延时后才出现长时任务申请；
+ *  2. 延时窗口内音频应正常播放（此时应用在前台，不依赖长时任务）；
+ *  3. 正常"停止后隔很久再播"不受影响（间隔已满足，立即申请）。
+ * 任何异常改回 false 即完全回退。
+ */
+const BG_TASK_RESTART_GUARD: boolean = false;
+/** 最小重复申请间隔（毫秒）。取值依据：真机观测到的违规间隔为 13.399 秒，故取 15 秒留余量。 */
+const BG_TASK_MIN_RESTART_INTERVAL_MS: number = 15000;
+
+/**
+ * ── T1-A4 AVSession 完整接入开关 ──────────────────────────────────────────
+ * **默认 false = 旧行为**（只设 metadata + 注册 play/pause/stop）。
+ * 系统播控行为无法本地验证，故新路径默认关闭；真机验证通过后再改为 true。
+ * 任何异常改回 false 即完全回退。
+ *
+ * 官方依据（原文）：
+ *  · 最佳实践 `最佳实践/音频和视频/音频播放系列开发实践/基于AudioRenderer播放PCM音频/bpta-playing-pcm-audio-based-audiorenderer`
+ *    §接入播控中心：
+ *      步骤 3：`this.aVSession.setLaunchAbility(agent);`
+ *        （`wantAgentInfo` 用 `operationType: wantAgent.OperationType.START_ABILITIES`）
+ *      步骤 4：注册 `on('play'|'pause'|'playNext'|'playPrevious'|'seek'|'setLoopMode'|'toggleFavorite')`
+ *  · SDK `@ohos.multimedia.avsession.d.ts`：
+ *      `:434 setLaunchAbility(ability: WantAgent): Promise<void>`
+ *      `:897 on(type: 'playNext', callback: () => void): void`
+ *      `:927 on(type: 'playPrevious', callback: () => void): void`
+ *      `:1236 on(type: 'seek', callback: (time: number) => void): void`
+ *      `:3443 AVPlaybackState.position?: PlaybackPosition`
+ *      `:3542 interface PlaybackPosition { elapsedTime: number; updateTime: number; }`（单位 ms）
+ *  · 官方 FAQ `faqs-avsession-15` 场景三：「应用未正确注册播控中心通知回调，
+ *    或者未及时将应用状态上报播控中心，导致后台播放状态异常。」
+
+ * **本轮只做两件语义无歧义的事**（其余见下方"不做"说明）：
+ *  ① `setLaunchAbility` —— 从播控中心点按可拉起应用；
+ *  ② `playNext` / `playPrevious` —— 映射到**下一章 / 上一章**（复用 `seekToChapter`，
+ *     与面板 `ReaderPage3.ttsSeekChapter` **完全同逻辑**）。
+ *
+ * **本轮刻意不做（已在审计 §1 T1-A4 记录理由）**：
+ *  - `duration`：TTS 是流式合成，**章的音频总时长事先不可知**；填一个估算值会让进度条撒谎。
+ *  - `position` + `on('seek')`：官方 FAQ `faqs-avsession-2` 明确"进度显示和控制"需要
+ *    **时长 + seek 回调**配套；缺 duration 时单报 position 无意义。
+ *  - `setLoopMode` / `toggleFavorite`：与本应用语义不符。
+ *
+ * 验证点（翻 true 后真机验证）：
+ *  1. 播控中心出现"上一首/下一首"按钮，点按能切章且**章节标题跟着变**；
+ *  2. 退出应用后，从播控中心点按能**拉起应用**；
+ *  3. 原有 播放/暂停/停止 三个按钮行为不变。
+ */
+const AVSESSION_FULL_CONTROL: boolean = false;
+
+export type TtsState = 'stopped' | 'playing' | 'paused';
+
+export interface TtsCallbacks {
+  onState: (state: TtsState) => void;
+  /** 朗读章节推进（spine 下标 + 章节名），UI 据此跟随跳章 */
+  onChapter: (spineIndex: number, title: string) => void;
+  /** 章内进度：第 segIndex/total 块 + 当前句文本（拼接后时间轴换算） */
+  onSegment: (segIndex: number, total: number, text: string) => void;
+  /** 句内字符进度：已读到该句第 charInSentence 个字（共 sentenceLen），供浮条实时前滚 */
+  onProgress: (charInSentence: number, sentenceLen: number) => void;
+  onToast: (msg: string) => void;
+}
+
+interface QueueChunk {
+  text: string;
+  isDialogue: boolean;
+  endsSentence: boolean;
+  /** ReaderKit 块节点下标（0 基，即 domPos 的 X-1）——唯一的段落坐标系 */
+  nodeIndex: number;
+  /** 节点内字符偏移（即 domPos 的 Y） */
+  charStart: number;
+  voiceId: string;   // 本块使用的音色（AI 识别后按男/女改写）
+  words: WordSpan[]; // 合成返回的词级时间戳（停顿拼接/句级显示用）
+  cachePath: string; // '' 表示无可读内容，直接跳过
+}
+
+/** 当前朗读位置（ReaderKit 坐标系：spine / 块节点 / 节点内字符） */
+export interface TtsSegmentPos {
+  spineIndex: number;
+  nodeIndex: number;
+  charStart: number;
+}
+
+export class TtsEngine {
+  private static context: common.UIAbilityContext | null = null;
+  private static handler: bookParser.BookParserHandler | null = null;
+  private static spineCount: number = 0;
+  private static prefs: TtsPrefs | null = null;
+  private static cb: TtsCallbacks | null = null;
+
+  private static state: TtsState = 'stopped';
+  private static sessionGen: number = 0;
+  private static chapterIndex: number = 0;
+  private static failStreak: number = 0;
+  /** 当前是否停在"段播放中"（决定 resume 是否直接续播音频） */
+  private static playingMidFile: boolean = false;
+  /** 正在播放的块下标（供 prevSegment 回退） */
+  private static playingSegIndex: number = 0;
+  /** 当前朗读的章节/块节点/节点内字符位置（回跳阅读器用，ReaderKit 坐标系） */
+  private static playingSpine: number = -1;
+  private static playingNode: number = -1;
+  private static playingChar: number = 0;
+  /** ≥0 表示段循环应跳转到该下标（prevSegment/seekToSegment 用） */
+  private static segTarget: number = -1;
+
+  private static player: PcmPlayer | null = null;
+
+  private static synthInFlight: Map<string, Promise<number>> = new Map();
+  /** 当前章的合成块队列（seekToSegment 立即更新锚点用） */
+  private static currentChunks: QueueChunk[] | null = null;
+  /** 当前章的 ReaderKit 块节点文本（下标 = domPos 的 X-1；文本框全文匹配定位用） */
+  private static currentNodes: string[] | null = null;
+  /** 观测到的最大块节点号（pageShow 自检用，0 表示尚未观测） */
+  private static observedMaxNode: number = 0;
+  /** 阅读器当前位置提供者（pageShow 坐标），开始/恢复播放时锚定当前页 */
+  private static readerPosProvider: (() => TtsSegmentPos | null) | null = null;
+  /** 暂停时刻的阅读器位置快照（判断暂停期间是否翻过页） */
+  private static pausePagePos: TtsSegmentPos | null = null;
+  /**
+   * 本次暂停是否由**系统音频打断**造成（T1-A2）。
+   * 只在 `PcmPlayer.INTERRUPT_FULL_HANDLING` 开启时被 `onResumeHint` 读取；
+   * 关闭时该标记无人消费 ⇒ 行为与改动前完全一致。
+   * 用于区分"系统打断后的自动续播"与"用户主动暂停不得自动恢复"。
+   */
+  private static interruptedBySystem: boolean = false;
+  private static bgRunning: boolean = false;
+  /**
+   * T1-B：正在进行中的长时任务**启动链**（`getWantAgent` + `startBackgroundRunning`）。
+   * 仅 `BG_TASK_SAFE_LIFECYCLE` 开启时被记录/读取；关闭时为 `null`、无人消费。
+   * 用途：`stopBackground()` 若发现启动尚未落地，需等它完成后再取消，
+   * 否则"启动后立刻停止"会永久泄漏一个 `AUDIO_PLAYBACK` 长时任务。
+   */
+  private static bgStarting: Promise<void> | null = null;
+  /**
+   * T1-C2：上次成功下发 `stopBackgroundRunning` 的时刻（`Date.now()` 毫秒）。
+   * 仅 `BG_TASK_RESTART_GUARD` 开启时被写入/读取；关闭时恒为 0、无人消费。
+   * 用途：避免落进官方明令禁止的「停止长时任务后立即再次申请」。
+   */
+  private static bgLastStopAt: number = 0;
+  /**
+   * T1-C2：被"最小间隔"推迟的长时任务申请定时器句柄（`-1` 表示无）。
+   * 仅 `BG_TASK_RESTART_GUARD` 开启时被写入/读取。
+   */
+  private static bgRestartTimer: number = -1;
+  private static avSession: avSessionKit.AVSession | null = null;
+  private static bookTitle: string = '';
+
+  // 睡眠定时（会话级，不持久化）
+  private static sleepStopChapter: number = -1; // 播到该 spine 下标（不含）即停
+  private static sleepStopMs: number = -1;      // 累计播放达到即停
+  private static playedMs: number = 0;          // 仅播放期累计（暂停不计）
+
+  static init(context: common.UIAbilityContext): void {
+    TtsEngine.context = context;
+  }
+
+  static getState(): TtsState {
+    return TtsEngine.state;
+  }
+
+  static currentChapter(): number {
+    return TtsEngine.chapterIndex;
+  }
+
+  /** 当前朗读位置（章节 + 块节点 + 节点内字符），供 UI 构造阅读器 domPos 回跳 */
+  static currentSegment(): TtsSegmentPos | null {
+    if (TtsEngine.state === 'stopped' || TtsEngine.playingSpine < 0 || TtsEngine.playingNode < 0) {
+      return null;
+    }
+    const pos: TtsSegmentPos = {
+      spineIndex: TtsEngine.playingSpine,
+      nodeIndex: TtsEngine.playingNode,
+      charStart: TtsEngine.playingChar
+    };
+    return pos;
+  }
+
+  /** 当前章的块节点文本（高亮几何计算用）。未开始朗读时返回 null。 */
+  static currentNodeTexts(): string[] | null {
+    return TtsEngine.currentNodes;
+  }
+
+  /**
+   * 一致性自检：ReaderPage3 在 pageShow 里回报该章观测到的最大块节点号（domPos 的 X），
+   * 与本引擎的节点数比对。数值不符即说明节点模型与 ReaderKit 不一致，
+   * 此时定位会退化到翻页搜索兜底——用它来在真机上第一时间定位问题。
+   */
+  static reportObservedMaxNode(x: number): void {
+    if (x > TtsEngine.observedMaxNode) {
+      TtsEngine.observedMaxNode = x;
+    }
+  }
+
+  static parityHint(): string {
+    const nodes = TtsEngine.currentNodes;
+    if (nodes === null) {
+      return 'nodes=?';
+    }
+    // observedMaxNode 已是换算后的 0 基块下标；合法范围 0..nodes.length-1
+    const maxNode = TtsEngine.observedMaxNode;
+    const flag = maxNode >= nodes.length ? ' MISMATCH' : '';
+    return `nodes=${nodes.length} maxNode=${maxNode}${flag}`;
+  }
+
+  static setCallbacks(cb: TtsCallbacks): void {
+    TtsEngine.cb = cb;
+  }
+
+  /** 注册阅读器当前位置提供者（阅读页 pageShow 坐标），用于"从当前页播放/继续" */
+  static setReaderPositionProvider(provider: () => TtsSegmentPos | null): void {
+    TtsEngine.readerPosProvider = provider;
+  }
+
+  /** 在块队列中找到第一个 (节点, 字符) ≥ (node, char) 的块下标 */
+  private static chunkIndexForPosition(chunks: QueueChunk[], node: number,
+    char: number): number {
+    for (let k = 0; k < chunks.length; k++) {
+      const c = chunks[k];
+      if (c.nodeIndex > node || (c.nodeIndex === node && c.charStart >= char)) {
+        return k;
+      }
+    }
+    return chunks.length - 1;
+  }
+
+  /** 面板参数改动后同步：尚未合成的块立即生效（音量/停顿在下一次拼接时生效） */
+  static updateConfig(prefs: TtsPrefs): void {
+    TtsEngine.prefs = prefs;
+  }
+
+  private static isPlaying(): boolean {
+    return TtsEngine.state === 'playing';
+  }
+
+  private static isPaused(): boolean {
+    return TtsEngine.state === 'paused';
+  }
+
+  private static alive(gen: number): boolean {
+    return gen === TtsEngine.sessionGen && TtsEngine.state === 'playing';
+  }
+
+  private static fileExists(path: string): boolean {
+    try {
+      return fs.accessSync(path);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ---------- TTS 磁盘缓存整理（审查发现：此前只写不删，会无限增长）----------
+  /** 缓存总上限 */
+  private static readonly CACHE_MAX_BYTES: number = 200 * 1024 * 1024;
+  /** 两次整理的最小间隔（避免频繁扫描） */
+  private static readonly CACHE_PRUNE_INTERVAL_MS: number = 60000;
+  /** 最近这段时间内的文件不删（可能正在播放/排队） */
+  private static readonly CACHE_PROTECT_MS: number = 5 * 60 * 1000;
+  private static cacheCheckedAt: number = 0;
+
+  /** 请求整理缓存：时间节流 + 异步执行，绝不阻塞朗读 */
+  static scheduleCachePrune(): void {
+    const now = Date.now();
+    if (now - TtsEngine.cacheCheckedAt < TtsEngine.CACHE_PRUNE_INTERVAL_MS) {
+      return;
+    }
+    TtsEngine.cacheCheckedAt = now;
+    setTimeout((): void => {
+      TtsEngine.pruneTtsCache();
+    }, 0);
+  }
+
+  /** 超过上限时按 mtime 从旧到新删除（.mp3 与其 .json 词表 sidecar 一起删） */
+  private static pruneTtsCache(): void {
+    const ctx = TtsEngine.context;
+    if (ctx === null) {
+      return;
+    }
+    const dir = ctx.cacheDir + '/tts';
+    try {
+      const names = fs.listFileSync(dir);
+      const paths: string[] = [];
+      const sizes: number[] = [];
+      const times: number[] = [];
+      let total = 0;
+      const now = Date.now();
+      for (let i = 0; i < names.length; i++) {
+        if (!names[i].endsWith('.mp3')) {
+          continue;
+        }
+        const p = dir + '/' + names[i];
+        try {
+          const st = fs.statSync(p);
+          const mt = st.mtime * 1000;
+          if (now - mt < TtsEngine.CACHE_PROTECT_MS) {
+            continue; // 最近用过的先不删
+          }
+          paths.push(p);
+          sizes.push(st.size);
+          times.push(mt);
+          total += st.size;
+        } catch (e) {
+          // 单个文件异常：跳过
+        }
+      }
+      if (total <= TtsEngine.CACHE_MAX_BYTES) {
+        return;
+      }
+      // 插入排序（文件数量级不大）：按 mtime 升序 = 最旧的先删
+      for (let i = 1; i < times.length; i++) {
+        const t = times[i];
+        const p = paths[i];
+        const s = sizes[i];
+        let j = i - 1;
+        while (j >= 0 && times[j] > t) {
+          times[j + 1] = times[j];
+          paths[j + 1] = paths[j];
+          sizes[j + 1] = sizes[j];
+          j--;
+        }
+        times[j + 1] = t;
+        paths[j + 1] = p;
+        sizes[j + 1] = s;
+      }
+      let removed = 0;
+      for (let i = 0; i < paths.length && total > TtsEngine.CACHE_MAX_BYTES; i++) {
+        try {
+          fs.unlinkSync(paths[i]);
+          const side = paths[i] + '.json';
+          if (TtsEngine.fileExists(side)) {
+            fs.unlinkSync(side);
+          }
+          total -= sizes[i];
+          removed++;
+        } catch (e) {
+          // 单个文件删不掉：继续
+        }
+      }
+      hilog.info(DOMAIN, TAG, 'cache prune removed=%{public}d leftMB=%{public}d',
+        removed, Math.round(total / 1048576));
+    } catch (e) {
+      // 目录不存在等：忽略
+    }
+  }
+
+  /**
+   * 开始朗读。startNode/startChar ≥ 0 时从起始章的该位置开始（阅读器当前页，
+   * ReaderKit 坐标系），后续章节仍从章首；默认 -1 = 从章首开始。
+   */
+  static async start(context: common.UIAbilityContext, handler: bookParser.BookParserHandler,
+    spineIndex: number, prefs: TtsPrefs, bookTitle: string,
+    startNode: number = -1, startChar: number = 0): Promise<void> {
+    TtsEngine.context = context;
+    TtsEngine.handler = handler;
+    TtsEngine.prefs = prefs;
+    TtsEngine.bookTitle = bookTitle;
+    try {
+      TtsEngine.spineCount = handler.getSpineList().length;
+    } catch (e) {
+      TtsEngine.cb?.onToast('书籍解析失败，无法朗读');
+      return;
+    }
+    try {
+      const dir = context.cacheDir + '/tts';
+      if (!TtsEngine.fileExists(dir)) {
+        fs.mkdirSync(dir, true);
+      }
+    } catch (e) {
+      // 目录已存在
+    }
+    TtsEngine.scheduleCachePrune(); // 会话开始顺带整理一次缓存
+    if (TtsEngine.state !== 'stopped') {
+      TtsEngine.stopInternal('');
+    }
+    try {
+      await TtsEngine.beginPlaybackEnv();
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'beginPlaybackEnv err %{public}s', e instanceof Error ? e.message : String(e));
+      TtsEngine.cb?.onToast('播放器初始化失败');
+      return;
+    }
+    TtsEngine.setState('playing');
+    const gen = ++TtsEngine.sessionGen;
+    await TtsEngine.run(gen, spineIndex, startNode, startChar);
+  }
+
+  /** 暂停：只动播放器与状态标志，协程原地挂起（恢复后从原位继续，不重读）。
+   *  阅读器位置快照统一在 setState('paused') 里采集，网络失败等自动暂停路径同样有效。 */
+  static pause(): void {
+    if (!TtsEngine.isPlaying()) {
+      return;
+    }
+    // 用户/引擎主动暂停 ⇒ 清除系统打断标记（避免陈旧标记导致后续误自动续播）
+    TtsEngine.interruptedBySystem = false;
+    TtsEngine.setState('paused');
+    if (TtsEngine.playingMidFile && TtsEngine.player !== null) {
+      TtsEngine.player.pause();
+    }
+  }
+
+  /**
+   * 恢复播报：
+   * - 暂停期间阅读器仍在同一位置 → 原进度无缝续播（音频缓存继续用，不停顿）；
+   * - 暂停期间阅读器换了页/换了章 → 以"当前所在页"为准重新锚定并合成播放，
+   *   绝不续播旧位置的缓存（对齐"不同页面就在该页所在位置重新播放"的语义）。
+   */
+  static resume(): void {
+    let forceRebuild: boolean = false;
+    if (!TtsEngine.isPaused()) {
+      // ---------- T1-D2 兜底：状态显示"在播"，但音频管线其实已死 ----------
+      // 真机场景：打断后引擎状态被置成 playing，用户再点播放时 `resume()` 会在此
+      // 直接 return（"点了没反应"）。改为：检测到写失败就按"从本页"的语义重建管线。
+      if (INTERRUPT_REBUILD_WHEN_STUCK && TtsEngine.isPlaying()
+        && TtsEngine.player !== null && TtsEngine.player.streamDead()) {
+        hilog.info(DOMAIN, TAG, 'resume: stream dead while state=playing -> force rebuild');
+        forceRebuild = true;
+        // 先归一到 paused，让 `pausePagePos` 记下当前位置，并真正停掉旧渲染器
+        TtsEngine.setState('paused');
+        TtsEngine.player.stop();
+      } else {
+        return;
+      }
+    }
+    // 无论自动还是手动恢复，系统打断标记都失效
+    TtsEngine.interruptedBySystem = false;
+    const now = TtsEngine.readerPosProvider !== null ? TtsEngine.readerPosProvider() : null;
+    const snap = TtsEngine.pausePagePos;
+    let flipped = forceRebuild || (now !== null && (snap === null
+      || now.spineIndex !== snap.spineIndex
+      || now.nodeIndex !== snap.nodeIndex
+      || now.charStart !== snap.charStart));
+    // ---------- T1-D4：不能原地续播时必须重建，禁止"什么都不做" ----------
+    // 真机故障（2026-09-21 01:13，进程 19666）：抖音/汽水音乐走 `INTERRUPT_HINT_STOP`
+    //   （**永久**失焦，官方口径"后续不会再收到任何焦点事件"）⇒ 写失败把播放循环打散
+    //   ⇒ `playingMidFile=false`。此时用户按播放，旧代码落进下方
+    //   `if (TtsEngine.playingMidFile && …)` 的空分支，**静默什么都不做**
+    //   （日志表现为 `SetAVPlaybackState:2` 已切换、却无 `Renderer::Start`）。
+    // 判据：只有渲染器确实停在 `STATE_PAUSED` 才允许原地 `start()`；
+    //   微信场景（hint=2）实测 `state=5` 可原地续播，故不受影响。
+    const canResumeInPlace: boolean = TtsEngine.playingMidFile
+      && TtsEngine.player !== null && TtsEngine.player.canResumeInPlace();
+    if (!canResumeInPlace) {
+      flipped = true;
+      hilog.info(DOMAIN, TAG,
+        'resume: cannot resume in place (playingMidFile=%{public}s) -> force re-anchor',
+        TtsEngine.playingMidFile ? 'true' : 'false');
+    }
+    TtsEngine.setState('playing');
+    if (flipped && now !== null) {
+      hilog.info(DOMAIN, TAG,
+        'resume: reader moved to spine=%{public}d node=%{public}d char=%{public}d → re-anchor',
+        now.spineIndex, now.nodeIndex, now.charStart);
+      if (now.spineIndex !== TtsEngine.chapterIndex || TtsEngine.currentChunks === null) {
+        TtsEngine.seekToChapter(now.spineIndex, now.nodeIndex, now.charStart);
+      } else {
+        TtsEngine.seekToSegment(
+          TtsEngine.chunkIndexForPosition(TtsEngine.currentChunks, now.nodeIndex, now.charStart));
+      }
+      return;
+    }
+    if (TtsEngine.playingMidFile && TtsEngine.player !== null) {
+      TtsEngine.player.resume();
+    }
+  }
+
+  static stop(reason: string): void {
+    TtsEngine.stopInternal(reason);
+    TtsEngine.stopBackground();
+    TtsEngine.deactivateSession();
+  }
+
+  /** 朗读中跳章（UI 目录/上一章/下一章），可带章内起始位置（ReaderKit 坐标） */
+  static seekToChapter(spineIndex: number, startNode: number = -1, startChar: number = 0): void {
+    if (TtsEngine.state === 'stopped' || TtsEngine.handler === null) {
+      return;
+    }
+    const gen = ++TtsEngine.sessionGen;
+    TtsEngine.abortPlay();
+    TtsEngine.setState('playing');
+    TtsEngine.run(gen, spineIndex, startNode, startChar).catch((e: Error): void => {
+      hilog.error(DOMAIN, TAG, 'seek run err %{public}s', e.message);
+    });
+  }
+
+  /**
+   * 播控中心「下一首 / 上一首」→ **下一章 / 上一章**（T1-A4）。
+   * 与面板 `ReaderPage3.ttsSeekChapter` **完全同逻辑**（`stopped` 守卫 + `Math.max(0, …)` 下界），
+   * 复用 `seekToChapter`，不另写一套跳章路径。
+   */
+  static skipChapter(delta: number): void {
+    if (TtsEngine.state === 'stopped') {
+      return;
+    }
+    const target = Math.max(0, TtsEngine.currentChapter() + delta);
+    TtsEngine.seekToChapter(target);
+  }
+
+  /** 下一段：提前结束当前块（run 循环自然 i++ 推进） */
+  static nextSegment(): void {
+    if (TtsEngine.state !== 'stopped') {
+      TtsEngine.abortPlay();
+    }
+  }
+
+  /** 上一块：段循环回到上一块重播（缓存+解码，即时响应） */
+  static prevSegment(): void {
+    if (TtsEngine.state === 'stopped') {
+      return;
+    }
+    TtsEngine.seekToSegment(TtsEngine.playingSegIndex - 1);
+  }
+
+  /** 跳到本章第 index 块（面板进度滑杆用）。锚点坐标与文本框立即更新，
+   *  不等合成——快速拖动时反馈实时，音频由引擎在后台追赶。 */
+  static seekToSegment(index: number): void {
+    if (TtsEngine.state === 'stopped') {
+      return;
+    }
+    const chunks = TtsEngine.currentChunks;
+    const target = Math.max(0, index);
+    if (chunks !== null && target < chunks.length) {
+      const c = chunks[target];
+      TtsEngine.playingSegIndex = target;
+      TtsEngine.playingSpine = TtsEngine.chapterIndex;
+      TtsEngine.playingNode = c.nodeIndex;
+      TtsEngine.playingChar = c.charStart;
+      TtsEngine.cb?.onSegment(target, chunks.length, c.text);
+    }
+    TtsEngine.segTarget = target;
+    TtsEngine.abortPlay();
+  }
+
+  /**
+   * 睡眠定时：从当前章起再读 chapters 章（0=不限）、累计播放 minutes 分钟（0=不限）。
+   * 两个都传 0 表示清除定时。
+   */
+  static setSleepTimer(chapters: number, minutes: number): void {
+    TtsEngine.sleepStopChapter = chapters > 0 ? TtsEngine.chapterIndex + chapters : -1;
+    TtsEngine.sleepStopMs = minutes > 0 ? minutes * 60 * 1000 : -1;
+    TtsEngine.playedMs = 0;
+    if (chapters > 0 || minutes > 0) {
+      hilog.info(DOMAIN, TAG, 'sleep timer set: chapters=%{public}d minutes=%{public}d',
+        chapters, minutes);
+    }
+  }
+
+  // 睡眠定时检查内联在 run 循环中（章界 + 块界两处）
+
+  // ---------- 主循环 ----------
+  private static async run(gen: number, spineIndex: number,
+    startNode: number = -1, startChar: number = 0): Promise<void> {
+    if (TtsEngine.handler === null || TtsEngine.prefs === null) {
+      return;
+    }
+    TtsEngine.chapterIndex = spineIndex;
+    while (TtsEngine.alive(gen)) {
+      // 睡眠定时：到章节数边界即停
+      if (TtsEngine.sleepStopChapter >= 0 && spineIndex >= TtsEngine.sleepStopChapter) {
+        TtsEngine.stopInternal('已读完定时设定的章节数');
+        TtsEngine.stopBackground();
+        TtsEngine.deactivateSession();
+        return;
+      }
+      if (spineIndex < 0 || spineIndex >= TtsEngine.spineCount) {
+        TtsEngine.stopInternal('全书朗读完毕');
+        TtsEngine.stopBackground();
+        TtsEngine.deactivateSession();
+        return;
+      }
+      // 1. 取章节文本（与阅读器同一数据源）
+      let content = '';
+      try {
+        content = await TtsEngine.handler.getSpineItemContent(spineIndex);
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'getSpineItemContent %{public}d failed: %{public}s',
+          spineIndex, e instanceof Error ? e.message : String(e));
+        TtsEngine.cb?.onToast('本章内容读取失败，已跳过');
+        spineIndex++;
+        TtsEngine.chapterIndex = spineIndex;
+        continue;
+      }
+      // 1. 建"ReaderKit 块节点模型"（与阅读器 DOM 块节点 1:1，唯一坐标系）
+      const nodes = buildChapterNodes(content).nodes;
+      const chunks = TtsEngine.buildQueue(nodes);
+      TtsEngine.currentChunks = chunks;
+      TtsEngine.currentNodes = nodes;
+      TtsEngine.observedMaxNode = 0;
+      hilog.info(DOMAIN, TAG, 'chapter: spine=%{public}d nodes=%{public}d chunks=%{public}d',
+        spineIndex, nodes.length, chunks.length);
+      if (!TtsEngine.alive(gen)) {
+        return;
+      }
+      // AI 说话人识别（多角色 + 已配置时）：对白块按男/女分音色
+      if (TtsEngine.prefs.scheme === 'multi'
+        && TtsEngine.prefs.aiSpeakerRecognitionEnabled
+        && TtsEngine.prefs.aiBaseUrl.length > 0 && TtsEngine.prefs.aiApiKey.length > 0) {
+        await TtsEngine.applySpeakerRecognition(chunks, nodes);
+        if (!TtsEngine.alive(gen)) {
+          return;
+        }
+      }
+      TtsEngine.failStreak = 0;
+      TtsEngine.notifyChapter(spineIndex);
+    TtsEngine.scheduleCachePrune(); // 换章是自然的缓存整理边界
+      if (chunks.length === 0) {
+        spineIndex++;
+        TtsEngine.chapterIndex = spineIndex;
+        startNode = -1; // 起始位置仅对第一章生效
+        continue;
+      }
+      // 2. 块循环（起始位置仅第一章生效：从阅读器当前页的块节点开始）
+      let i = 0;
+      if (startNode >= 0) {
+        i = TtsEngine.chunkIndexForPosition(chunks, startNode, startChar);
+        startNode = -1;
+      }
+      while (TtsEngine.alive(gen) && i < chunks.length) {
+        if (TtsEngine.isPaused()) {
+          await TtsEngine.sleep(150);
+          continue;
+        }
+        // 睡眠定时：累计播放时长到点即停
+        if (TtsEngine.sleepStopMs >= 0 && TtsEngine.playedMs >= TtsEngine.sleepStopMs) {
+          TtsEngine.stopInternal('睡眠定时结束，已自动停止');
+          TtsEngine.stopBackground();
+          TtsEngine.deactivateSession();
+          return;
+        }
+        if (TtsEngine.segTarget >= 0) {
+          const target = TtsEngine.segTarget;
+          TtsEngine.segTarget = -1;
+          if (target < chunks.length) {
+            i = Math.max(0, target);
+          }
+          continue;
+        }
+        TtsEngine.playingSegIndex = i;
+        TtsEngine.playingSpine = spineIndex;
+        TtsEngine.playingNode = chunks[i].nodeIndex;
+        TtsEngine.playingChar = chunks[i].charStart;
+        TtsEngine.cb?.onSegment(i, chunks.length, chunks[i].text);
+        // 预取后续块的合成（只写缓存，不解码）
+        for (let k = 1; k <= 2; k++) {
+          TtsEngine.prefetch(chunks, i + k);
+        }
+        try {
+          await TtsEngine.ensureSynth(chunks[i]);
+          if (!TtsEngine.alive(gen)) {
+            return;
+          }
+          TtsEngine.failStreak = 0;
+        } catch (e) {
+          TtsEngine.failStreak++;
+          hilog.error(DOMAIN, TAG, 'synth fail #%{public}d: %{public}s', TtsEngine.failStreak,
+            e instanceof Error ? e.message : String(e));
+          if (TtsEngine.failStreak >= FAIL_STREAK_PAUSE) {
+            TtsEngine.setState('paused');
+            TtsEngine.cb?.onToast('网络异常，已暂停朗读');
+            continue;
+          }
+          TtsEngine.cb?.onToast('一句合成失败，已跳过');
+          i++;
+          continue;
+        }
+        const chunk = chunks[i];
+        if (chunk.cachePath.length === 0 || !TtsEngine.fileExists(chunk.cachePath)) {
+          i++;
+          continue;
+        }
+        // 3. 解码 + 停顿拼接 + PCM 播放（completed 或被打断时 resolve）
+        try {
+          await TtsEngine.playChunk(chunk, i, chunks.length);
+        } catch (e) {
+          hilog.error(DOMAIN, TAG, 'playChunk err: %{public}s',
+            e instanceof Error ? e.message : String(e));
+          TtsEngine.cb?.onToast('一段播放失败，已跳过');
+          i++;
+          continue;
+        }
+        if (!TtsEngine.alive(gen)) {
+          return;
+        }
+        i++;
+      }
+      if (!TtsEngine.alive(gen)) {
+        return;
+      }
+      spineIndex++;
+      TtsEngine.chapterIndex = spineIndex;
+    }
+  }
+
+  /**
+   * 块节点数组 → 合成块队列。
+   * nodeIndex 直接用 ReaderKit 块节点下标（空节点占号但无块），
+   * charStart 是"原始节点文本"内的字符偏移——即 domPos 的 Y，
+   * 因此这里**不能 trim**（trim 会让 Y 整体前移，定位就会偏）。
+   */
+  private static buildQueue(nodes: string[]): QueueChunk[] {
+    const prefs = TtsEngine.prefs!;
+    const chunks: QueueChunk[] = [];
+    let carry = false;
+    for (let p = 0; p < nodes.length && chunks.length < MAX_CHUNKS_PER_CHAPTER; p++) {
+      const raw = nodes[p];
+      if (raw.length === 0 || !hasSpeakableText(raw)) {
+        continue;
+      }
+      const segs: SpeakSegment[] = splitParagraphIntoSegments(p, raw, carry, prefs.quoteStyles);
+      carry = segs.length > 0 && segs[segs.length - 1].isDialogue && !segs[segs.length - 1].endsSentence;
+      for (let s = 0; s < segs.length; s++) {
+        const parts = splitSegmentsIntoChunks(segs[s]);
+        for (let k = 0; k < parts.length; k++) {
+          const seg = parts[k];
+          const chunk: QueueChunk = {
+            text: seg.text,
+            isDialogue: seg.isDialogue,
+            endsSentence: seg.endsSentence,
+            nodeIndex: seg.nodeIndex,
+            charStart: seg.charStart,
+            voiceId: seg.isDialogue ? prefs.dialogueVoiceId : prefs.narrationVoiceId,
+            words: [],
+            cachePath: ''
+          };
+          chunks.push(chunk);
+        }
+      }
+    }
+    return chunks;
+  }
+
+  /**
+   * 文本框内容 → 真实位置：在块节点数组里就地搜索（合成块永远不跨节点），
+   * 优先从当前朗读位置向后找（规避重复句），返回 ReaderKit 坐标。
+   */
+  static locateText(text: string, fromNode: number, fromChar: number): TtsSegmentPos | null {
+    const nodes = TtsEngine.currentNodes;
+    if (nodes === null || nodes.length === 0) {
+      return null;
+    }
+    const needle = text.trim();
+    if (needle.length === 0) {
+      return null;
+    }
+    const start = Math.max(0, Math.min(fromNode, nodes.length - 1));
+    for (let n = start; n < nodes.length; n++) {
+      const from = n === start ? Math.max(0, fromChar) : 0;
+      const at = nodes[n].indexOf(needle, from);
+      if (at >= 0) {
+        const hit: TtsSegmentPos = {
+          spineIndex: TtsEngine.chapterIndex, nodeIndex: n, charStart: at
+        };
+        return hit;
+      }
+    }
+    for (let n = 0; n < nodes.length; n++) {
+      const at = nodes[n].indexOf(needle);
+      if (at >= 0) {
+        const hit2: TtsSegmentPos = {
+          spineIndex: TtsEngine.chapterIndex, nodeIndex: n, charStart: at
+        };
+        return hit2;
+      }
+    }
+    return null;
+  }
+
+  private static cachePathFor(chunk: QueueChunk): string {
+    const prefs = TtsEngine.prefs!;
+    const key = chunk.voiceId + '|' + prefs.rate.toFixed(2) + '|' + prefs.pitch.toFixed(2) + '|' + chunk.text;
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < key.length; i++) {
+      hash ^= key.charCodeAt(i);
+      hash = (hash * 0x01000193) >>> 0;
+    }
+    return TtsEngine.context !== null ? TtsEngine.context.cacheDir + '/tts/' + hash.toString(16) + '.mp3' : '';
+  }
+
+  /**
+   * AI 说话人识别（对齐 PC 版机制）：对对白块批量标注 male/female/unknown，
+   * 分别套用 男生音色/女生音色/对白音色。失败静默回落（保持统一对白音色）。
+   */
+  private static async applySpeakerRecognition(chunks: QueueChunk[], nodes: string[]): Promise<void> {
+    const prefs = TtsEngine.prefs!;
+    const items: SpeakerItem[] = [];
+    const itemChunks: QueueChunk[] = [];
+    for (let i = 0; i < chunks.length && items.length < 50; i++) {
+      const c = chunks[i];
+      if (!c.isDialogue) {
+        continue;
+      }
+      // 以所属块节点前后各一个节点作上下文（对齐 PC 版"扩到非纯对白行"的简化版）
+      const before = c.nodeIndex > 0 && c.nodeIndex - 1 < nodes.length ? nodes[c.nodeIndex - 1] : '';
+      const after = c.nodeIndex + 1 < nodes.length ? nodes[c.nodeIndex + 1] : '';
+      const item: SpeakerItem = { text: c.text, before: before, after: after };
+      items.push(item);
+      itemChunks.push(c);
+    }
+    if (items.length === 0) {
+      return;
+    }
+    try {
+      const kinds = await classifyDialogueGenders(
+        prefs.aiBaseUrl, prefs.aiApiKey, prefs.aiModel, items);
+      for (let i = 0; i < itemChunks.length; i++) {
+        const kind = i < kinds.length ? kinds[i] : 'unknown';
+        if (kind === 'male') {
+          itemChunks[i].voiceId = prefs.dialogueMaleVoiceId;
+        } else if (kind === 'female') {
+          itemChunks[i].voiceId = prefs.dialogueFemaleVoiceId;
+        }
+      }
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'speaker recognition failed: %{public}s',
+        e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 合成（3 次重试 + 缓存）；同块并发只跑一次（按 cachePath 去重）
+   * @throws 合成 3 次均失败时抛出
+   */
+  private static async ensureSynth(chunk: QueueChunk): Promise<void> {
+    if (chunk.cachePath.length > 0 && chunk.words.length > 0
+      && TtsEngine.fileExists(chunk.cachePath)) {
+      return;
+    }
+    const path = TtsEngine.cachePathFor(chunk);
+    if (path.length === 0) {
+      return;
+    }
+    // 缓存命中要求 mp3 + 词表 sidecar 双文件（词表是停顿拼接/句级显示的原料）
+    if (TtsEngine.fileExists(path) && TtsEngine.fileExists(path + '.json')) {
+      chunk.cachePath = path;
+      return;
+    }
+    const running = TtsEngine.synthInFlight.get(path);
+    if (running !== undefined) {
+      const r = await running;
+      if (r === 1) {
+        chunk.cachePath = path;
+      }
+      return;
+    }
+    const task = TtsEngine.doSynth(chunk, path);
+    TtsEngine.synthInFlight.set(path, task);
+    try {
+      const r = await task;
+      if (r === 1) {
+        chunk.cachePath = path;
+      }
+    } finally {
+      TtsEngine.synthInFlight.delete(path);
+    }
+  }
+
+  /** @returns 1=已写缓存文件；0=无可读内容（空块）；合成失败抛异常 */
+  private static async doSynth(chunk: QueueChunk, path: string): Promise<number> {
+    const prefs = TtsEngine.prefs!;
+    const voice = chunk.voiceId;
+    let lastErr: Error = new Error('未知错误');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await synthesizeOnce(chunk.text, voice, prefs.rate, prefs.pitch);
+        if (r.mp3.byteLength === 0) {
+          // 空块（无可读内容）视为成功，cachePath 留空即跳过
+          return 0;
+        }
+        chunk.words = r.words;
+        const f = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+        fs.writeSync(f.fd, r.mp3);
+        fs.closeSync(f.fd);
+        // 词表随 mp3 落盘（跨会话恢复停顿拼接/句级显示所需）
+        TtsEngine.writeWordsSidecar(path, chunk.words);
+        return 1;
+      } catch (e) {
+        lastErr = e instanceof Error ? e : new Error(String(e));
+        await TtsEngine.sleep(250 * (attempt + 1));
+      }
+    }
+    throw lastErr;
+  }
+
+  /** 词表 sidecar：<hash>.mp3.json */
+  private static writeWordsSidecar(path: string, words: WordSpan[]): void {
+    try {
+      const arr: string[] = [];
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const esc = w.text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        arr.push(`{"text":"${esc}","startMs":${w.startMs},"endMs":${w.endMs}}`);
+      }
+      const json = '{"words":[' + arr.join(',') + ']}';
+      const f = fs.openSync(path + '.json', fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(f.fd, json);
+      fs.closeSync(f.fd);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'write sidecar err %{public}s', e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 缓存命中时从 sidecar 恢复词表 */
+  private static loadWordsSidecar(chunk: QueueChunk): void {
+    if (chunk.words.length > 0 || chunk.cachePath.length === 0) {
+      return;
+    }
+    try {
+      const path = chunk.cachePath + '.json';
+      if (!TtsEngine.fileExists(path)) {
+        return;
+      }
+      const stat = fs.statSync(path);
+      const buf = new ArrayBuffer(stat.size);
+      const f = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      fs.readSync(f.fd, buf);
+      fs.closeSync(f.fd);
+      const text = util.TextDecoder.create('utf-8').decodeToString(new Uint8Array(buf));
+      const root = JSON.parse(text) as Record<string, Object>;
+      const rawArr = root['words'];
+      if (!Array.isArray(rawArr)) {
+        return;
+      }
+      const arrSrc = rawArr as Array<Object>;
+      const words: WordSpan[] = [];
+      for (let i = 0; i < arrSrc.length; i++) {
+        const o = arrSrc[i] as Record<string, Object>;
+        const t = o['text'];
+        const s = o['startMs'];
+        const e2 = o['endMs'];
+        if (typeof t === 'string' && typeof s === 'number' && typeof e2 === 'number') {
+          const w: WordSpan = { text: t as string, startMs: s as number, endMs: e2 as number };
+          words.push(w);
+        }
+      }
+      chunk.words = words;
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'load sidecar err %{public}s', e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  private static prefetch(chunks: QueueChunk[], index: number): void {
+    if (index >= chunks.length) {
+      return;
+    }
+    const c = chunks[index];
+    if (c.cachePath.length > 0) {
+      return;
+    }
+    if (!hasSpeakableText(c.text)) {
+      return;
+    }
+    const path = TtsEngine.cachePathFor(c);
+    if (path.length === 0
+      || (TtsEngine.fileExists(path) && TtsEngine.fileExists(path + '.json'))
+      || TtsEngine.synthInFlight.has(path)) {
+      return;
+    }
+    const task = TtsEngine.doSynth(c, path).then((r: number): number => {
+      if (r === 1) {
+        c.cachePath = path;
+      }
+      return r;
+    }).catch((e: Error): number => {
+      hilog.warn(DOMAIN, TAG, 'prefetch fail: %{public}s', e.message);
+      return -1;
+    });
+    TtsEngine.synthInFlight.set(path, task);
+    task.finally((): void => {
+      TtsEngine.synthInFlight.delete(path);
+    });
+  }
+
+  // ---------- 解码 + 拼接 + 播放 ----------
+  /**
+   * 创建播放器与后台环境
+   * @throws 播放器创建失败时抛出
+   */
+  private static async beginPlaybackEnv(): Promise<void> {
+    if (TtsEngine.player === null) {
+      const p = new PcmPlayer();
+      p.onInterrupted = (): void => {
+        // 系统打断（来电等）：引擎整体暂停，用户手动继续
+        if (TtsEngine.isPlaying()) {
+          TtsEngine.setState('paused');
+          // 标记"这次暂停是系统造成的"（必须在 setState 之后）
+          TtsEngine.interruptedBySystem = true;
+          TtsEngine.cb?.onToast('播放被打断（来电或其他应用）');
+        }
+      };
+      // 以下两个回调**只在** PcmPlayer 的 INTERRUPT_FULL_HANDLING 开启时才会被触发
+      p.onStopped = (): void => {
+        // 系统已强制停流（永久失焦）：按官方口径"切换至音频暂停状态"以保持状态一致
+        if (TtsEngine.isPlaying()) {
+          TtsEngine.setState('paused');
+          TtsEngine.cb?.onToast('播放已停止（音频被其他应用占用）');
+        }
+      };
+      p.onResumeHint = (): void => {
+        // 仅当"本次暂停由系统打断造成"时才自动续播；用户主动暂停不自动恢复
+        if (TtsEngine.isPaused() && TtsEngine.interruptedBySystem) {
+          TtsEngine.resume();
+        }
+      };
+      TtsEngine.player = p;
+    }
+    TtsEngine.startBackground();
+    await TtsEngine.ensureSession();
+  }
+
+  /**
+   * 解码缓存 MP3 → 计算停顿点 → 拼接 PCM → 流式播放（句级进度回传）。
+   * @throws 解码/装载失败
+   */
+  private static async playChunk(chunk: QueueChunk, index: number, total: number): Promise<void> {
+    const prefs = TtsEngine.prefs!;
+    const player = TtsEngine.player;
+    if (player === null) {
+      return;
+    }
+    // 缓存命中的块：从 sidecar 恢复词表（停顿拼接与句级显示的原料）
+    TtsEngine.loadWordsSidecar(chunk);
+    // 读缓存 MP3
+    const stat = fs.statSync(chunk.cachePath);
+    const mp3 = new ArrayBuffer(stat.size);
+    const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
+    fs.readSync(f.fd, mp3);
+    fs.closeSync(f.fd);
+    // 解码
+    const decoded = await decodeMp3ToPcm(mp3);
+    if (decoded.pcm.byteLength === 0) {
+      return;
+    }
+    const pcm = new Int16Array(decoded.pcm);
+    // 停顿点 + 拼接（语速缩放 + 音量）
+    const points = computePausePoints(chunk.text, chunk.words);
+    const spliced = applyPauses(pcm, decoded.sampleRate, points,
+      prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate, prefs.volume);
+    // 诊断：定位"停顿不生效"——若 words>0 而 points=0，必为词表与文本未对齐
+    hilog.info(DOMAIN, TAG,
+      'splice: words=%{public}d pts=%{public}d src=%{public}d out=%{public}d sent=%{public}d comm=%{public}d rate=%{public}s',
+      chunk.words.length, points.length, pcm.length, spliced.pcm.length,
+      prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate.toFixed(2));
+    if (points.length === 0 && chunk.words.length > 0) {
+      hilog.info(DOMAIN, TAG, 'splice-miss text[0..24]=%{public}s w0=%{public}s w1=%{public}s w2=%{public}s',
+        chunk.text.substring(0, 24),
+        chunk.words[0]?.text ?? '', chunk.words[1]?.text ?? '', chunk.words[2]?.text ?? '');
+    }
+    const timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
+    // 播放：句级文本 + 句内字符进度回传
+    TtsEngine.playingMidFile = true;
+    let lastMark = -1;
+    let lastCharInSentence = -1;
+    await player.play(spliced.pcm, spliced.sampleRate, (ms: number): void => {
+      for (let m = timeline.length - 1; m >= 0; m--) {
+        if (ms >= timeline[m].startAdjMs) {
+          if (m !== lastMark) {
+            lastMark = m;
+            lastCharInSentence = -1;
+            // 句级位置：块内偏移 + 本句在块内的字符起点 → ReaderKit 的 (节点, 字符)
+            TtsEngine.playingSpine = TtsEngine.chapterIndex;
+            TtsEngine.playingNode = chunk.nodeIndex;
+            TtsEngine.playingChar = chunk.charStart + timeline[m].charStart;
+            TtsEngine.cb?.onSegment(index, total, timeline[m].text);
+          }
+          // 句内字符进度（用 Edge 词级时间戳反算，浮条据此实时前滚）
+          const len = timeline[m].text.length;
+          if (len > 0) {
+            const origMs = lookupOrigMs(spliced.timeMap, ms);
+            const offInChunk = TtsEngine.charOffsetAtMs(chunk, origMs);
+            let rel = offInChunk - timeline[m].charStart;
+            if (rel < 0) {
+              rel = 0;
+            }
+            if (rel > len) {
+              rel = len;
+            }
+            if (rel !== lastCharInSentence) {
+              lastCharInSentence = rel;
+              TtsEngine.cb?.onProgress(rel, len);
+            }
+          }
+          break;
+        }
+      }
+    });
+    TtsEngine.playingMidFile = false;
+    // 睡眠定时的播放时长累计（停顿已在 PCM 内）
+    TtsEngine.playedMs += spliced.pcm.length * 2 / spliced.sampleRate * 1000;
+  }
+
+  private static abortPlay(): void {
+    // PcmPlayer 内部 abortFlag 使写循环退出并清空队列；下一次 play() 自动复位
+    if (TtsEngine.player !== null) {
+      TtsEngine.player.stop();
+    }
+  }
+
+  private static stopInternal(reason: string): void {
+    TtsEngine.sessionGen++;
+    TtsEngine.state = 'stopped';
+    TtsEngine.interruptedBySystem = false;
+    TtsEngine.playingMidFile = false;
+    TtsEngine.abortPlay();
+    if (TtsEngine.player !== null) {
+      TtsEngine.player.stop();
+    }
+    TtsEngine.cb?.onState('stopped');
+    if (reason.length > 0) {
+      TtsEngine.cb?.onToast(reason);
+    }
+  }
+
+  /**
+   * 原始时刻 → 该块文本内的字符偏移（句内字符进度用）。
+   * 依据 Edge 的词级时间戳：落在某个词里就按时间比例插值。
+   */
+  private static charOffsetAtMs(chunk: QueueChunk, origMs: number): number {
+    let cursor = 0;
+    for (let i = 0; i < chunk.words.length; i++) {
+      const w = chunk.words[i];
+      if (w.text.length === 0) {
+        continue;
+      }
+      const at = chunk.text.indexOf(w.text, cursor);
+      if (at < 0) {
+        continue;
+      }
+      cursor = at + w.text.length;
+      if (origMs < w.startMs) {
+        return at;
+      }
+      if (origMs <= w.endMs) {
+        const frac = w.endMs > w.startMs ? (origMs - w.startMs) / (w.endMs - w.startMs) : 1;
+        return at + Math.round(frac * w.text.length);
+      }
+    }
+    return chunk.text.length;
+  }
+
+  private static notifyChapter(spineIndex: number): void {
+    let title = '';
+    if (TtsEngine.handler !== null) {
+      try {
+        const catalog = TtsEngine.handler.getCatalogList();
+        // 目录与书脊多对一，取资源文件匹配的目录名（找不到就留空）
+        const spines = TtsEngine.handler.getSpineList();
+        const href = spineIndex < spines.length ? spines[spineIndex].href : '';
+        for (let i = 0; i < catalog.length; i++) {
+          if (href.length > 0 && catalog[i].resourceFile === href) {
+            title = catalog[i].catalogName;
+            break;
+          }
+        }
+      } catch (e) {
+        // 忽略
+      }
+    }
+    TtsEngine.cb?.onChapter(spineIndex, title);
+    TtsEngine.updateSessionMeta(title);
+  }
+
+  private static setState(s: TtsState): void {
+    TtsEngine.state = s;
+    // 任何进入暂停的路径都采集阅读器位置快照（resume 判断是否换页重锚的依据）
+    if (s === 'paused' && TtsEngine.readerPosProvider !== null) {
+      TtsEngine.pausePagePos = TtsEngine.readerPosProvider();
+    }
+    TtsEngine.cb?.onState(s);
+    TtsEngine.updateSessionState();
+  }
+
+  private static sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  // ---------- 长时任务（后台朗读） ----------
+  private static startBackground(): void {
+    if (TtsEngine.bgRunning || TtsEngine.context === null) {
+      return;
+    }
+    if (BG_TASK_SAFE_LIFECYCLE && TtsEngine.bgStarting !== null) {
+      return; // 启动链仍在进行，避免并发重复启动
+    }
+    if (BG_TASK_RESTART_GUARD && TtsEngine.bgLastStopAt > 0) {
+      // ---------- 新路径（T1-C2）：避开官方禁止的"停止后立即再次申请" ----------
+      const waited: number = Date.now() - TtsEngine.bgLastStopAt;
+      const remain: number = BG_TASK_MIN_RESTART_INTERVAL_MS - waited;
+      if (remain > 0) {
+        hilog.info(DOMAIN, TAG, 'bg restart deferred %{public}d ms (last stop %{public}d ms ago)',
+          remain, waited);
+        if (TtsEngine.bgRestartTimer !== -1) {
+          clearTimeout(TtsEngine.bgRestartTimer);
+        }
+        TtsEngine.bgRestartTimer = setTimeout((): void => {
+          TtsEngine.bgRestartTimer = -1;
+          TtsEngine.startBackground();
+        }, remain);
+        return;
+      }
+    }
+    try {
+      const wantInfo: wantAgent.WantAgentInfo = {
+        wants: [{
+          bundleName: TtsEngine.context.abilityInfo.bundleName,
+          abilityName: 'EntryAbility'
+        }],
+        operationType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      // T1-B：让 `chain` 覆盖到 `startBackgroundRunning` 落地为止（旧写法只到 getWantAgent 返回）。
+      // 对旧路径无任何可观测影响 —— `chain` 在旧路径下无人消费，且内层已有自己的 catch。
+      const chain: Promise<void> = wantAgent.getWantAgent(wantInfo).then((agent: object): Promise<void> | void => {
+        if (TtsEngine.context === null) {
+          return;
+        }
+        if (BG_TASK_NOTIFICATION_AWARE) {
+          // ---------- 新路径（T1-C1）：用返回 ContinuousTaskNotification 的重载 ----------
+          // `bgModes` 取值 `'audioPlayback'` 来自官方「表1 长时任务类型」的**配置项**列。
+          return backgroundTaskManager.startBackgroundRunning(
+            TtsEngine.context, ['audioPlayback'], agent)
+            .then((info: backgroundTaskManager.ContinuousTaskNotification): void => {
+              const taskId: number = info.continuousTaskId === undefined ? -1 : info.continuousTaskId;
+              hilog.info(DOMAIN, TAG, 'bg task started notificationId=%{public}d taskId=%{public}d',
+                info.notificationId, taskId);
+              TtsEngine.bgRunning = true;
+            }).catch((e: BusinessError): void => {
+              hilog.warn(DOMAIN, TAG, 'bg task err %{public}s', JSON.stringify(e));
+            });
+        }
+        // ---------- 旧路径（默认，行为逐字保留）----------
+        return backgroundTaskManager.startBackgroundRunning(
+          TtsEngine.context, backgroundTaskManager.BackgroundMode.AUDIO_PLAYBACK, agent)
+          .then((): void => {
+            TtsEngine.bgRunning = true;
+          }).catch((e: BusinessError): void => {
+            hilog.warn(DOMAIN, TAG, 'bg task err %{public}s', JSON.stringify(e));
+          });
+      }).catch((e: BusinessError): void => {
+        hilog.warn(DOMAIN, TAG, 'wantAgent err %{public}s', JSON.stringify(e));
+      });
+      if (BG_TASK_SAFE_LIFECYCLE) {
+        TtsEngine.bgStarting = chain;
+        chain.then((): void => {
+          TtsEngine.bgStarting = null;
+        }, (): void => {
+          TtsEngine.bgStarting = null;
+        });
+      }
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'bg task err %{public}s', JSON.stringify(e));
+    }
+  }
+
+  private static stopBackground(): void {
+    if (TtsEngine.context === null) {
+      return;
+    }
+    if (BG_TASK_RESTART_GUARD && TtsEngine.bgRestartTimer !== -1) {
+      // T1-C2：有"延后申请"尚未落地 → 用户已要求停止，取消它
+      const pendingTimer: number = TtsEngine.bgRestartTimer;
+      TtsEngine.bgRestartTimer = -1;
+      clearTimeout(pendingTimer);
+    }
+    if (BG_TASK_SAFE_LIFECYCLE) {
+      // ---------- 新路径（T1-B）：以"最终一定停"为准 ----------
+      const ctx = TtsEngine.context;
+      const doStop = (): void => {
+        if (BG_TASK_RESTART_GUARD) {
+          TtsEngine.bgLastStopAt = Date.now();
+        }
+        backgroundTaskManager.stopBackgroundRunning(ctx).then((): void => {
+          TtsEngine.bgRunning = false;
+        }).catch((): void => {
+          TtsEngine.bgRunning = false;
+        });
+      };
+      const pending = TtsEngine.bgStarting;
+      if (pending !== null) {
+        // 启动链还没落地：等它结束（无论成败）立刻取消，避免"泄漏一个长时任务"
+        pending.then(doStop, doStop);
+        return;
+      }
+      if (TtsEngine.bgRunning) {
+        doStop();
+      }
+      return;
+    }
+    // ---------- 旧路径（默认，行为逐字保留）----------
+    if (!TtsEngine.bgRunning) {
+      return;
+    }
+    if (BG_TASK_RESTART_GUARD) {
+      TtsEngine.bgLastStopAt = Date.now();
+    }
+    backgroundTaskManager.stopBackgroundRunning(TtsEngine.context).then((): void => {
+      TtsEngine.bgRunning = false;
+    }).catch((): void => {
+      TtsEngine.bgRunning = false;
+    });
+  }
+
+  // ---------- AVSession（锁屏/通知栏控制） ----------
+  private static async ensureSession(): Promise<void> {
+    if (TtsEngine.avSession !== null || TtsEngine.context === null) {
+      return;
+    }
+    try {
+      const session = await avSessionKit.createAVSession(TtsEngine.context, 'legado_tts', 'audio');
+      await session.setAVMetadata({
+        assetId: 'legado_tts_' + TtsEngine.bookTitle,
+        title: TtsEngine.bookTitle.length > 0 ? TtsEngine.bookTitle : '朗读',
+        artist: '开源阅读 · 朗读'
+      });
+      session.on('play', () => {
+        TtsEngine.resume();
+      });
+      session.on('pause', () => {
+        TtsEngine.pause();
+      });
+      session.on('stop', () => {
+        TtsEngine.stop('');
+      });
+      if (AVSESSION_FULL_CONTROL) {
+        // ① 播控中心点按可拉起应用（官方最佳实践 §接入播控中心 步骤 3）
+        const wantInfo: wantAgent.WantAgentInfo = {
+          wants: [{
+            bundleName: TtsEngine.context.abilityInfo.bundleName,
+            abilityName: TtsEngine.context.abilityInfo.name
+          }],
+          operationType: wantAgent.OperationType.START_ABILITIES,
+          requestCode: 0,
+          wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+        };
+        wantAgent.getWantAgent(wantInfo).then((agent: object): void => {
+          session.setLaunchAbility(agent).catch((e: BusinessError): void => {
+            hilog.warn(DOMAIN, TAG, 'setLaunchAbility err %{public}s', JSON.stringify(e));
+          });
+        }).catch((e: BusinessError): void => {
+          hilog.warn(DOMAIN, TAG, 'setLaunchAbility wantAgent err %{public}s', JSON.stringify(e));
+        });
+        // ② 下一章 / 上一章（复用 seekToChapter，与面板 ttsSeekChapter 同逻辑）
+        session.on('playNext', () => {
+          TtsEngine.skipChapter(1);
+        });
+        session.on('playPrevious', () => {
+          TtsEngine.skipChapter(-1);
+        });
+      }
+      await session.activate();
+      TtsEngine.avSession = session;
+      TtsEngine.updateSessionState();
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'avsession err %{public}s', JSON.stringify(e));
+    }
+  }
+
+  private static async updateSessionState(): Promise<void> {
+    try {
+      await TtsEngine.avSession?.setAVPlaybackState({
+        state: TtsEngine.state === 'playing'
+          ? avSessionKit.PlaybackState.PLAYBACK_STATE_PLAY
+          : avSessionKit.PlaybackState.PLAYBACK_STATE_PAUSE,
+        speed: 1.0
+      });
+    } catch (e) {
+      // 忽略
+    }
+  }
+
+  private static async updateSessionMeta(chapter: string): Promise<void> {
+    try {
+      if (TtsEngine.avSession === null) {
+        return;
+      }
+      await TtsEngine.avSession.setAVMetadata({
+        assetId: 'legado_tts_' + TtsEngine.bookTitle,
+        title: TtsEngine.bookTitle.length > 0 ? TtsEngine.bookTitle : '朗读',
+        artist: chapter.length > 0 ? chapter : '朗读中'
+      });
+    } catch (e) {
+      // 忽略
+    }
+  }
+
+  private static deactivateSession(): void {
+    const s = TtsEngine.avSession;
+    TtsEngine.avSession = null;
+    if (s === null) {
+      return;
+    }
+    s.deactivate().then(async (): Promise<void> => {
+      try {
+        await s.destroy();
+      } catch (e) {
+        // 忽略
+      }
+    }).catch((): void => {
+      // 忽略
+    });
+  }
+}
+

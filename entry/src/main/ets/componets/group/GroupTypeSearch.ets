@@ -1,7 +1,9 @@
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
+import { Haptics } from '../../common/utils/Haptics';
 import { BookGroups } from '../../database/entities/BookGroups'
 import BookType from '../head/BookType'
 import groupTypeSearchPanel from './groupTypeSearchPanel'
+import { NightMode, ShelfColors } from '../../common/utils/NightMode'
 
 @Component
 export default struct groupTypeSearch {
@@ -11,6 +13,8 @@ export default struct groupTypeSearch {
   @Link bookTypeNumber:number
   @Link searchBookList:number[]
   @Prop isShowMore:boolean = false
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   aboutToAppear(): void {
     this.getGroupList()
   }
@@ -62,17 +66,17 @@ export default struct groupTypeSearch {
                   }
                 })
               }
-            })
+            }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
           }
         }
         .scrollBar(BarState.Off)
         .scrollable(ScrollDirection.Horizontal)
         Row(){
-          Image($r('app.media.more_search')).width(25).height(25)
+          Image($r('app.media.more_search')).width(25).height(25).fillColor(ShelfColors.icon())
         }.width(
           '10%'
         ).onClick(()=>{
-          this.groupCoverShow = true
+          Haptics.tap(); this.groupCoverShow = true
         })
         .visibility(!this.isShowMore?Visibility.Visible:Visibility.Hidden)
       }.margin({ left: 15,bottom:10})

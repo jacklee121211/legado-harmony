@@ -10,6 +10,31 @@
         "usedScene": {
           "when":"inuse"
         }
+      },
+      {
+        "name" : "ohos.permission.KEEP_BACKGROUND_RUNNING",
+        "usedScene": {
+          "when":"inuse"
+        }
+      },
+      {
+        // #3：听书面板「本章」滑块步进震动反馈
+        // SDK `@ohos.vibrator.d.ts:126` 的 startVibration 标注 `@permission ohos.permission.VIBRATE`
+        "name" : "ohos.permission.VIBRATE",
+        "usedScene": {
+          "when":"inuse"
+        }
+      },
+      {
+        // #3：全局震动方案的「勿扰模式自动停」——查询系统免打扰状态。
+        // `intelligentScene.isDoNotDisturbEnabled()`（`@ohos.intelligentScene.d.ts:41`，@since 23）
+        // 标注 `@permission ohos.permission.GET_DONOTDISTURB_STATE`；
+        // 官方权限列表（documentId permissions-for-all）：权限级别 normal、
+        // 授权方式 system_grant（安装即授）、起始版本 23。
+        "name" : "ohos.permission.GET_DONOTDISTURB_STATE",
+        "usedScene": {
+          "when":"inuse"
+        }
       }
     ],
     "deviceTypes": [
@@ -29,6 +54,19 @@
         "startWindowIcon": "$media:icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        "backgroundModes": [
+          "audioPlayback"
+        ],
+        // 桌面静态快捷方式（快速听书 / 快速阅读）。
+        // 官方 documentId `开发指南/开发基础知识/典型场景的开发指导/创建应用静态快捷方式/typical-scenario-configuration`：
+        // 「在模块的 /resources/base/profile/ 目录下配置快捷方式的配置文件，如 shortcuts_config.json」
+        // 「桌面展示快捷方式的数量有上限要求，最多展示 4 个。」
+        "metadata": [
+          {
+            "name": "ohos.ability.shortcuts",
+            "resource": "$profile:shortcuts_config"
+          }
+        ],
         "skills": [
           {
             "entities": [

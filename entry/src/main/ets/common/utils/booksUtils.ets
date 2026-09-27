@@ -18,7 +18,9 @@ class booksUtils{
   async addBooks(books: Books){
     books.isJoin = true
     books.bookGroup = books.bookGroup??3 //默认未分组
-    BooksDao.insert(books)
+    // ⚠️ 必须 await：旧实现"裸调 insert 不等待"，调用方 `await addBooks()` 拿不到
+    // "已入库"的时点 ⇒ 批量导入后立即刷 UI 查不到新数据（2026-09-24 导入竞态修复）。
+    await BooksDao.insert(books)
   }
   //校验当前书籍是否存在书架中
   async isExistBooks(bookUrl?:string,bookName?:string): Promise<boolean>{

@@ -5,6 +5,7 @@
  * 通用确认取消按钮
  */
 import CommonConstants from '../../common/constants/CommonConstants'
+import { Haptics } from '../../common/utils/Haptics';
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 
@@ -30,7 +31,7 @@ export default struct buttonCommon {
           .backgroundColor(this.theme.secondColor)
           .fontColor(this.theme.mainColor)
           .onClick(() => {
-              this.cancel()
+              Haptics.tap(); this.cancel()
           })
         Button(this.sureTitle)
           .padding({left: 32, right: 32, top: 8, bottom: 8})
@@ -40,7 +41,7 @@ export default struct buttonCommon {
           .backgroundColor(this.theme.mainColor)
           .fontColor('#FFFFFF')
           .onClick(()=>{
-            this.confirm()
+            Haptics.tap(); this.confirm()
           })
       }
       .padding({top: 12, bottom: 12})

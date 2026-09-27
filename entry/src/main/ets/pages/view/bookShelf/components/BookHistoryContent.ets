@@ -1,11 +1,14 @@
 import bookHistoryDao from '../../../../database/dao/BookHistoryDao'
 import { BookHistory } from '../../../../database/entities/BookHistory'
 import BookHistoryInfo from './BookHistoryInfo'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 @Component
 export default struct BookHistoryContent {
   @State bookHistory:BookHistory[] = []
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
+  /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   @Prop searchValue:string
   @Prop @Watch('changeBookType')currentIndex: number
   //更新数据累加刷新数据页面
@@ -32,7 +35,7 @@ export default struct BookHistoryContent {
         Image($r('app.media.no_record')).width(200).height(200)
         Text('暂无浏览记录')
           .fontSize(12)
-          .fontColor('rgba(96, 96, 96, 0.6)')
+          .fontColor(ShelfColors.textSub())
           .fontWeight(500)
           .padding(5)
       }
@@ -48,9 +51,9 @@ export default struct BookHistoryContent {
             BookHistoryInfo({
               bookHistory:item
             })
-          })
+          }, (item: BookHistory): string => item.id !== undefined ? 'h' + item.id : item.bookUrl)
         }
-        .backgroundColor('rgba(255,250,247,0.8)')
+        .backgroundColor(ShelfColors.card())
       }
     }
   }

@@ -3,6 +3,7 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookFolderGridManage from './BookFolderGridManage'
 import BookFolderInfoManage from './BookFolderInfoManage'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
 export default struct BookFolderManages {
@@ -11,6 +12,8 @@ export default struct BookFolderManages {
   @Prop EXHIBIT:string
   @State delCache:boolean = false
   @Prop isManage:boolean = true
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   onSelect:Function = () => {}
   bookInfoDel: CustomDialogController | null = new CustomDialogController({
     builder: confirmDialogExample({
@@ -46,7 +49,7 @@ export default struct BookFolderManages {
    if (this.bookGroups === null || this.bookGroups.length === 0) {
      Column() {
        Image($r('app.media.no_record')).width(200).height(200)
-       Text('暂无浏览记录').fontSize(12).fontColor('rgba(96, 96, 96, 0.6)').fontWeight(500).padding(5)
+       Text('暂无浏览记录').fontSize(12).fontColor(ShelfColors.textSub()).fontWeight(500).padding(5)
      }
      .margin({ top: 120 })
    } else {
@@ -63,7 +66,7 @@ export default struct BookFolderManages {
                }
              })
            }
-         })
+         }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
        } else {
          GridRow({
            columns:3
@@ -81,7 +84,7 @@ export default struct BookFolderManages {
                  })
                }
              }
-           })
+           }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
          }
        }
      }.layoutWeight(1)

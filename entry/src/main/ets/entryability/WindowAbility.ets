@@ -168,6 +168,77 @@ export class WindowAbility {
     });
   }
 
+  // ── 阅读页沉浸期：冻结/恢复**上下**避让值（2026-09-22）────────────────────────
+  //
+  // ── 现象 ──────────────────────────────────────────────────────────────────
+  // 用户报告（先后两次）：
+  //   ① 「进入和退出，主页明显有个上下跳的感觉很割裂」→ 已修（顶部）
+  //   ② 「之前出现状态栏消失，进入退出有状态栏会跳，现在好了，
+  //       但是**底下的书架和我的图标还是会跳**」→ 本次修（底部）
+  //
+  // ── 根因 ──────────────────────────────────────────────────────────────────
+  // 阅读页要全屏，所以会隐藏系统栏（`ReaderPage3` 里 `toggleWindowSystemBar([])`）。
+  // 系统栏一隐藏，`EntryAbility` 注册的 `avoidAreaChange` 监听就会把：
+  //   · `TYPE_SYSTEM` 的 `topRect.height`（实测 **38.81vp**）写成 `topRectHeight = 0`
+  //   · `TYPE_NAVIGATION_INDICATOR` 的 `bottomRect.height`（实测 **27.85vp**）
+  //     写成 `bottomRectHeight = 0`
+  // 退出恢复系统栏时又写回原值。
+  //
+  // 而主页**上下两处**都用它们做避让：
+  //   · 顶部：`ComponetModifier.ColumnModifier:12`、`IndexShelf:165`、`Header:104`…
+  //   · 底部：`Index.ets:280` 的 `.barFloatingStyle(tabsFloatingStyle(bottomRectHeight + 8))`
+  //           （悬浮页签条离底距离）与 `:281` 的 `.padding({bottom: …})`
+  // ⇒ 两个值一起跳，所以"状态栏那块"和"底部书架/我的图标"会分别跳。
+  //   上次只冻结了顶部，底部就还在跳。
+  //
+  // ── 为什么"冻结"就能解决 ──────────────────────────────────────────────────
+  // 阅读页是盖在主页之上的 `NavDestination`，**沉浸期内主页根本不可见** ——
+  // 它怎么重排用户都看不见。所以只要让这两个值在这段时间**保持不变**，
+  // 跳动的源头就消失了，而且不牺牲任何东西。
+  //
+  // ── 为什么"存旧值再还回去"，而不是"退出时重算" ─────────────────────────────
+  // `EntryAbility.toVp()` 走的是 `px2vp`（该文件 `AVOID_AREA_USE_UICONTEXT = false`）。
+  // 若在这里另写一套 px→vp 换算，**必然引入细微偏差**（而且换算方式会随那个开关变）。
+  // 存下进入前的值原样还回去，**零误差、零耦合**。
+  // 另外：只恢复系统栏、指望异步的 `avoidAreaChange` 来纠正，会有窗口期
+  // ⇒ 用户会看到"先跳一下再归位"。
+  private topRectFrozen: boolean = false;
+  private savedTopRectHeight: number = 0;
+  private savedBottomRectHeight: number = 0;
+
+  /** 进入沉浸（阅读页打开）：冻结上下避让值，让隐藏系统栏不再引起主页重排 */
+  freezeTopRect(): void {
+    if (this.topRectFrozen) {
+      return;
+    }
+    this.savedTopRectHeight = (AppStorage.get<number>('topRectHeight') ?? 0) as number;
+    this.savedBottomRectHeight = (AppStorage.get<number>('bottomRectHeight') ?? 0) as number;
+    this.topRectFrozen = true;
+    hilog.info(0x0000, TAG, 'freezeTopRect: saved top=' + this.savedTopRectHeight
+      + ' bottom=' + this.savedBottomRectHeight);
+  }
+
+  /** 退出沉浸（阅读页关闭）：把冻结前的上下避让值原样还回去 */
+  restoreTopRect(): void {
+    if (!this.topRectFrozen) {
+      return;
+    }
+    this.topRectFrozen = false;
+    AppStorage.setOrCreate<number>('topRectHeight', this.savedTopRectHeight);
+    AppStorage.setOrCreate<number>('bottomRectHeight', this.savedBottomRectHeight);
+    hilog.info(0x0000, TAG, 'restoreTopRect: top=' + this.savedTopRectHeight
+      + ' bottom=' + this.savedBottomRectHeight);
+  }
+
+  /**
+   * 供 `avoidAreaChange` 监听询问：当前是否处于沉浸期。
+   * 为 `true` 时监听应**跳过**对 `topRectHeight` / `bottomRectHeight` 的更新
+   * （否则会打破冻结）。
+   */
+  isTopRectFrozen(): boolean {
+    return this.topRectFrozen;
+  }
+
   /**
    * 将系统栏设置为可见。
    *
@@ -200,6 +271,28 @@ export class WindowAbility {
         hilog.error(0x0000, TAG,
           'toggleWindowSystemBar Failed to set the system bar to be invisible. Cause:' + JSON.stringify(exception));
       }
+    });
+  }
+
+  /**
+   * 状态栏图标颜色随夜间体系联动（2026-09-23 亮暗色重构新增）。
+   *
+   * 此前全工程只有 `EntryAbility.initWindowProcess` 在冷启动设过一次
+   * `statusBarContentColor`，之后从不更新 —— 夜间切换后状态栏图标颜色与页面脱节。
+   * 现在由 `NightMode.sync()` 在「有效深浅」变化时调用。
+   *
+   * @param dark true = 深色界面（图标用白）；false = 浅色界面（图标用黑）
+   */
+  setStatusBarContentColor(dark: boolean): void {
+    if (!this.windowClass) {
+      return;
+    }
+    this.windowClass.setWindowSystemBarProperties({
+      statusBarContentColor: dark ? '#FFFFFF' : '#000000'
+    }).then(() => {
+      hilog.info(0x0000, TAG, 'setStatusBarContentColor(%{public}s) succeeded', String(dark));
+    }, (error: Error) => {
+      hilog.error(0x0000, TAG, 'setStatusBarContentColor failed: ' + JSON.stringify(error));
     });
   }
 }

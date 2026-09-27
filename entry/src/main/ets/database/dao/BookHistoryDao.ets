@@ -7,7 +7,6 @@
 import DbUtil from '../../common/utils/DbUtil';
 import AppDatabaseUtil from '../AppDatabaseUtil';
 import { BookHistory } from '../entities/BookHistory';
-import { rssSourcesHistory } from '../entities/rssSourcesHistory';
 import { BookHistoryTypeParams } from '../types/BookHistoryType';
 import { ColumnInfo } from '../types/ColumnInfo';
 
@@ -22,7 +21,7 @@ class BookHistoryDao {
         return
       }
       await DbUtil.createTable(createSql)
-      AppDatabaseUtil.existsTable(this.TABLE_NAME)
+      await AppDatabaseUtil.existsTable(this.TABLE_NAME)
       return
     } catch (err) {
       console.info('TagInfo', JSON.stringify(err))

@@ -8,6 +8,7 @@
  * 设置自定义区域后，相应的默认区域失效
  */
 import { router } from '@kit.ArkUI'
+import { Haptics } from '../../common/utils/Haptics';
 import { IconTitleVo } from '../../componetsmodel/IconTitleVo'
 import dialogTitleFuction from './dialogTitleFuction'
 
@@ -45,7 +46,7 @@ export default struct Header {
               .size({ width: 24, height: 24 })
               .interpolation(ImageInterpolation.Medium)
               .onClick(() => {
-                router.back()
+                Haptics.tap(); router.back()
               })
           }
           .alignItems(HorizontalAlign.Start)
@@ -80,7 +81,7 @@ export default struct Header {
                 }
               })
             .onClick(() => {
-              this.showFunction = true
+              Haptics.tap(); this.showFunction = true
             })
         } else {
           if (this.customRightBuilder === this.rightBuilder && !this.dialogRightData.length) {
@@ -115,7 +116,7 @@ export default struct Header {
           isBorder: this.dialogRightData.length !== index + 1
         })
           .onClick(() => {
-            this.dialogRightChange(index)
+            Haptics.tap(); this.dialogRightChange(index)
           })
       })
     }

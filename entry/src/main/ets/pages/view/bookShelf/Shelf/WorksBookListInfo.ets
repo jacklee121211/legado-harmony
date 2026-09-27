@@ -2,9 +2,11 @@
  * 书单信息
  */
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
+import { Haptics } from '../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../common/model/Theme'
 import BookOverlay from '../../../../componets/bookDetail/BookOverlay'
 import { WorksLists } from '../../../../database/entities/WorksLists'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 
 @Component
@@ -15,6 +17,8 @@ export default struct WorksBookListInfo{
   onSelect:Function = () => {}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
     Flex(
       {
@@ -39,7 +43,7 @@ export default struct WorksBookListInfo{
           Text(this.work.worksName)
             .fontWeight(700)
           Column(){
-            Text(`共${this.work.worksBookNum}本`).fontSize(12).fontColor('rgb(174,174,174)')
+            Text(`共${this.work.worksBookNum}本`).fontSize(12).fontColor(ShelfColors.textSub())
               .textOverflow({
                 overflow:TextOverflow.Ellipsis
               })
@@ -48,7 +52,7 @@ export default struct WorksBookListInfo{
               .maxLines(1)
               .lineHeight(20)
             Text(this.work.worksDescribe)
-              .fontSize(12).fontColor('rgb(174,174,174)')
+              .fontSize(12).fontColor(ShelfColors.textSub())
               .fontSize(12)
               .fontWeight(400)
               .textOverflow({
@@ -69,11 +73,13 @@ export default struct WorksBookListInfo{
             .selectedColor(this.theme.mainColor)
             .select(this.work.worksId?this.checkGroup[this.work.worksId] ?? false:false)
             .onChange((val: boolean) => {
+              Haptics.tap();
               if (this.work.worksId) {
                 this.checkGroup[this.work.worksId] = val
               }
             })
             .onClick(() => {
+              Haptics.tap();
               this.onSelect()
             })
         }

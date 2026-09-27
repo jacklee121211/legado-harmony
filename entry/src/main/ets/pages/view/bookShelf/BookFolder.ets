@@ -1,4 +1,5 @@
 import { it } from '@ohos/hypium'
+import { Haptics } from '../../../common/utils/Haptics';
 import BookOverlay from '../../../componets/bookDetail/BookOverlay'
 import { showMessage } from '../../../componets/common/promptShow'
 import { folderList } from '../../../componets/dataList/folderList'
@@ -6,6 +7,10 @@ import BookGroupsDao from '../../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import BookManageDialog from './components/dialog/BookManageDialog'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
+import UiMotion from '../../../common/utils/UiMotion'
+import { shelfEntrance } from '../../../common/utils/EntranceWave'
+import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 
 /**
  * 文件夹
@@ -13,10 +18,71 @@ import FolderInfoDialog from './components/dialog/FolderInfoDialog'
 @Component
 export default struct BookFolder {
   @Prop EXHIBIT: string
+  /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   currentIndex: number = 0
   @State changeNumber: number = 0
   @State isShowBookFolderInfoDialog: boolean = false
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+
+  // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────────
+  /**
+   * 每项的"已入场"标记。用数组而不是把项抽成子组件 —— 本文件的两套卡片都是
+   * `@Builder` 内联出来的，抽组件会牵动布局；而 `@State` 对 Array 的**数组项赋值**
+   * 是可观察的（官方状态管理 V1 文档：`@State` 装饰 Array 时「可以观察到数组本身的
+   * 赋值和数组项的增删改」）⇒ 数组方案同样能逐项驱动动画。
+   */
+  @State enteredFlags: boolean[] = []
+  /** 未到期的入场定时器句柄，`aboutToDisappear` 里统一清掉 */
+  private enterTimers: number[] = []
+
+  /**
+   * 读取某一项是否已入场。
+   * ⚠️ **必须容错**：`enteredFlags` 是按"上一次的数据条数"建的，若因任何原因越界
+   * （父组件直接注入数据、条数变化早于 flags 重建），`undefined` 会被当成 falsy
+   * ⇒ 整项永久透明。所以这里把 `undefined` 显式判成"已入场"。
+   */
+  private isEntered(index: number): boolean {
+    const v: boolean | undefined = this.enteredFlags[index]
+    return v === undefined ? true : v
+  }
+
+  /**
+   * 开一波并重建标记数组。
+   *
+   * ⚠️ 调用顺序必须严格是 `replayEntrance(...)` → `this.groupList = val`：
+   *    两行在同一同步块里，渲染只会发生一次，彼时 flags 已与数据等长，
+   *    不会出现"数据已到、flags 还没建"的那一帧（那就是前面说的永久透明隐患）。
+   */
+  private replayEntrance(count: number): void {
+    this.clearEnterTimers()
+    shelfEntrance.begin()
+    const flags: boolean[] = []
+    for (let i = 0; i < count; i++) {
+      const d: number = shelfEntrance.delayFor(i)
+      if (d < 0) {
+        // 波次已结束 ⇒ 直接终态，不播动画（需求第 7 点）
+        flags.push(true)
+      } else {
+        flags.push(false)
+        this.enterTimers.push(setTimeout(() => {
+          this.enteredFlags[i] = true
+        }, d))
+      }
+    }
+    this.enteredFlags = flags
+  }
+
+  private clearEnterTimers(): void {
+    for (const t of this.enterTimers) {
+      clearTimeout(t)
+    }
+    this.enterTimers = []
+  }
+
+  aboutToDisappear(): void {
+    this.clearEnterTimers()
+  }
 
   aboutToAppear(): void {
     this.getGroupList()
@@ -28,6 +94,7 @@ export default struct BookFolder {
     BookGroupsDao.search({
       type: this.currentIndex
     }).then((val) => {
+      this.replayEntrance(val.length)
       this.groupList = val
     })
   }
@@ -36,7 +103,7 @@ export default struct BookFolder {
     GridRow({
       columns: this.EXHIBIT === '宫格' ? 3 : 1
     }) {
-      ForEach(this.groupList, (item: BookGroups) => {
+      ForEach(this.groupList, (item: BookGroups, index: number) => {
         if (item.show && !item.isSystem) {
           GridCol() {
             Column() {
@@ -50,14 +117,28 @@ export default struct BookFolder {
           .gesture(
             LongPressGesture({ repeat: false, duration: 500 })
               .onAction((event: GestureEvent) => {
+                Haptics.tap();
                 this.dialogGroupData = item
                 this.changeNumber = 1
                 this.groupInfoDialog?.open()
               }))
           .onClick(() => {
+            Haptics.tap();
             this.isShowBookFolderInfoDialog = true
             this.clickGroup = item
           })
+          // ── 渐次入场（2026-09-24，需求第 5 / 7 点）────────────────────────
+          // 只动图形变换属性（opacity / scale / translate），不触发重新布局 ——
+          // 官方最佳实践《动画帧率优化》原文：「使用图形变换属性变化组件，而不是直接
+          // 修改布局属性，减少布局计算和重绘，降低丢帧率」。
+          // ⚠️ `.animation()` 放最后：它作用于**它之前**的属性。
+          .opacity(this.isEntered(index) ? 1 : 0)
+          .scale({
+            x: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
+            y: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
+          })
+          .translate({ y: this.isEntered(index) ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
+          .animation(UiMotion.itemEnterParam())
         }
       })
     }
@@ -72,7 +153,14 @@ export default struct BookFolder {
     })
   }
 
-  @Prop clickGroup: BookGroups
+  // D-12（Round 28）：**不采纳** lint 的 @ObjectLink 建议，改为语义正确的 @State。
+  // 依据：① 本变量在 L59 被本地整体赋值 `this.clickGroup = item`，而官方限制「@ObjectLink 装饰的变量是
+  //          只读的，不能被赋值，否则会有运行时报错 Cannot set property when setter is undefined」
+  //          （devecocli docs read arkts-observed-and-objectlink 限制条件 6）→ 改 @ObjectLink 会运行时报错；
+  //      ② 唯一调用点 BookContentRefresh.ets:72 只传 EXHIBIT/currentIndex，从不传 clickGroup，
+  //          而 @ObjectLink「禁止本地初始化，必须从父组件初始化」→ 同样不成立；
+  //      ③ 故它本就是「组件本地可变状态」，@State 才是正确装饰器（顺带消除 clickGroup 初始为 undefined 的隐患）。
+  @State clickGroup: BookGroups = new BookGroups()
 
   @Builder
   bookFolderInfoDialog() {
@@ -130,7 +218,7 @@ export default struct BookFolder {
           .align(Alignment.BottomStart)
         }
 
-        Row().width(100).height(20).backgroundColor('rgba(255, 255, 255, 0.6)').borderRadius(10)
+        Row().width(100).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
       }
 
       Text(item.groupName)
@@ -223,9 +311,16 @@ export default struct BookFolder {
     }),
     cancel: this.exitDialog,
     autoCancel: true,
-    width: '100%',
+    // ★ 悬空四圆角 + 系统真材质（2026-09-22）。与书架其它长按弹窗保持同一观感。
+    //   `customStyle: false` 是材质生效的**必要条件**；options 无 margin 字段，
+    //   左右边距靠 width，上下靠 offset。逐条依据见 `BookInfos.ets` 同处注释。
+    width: '92%',
     alignment: DialogAlignment.Bottom,
-    customStyle: true
+    offset: { dx: 0, dy: -16 },
+    cornerRadius: 20,
+    customStyle: false,
+    // 弹窗材质走官方 options 渠道（依据见 BookInfos.ets 同处注释）
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
 
   })
 

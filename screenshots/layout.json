@@ -1,0 +1,754 @@
+- Dumping layout…
+[
+  {
+    "bounds": [
+      0,
+      0,
+      1320,
+      2848
+    ],
+    "children": [
+      {
+        "id": "main",
+        "type": "Column",
+        "bounds": [
+          0,
+          132,
+          1320,
+          2848
+        ],
+        "children": [
+          {
+            "type": "Swiper",
+            "bounds": [
+              0,
+              132,
+              1320,
+              2848
+            ],
+            "scrollable": true,
+            "children": [
+              {
+                "type": "__Common__",
+                "bounds": [
+                  67,
+                  132,
+                  236,
+                  232
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "小说",
+                    "bounds": [
+                      67,
+                      132,
+                      236,
+                      232
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "__Common__",
+                "bounds": [
+                  236,
+                  132,
+                  411,
+                  232
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "漫画",
+                    "bounds": [
+                      303,
+                      132,
+                      411,
+                      232
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "__Common__",
+                "bounds": [
+                  411,
+                  132,
+                  640,
+                  232
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "有声书",
+                    "bounds": [
+                      478,
+                      132,
+                      640,
+                      232
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Image",
+                "bounds": [
+                  1037,
+                  145,
+                  1118,
+                  226
+                ],
+                "clickable": true,
+                "children": []
+              },
+              {
+                "type": "Image",
+                "bounds": [
+                  1172,
+                  145,
+                  1253,
+                  226
+                ],
+                "clickable": true,
+                "children": []
+              },
+              {
+                "type": "Row",
+                "bounds": [
+                  97,
+                  343,
+                  361,
+                  402
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "最近阅读",
+                    "bounds": [
+                      97,
+                      343,
+                      300,
+                      402
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "__Common__",
+                "bounds": [
+                  411,
+                  343,
+                  614,
+                  402
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "浏览历史",
+                    "bounds": [
+                      411,
+                      343,
+                      614,
+                      402
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "__Common__",
+                "bounds": [
+                  665,
+                  343,
+                  817,
+                  402
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "文件夹",
+                    "bounds": [
+                      665,
+                      343,
+                      817,
+                      402
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "__Common__",
+                "bounds": [
+                  905,
+                  343,
+                  1007,
+                  402
+                ],
+                "clickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "宫格",
+                    "bounds": [
+                      905,
+                      343,
+                      1007,
+                      402
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Text",
+                "text": "管理",
+                "bounds": [
+                  1095,
+                  343,
+                  1197,
+                  402
+                ],
+                "clickable": true,
+                "children": []
+              },
+              {
+                "type": "Scroll",
+                "bounds": [
+                  90,
+                  499,
+                  1123,
+                  600
+                ],
+                "scrollable": true,
+                "children": [
+                  {
+                    "type": "__Common__",
+                    "bounds": [
+                      90,
+                      499,
+                      225,
+                      600
+                    ],
+                    "clickable": true,
+                    "children": [
+                      {
+                        "type": "Text",
+                        "text": "分组",
+                        "bounds": [
+                          117,
+                          526,
+                          198,
+                          573
+                        ],
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "__Common__",
+                    "bounds": [
+                      259,
+                      499,
+                      394,
+                      600
+                    ],
+                    "clickable": true,
+                    "children": [
+                      {
+                        "type": "Text",
+                        "text": "全部",
+                        "bounds": [
+                          286,
+                          526,
+                          367,
+                          573
+                        ],
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "__Common__",
+                    "bounds": [
+                      428,
+                      499,
+                      604,
+                      600
+                    ],
+                    "clickable": true,
+                    "children": [
+                      {
+                        "type": "Text",
+                        "text": "未分组",
+                        "bounds": [
+                          455,
+                          526,
+                          577,
+                          573
+                        ],
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "__Common__",
+                    "bounds": [
+                      637,
+                      499,
+                      772,
+                      600
+                    ],
+                    "clickable": true,
+                    "children": [
+                      {
+                        "type": "Text",
+                        "text": "本地",
+                        "bounds": [
+                          664,
+                          526,
+                          745,
+                          573
+                        ],
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "__Common__",
+                    "bounds": [
+                      806,
+                      499,
+                      941,
+                      600
+                    ],
+                    "clickable": true,
+                    "children": [
+                      {
+                        "type": "Text",
+                        "text": "书单",
+                        "bounds": [
+                          833,
+                          526,
+                          914,
+                          573
+                        ],
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "__Common__",
+                    "bounds": [
+                      975,
+                      499,
+                      1123,
+                      600
+                    ],
+                    "clickable": true,
+                    "children": [
+                      {
+                        "type": "Text",
+                        "text": "我的最爱",
+                        "bounds": [
+                          1002,
+                          526,
+                          1123,
+                          573
+                        ],
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "Row",
+                "bounds": [
+                  1123,
+                  507,
+                  1230,
+                  592
+                ],
+                "clickable": true,
+                "children": []
+              },
+              {
+                "type": "Refresh",
+                "bounds": [
+                  0,
+                  633,
+                  1320,
+                  2848
+                ],
+                "scrollable": true,
+                "children": [
+                  {
+                    "type": "List",
+                    "bounds": [
+                      50,
+                      633,
+                      1270,
+                      2848
+                    ],
+                    "scrollable": true,
+                    "children": [
+                      {
+                        "type": "Flex",
+                        "bounds": [
+                          50,
+                          633,
+                          1270,
+                          969
+                        ],
+                        "clickable": true,
+                        "longClickable": true,
+                        "children": [
+                          {
+                            "type": "Text",
+                            "text": "本地",
+                            "bounds": [
+                              205,
+                              666,
+                              286,
+                              722
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "神墓.txt",
+                            "bounds": [
+                              353,
+                              726,
+                              557,
+                              789
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "第五章 捉仙",
+                            "bounds": [
+                              353,
+                              830,
+                              567,
+                              877
+                            ],
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "type": "Flex",
+                        "bounds": [
+                          50,
+                          1003,
+                          1270,
+                          1339
+                        ],
+                        "clickable": true,
+                        "longClickable": true,
+                        "children": [
+                          {
+                            "type": "Text",
+                            "text": "本地",
+                            "bounds": [
+                              205,
+                              1036,
+                              286,
+                              1092
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "网游之模拟城市.txt",
+                            "bounds": [
+                              353,
+                              1096,
+                              827,
+                              1159
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "preface",
+                            "bounds": [
+                              353,
+                              1200,
+                              496,
+                              1247
+                            ],
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "type": "Flex",
+                        "bounds": [
+                          50,
+                          1373,
+                          1270,
+                          1709
+                        ],
+                        "clickable": true,
+                        "longClickable": true,
+                        "children": [
+                          {
+                            "type": "Text",
+                            "text": "本地",
+                            "bounds": [
+                              205,
+                              1406,
+                              286,
+                              1462
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "琴帝.txt",
+                            "bounds": [
+                              353,
+                              1466,
+                              557,
+                              1529
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "第一集 琴魔法师 第一章 天生八指（一）",
+                            "bounds": [
+                              353,
+                              1570,
+                              1075,
+                              1617
+                            ],
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "type": "Flex",
+                        "bounds": [
+                          50,
+                          1742,
+                          1270,
+                          2078
+                        ],
+                        "clickable": true,
+                        "longClickable": true,
+                        "children": [
+                          {
+                            "type": "Text",
+                            "text": "本地",
+                            "bounds": [
+                              205,
+                              1775,
+                              286,
+                              1831
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "天擎.txt",
+                            "bounds": [
+                              353,
+                              1835,
+                              557,
+                              1898
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "第一集   奔向黎明 第一节  来自麻省理工的初中代课老师",
+                            "bounds": [
+                              353,
+                              1939,
+                              1270,
+                              1986
+                            ],
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "type": "Flex",
+                        "bounds": [
+                          50,
+                          2112,
+                          1270,
+                          2448
+                        ],
+                        "clickable": true,
+                        "longClickable": true,
+                        "children": [
+                          {
+                            "type": "Text",
+                            "text": "本地",
+                            "bounds": [
+                              205,
+                              2145,
+                              286,
+                              2201
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "邪龙道.txt",
+                            "bounds": [
+                              353,
+                              2205,
+                              611,
+                              2268
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "preface",
+                            "bounds": [
+                              353,
+                              2309,
+                              496,
+                              2356
+                            ],
+                            "children": []
+                          }
+                        ]
+                      },
+                      {
+                        "type": "Flex",
+                        "bounds": [
+                          50,
+                          2482,
+                          1270,
+                          2818
+                        ],
+                        "clickable": true,
+                        "longClickable": true,
+                        "children": [
+                          {
+                            "type": "Text",
+                            "text": "本地",
+                            "bounds": [
+                              205,
+                              2515,
+                              286,
+                              2571
+                            ],
+                            "children": []
+                          },
+                          {
+                            "type": "Text",
+                            "text": "逍行纪.txt",
+                            "bounds": [
+                              353,
+                              2598,
+                              611,
+                              2661
+                            ],
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Column",
+            "bounds": [
+              416,
+              2551,
+              660,
+              2714
+            ],
+            "clickable": true,
+            "children": [
+              {
+                "type": "Column",
+                "bounds": [
+                  416,
+                  2564,
+                  660,
+                  2714
+                ],
+                "longClickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "书架",
+                    "bounds": [
+                      500,
+                      2666,
+                      575,
+                      2710
+                    ],
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Column",
+            "bounds": [
+              659,
+              2551,
+              903,
+              2714
+            ],
+            "clickable": true,
+            "children": [
+              {
+                "type": "Column",
+                "bounds": [
+                  659,
+                  2564,
+                  903,
+                  2714
+                ],
+                "longClickable": true,
+                "children": [
+                  {
+                    "type": "Text",
+                    "text": "我的",
+                    "bounds": [
+                      743,
+                      2666,
+                      818,
+                      2710
+                    ],
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
+
+New version 1.3.4 available, run `devecocli update` to upgrade

@@ -1,4 +1,6 @@
 import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
+import { Haptics } from '../../../../../common/utils/Haptics';
+import { NightMode } from '../../../../../common/utils/NightMode'
 import commonInputDialog from '../../../../../componets/common/commonInputDialog'
 import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import InsideCircleIcon from '../../../../../componets/common/InsideCircleIcon'
@@ -9,6 +11,7 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import catalogAddShelf from '../../Manage/components/catalogAddShelf'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import coverInfoDialog from './coverInfoDialog'
+import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 
 @CustomDialog
 /**
@@ -16,6 +19,13 @@ import coverInfoDialog from './coverInfoDialog'
  */
 export default struct FolderInfoDialog{
   controller?: CustomDialogController
+
+  /**
+   * 弹窗背板（2026-09-21 接入沉浸光感）。底部面板、高度不大，
+   * 不属官方点名的「接近全屏的超大面积」。用修饰器的原因见
+   * `MaterialColumnModifier` 注释 —— 这行白底会把 Dialog 的**自动沉浸**挡掉。
+   */
+  private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
   //推送提醒
   @Prop itemData:BookGroups
   @State pushReminder:boolean = false
@@ -48,14 +58,15 @@ export default struct FolderInfoDialog{
         alignItems:ItemAlign.Center
       }){
         Column(){
-          Text(this.itemData.groupName).fontColor('rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
-          Text(`共${this.itemData.bookIds?.length||0}本`).fontColor('rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
+          Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
+          Text(`共${this.itemData.bookIds?.length||0}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
         }
         Row(){
           Text('更新提醒')
           Toggle({ type: ToggleType.Switch, isOn: this.itemData.canUpdate})
             .selectedColor("#F60").hoverEffect(HoverEffect.None)
             .onChange((val)=>{
+              Haptics.tap();
               this.itemData.canUpdate = val
               bookGroupUtil.updatePartialGroup(this.itemData)
               setTimeout(()=>{
@@ -77,6 +88,7 @@ export default struct FolderInfoDialog{
                 title:this.topTitle
               })
                 .onClick(()=>{
+                  Haptics.tap();
                   this.folderInfo(item.id)
                 })
             } else {
@@ -85,6 +97,7 @@ export default struct FolderInfoDialog{
                 title:item.title
               })
                 .onClick(()=>{
+                  Haptics.tap();
                   this.folderInfo(item.id)
                 })
             }
@@ -94,9 +107,10 @@ export default struct FolderInfoDialog{
       }
       Divider().strokeWidth(0.5).padding({bottom:16})
       Column(){
-        Text('取消').fontColor('rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(400).lineHeight(24).textAlign(TextAlign.Center)
+        Text('取消').fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(400).lineHeight(24).textAlign(TextAlign.Center)
       }
       .onClick(()=>{
+        Haptics.tap();
         this.cancel()
         this.controller?.close()
       })
@@ -112,8 +126,11 @@ export default struct FolderInfoDialog{
           }
         })
     }
-    .borderRadius({topLeft:20,topRight:20})
-    .backgroundColor(Color.White)
+    // 四角都圆（原来只圆上面两个角、下面两个角贴底）⇒ 配合调用点的
+    // `cornerRadius: 20` + `offset{dx:0,dy:-16}` 形成悬空四圆角矩形。
+    // 依据见 `BookInfos.ets` / `MaterialColumnModifier` 的注释。
+    .borderRadius(20)
+    .attributeModifier(this.surface)
     .width('100%')
   }
 
@@ -201,7 +218,9 @@ export default struct FolderInfoDialog{
     autoCancel: true,
     alignment: DialogAlignment.Center,
     customStyle: false,
-    cornerRadius: 25
+    cornerRadius: 25,
+    // 弹窗材质走官方 options 渠道（依据见 BookInfos.ets 同处注释）
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
   })
 
   restTitleCancel(){
@@ -340,7 +359,8 @@ export default struct FolderInfoDialog{
     autoCancel: true,
     width:'100%',
     alignment: DialogAlignment.Bottom,
-    customStyle:true
+    customStyle:true,
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
   })
 
   coverCancel(){

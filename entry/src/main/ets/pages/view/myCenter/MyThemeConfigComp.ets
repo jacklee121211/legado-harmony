@@ -1,6 +1,6 @@
 import { ThemeColor, ThemeStorageKey } from '../../../common/constants/Theme'
+import { Haptics } from '../../../common/utils/Haptics';
 import { ThemeItem } from '../../../common/model/Theme'
-import { promptAction, PromptAction, router } from '@kit.ArkUI'
 import { themeManager } from '../../../common/utils/ThemeManager'
 import { JSON } from '@kit.ArkTS'
 
@@ -38,6 +38,7 @@ export struct MyThemeConfigComp {
           .fontColor(this.theme.mainColor)
           .backgroundColor(this.theme.secondColor)
           .onClick(() => {
+            Haptics.tap();
             this.dialog.close()
           })
           .width(112)
@@ -47,10 +48,12 @@ export struct MyThemeConfigComp {
           .fontColor(Color.White)
           .backgroundColor(this.theme.mainColor)
           .onClick(() => {
+            Haptics.tap();
             if (this.themeList.length > 1) {
               themeManager.deleteTheme(this.longPressGestureIndex)
             } else {
-              promptAction.showToast({message: "删除失败，至少需要保留一个主题"})
+              // T13/D-17（Round 37）：@useinstead ohos.arkui.UIContext.PromptAction#showToast
+              this.getUIContext().getPromptAction().showToast({message: "删除失败，至少需要保留一个主题"})
             }
             this.dialog.close()
           })
@@ -65,7 +68,7 @@ export struct MyThemeConfigComp {
     .height(136)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .backgroundColor(Color.White)
+    .backgroundColor($r('app.color.card_bg'))
     .borderRadius(32)
   }
 
@@ -90,7 +93,7 @@ export struct MyThemeConfigComp {
             .position({right: 0, top: 0})
         }
       }
-      .width(154)
+      .width('100%')
       .height(77)
       .borderRadius(8)
       .backgroundColor(item.mainColor)
@@ -101,53 +104,27 @@ export struct MyThemeConfigComp {
         .lineHeight(22)
         .width('100%')
     }
-    .width(154)
+    .width('100%')
     .height(107)
   }
 
   build() {
     Column() {
       Grid() {
-        // 自定义主题
-        GridItem() {
-          Column({space: 8}) {
-            Column() {
-              Image($r('app.media.my_theme_config_custom'))
-                .width(24)
-                .aspectRatio(1)
-            }
-            .alignItems(HorizontalAlign.Center)
-            .justifyContent(FlexAlign.Center)
-            .width(154)
-            .height(77)
-            .borderRadius(8)
-            .backgroundColor('#f5f5f5')
-            .onClick(() => {
-              router.pushUrl({
-                url: '/pages/view/myCenter/CreateCustomTheme'.slice(1)
-              })
-            })
-
-            Text('自定义主题')
-              .fontSize(14)
-              .height(22)
-              .lineHeight(22)
-              .width('100%')
-          }
-          .width(154)
-          .height(107)
-        }
+        // 2026-09-25 用户要求：「自定义主题（直接删除）」—— 入口整块移除。
         ForEach(this.themeList, (item: ThemeItem, index) => {
           GridItem() {
             this.themeItemBuilder(item, index)
           }
           .onClick(() => {
+            Haptics.tap();
             this.activeIndex = index
             themeManager.setTheme(this.themeList[index], index)
           })
           .gesture(
             LongPressGesture()
               .onAction(() => {
+                Haptics.tap();
                 this.dialog.open()
                 this.longPressGestureIndex = index
               })
@@ -157,7 +134,8 @@ export struct MyThemeConfigComp {
       .columnsTemplate('1fr 1fr')
       .columnsGap(12)
       .rowsGap(12)
-      .width('100%')
+      // 2026-09-25 用户要求：两侧收紧，与上面三段开关同 90% 宽
+      .width('90%')
       .height('100%')
     }
     .width('100%')

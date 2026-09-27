@@ -1,71 +1,37 @@
-# [English](English.md) [中文](README.md)
-<a href="https://jb.gg/OpenSourceSupport" target="_blank">
-<img width="24" height="24" src="https://resources.jetbrains.com/storage/products/company/brand/logos/jb_beam.svg?_gl=1*135yekd*_ga*OTY4Mjg4NDYzLjE2Mzk0NTE3MzQ.*_ga_9J976DJZ68*MTY2OTE2MzM5Ny4xMy4wLjE2NjkxNjMzOTcuNjAuMC4w&_ga=2.257292110.451256242.1669085120-968288463.1639451734" alt="idea"/>
-</a>
+# 喵阅
 
-<div align="center">
-<img width="125" height="125" src="svg/icon.svg" alt="legado"/>  
-  
-Legado / 开源阅读
+一款专注本地阅读的 HarmonyOS 阅读器。
 
-Legado is a free and open source novel reader for Harmony OS.
-</div>
+> **纯本地工具**：不内置、不提供、不检索任何网络书源或在线内容。
+> 所有阅读内容均来自你自行导入的本地文件，导入什么是你的权利，也由你负责。
 
+## 功能
 
-[![](https://img.shields.io/badge/-Contents:-696969.svg)](#contents) [![](https://img.shields.io/badge/-Function-F5F5F5.svg)](#Function-主要功能-) [![](https://img.shields.io/badge/-Community-F5F5F5.svg)](#Community-交流社区-) [![](https://img.shields.io/badge/-API-F5F5F5.svg)](#API-) [![](https://img.shields.io/badge/-Other-F5F5F5.svg)](#Other-其他-) [![](https://img.shields.io/badge/-Grateful-F5F5F5.svg)](#Grateful-感谢-) [![](https://img.shields.io/badge/-Interface-F5F5F5.svg)](#Interface-界面-)
+- **本地导入阅读**：支持 `txt / epub / mobi / azw / azw3`，与 ReaderKit 官方支持列表一致；支持自定义字符集
+- **优质排版**：基于华为 [ReaderKit（阅读服务）](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/reader-kit-introduction)排版引擎，翻页覆盖 / 仿真 / 滑动 / 滚动等多种模式
+- **听书**：本地 TTS 与在线 TTS 引擎（仅合成语音，不涉及内容分发），支持朗读定时
+- **个性化**：沉浸光感材质、自定义背景与纹理混合、主题编辑器（自定义主题创建/管理）
+- **书架管理**：分组、置顶、批量管理、书单导入（本地 JSON）、书架本地搜索
+- **阅读辅助**：书签、阅读进度、阅读统计（读过 / 读完）、简繁转换等排版选项
+- **效率**：桌面快捷方式（快速听书 / 快速阅读）、精细的震动反馈
 
-# Function-主要功能 [![](https://img.shields.io/badge/-Function-F5F5F5.svg)](#Function-主要功能-)
+## 构建
 
-<details><summary>中文</summary>
-1.自定义书源，自己设置规则，抓取网页数据，规则简单易懂，软件内有规则说明。<br>
-2.列表书架，网格书架自由切换。<br>
-3.书源规则支持搜索及发现，所有找书看书功能全部自定义，找书更方便。<br>
-4.订阅内容,可以订阅想看的任何内容,看你想看<br>
-5.支持替换净化，去除广告替换内容很方便。<br>
-6.支持本地TXT、EPUB阅读，手动浏览，智能扫描。<br>
-7.支持高度自定义阅读界面，切换字体、颜色、背景、行距、段距、加粗、简繁转换等。<br>
-8.支持多种翻页模式，覆盖、仿真、滑动、滚动等。<br>
-9.软件开源，持续优化，无广告。
-</details>
+1. 安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)（HarmonyOS SDK）
+2. 克隆本仓库后用 DevEco Studio 打开
+3. `Build > Build Hap(s)/APP(s)` 或命令行：
 
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
-</a>
+```bash
+hvigorw assembleHap --mode module -p product=default -p buildMode=release
+```
 
+## 声明
 
+- 本应用为本地文件阅读工具，与任何内容提供方无关联；应用内不包含任何书籍内容
+- 在线 TTS 仅为语音合成能力，不抓取、不分发任何文本内容
 
-# API [![](https://img.shields.io/badge/-API-F5F5F5.svg)](#API-)
-* 阅读3.0 提供了2种方式的API：`Web方式`和`Content Provider方式`。您可以在[这里](api.md)根据需要自行调用。 
-* 可通过url唤起阅读进行一键导入,url格式: legado://import/{path}?src={url}
-* path类型: bookSource,rssSource,replaceRule,textTocRule,httpTTS,theme,readConfig,dictRule,[addToBookshelf](/app/src/main/java/io/legado/app/ui/association/AddToBookshelfDialog.kt)
-* path类型解释: 书源,订阅源,替换规则,本地txt小说目录规则,在线朗读引擎,主题,阅读排版,添加到书架
+## 开源协议与致谢
 
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
-</a>
-
-# Other-其他 [![](https://img.shields.io/badge/-Other-F5F5F5.svg)](#Other-其他-)
-
-##### Harmony阅读
-* [书源规则](https://mgz0227.github.io/The-tutorial-of-Legado/)
-* [web端书架](https://github.com/gedoor/legado_web_bookshelf)
-* [web端源编辑](https://github.com/gedoor/legado_web_source_editor)
-
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
-</a>
-
-
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
-</a>
-
-
-# Interface-界面 [![](https://img.shields.io/badge/-Interface-F5F5F5.svg)](#Interface-界面-)
-<img src="png/start.png" width="270"><img src="png/bookshelf.png" width="270">
-<img src="png/find.png" width="270"><img src="png/rss.png" width="270">
-<img src="png/main.png" width="270">
-
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
-</a>
+- 本项目基于 [gedoor/legado](https://github.com/gedoor/legado)（**GPL-3.0**）的 HarmonyOS 社区移植版本 [yongfengnice/legado-harmony](https://github.com/yongfengnice/legado-harmony) 修改而来，感谢两位上游作者的工作
+- 相对移植版本的主要修改：**移除书源 / 订阅 / RSS 等全部联网内容获取体系**，仅保留本地阅读能力，并重构了 UI
+- 本项目依 **GPL-3.0** 协议继续开源，完整许可证见 [LICENSE](LICENSE)

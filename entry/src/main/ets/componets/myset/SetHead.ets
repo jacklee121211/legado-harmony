@@ -1,4 +1,4 @@
-import router from '@ohos.router'
+import AppRouter from '../../common/router/AppRouter'
 
 @Component
 export struct SetHead{
@@ -14,12 +14,15 @@ export struct SetHead{
       Image($r('app.media.return_left'))
         .height(15)
         .onClick(()=>{
-          router.back();
+          // 迁 Navigation 第 4 期：`MySetPage` 现在是 NavDestination，
+          // 原来的 `router.back()` 会把整个 Index 弹掉（直接回桌面）。
+          // `AppRouter.back()` 自适应判断该弹哪个栈。
+          AppRouter.back();
         })
 
       Text(this.titleName).width('80%').textAlign(TextAlign.Center)
         .fontSize(16)
-        .fontColor(Color.Black)
+        .fontColor($r('app.color.text_primary'))
         .fontWeight(600)
 
       Text(this.rightString).width('10%').textAlign(TextAlign.Center)

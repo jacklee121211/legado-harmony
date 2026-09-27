@@ -1,4 +1,5 @@
 import { ThemeStorageKey } from "../../common/constants/Theme"
+import { Haptics } from '../../common/utils/Haptics';
 import { ThemeItem } from "../../common/model/Theme"
 
 /**
@@ -27,6 +28,7 @@ export default struct addBookTypeDialog {
       Row({space:24}) {
         Text('取消')
           .onClick(() => {
+            Haptics.tap();
             if (this.controller != undefined) {
               this.controller.close()
               this.cancel()
@@ -38,6 +40,7 @@ export default struct addBookTypeDialog {
           .backgroundColor(this.theme.secondColor)
         Text('确认')
           .onClick(() => {
+            Haptics.tap();
             if (this.controller != undefined) {
               this.controller.close()
               this.confirm()
@@ -58,7 +61,10 @@ export default struct addBookTypeDialog {
           this.bookType = value
           this.BookTypeValueLength = value.length
           if (10 - this.BookTypeValueLength === 0) {
-            animateTo({
+            // T13/D-17（Round 37）：全局 `animateTo` 是 @deprecated since 18，
+            // SDK `component/common.d.ts` `@useinstead ohos.arkui.UIContext.UIContext#animateTo`；
+            // 同一 UI 实例、同一参数 ⇒ 行为等价（无开关）。
+            this.getUIContext().animateTo({
               duration: 200,
               // curve: curves.springCurve(100, 0, 50, 10),
               iterations: 4,
@@ -81,7 +87,7 @@ export default struct addBookTypeDialog {
       }.offset({x:-40})
       } else {
         Text('清空').fontSize(12).fontWeight(500).fontColor(Color.Red).onClick(()=>{
-          this.bookType = ''
+          Haptics.tap(); this.bookType = ''
         }).offset({x:-40})
       }
 

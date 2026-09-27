@@ -18,7 +18,7 @@ class WorksListsDao {
         return
       }
       await DbUtil.createTable(createSql)
-      AppDatabaseUtil.existsTable(this.TABLE_NAME)
+      await AppDatabaseUtil.existsTable(this.TABLE_NAME)
       return
     } catch (err) {
       console.info('TagInfo', JSON.stringify(err))

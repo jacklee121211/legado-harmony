@@ -1,14 +1,16 @@
-import { componentSnapshot, promptAction, router } from '@kit.ArkUI'
+import { componentSnapshot, promptAction } from '@kit.ArkUI'
+import { Haptics } from '../../../common/utils/Haptics';
 import { image } from '@kit.ImageKit'
 import { emitter } from '@kit.BasicServicesKit'
 import { ThemeColor, ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeColorItem, ThemeItem } from '../../../common/model/Theme'
 import { themeManager } from '../../../common/utils/ThemeManager'
 import { sleep } from '../../../common/utils/utils'
+import AppRouter from '../../../common/router/AppRouter'
 
-@Entry
+// 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
-struct CreateCustomTheme {
+export default struct CreateCustomTheme {
   @StorageLink('topRectHeight') topRectHeight: number = 0
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   // 颜色列表
@@ -48,8 +50,10 @@ struct CreateCustomTheme {
             left: { anchor: '__container__', align: HorizontalAlign.Start }
           })
           .onClick(() => {
+            Haptics.tap();
             themeManager.setTheme(this.originTheme, AppStorage.get(ThemeStorageKey.THEMEINDEX) as number)
-            router.back()
+            // 迁 Navigation 第 4 期：本页现在是 NavDestination ⇒ 走门面返回。
+            AppRouter.back()
           })
         Row({space: 8}) {
           TextInput({text: $$this.themeName})
@@ -84,10 +88,11 @@ struct CreateCustomTheme {
             right: { anchor: '__container__', align: HorizontalAlign.End }
           })
           .onClick(() => {
+            Haptics.tap();
             themeManager.setTheme(this.originTheme, AppStorage.get(ThemeStorageKey.THEMEINDEX) as number)
             this.selectTheme.text = this.themeName
             themeManager.addTheme(this.selectTheme)
-            router.back()
+            AppRouter.back()
           })
 
       }
@@ -99,7 +104,7 @@ struct CreateCustomTheme {
       })
       .width('100%')
       .height(48)
-      .backgroundColor('#fff')
+      .backgroundColor($r('app.color.card_bg'))
 
       // 截图区
       Column() {
@@ -111,7 +116,7 @@ struct CreateCustomTheme {
       .width('100%')
       .layoutWeight(1)
       .padding({left: 60, right: 60, top: 72, bottom: 88})
-      .backgroundColor('#f5f5f5')
+      .backgroundColor($r('app.color.page_bg_alt'))
 
       // 底部选色区
       Row({space: 12}) {
@@ -119,21 +124,21 @@ struct CreateCustomTheme {
           Image($r('app.media.my_theme_config_custom'))
             .width(16)
             .aspectRatio(1)
-            .fillColor('#858585')
+            .fillColor($r('app.color.text_tertiary'))
         }
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .width(40)
         .aspectRatio(1)
         .borderRadius(20)
-        .backgroundColor('#f0f0f0')
+        .backgroundColor($r('app.color.chip_bg'))
 
         Column() {
 
         }
         .height(40)
         .width(1)
-        .backgroundColor('#f0f0f0')
+        .backgroundColor($r('app.color.chip_bg'))
 
         Scroll() {
           Row({space: 12}) {
@@ -165,13 +170,13 @@ struct CreateCustomTheme {
       }
       .height(72)
       .width('100%')
-      .backgroundColor('#fff')
+      .backgroundColor($r('app.color.card_bg'))
       .padding({left: 20, right: 20, top: 16, bottom: 16})
 
     }
     .width('100%')
     .height('100%')
     .padding({top: this.topRectHeight, bottom: this.bottomRectHeight})
-    .backgroundColor('#fff')
+    .backgroundColor($r('app.color.page_bg'))
   }
 }

@@ -1,8 +1,12 @@
 import CommonConstants from '../../common/constants/CommonConstants'
+import { Haptics } from '../../common/utils/Haptics';
 import { dataItem } from '../dataList/dataItem'
+import { NightMode, ShelfColors } from '../../common/utils/NightMode'
 
 @Component
 export struct readTabs{
+  /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
 
 
   @Prop read_list:dataItem[]
@@ -18,6 +22,7 @@ export struct readTabs{
         .justifyContent(FlexAlign.Center)
         .width("33%")
         .onClick((event)=>{
+          Haptics.tap();
           let x=event.target.area.position.x?.toString()
           if( this.read_index>index){
             if(x!=undefined){
@@ -33,14 +38,14 @@ export struct readTabs{
           }
           this.read_index=index
         })
-      })
+      }, (item: dataItem): string => item.title)
     }.height(30)
     .width(CommonConstants.FULL_HEIGHT)
   }
   build() {
     Row(){
       Row()
-        .backgroundColor(Color.White)
+        .backgroundColor(ShelfColors.card())
         .stateStyles({
           normal:this.readListStyles
         }).size({width:"33%",height:30})
@@ -54,7 +59,7 @@ export struct readTabs{
       offset: { x: 0, y:0}
     })
     .width(CommonConstants.FULL_HEIGHT)
-    .backgroundColor("rgba(0, 0, 0, 0.04)")
+    .backgroundColor(ShelfColors.chip())
     .stateStyles({
       normal:this.readListStyles
     })

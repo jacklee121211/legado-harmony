@@ -11,8 +11,7 @@
     {
       "name": "search_history",
       "value": "#F5F5F5"
-    }
-  ,
+    },
     {
       "name": "test",
       "value": "#FFFF0000"
@@ -28,6 +27,74 @@
     {
       "name": "share_shelf_book_background",
       "value": "#F5F5F5"
+    },
+    {
+      "name": "page_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "page_bg_alt",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "card_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "surface_92",
+      "value": "#EBFFFFFF"
+    },
+    {
+      "name": "text_primary",
+      "value": "#191919"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#99606060"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#8C8C8C"
+    },
+    {
+      "name": "icon_color",
+      "value": "#E0131313"
+    },
+    {
+      "name": "divider",
+      "value": "#989797"
+    },
+    {
+      "name": "chip_bg",
+      "value": "#0A000000"
+    },
+    {
+      "name": "solid_chip",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "sub_btn_bg",
+      "value": "#0F000000"
+    },
+    {
+      "name": "sub_btn_fg",
+      "value": "#E0000000"
+    },
+    {
+      "name": "skeleton",
+      "value": "#99FFFFFF"
+    },
+    {
+      "name": "mask_45",
+      "value": "#73000000"
+    },
+    {
+      "name": "night_panel",
+      "value": "#202224"
+    },
+    {
+      "name": "night_text",
+      "value": "#FFFFFF"
     }
   ]
 }

@@ -1,12 +1,15 @@
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
+import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import { showMessage } from '../../../../componets/common/promptShow'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
 import booksUtil from '../../../../common/utils/booksUtils'
 import { BookHistory } from '../../../../database/entities/BookHistory'
+import AppRouter, { RouteName } from '../../../../common/router/AppRouter'
 import bookHistoryUtils from '../../../../common/utils/BookHistoryUtils'
 import clickUtil from '../../../../common/utils/ClickUtils'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 @Component
   /**
@@ -17,6 +20,8 @@ export default struct BookHistoryInfo {
   @Prop bookHistory: BookHistory
   @State delCache: boolean = false
   @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0
+  /** App 级夜间开关：只为触发重绘（取色走 ShelfColors） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
 
   async aboutToAppear(): Promise<void> {
     if (this.bookHistory.id) {
@@ -84,20 +89,20 @@ export default struct BookHistoryInfo {
         }
         .alignItems(HorizontalAlign.Start)
         .onClick(() => {
+          Haptics.tap();
           clickUtil.preventClick(() => {
-            router.pushUrl({
-              url: 'pages/view/BookDetailPage',
-              params: this.book
-            })
+            // 迁 Navigation 第 2 期：详情页已改为 NavDestination，改走路由门面
+            AppRouter.push(RouteName.BOOK_DETAIL, this.book)
           })
         })
       }
 
       Column({ space: 15 }) {
         Row() {
-          Image($r('app.media.delete_svg')).width(17).fillColor('rgba(0, 0, 0, 0.6)')
+          Image($r('app.media.delete_svg')).width(17).fillColor(ShelfColors.icon())
         }
         .onClick(() => {
+          Haptics.tap();
           if (this.bookInfoDel != null) {
             this.bookInfoDel.open()
           }
@@ -109,8 +114,8 @@ export default struct BookHistoryInfo {
             Image(this.book.isJoin ? $r("app.media.add_check") : $r("app.media.add_shelf"))
               .width(this.book.isJoin ? 15 : 10)
               .height(this.book.isJoin ? 15 : 10)
-              .fillColor('rgba(0, 0, 0, 0.9)')
-            Text('书架').fontSize(10).fontColor('rgba(0, 0, 0, 0.45)')
+              .fillColor(ShelfColors.icon())
+            Text('书架').fontSize(10).fontColor(ShelfColors.textSub())
           }
           .padding({
             left: 15,
@@ -124,6 +129,7 @@ export default struct BookHistoryInfo {
         .borderWidth(this.book.isJoin ? 0 : 1)
         .borderRadius(50)
         .onClick(() => {
+          Haptics.tap();
           if (!this.book.isJoin) {
             this.book.id = undefined
             booksUtil.addBooks(this.book)
@@ -142,6 +148,7 @@ export default struct BookHistoryInfo {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction((event: GestureEvent) => {
+          Haptics.tap();
           // this.bookInfoDialog?.open()
         }))
     .padding(10)

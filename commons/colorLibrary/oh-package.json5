@@ -1,4 +1,8 @@
 {
+  // T29-④（Round 40）：保持**小写**的 `colorlibrary` —— hvigor 的包名校验正则
+  // `/^(@(?![0-9-_])[a-z0-9-_]+(?<![-_])\/)?(?![0-9-_.])[a-z0-9-_.]+(?<![-_.])$/` 只允许小写，
+  // 带大写的 `@ohos/colorLibrary` 会报 `does not comply with the regular expression`。
+  // 与 `entry/oh-package.json5` 的依赖名保持一致（那边也已改成 `colorlibrary`）。
   "name": "colorlibrary",
   "version": "1.0.0",
   "description": "Please describe the basic information.",
