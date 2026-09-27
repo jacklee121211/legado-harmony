@@ -1,7 +1,8 @@
 import BookMark from '../../../componets/head/BookMark'
-import { router } from '@kit.ArkUI'
+import AppRouter, { RouteName, BookManageRouteParam } from '../../../common/router/AppRouter'
 import BookBodyContent from './components/BookBodyContent'
 import { FileHandler } from '../../../common/utils/FileHandler'
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import Dialog from '../../../componets/common/Dialog'
 import { showMessage } from '../../../componets/common/promptShow'
 import { bookShelfImport } from '../../../database/entities/Books'
@@ -12,6 +13,13 @@ import { ThemeItem } from '../../../common/model/Theme'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { IconTitleVo } from '../../../componetsmodel/IconTitleVo'
 import dialogTitleFuction from '../../../componets/common/dialogTitleFuction'
+import { ShelfSearchPanel } from './components/dialog/ShelfSearchPanel'
+import { ImportBookListDialog } from './components/dialog/ImportBookListDialog'
+import { LengthMetrics } from '@kit.ArkUI'
+import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
+// ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
+import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
+import { Haptics } from '../../../common/utils/Haptics'
 
 @Component
 export default struct IndexShelf {
@@ -20,9 +28,15 @@ export default struct IndexShelf {
   @State bookTypeNumber: number = 2
   @State EXHIBIT: string = '列表'
   @State @Watch('changeGroup') GROUP: string = '标签'
+  /**
+   * 右上角「更多」菜单（2026-09-21 精简）。
+   * 「下载管理」已删：`DownloadManagementPage` 里是三组硬编码「斗破苍穹」假列表，
+   * 全工程 grep `downloadFile|DownloadTask|@ohos.request.download` **零命中**，
+   * 页面内的 `switch(index){case 5,6,7: break}` 与「全选」`onClick` 也都是空的。
+   * ⚠️ 删掉后**索引整体前移一位**，`changeTheme()` 里的 case 必须同步。
+   */
   private moreList: IconTitleVo[] = [
     new IconTitleVo($r('app.media.import_svg'), '书籍导入'),
-    new IconTitleVo($r('app.media.down_svg'), '下载管理'),
     new IconTitleVo($r('app.media.import_book_svg'), '导入书单'),
     new IconTitleVo($r('app.media.batch_svg'), '批量管理'),
   ]
@@ -36,9 +50,95 @@ export default struct IndexShelf {
 
   @State isShowImport: boolean = false
   @State isShowCloudImport: boolean = false
-  @State isShowImportBookList: boolean = false
+  // 「导入书单」弹窗（2026-09-25 从贴底 bindSheet 升级为标准居中 @CustomDialog，
+  //   见 components/dialog/ImportBookListDialog.ets；控制器每次打开新建）
+  private importListDialog: CustomDialogController | null = null
+
+  private openImportListDialog(): void {
+    this.importListDialog = new CustomDialogController({
+      builder: ImportBookListDialog({
+        onPaste: (): void => {
+          this.pasteBookImport()
+        },
+        onLocal: (): void => {
+          this.pickBookListLocal()
+        },
+        onClose: (): void => {
+          // 关闭权在页面侧（全工程 2026-09-25 统一约定）
+          this.importListDialog?.close()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '80%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    })
+    this.importListDialog?.open()
+  }
+
+  /**
+   * 书单本地导入：选 JSON 文件 → 解析 → 批量入架。
+   * （逻辑自原 `ImportClickBox` case 4 原样搬移，供新弹窗回调调用。）
+   */
+  private async pickBookListLocal(): Promise<void> {
+    const res = await FileHandler.documentPickerFile(1, ['.json'])
+    FileHandler.ReadJSONFile(res[0]).then(async result => {
+      if (result.length > 0) {
+        this.bookImport = JSON.parse(result) as bookShelfImport[]
+        this.bookImport.length > 0 ? await booksUtil.batchAdd(this.bookImport, this.currentIndex) : ''
+        showMessage(this.bookImport.length > 0 ? `相关书单书籍内容导入${this.bookImport.length}本` :
+          '未找到相关书单书籍内容')
+      }
+    })
+    setTimeout(() => {
+      this.isBookRefreshing++
+    }, 500)
+  }
+  /** 书架搜索浮窗（2026-09-22 新增，见搜索按钮处的说明） */
+  @State isShowShelfSearch: boolean = false
+  /** 顶部搜索/更多图标的 Q弹缩放值（2026-09-25，`runJellyClick` 自驱 `.scale()`） */
+  @State searchScale: number = 1
+  @State moreScale: number = 1
+  /**
+   * 书架搜索弹窗控制器（2026-09-22 从 `bindSheet` 改成 `@CustomDialog`）。
+   *
+   * `@CustomDialog` 由 `offset` 直接控制位置、不受 sheet 锚定行为限制，
+   * 且能通过 `systemMaterial` 拿到**真沉浸光感材质**（sheet 拿不到）。
+   * 配方与已验证的「长按书籍弹窗 / 加入书单 / 睡眠定时」完全一致。
+   */
+  shelfSearchDialog: CustomDialogController | null = new CustomDialogController({
+    builder: ShelfSearchPanel({
+      onClose: () => {
+        this.shelfSearchDialog?.close()
+      }
+    }),
+    cancel: () => {
+      this.isShowShelfSearch = false
+    },
+    autoCancel: true,
+    // 用户要求：放大镜浮窗**居中**
+    alignment: DialogAlignment.Center,
+    width: '92%',
+    // ⚠️ 2026-09-22 用户真机反馈：放大镜弹窗**居中效果完美**，但「高度差点，增加 15%」
+    //   432 x 1.15 ≈ **497**（取 500 便于阅读）
+    height: 465,
+    cornerRadius: 20,
+    customStyle: false,
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+  })
   @StorageLink('topRectHeight') topRectHeight: number = 0
   @StorageProp('APP_INDEX_SCROLLABLE') APP_INDEX_SCROLLABLE: boolean = false
+  /**
+   * App 级夜间开关（只为**触发本组件的重绘**而订）。
+   * 真正取色一律走 `ShelfColors.*()`（它内部读同一个开关）—— 若只订状态而颜色还是
+   * 写死的浅色，夜间下本页不会重绘；若只靠函数而不订状态，值变了也不会重绘。
+   * 两者必须同时存在。规则见 `common/utils/NightMode.ets`。
+   */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @State bookImport: bookShelfImport[] = []
   // 主题颜色
@@ -67,6 +167,7 @@ export default struct IndexShelf {
           List({ scroller: this.scrollController }) {
             ListItem() {
               BookMark({ title: '小说', index: 0, currentIndex: this.currentIndex }).onClick(() => {
+                Haptics.tap();
                 this.currentIndex = 0
                 this.tabsController.changeIndex(0)
                 console.log(this.currentIndex + '')
@@ -75,6 +176,7 @@ export default struct IndexShelf {
 
             ListItem() {
               BookMark({ title: '漫画', index: 1, currentIndex: this.currentIndex }).onClick(() => {
+                Haptics.tap();
                 this.currentIndex = 1
                 this.tabsController.changeIndex(1)
                 console.log(this.currentIndex + '')
@@ -83,6 +185,7 @@ export default struct IndexShelf {
 
             ListItem() {
               BookMark({ title: '有声书', index: 2, currentIndex: this.currentIndex }).onClick(() => {
+                Haptics.tap();
                 this.currentIndex = 2
                 this.tabsController.changeIndex(2)
                 console.log(this.currentIndex + '')
@@ -93,6 +196,9 @@ export default struct IndexShelf {
           .height(40)
           .scrollBar(BarState.Off)
           .listDirection(Axis.Horizontal)
+          // ⚠️ 2026-09-23：这里**试过**加"向沉浸光感看齐"的胶囊外观（半透明底+强模糊+圆角），
+          //   用户真机看后反馈「不好看」⇒ **已按用户要求改回原样**（不加任何底色/模糊）。
+          //   「最近阅读/浏览历史…」和「分组/全部/未分组…」那两处的胶囊保留（用户没反对）。
         }
 
         Row() {
@@ -105,45 +211,69 @@ export default struct IndexShelf {
             height: 240,
             showClose: false,
             dragBar: false,
-            backgroundColor: "white",
+            backgroundColor: ShelfColors.card(),
             blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
             onDisappear: () => {
               // this.clickBookType = ''
             }
           })
 
-          Flex() {
-          }
-          .width(0)
-          .height(0)
-          .bindSheet($$this.isShowImportBookList, this.ImportBookListDialog(), {
-            // 书单导入弹窗绑定元素
-            height: 240,
-            showClose: false,
-            dragBar: false,
-            backgroundColor: "white",
-            blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-            onDisappear: () => {
-              // this.clickBookType = ''
-            }
-          })
 
           Row({ space: 16 }) {
-            Image($r('app.media.search')).width(24).onClick(() => {
-              router.pushUrl({
-                url: 'pages/view/search/SearchBook'
-              });
+            // ── 搜索按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
+            // 符号名 `magnifyingglass` 在 SDK 符号表
+            //   `…\Sdk\23\previewer\common\resources\entry\resources.txt` 查得，不猜名字。
+            // 颜色沿用 `ShelfColors.icon()`（日/夜双档，替代原 SVG 的显式染色；
+            //   夜间不染色的坑见原注释，现在由 icon() 统一保证）。
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(24)
+              .fontColor([ShelfColors.icon()])
+              .scale({ x: this.searchScale, y: this.searchScale })
+              .onClick(() => {
+              Haptics.tap();
+              runJellyClick((v: number) => {
+                this.searchScale = v
+              })
+              // ★ 2026-09-22：改为**本地书架搜索浮窗**（用户要求）。
+              //   用户原话：「书架顶部搜索是假的，进入之后是假的，直觉删除，保留搜索按钮，
+              //   点击后直接出现浮窗搜索，可以搜索书名，支持拼音，首字母，汉字等多种搜索模式」。
+              //   原来这里 `AppRouter.push(RouteName.SEARCH)` 去的是 `SearchBook.ets`，
+              //   而那一页是**搜网络书源**的（`taskSearchBook` 在线搜索），
+              //   对"找我自己书架上的书"来说是假的（`SearchBook` 页面本身保留 ——
+              //   它的在线搜书能力另有用途，本次只是不再从书架入口进它）。
+              this.isShowShelfSearch = true
+              this.shelfSearchDialog?.open()
             })
-            Image($r('app.media.more')).width(24)
+              .clickEffect(UiMotion.CLICK)
+              // ★★ 2026-09-22 改为 @CustomDialog（用户拍板「既然能统一，那就全 @CustomDialog」）★★
+              //   原因：sheet 的 `preferType: SheetType.CENTER` 真机**毫无变化**
+              //   （试过 detents / height / preferType 四种组合都不居中），
+              //   而 `@CustomDialog` 由 `offset` **直接控制位置**，不受 sheet 锚定行为限制；
+              //   这条路已在本工程验证成功三次（长按弹窗 / 加入书单 / 睡眠定时）。
+              //   而且 `@CustomDialog` 还能拿到**真沉浸光感材质**（sheet 拿不到）。
+
+            // ── 更多按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
+            // 符号名 `more`（横向三点）同表查得；`more_fill` 也在表里（未用）。
+            SymbolGlyph($r('sys.symbol.more'))
+              .fontSize(24)
+              .fontColor([ShelfColors.icon()])
+              .scale({ x: this.moreScale, y: this.moreScale })
               .bindMenu(this.MenuBuilder())
               .bindSheet($$this.isShowImport, this.ImportDialog(), {
                 // 书籍导入弹窗绑定元素
                 height: 200,
                 showClose: false,
                 dragBar: false,
-                backgroundColor: "rgba(0, 0, 0, 0.15)",
+                backgroundColor: ShelfColors.surface(),
                 blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
               })
+              .onClick(() => {
+                Haptics.tap();
+                runJellyClick((v: number) => {
+                  this.moreScale = v
+                })
+              })
+              .clickEffect(UiMotion.CLICK)
           }
         }.margin({ bottom: 12 })
       }
@@ -175,17 +305,44 @@ export default struct IndexShelf {
         console.log('index:' + index)
         this.currentIndex = index
       })
-      .backgroundColor(Color.White)
+      .backgroundColor(ShelfColors.pageBg())
       .scrollable(this.APP_INDEX_SCROLLABLE)
     }
     .height('100%')
+    // ── 页面主题渐变（书架整页的底色）────────────────────────────────────────
+    // 日间：主题 mainColor → secondColor（用户可选 5 套浅色主题）。
+    // 夜间：换成中性深灰渐变 —— `themeManager` 那 5 套**全是浅色**
+    // （`common/constants/Theme.ets:5-9`，如 `#ffece0`），直接沿用会让整页发白。
+    // 取值与规则见 `ShelfColors.gradientStart/End()`。
     .linearGradient({
       direction: GradientDirection.Bottom, // 渐变方向
-      colors: [[this.theme.mainColor, 0], [this.theme.secondColor, 0.2]] // 数组末尾元素占比小于1时满足重复着色效果
+      colors: [[ShelfColors.gradientStart(this.theme.mainColor), 0],
+        [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]] // 数组末尾元素占比小于1时满足重复着色效果
     })
     .borderRadius({ bottomRight: 5, bottomLeft: 5 })
   }
 
+  /**
+   * 右上角「⋯」的 `bindMenu` 内容。
+   *
+   * ⚠️ **夜间必须自己铺一层不透明深底**（2026-09-23 用户真机截图红圈反馈）。
+   *
+   * 根因：`bindMenu` 的**菜单面板底色是浮层自带的**，`MenuOptions` 只有
+   *   `title?` / `showInSubWindow?` 两个字段（SDK `component/common.d.ts`），
+   *   **没有任何颜色/材质开关**；而官方对 `MaterialState.DEFAULT` 的原文
+   *   （documentId `API参考/…/ohos_arkui_uiMaterial_系统材质_/arkts-apis-uimaterial`）说
+   *   「弹出框Dialog…**在组件本身未设置背景颜色、模糊参数和阴影参数时**默认开启沉浸式系统材质」
+   *   —— 沉浸材质不认应用配色（`ImmersiveOptions` 六个字段里没有 colorMode，
+   *   SDK `…\ets\api\@ohos.arkui.uiMaterial.d.ts:306-429`）⇒ 夜里那层还是浅色磨砂。
+   *
+   * 做法：给内容根节点上色 —— 内容会把菜单面板**绝大部分**盖住。
+   *   · 日间：`Color.Transparent` ⇒ 与改造前**逐像素一致**（不改动原有观感）
+   *   · 夜间：`#1F1F1F`（与各弹窗夜间面板同色）+ 圆角 12
+   * 【待验证】菜单面板四周还有系统自带的少量内边距，夜间可能残留一圈浅色描边。
+   *   真机若确实看得见，改法只有一条：把 `bindMenu` 换成 `bindPopup` +
+   *   `CustomPopupOptions.popupColor`（SDK 该接口确有 `popupColor`/`radius`/`shadow` 字段，
+   *   可完全接管底色），代价是 `bindMenu` → `bindPopup` 要自己维护显隐 `@State`。
+   */
   @Builder
   MenuBuilder() {
     Column() {
@@ -193,13 +350,22 @@ export default struct IndexShelf {
         dialogTitleFuction({
           title: item.title,
           icon: item.icon,
-          isBorder: this.moreList.length !== index + 1
+          isBorder: this.moreList.length !== index + 1,
+          // 菜单内容已铺半透明深底（见本 @Builder 的注释）⇒ 文字/图标同步转浅
+          nightStyle: NightMode.isDarkSurface()
         })
           .onClick(() => {
+            Haptics.tap();
             this.changeTheme(index)
           })
       })
     }
+    // 材质与「最近阅读」小气泡对齐（2026-09-23 用户反馈）：同一个配方 =
+    // 半透明面底 + COMPONENT_ULTRA_THICK 超厚模糊 + 圆角 20（取值见 BookBodyContent 同款注释）。
+    // 原来日间 Transparent / 夜间死色 #1F1F1F，两种模式都和最近阅读的观感对不上。
+    .backgroundColor(ShelfColors.surface())
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .borderRadius(20)
   }
   @Builder
   // 书籍导入UI盒子
@@ -212,8 +378,8 @@ export default struct IndexShelf {
       .width(48)
       .height(48)
       .borderRadius(24)
-      .borderColor("rgba(0, 0, 0, 0.15)")
-      .backgroundColor("white")
+      .borderColor(ShelfColors.line())
+      .backgroundColor(ShelfColors.solidChip())
       .borderWidth(1)
       .padding(12)
 
@@ -231,29 +397,8 @@ export default struct IndexShelf {
       right: 21
     })
     .onClick(async () => {
+      Haptics.tap();
       switch (index) {
-        case 0:
-          // 本地导入
-          //   router.pushUrl({
-          //     url: 'pages/view/bookShelf/LocalImportPage'
-          //   });
-          let FileResult = await FileHandler.documentPickerFile(undefined, ['.txt', '.epub', '.mobi', '.azw', '.azw3'])
-          FileResult.forEach((item) => {
-            FileHandler.CopyFile(item, this.currentIndex)
-          })
-          this.isShowImport = false
-          setTimeout(() => {
-            this.isBookRefreshing++
-          }, 500)
-          break
-        case 1:
-          // 云盘导入
-          this.isShowCloudImport = true
-          break
-        case 2:
-          // 网址导入
-          this.dialogController.open();
-          break
         case 3:
           // 书单粘贴导入
           this.pasteBookImport()
@@ -305,6 +450,7 @@ export default struct IndexShelf {
           .lineHeight(24)
       }
       .onClick(() => {
+        Haptics.tap();
         this.isShowImport = false
       })
       .alignItems(HorizontalAlign.Center)
@@ -364,7 +510,7 @@ export default struct IndexShelf {
             })
             .opacity(0.45)
         }
-        .backgroundColor("rgba(0, 0, 0, 0.04)")
+        .backgroundColor(ShelfColors.chip())
         .width(40)
         .height(40)
 
@@ -394,7 +540,7 @@ export default struct IndexShelf {
           Image($r('app.media.add')).width(24)
 
         }
-        .backgroundColor("rgba(0, 0, 0, 0.04)")
+        .backgroundColor(ShelfColors.chip())
         .width(40)
         .height(40)
 
@@ -422,6 +568,7 @@ export default struct IndexShelf {
           .lineHeight(24)
       }
       .onClick(() => {
+        Haptics.tap();
         this.isShowCloudImport = false
       })
       .alignItems(HorizontalAlign.Center)
@@ -436,74 +583,89 @@ export default struct IndexShelf {
   }
 
   @Builder
-  // 导入书单弹窗
-  ImportBookListDialog() {
+  // 书架搜索浮窗（2026-09-22 新增）：按书名/作者在**本地库**里过滤
+  ShelfSearchDialog() {
     Column() {
-      Flex({
-        direction: FlexDirection.Row,
-        wrap: FlexWrap.Wrap,
-        alignContent: FlexAlign.Center,
-        justifyContent: FlexAlign.Start
-      }) {
-        Grid() {
-          GridItem() {
-            this.ImportClickBox(3, "app.media.Paste", "粘贴导入")
-          }
-
-          GridItem() {
-            this.ImportClickBox(4, "app.media.my_center_file_icon", "本地导入")
-          }
+      ShelfSearchPanel({
+        onClose: () => {
+          this.isShowShelfSearch = false
         }
-        .columnsTemplate("1fr 1fr 1fr 1fr")
-        .padding({
-          top: 12
-        })
-      }
-      .height("60%")
-
-      Divider()
-
-      Column() {
-        Text('取消').fontSize(16).fontWeight(400)
-          .lineHeight(24)
-      }
-      .onClick(() => {
-        this.isShowImportBookList = false
       })
-      .alignItems(HorizontalAlign.Center)
-      .padding({
-        top: 16
-      })
+    }
+    // ── 独立四圆角悬浮（2026-09-22 用户要求）──────────────────────────────
+    // 用户原话：「书架放大镜的 sheet **底部粘连**，并且太高了，缩短 40%」。
+    // sheet 侧已设为 `backgroundColor: Color.Transparent`，
+    // 所以这里必须由**内容层**提供「留白 + 圆角 + 实底」：
+    //   · `margin` 左右 16 / 底 12 ⇒ 面板与屏幕边缘的视觉留白（**去掉底部粘连**）
+    //   · `padding` 16 ⇒ 圆角保护（内容不被 r=20 的圆弧压住）
+    .backgroundColor(ShelfColors.card())
+    .borderRadius(20)
+    .padding(16)
+    .margin({ left: 16, right: 16, bottom: 12 })
+    .height('100%')
+  }
+
+
+  changeTheme(themeNum: number) {
+    // 右上角更多（索引与 moreList 对齐，见其注释）
+    switch (themeNum) {
+      case 0:
+        // 书籍导入 → **直接衔接本地导入**（用户要求：去掉二级菜单，化繁为简）。
+        // 原来这里 `isShowImport = true` 弹出一个「本地导入/网盘导入/网址导入」二级菜单，
+        // 而其中「网盘导入」是空壳、「网址导入」的 `ConfirmCallback` 从未赋值
+        // （输完网址点确定只关弹窗）⇒ 只剩本地导入是真功能，直接做掉。
+        this.pickLocalBooks()
+        break
+      case 1:
+        // 导入书单弹窗（2026-09-25：标准居中 @CustomDialog）
+        Haptics.tap();
+        this.openImportListDialog()
+        break
+      case 2:
+        // 迁 Navigation 第 4 期：管理页已改为 NavDestination，改走路由门面。
+        AppRouter.push(RouteName.BOOK_MANAGE, {
+          currentIndex: this.currentIndex,
+          EXHIBIT: this.EXHIBIT,
+          bookTypeNumber: this.bookTypeNumber
+        } as BookManageRouteParam)
+        break
     }
   }
 
-  changeTheme(themeNum: number) {
-    // 右上角更多
-    switch (themeNum) {
-      case 0:
-        // 书籍导入弹窗
-        this.isShowImport = true
-        break
-      case 1:
-        // 下载管理页
-        router.pushUrl({
-          url: 'pages/view/bookShelf/DownloadManagementPage'
-        });
-        break
-      case 2:
-        // 导入书单弹窗
-        this.isShowImportBookList = true
-        break
-      case 3:
-        router.pushUrl({
-          url: 'pages/view/bookShelf/Manage/BookManagePage',
-          params: {
-            currentIndex: this.currentIndex,
-            EXHIBIT: this.EXHIBIT,
-            bookTypeNumber: this.bookTypeNumber
-          }
-        })
-        break
+  /**
+   * 本地导入：拉起文件选择器 → 拷贝进沙箱 → 刷新书架。
+   *
+   * 为什么抽成方法：「书籍导入」现在**直接**走这里（用户要求去掉二级菜单），
+   * 不再经过「本地导入 / 网盘导入 / 网址导入」那一层。
+   *
+   * 支持的后缀与 ReaderKit 官方支持列表一致：`txt / epub / mobi / azw / azw3`
+   * （官方文档 documentId：`开发指南/Reader_Kit_阅读服务/Reader_Kit简介/reader-introduction`）。
+   */
+  private async pickLocalBooks(): Promise<void> {
+    try {
+      const fileResult = await FileHandler.documentPickerFile(undefined,
+        ['.txt', '.epub', '.mobi', '.azw', '.azw3'])
+      this.isShowImport = false
+      if (fileResult.length === 0) {
+        return
+      }
+      // ⚠️ 2026-09-24 导入竞态修复：必须**逐本 await** 到"拷贝+写库"真正完成，
+      // 全部结束后再刷书架。旧实现 forEach 不等待 + 固定 500ms 定时器盲刷，
+      // 批量导入时写库还没跑完就查了库 ⇒ 书架只出现一部分，重启才恢复。
+      let okCount = 0
+      for (const item of fileResult) {
+        const ok = await FileHandler.CopyFile(item, this.currentIndex)
+        if (ok) {
+          okCount++
+        }
+      }
+      if (okCount > 0) {
+        showMessage(`已导入 ${okCount} 本书籍`)
+        // 写库已在上面 await 完成，这里可以**立即**刷新，不再需要延时。
+        this.isBookRefreshing++
+      }
+    } catch (e) {
+      showMessage('导入失败：' + (e instanceof Error ? e.message : String(e)))
     }
   }
 

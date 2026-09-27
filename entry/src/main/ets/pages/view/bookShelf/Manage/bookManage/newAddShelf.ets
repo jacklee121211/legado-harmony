@@ -1,15 +1,19 @@
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
+import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import groupTypeSearch from '../../../../../componets/group/GroupTypeSearch'
 import booksDao from '../../../../../database/dao/BooksDao'
 import { Books } from '../../../../../database/entities/Books'
 import BookInfoManage from './BookInfoManage'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 /**
  * 添加书籍
  */
 @Component
 export default struct newAddShelf{
+  /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走资源 token / `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   @State searchValue:string = ''
   @Prop currentIndex:number
   @State bookList:Books[] = []
@@ -75,9 +79,9 @@ export default struct newAddShelf{
            Image($r('app.media.close'))
              .width(25)
              .height(25)
-             .fillColor('rgba(0, 0, 0, 0.88)')
+             .fillColor(ShelfColors.icon())
              .onClick(()=>{
-               this.close()
+               Haptics.tap(); this.close()
              })
            Column(){
              Text('添加书籍')
@@ -85,7 +89,7 @@ export default struct newAddShelf{
                .lineHeight(24)
                .fontWeight(500)
                .textAlign(TextAlign.Center)
-               .fontColor('rgba(0, 0, 0, 0.88)')
+               .fontColor($r('app.string.color_black_88'))
            }
            .margin({right:20})
            .width('100%')
@@ -120,13 +124,13 @@ export default struct newAddShelf{
                 isManage:true,
                 checkGroup:this.selectBookId
               })
-            })
+            }, (item: Books): string => item.id !== undefined ? 'b' + item.id : (item.bookUrl ?? item.bookName))
           }
         }
         .layoutWeight(1)
         .align(Alignment.TopStart)
         .scrollBar(BarState.Off).padding({left:15,right:15})
-        Divider().strokeWidth(0.5)
+        Divider().strokeWidth(0.5).color(ShelfColors.line())
         this.footerTitle()
       }
       .margin({top:30})
@@ -149,7 +153,7 @@ export default struct newAddShelf{
           Text(!this.allSelect?'全选':'取消全选')
             .fontSize(16)
             .fontWeight(400)
-            .fontColor('rgba(0, 0, 0, 0.88)')
+            .fontColor($r('app.string.color_black_88'))
         }
         .onClick(()=>{
           if (this.bookList.length === 0) {
@@ -183,7 +187,7 @@ export default struct newAddShelf{
         left:32,
         right:32
       })
-      .backgroundColor(Color.White)
+      .backgroundColor(ShelfColors.card())
   }
 
   //遍历列表数据

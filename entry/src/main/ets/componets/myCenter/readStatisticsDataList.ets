@@ -1,11 +1,15 @@
 import CommonConstants from '../../common/constants/CommonConstants'
+import { Haptics } from '../../common/utils/Haptics';
 import { PublicConstants } from '../../common/constants/PublicConstants'
 import { readBookList } from '../dataList/readBookList'
+import { NightMode, ShelfColors } from '../../common/utils/NightMode'
 
 
 @Component
 export struct readStatisticsDataList{
   @Prop dateValue:number[]
+  /** 表头口径文案：「读过」/「读完」（由 `readStatistics.ets` 按 type 传入） */
+  @Prop headLabel:string = '读过'
   @Link bookList:readBookList[]
   @State translateX:number=0
   @State bookIndex:number=0
@@ -14,7 +18,9 @@ export struct readStatisticsDataList{
   @State lastScreenX: number = 0
   @State lastScreenY: number = 0
   @Consume delStatus:boolean
-  @Builder text(value:string,back:ResourceColor="rgba(0, 0, 0, 0.45)"){
+  /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
+  @Builder text(value:string,back:ResourceColor=ShelfColors.textSub()){
     Text(value)
       .fontSize(12)
       .fontWeight(400)
@@ -23,10 +29,31 @@ export struct readStatisticsDataList{
   }
   scroller: Scroller = new Scroller()
   // 时间 本数
-  @Builder readHeader(dateValue:number[]){
+  /**
+   * ⚠️ **这个 @Builder 绝对不能带参数**（2026-09-21 真机 bug 根因）。
+   *
+   * ArkUI 的 `@Builder` **按值传参**时不会随状态变量刷新。官方文档原文
+   * （documentId：`开发指南/ArkUI_方舟UI框架/UI开发_ArkTS声明式开发范式/学习UI范式基本语法/`
+   *   `组件扩展/Builder装饰器_自定义构建函数/arkts-builder`）：
+   *
+   *   > #### 按值传递参数
+   *   > 调用@Builder装饰的函数默认按值传递。当传递的参数为状态变量时，
+   *   > 状态变量的改变不会引起@Builder函数内的UI刷新。
+   *   > ...
+   *   > // 按值传递参数，状态变量的改变不会引起overBuilderByValue内的UI刷新
+   *
+   * 原实现是 `readHeader(dateValue:number[])` + `this.readHeader(this.dateValue)`：
+   * `dateValue` 这个 `@Prop` 被**按值**传进去 ⇒ 表头永远停在**首次渲染**时的值。
+   * 而首次渲染发生在 `readStatistics.aboutToAppear()` 里的 `loadData()` 完成**之前**，
+   * 所以真机上表头一直显示初始值 —— 也就是底座样例遗留的硬编码 `[2023, 36]`：
+   * 「2023年读过36本」（读过、读完两个二级页都会中招）。
+   *
+   * 改成无参、直接读 `this.dateValue` / `this.headLabel`，状态一变就刷新。
+   */
+  @Builder readHeader(){
 
     Row(){
-      Text(`${dateValue[0]}年读过${dateValue[1]}本`)
+      Text(`${this.dateValue[0]}年${this.headLabel}${this.dateValue[1]}本`)
         .fontSize(16)
         .lineHeight(24)
         .fontWeight(500)
@@ -40,7 +67,12 @@ export struct readStatisticsDataList{
       Text(book.bookName).fontSize(16).lineHeight(24)
       Column(){
         this.text(book.author)
-        this.text(`累计阅读${book.readingDuration[0]}小时${book.readingDuration[1]}分钟`)
+        // ⚠️ 「累计阅读X小时Y分钟」已移除（2026-09-21）。
+        //   原实现传进来的是 `[当前章号, 总章数]`（见 readStatistics.ets 的构造），
+        //   被这里当小时/分钟渲染 ⇒ 数字全是假的（例如「累计阅读0小时765分钟」）。
+        //   真实的阅读时长本应来自 `readRecord` 表的 `readTime` 列
+        //   （`AppDatabase/index.ets:1750` 建表），但**全工程没有任何代码写它**，
+        //   属于"有表无写入"的半成品 ⇒ 按用户决定**先隐藏**，不再显示假数字。
       }.alignItems(HorizontalAlign.Start)
     }.alignItems(HorizontalAlign.Start)
     .width("50%")
@@ -57,6 +89,7 @@ export struct readStatisticsDataList{
           .selectedColor(0xed6f21)
           .shape(CheckBoxShape.CIRCLE)
           .onChange((value: boolean) => {
+            Haptics.tap();
             this.bookList[index].status=value
           })
           .transition(
@@ -73,7 +106,7 @@ export struct readStatisticsDataList{
           .fontSize(12)
           .fontWeight(400)
           .lineHeight(20)
-          .fontColor("rgba(0, 0, 0, 0.45)")
+          .fontColor(ShelfColors.textSub())
           .transition(
             TransitionEffect.asymmetric(
               TransitionEffect.OPACITY.animation({ duration: 500 }).combine(
@@ -85,9 +118,9 @@ export struct readStatisticsDataList{
           )
       }
       Row(){
-        this.text("读到",Color.Black)
+        this.text("读到")
         Text(schedule.toString()).fontSize(24).lineHeight(24).fontWeight(600)
-        this.text("%",Color.Black)
+        this.text("%")
       }
     }.alignItems(HorizontalAlign.End)
     .justifyContent(FlexAlign.SpaceBetween)
@@ -97,7 +130,7 @@ export struct readStatisticsDataList{
   }
   build() {
      Column(){
-       this.readHeader(this.dateValue)
+       this.readHeader()
        Scroll(){
          Column(){
            ForEach(this.bookList,(book:readBookList,index:number)=>{
@@ -106,6 +139,10 @@ export struct readStatisticsDataList{
                  Row(){
                    //封面
                    Image(book.coverImage)
+                     .alt($r('app.media.icon_book_default_cover_one'))
+                     // 视觉升级（2026-09-21）：与书架封面统一圆角 + 柔和投影。纯增量属性。
+                     .borderRadius(4)
+                     .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.18)', offsetX: 0, offsetY: 3 })
                      .size({width:60,height:80})
                    //书名作者及阅读时长
                    this.bookAuthor(book)
@@ -141,7 +178,7 @@ export struct readStatisticsDataList{
                    })
                )
              }.width(CommonConstants.FULL_WIDTH)
-             .backgroundColor(PublicConstants.THEME_COLOR_WHITE)
+             .backgroundColor(ShelfColors.card())
              .borderRadius(12)
              .margin({bottom:16})
              .clip(true)

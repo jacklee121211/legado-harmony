@@ -4,7 +4,6 @@
  * @className: Books
  * 书籍
  */
-import { BookSource } from './BookSource';
 import { readerCore } from '@kit.ReaderKit';
 
 @Observed
@@ -59,6 +58,22 @@ export class Books {
   localBookDurChapterPos?:readerCore.PageDataInfo|null = null
   //最近一次阅读书籍的时间(打开正文的时间)
   durChapterTime: number = 0
+  /**
+   * 「曾经读完」的时间戳（0 = 从未读完）。
+   *
+   * 为什么不能只看 `durChapterIndex`：进度**会回退**（读完后回第一章重看），
+   * 而需求是「达到过 100% 就算读完，同一本第二次 100% 不重复计」。
+   * 故单独记一个**只写一次**的标记：读到末章时若本字段为 0 才写入 Date.now()。
+   *
+   * 迁移：本列是后加的，老库不会自动有 ⇒ 由 `AppDatabase/index.ets` 的
+   * `ALTER TABLE books ADD COLUMN finishedTime INTEGER NOT NULL DEFAULT 0` 补齐
+   * （try/catch 容忍"列已存在"）。
+   *
+   * 声明成**可选**（`?`）是必须的：工程内有多处 `Books` 字面量（`booksUtils.ets:35`、
+   * `FileHandler.ets:52` 等）没有该字段，若声明为必填会直接编译失败。
+   * 读取处一律用 `?? 0` 兜底。同文件 `createTime?: number = 0` 即此写法先例。
+   */
+  finishedTime?: number = 0
   //字数
   wordCount?: string
   //刷新书架时更新书籍信息
@@ -81,8 +96,6 @@ export class Books {
   isJoin: boolean = false
   //是否本地导入
   isLocalBook: boolean = false
-  source?: BookSource
-  sourceList?: BookSource[] = []
 }
 
 export class bookShelfImport {

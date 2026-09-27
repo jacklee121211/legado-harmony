@@ -1,4 +1,5 @@
 import PaddingConstants from '../../../../../common/constants/PaddingConstants';
+import { Haptics } from '../../../../../common/utils/Haptics';
 import bookGroupUtil from '../../../../../common/utils/bookGroupUtils';
 import booksUtil from '../../../../../common/utils/booksUtils';
 import confirmDialogExample from '../../../../../componets/common/confirmDialog';
@@ -87,11 +88,12 @@ export default  struct BookManageDialog {
   }
   //书籍
   getBookList(){
+    // pageSize=0 ⇒ 全量（BooksDao.searchPage 约定）：与 BookManagePage 同步去掉 100 本上限。
     booksDao.searchPage({
       type:this.currentIndex,
       bookGroup:this.bookTypeNumber,
       order:this.searchValue
-    },1,100).then((val)=>{
+    },1,0).then((val)=>{
       this.bookList = val
     })
   }
@@ -261,9 +263,6 @@ export default  struct BookManageDialog {
           .fontSize(16).fontWeight(500).fontColor($r('app.string.color_black_88'))
       }
       .width('33%')
-      .onClick(()=>{
-
-      })
       Row(
         {
           space:12
@@ -273,6 +272,7 @@ export default  struct BookManageDialog {
           .textAlign(TextAlign.Center)
           .fontSize(14).fontWeight(400).fontColor($r('app.string.color_black_88'))
           .onClick(()=>{
+            Haptics.tap();
             if (this.EXHIBIT === '列表') {
               this.EXHIBIT = '宫格'
             } else {
@@ -291,6 +291,7 @@ export default  struct BookManageDialog {
           .textAlign(TextAlign.Center)
           .fontSize(14).fontWeight(400).fontColor($r('app.string.color_black_88'))
           .onClick(()=>{
+            Haptics.tap();
             this.isManage = !this.isManage
           })
       }
@@ -325,6 +326,7 @@ export default  struct BookManageDialog {
         .select(this.allCheck)
         .selectedColor(this.theme.mainColor)
         .onClick(() => {
+          Haptics.tap();
           if (this.verificationDate()) {
             return
           }
@@ -390,6 +392,7 @@ export default  struct BookManageDialog {
       Text('完成')
     }
     .onClick(async () => {
+      Haptics.tap();
       if (this.isManageSearch) {
         this.searchCheck(this.checkListNumber)
       } else {
@@ -405,6 +408,7 @@ export default  struct BookManageDialog {
     Column(){
       Text('删除').fontSize(16).fontWeight(500).lineHeight(24).fontColor('#EF4444')
     }.onClick(()=>{
+      Haptics.tap();
       if (this.checkListNumber.length <= 0) {
         showMessage('请选择要操作的内容');
         return
@@ -445,6 +449,7 @@ export default  struct BookManageDialog {
                 Text(this.topTitle).fontSize(14).fontWeight(500)
               }
               .onClick(()=>{
+                Haptics.tap();
                 this.bookInfoButton(item.id)
               })
             } else {
@@ -455,6 +460,7 @@ export default  struct BookManageDialog {
                 Text(item.title).fontSize(14).fontWeight(500)
               }
               .onClick(()=>{
+                Haptics.tap();
                 this.bookInfoButton(item.id)
               })
             }

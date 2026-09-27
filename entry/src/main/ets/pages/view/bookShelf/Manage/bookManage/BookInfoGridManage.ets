@@ -1,8 +1,10 @@
 import CommonConstants from '../../../../../common/constants/CommonConstants'
+import { Haptics } from '../../../../../common/utils/Haptics';
 import FontConstants from '../../../../../common/constants/FontConstants'
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
 /**
@@ -18,6 +20,8 @@ export default struct BookInfoGridManage{
   onSelect:Function = () => {}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
     Column({
       space:CommonConstants.SPACE_6
@@ -43,11 +47,11 @@ export default struct BookInfoGridManage{
               group: 'checkboxGroup'
             })
               .onClick(()=>{
-                this.onSelect()
+                Haptics.tap(); this.onSelect()
               })
               .select(this.bookData.id?this.checkGroup[this.bookData.id] ?? false:false)
               .selectedColor(this.theme.mainColor)
-              .unselectedColor('rgba(0, 0, 0, 0.35)')
+              .unselectedColor(ShelfColors.checkboxIdle())
               .zIndex(2)
               .onChange((val:boolean)=>{
                 if (this.bookData.id) {
@@ -82,7 +86,7 @@ export default struct BookInfoGridManage{
         .ellipsisMode(EllipsisMode.END)
         .maxLines(2)
 
-      Text(this.bookData.intro).fontSize(12).fontColor('rgb(174,174,174)')
+      Text(this.bookData.intro).fontSize(12).fontColor(ShelfColors.textSub())
         .textOverflow({
           overflow:TextOverflow.Ellipsis
         })

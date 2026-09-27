@@ -9,3 +9,7 @@
 /.clang-format
 /.clang-tidy
 **/.test
+# 含签名凭据（keyPassword/storePassword/certpath），**禁止提交**
+# 需要构建时由 DevEco Studio 自动生成
+/build-profile.json5
+/docs/

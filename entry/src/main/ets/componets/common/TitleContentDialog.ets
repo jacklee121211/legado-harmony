@@ -1,4 +1,5 @@
 import { ThemeStorageKey } from "../../common/constants/Theme"
+import { Haptics } from '../../common/utils/Haptics'
 import { ThemeItem } from "../../common/model/Theme"
 
 /**
@@ -34,6 +35,7 @@ export default struct TitleContentDialog {
       Row({space:24}) {
         Text('取消')
           .onClick(() => {
+            Haptics.tap();
             if (this.controller != undefined) {
               this.controller.close()
               this.cancel()
@@ -45,6 +47,7 @@ export default struct TitleContentDialog {
           .backgroundColor(this.theme.secondColor)
         Text('确认')
           .onClick(() => {
+            Haptics.tap();
             if (this.controller != undefined) {
               this.controller.close()
               this.confirm()

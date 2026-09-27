@@ -1,4 +1,5 @@
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
+import { Haptics } from '../../../../common/utils/Haptics';
 import { showMessage } from '../../../../componets/common/promptShow'
 import { WorksLists } from '../../../../database/entities/WorksLists'
 import WorksBookListGrid from './WorksBookListGrid'
@@ -6,6 +7,10 @@ import worksBookInfoDialog from '../../dialog/worksBookInfoDialog'
 import WorksBookListInfo from './WorksBookListInfo'
 import worksListsDao from '../../../../database/dao/WorksListsDao'
 import newBookShelf from '../Manage/bookManage/newBookShelf'
+import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
+import UiMotion from '../../../../common/utils/UiMotion'
+import { shelfEntrance } from '../../../../common/utils/EntranceWave'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 /**
  * 书单
@@ -17,9 +22,51 @@ export default struct WorksBookLists {
   @Prop currentIndex: number
   @Prop worksLists: WorksLists[] = []
   @Prop isShowCheck: boolean = false
+  /** App 级夜间开关：只为触发重绘（取色走 ShelfColors） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   @State worksBook: WorksLists = new WorksLists()
   @StorageLink('BOOK_IS_BOOK_WORKS_BOOK_LIST') @Watch('getWorkLists') isWorksBookListRefreshing: number = 0
   onSelect: Function = () => {
+  }
+
+  // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────────
+  // 与 `BookFolder.ets` 同一套做法（`@State` 数组逐项驱动 + 定时器 + 越界容错），
+  // 详细依据见那边的注释。
+  @State enteredFlags: boolean[] = []
+  private enterTimers: number[] = []
+
+  private isEntered(index: number): boolean {
+    const v: boolean | undefined = this.enteredFlags[index]
+    return v === undefined ? true : v
+  }
+
+  private replayEntrance(count: number): void {
+    this.clearEnterTimers()
+    shelfEntrance.begin()
+    const flags: boolean[] = []
+    for (let i = 0; i < count; i++) {
+      const d: number = shelfEntrance.delayFor(i)
+      if (d < 0) {
+        flags.push(true)
+      } else {
+        flags.push(false)
+        this.enterTimers.push(setTimeout(() => {
+          this.enteredFlags[i] = true
+        }, d))
+      }
+    }
+    this.enteredFlags = flags
+  }
+
+  private clearEnterTimers(): void {
+    for (const t of this.enterTimers) {
+      clearTimeout(t)
+    }
+    this.enterTimers = []
+  }
+
+  aboutToDisappear(): void {
+    this.clearEnterTimers()
   }
 
   aboutToAppear(): void {
@@ -34,6 +81,7 @@ export default struct WorksBookLists {
     worksListsDao.search({
       type: this.currentIndex
     }).then((val) => {
+      this.replayEntrance(val.length)
       this.worksLists = val
     })
   }
@@ -57,10 +105,12 @@ export default struct WorksBookLists {
                 .gesture(
                   LongPressGesture({ repeat: false, duration: 500 })
                     .onAction((event: GestureEvent) => {
+                        Haptics.tap();
                         this.worksBook = item
                         this.shelfInfoDialog?.open()
                     }))
                 .onClick(() => {
+                    Haptics.tap();
                     this.worksBook = item
                     this.isShowEditBook = true
                 })
@@ -77,15 +127,27 @@ export default struct WorksBookLists {
                 .gesture(
                   LongPressGesture({ repeat: false, duration: 500 })
                     .onAction((event: GestureEvent) => {
+                      Haptics.tap();
                       this.worksBook = item
                       this.shelfInfoDialog?.open()
                     }))
                 .onClick(() => {
+                  Haptics.tap();
                   this.worksBook = item
                   this.isShowEditBook = true
                 })
             }
           }
+          // ── 渐次入场（2026-09-24，需求第 5 / 7 点）──────────────────────────
+          // 只动图形变换属性（opacity / scale / translate），不触发重新布局；
+          // `.animation()` 放最后（它作用于**它之前**的属性）。
+          .opacity(this.isEntered(index) ? 1 : 0)
+          .scale({
+            x: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
+            y: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
+          })
+          .translate({ y: this.isEntered(index) ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
+          .animation(UiMotion.itemEnterParam())
         })
       }
 
@@ -117,7 +179,7 @@ export default struct WorksBookLists {
         lastWorkBookList: this.worksBook
       })
     }
-    .backgroundColor(Color.White)
+    .backgroundColor(ShelfColors.card())
   }
 
   shelfInfoDialog: CustomDialogController | null = new CustomDialogController({
@@ -129,9 +191,16 @@ export default struct WorksBookLists {
     }),
     cancel: this.exitDialog,
     autoCancel: true,
-    width: '100%',
+    // ★ 悬空四圆角 + 系统真材质（2026-09-22）。与书架其它长按弹窗保持同一观感。
+    //   `customStyle: false` 是材质生效的**必要条件**；options 无 margin 字段，
+    //   左右边距靠 width，上下靠 offset。逐条依据见 `BookInfos.ets` 同处注释。
+    width: '92%',
     alignment: DialogAlignment.Bottom,
-    customStyle: true
+    offset: { dx: 0, dy: -16 },
+    cornerRadius: 20,
+    customStyle: false,
+    // 弹窗材质走官方 options 渠道（依据见 BookInfos.ets 同处注释）
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
 
   })
 

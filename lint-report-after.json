@@ -1,0 +1,1707 @@
+{
+  "issues": [
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\model\\taskSearchBook.ets",
+      "line": 30,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\model\\taskSearchBook.ets",
+      "line": 120,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\model\\XmlAnalysis.ets",
+      "line": 57,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\bookGroupUtils.ets",
+      "line": 58,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\bookGroupUtils.ets",
+      "line": 61,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\booksUtils.ets",
+      "line": 25,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\booksUtils.ets",
+      "line": 69,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\booksUtils.ets",
+      "line": 88,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\requestUtils.ets",
+      "line": 33,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\requestUtils.ets",
+      "line": 35,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\requestUtils.ets",
+      "line": 39,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\requestUtils.ets",
+      "line": 41,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\requestUtils.ets",
+      "line": 68,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\requestUtils.ets",
+      "line": 70,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\rssSourcesUtils.ets",
+      "line": 25,
+      "column": 3,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\rssSourcesUtils.ets",
+      "line": 44,
+      "column": 3,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\rssSourcesUtils.ets",
+      "line": 55,
+      "column": 4,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\common\\utils\\searchUtils.ets",
+      "line": 23,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\ReadShow.ets",
+      "line": 26,
+      "column": 4,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\ImportCommon.ets",
+      "line": 205,
+      "column": 13,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\SubscriptionImport.ets",
+      "line": 51,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\SubscriptionImport.ets",
+      "line": 233,
+      "column": 13,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\SubscriptionImport.ets",
+      "line": 430,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\Reader\\MusicPlayer.ets",
+      "line": 57,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookGroupsDao.ets",
+      "line": 101,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookGroupsDao.ets",
+      "line": 211,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookGroupsDao.ets",
+      "line": 225,
+      "column": 11,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookGroupsDao.ets",
+      "line": 283,
+      "column": 13,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookGroupsDao.ets",
+      "line": 306,
+      "column": 11,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BooksDao.ets",
+      "line": 174,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BooksDao.ets",
+      "line": 267,
+      "column": 11,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookSourceDao.ets",
+      "line": 245,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookSourceDao.ets",
+      "line": 292,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\BookSourceDao.ets",
+      "line": 328,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\rssSourceGroupDao.ets",
+      "line": 46,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\rssSourceGroupDao.ets",
+      "line": 57,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\RssSourcesHistoryDao.ets",
+      "line": 63,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\RssSourcesHistoryDao.ets",
+      "line": 117,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\SubscriptionDao.ets",
+      "line": 84,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\SubscriptionDao.ets",
+      "line": 173,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\dao\\WorksListsDao.ets",
+      "line": 67,
+      "column": 9,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookContent.ets",
+      "line": 23,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookContent.ets",
+      "line": 59,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookContent.ets",
+      "line": 78,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\BookSource\\AddSourcePage.ets",
+      "line": 181,
+      "column": 13,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\BookSource\\Index.ets",
+      "line": 61,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\CategoryList\\Index.ets",
+      "line": 49,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\CategoryList\\Index.ets",
+      "line": 76,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\RssSourceGroup.ets",
+      "line": 32,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\RssSources\\newSourcesNetWork.ets",
+      "line": 58,
+      "column": 11,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\RssSources\\newSourcesNetWork.ets",
+      "line": 103,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\rssWebView.ets",
+      "line": 83,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\rssWebView.ets",
+      "line": 390,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\rssWebView.ets",
+      "line": 415,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\SubscriptionIndex.ets",
+      "line": 406,
+      "column": 5,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\SubscriptionIndex.ets",
+      "line": 428,
+      "column": 7,
+      "severity": "Error",
+      "rule": "@typescript-eslint/await-thenable",
+      "message": "Unexpected `await` of a non-Promise (non-\"Thenable\") value."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\bookDetail\\BookOverlay.ets",
+      "line": 4,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\bookDetail\\note\\CircleGeneralButton.ets",
+      "line": 9,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\bookDetail\\note\\NoteIndex.ets",
+      "line": 66,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\bookDetail\\note\\NoteIndex.ets",
+      "line": 68,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\bookDetail\\ReadRecordItem.ets",
+      "line": 9,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\bookDetail\\TagIndex.ets",
+      "line": 11,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\buttonCommon.ets",
+      "line": 12,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\CircleIcon.ets",
+      "line": 10,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\DialogCancelButton.ets",
+      "line": 11,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\InsideCircleIcon.ets",
+      "line": 3,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\noFind.ets",
+      "line": 15,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\noSourceFind.ets",
+      "line": 12,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\operateIcon.ets",
+      "line": 9,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\RefreshComponent.ets",
+      "line": 8,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\Score.ets",
+      "line": 34,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\common\\Tag.ets",
+      "line": 2,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\Form\\FormInput.ets",
+      "line": 16,
+      "column": 25,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\Form\\FormItem.ets",
+      "line": 9,
+      "column": 25,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\GroupType.ets",
+      "line": 54,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\groupTypePanel.ets",
+      "line": 71,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\groupTypePanel.ets",
+      "line": 143,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\groupTypePanel.ets",
+      "line": 160,
+      "column": 17,
+      "severity": "Warning",
+      "rule": "@performance/high-frequency-log-check",
+      "message": "Avoid printing logs in frequent functions. The call chain here is as follows: entry\\src\\main\\ets\\componets\\group\\groupTypePanel.ets:160:console.info"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\GroupTypeSearch.ets",
+      "line": 54,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\groupTypeSearchPanel.ets",
+      "line": 55,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\group\\groupTypeSearchPanel.ets",
+      "line": 85,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\head\\BookMark.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\head\\BookType.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\head\\IndexSearchType.ets",
+      "line": 69,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\ImportCommon.ets",
+      "line": 120,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\ImportCommon.ets",
+      "line": 125,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\SubscriptionImport.ets",
+      "line": 125,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\SubscriptionImport.ets",
+      "line": 130,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\import\\SubscriptionImport.ets",
+      "line": 358,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\myCenter\\FolderFileListItem.ets",
+      "line": 10,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\myCenter\\readTabs.ets",
+      "line": 14,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\myset\\SetHead.ets",
+      "line": 4,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\panel\\catalogMove.ets",
+      "line": 28,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\panel\\catalogMove.ets",
+      "line": 161,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-no-state-var-access-in-loop",
+      "message": "Avoid frequent state variable reads inside loop logic"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\panel\\catalogMove.ets",
+      "line": 162,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-no-state-var-access-in-loop",
+      "message": "Avoid frequent state variable reads inside loop logic"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\Reader\\NetworkInput.ets",
+      "line": 2,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\Reader\\TxtContentHandler.ets",
+      "line": 98,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-no-state-var-access-in-loop",
+      "message": "Avoid frequent state variable reads inside loop logic"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\search\\SearchBookItem.ets",
+      "line": 10,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\search\\SearchHistory.ets",
+      "line": 41,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\source\\sourceTabs.ets",
+      "line": 14,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\ui\\SourceGroup.ets",
+      "line": 11,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\componets\\ui\\SourceGroup.ets",
+      "line": 38,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\entities\\rule\\index.ets",
+      "line": 1,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\entities\\rule\\index.ets",
+      "line": 2,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\entities\\rule\\index.ets",
+      "line": 3,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\entities\\rule\\index.ets",
+      "line": 4,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\entities\\rule\\index.ets",
+      "line": 5,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\database\\entities\\rule\\index.ets",
+      "line": 6,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\Index.ets",
+      "line": 115,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\BookDetailPage.ets",
+      "line": 116,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\BookEditor\\BookEditorPage.ets",
+      "line": 196,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\BookFolder.ets",
+      "line": 75,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookBodyContent.ets",
+      "line": 152,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookBodyContent.ets",
+      "line": 171,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookContent.ets",
+      "line": 113,
+      "column": 8,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookHistoryContent.ets",
+      "line": 47,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookHistoryInfo.ets",
+      "line": 35,
+      "column": 12,
+      "severity": "Warning",
+      "rule": "@performance/bad-deep-clone-check",
+      "message": "Prioritize structured clone for deep clone operations."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookInfoGrids.ets",
+      "line": 15,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\BookInfos.ets",
+      "line": 12,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\components\\dialog\\BookSelectGroupDialog.ets",
+      "line": 60,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\BookFolderGridManage.ets",
+      "line": 10,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\BookFolderInfoManage.ets",
+      "line": 11,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\BookFolderManages.ets",
+      "line": 55,
+      "column": 10,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\BookFolderManages.ets",
+      "line": 71,
+      "column": 12,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\bookListManage.ets",
+      "line": 29,
+      "column": 12,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\bookListManage.ets",
+      "line": 46,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\newAddShelf.ets",
+      "line": 117,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\bookManage\\newBookShelf.ets",
+      "line": 34,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Manage\\components\\catalogAddShelf.ets",
+      "line": 78,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Shelf\\WorksBookListGrid.ets",
+      "line": 8,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\bookShelf\\Shelf\\WorksBookListInfo.ets",
+      "line": 13,
+      "column": 3,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-object-link-to-replace-prop",
+      "message": "Use @ObjectLink instead of @Prop to reduce unnecessary deep copies"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\coverInfoImageShow.ets",
+      "line": 12,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\dialog\\shareWorksBook.ets",
+      "line": 82,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\dialog\\shareWorksBook.ets",
+      "line": 114,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\dialog\\shareWorksBook.ets",
+      "line": 144,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\dialog\\worksBookInfoDialog.ets",
+      "line": 32,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\BookSource\\components\\FilterText.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\BookSource\\Index.ets",
+      "line": 113,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\cartoonFind.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\CategoryList\\Index.ets",
+      "line": 121,
+      "column": 17,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\AllCategory.ets",
+      "line": 23,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\AllCategory.ets",
+      "line": 36,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\BodyContent.ets",
+      "line": 71,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\BodyContent.ets",
+      "line": 140,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\BookFindContent.ets",
+      "line": 104,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\CardItem.ets",
+      "line": 8,
+      "column": 16,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\components\\FindContent.ets",
+      "line": 11,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\Find.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\mayAlsoLike.ets",
+      "line": 9,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\novelFind.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Find\\soundFind.ets",
+      "line": 5,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\aboutUs\\aboutUsPage.ets",
+      "line": 218,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\aboutUs\\aboutUsPage.ets",
+      "line": 291,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\aboutUs\\DisclaimerPage.ets",
+      "line": 51,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\aboutUs\\OpenSourceLicensePage.ets",
+      "line": 58,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\aboutUs\\PrivacyAgreementPage.ets",
+      "line": 49,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\aboutUs\\versionLogPage.ets",
+      "line": 92,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\clearCache.ets",
+      "line": 25,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\cloudDisk.ets",
+      "line": 185,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\CreateCustomTheme.ets",
+      "line": 140,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\FileManagement.ets",
+      "line": 87,
+      "column": 29,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-reusable-component",
+      "message": "Use reusable components to define complex components whenever possible"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\helpCenterPage.ets",
+      "line": 141,
+      "column": 21,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\helpCenterPage.ets",
+      "line": 155,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\helpCenterPage.ets",
+      "line": 203,
+      "column": 19,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\helpCenterPage.ets",
+      "line": 238,
+      "column": 17,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MyCenter.ets",
+      "line": 102,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MyCenter.ets",
+      "line": 116,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MyCenter.ets",
+      "line": 144,
+      "column": 17,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MySetPage.ets",
+      "line": 85,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MySetPage.ets",
+      "line": 90,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MySetPage.ets",
+      "line": 184,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\MyThemeConfigComp.ets",
+      "line": 140,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\WebDav.ets",
+      "line": 67,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\directoryPurification.ets",
+      "line": 15,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\newAddRule.ets",
+      "line": 333,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\ReaderPage2.ets",
+      "line": 127,
+      "column": 8,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\ReaderPage2.ets",
+      "line": 800,
+      "column": 21,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-reusable-component",
+      "message": "Use reusable components to define complex components whenever possible"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\ReaderPage3.ets",
+      "line": 2242,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkui-use-reusable-component",
+      "message": "Use reusable components to define complex components whenever possible"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\RuleGroupType.ets",
+      "line": 34,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\RuleGroupTypePanel.ets",
+      "line": 45,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\RuleGroupTypePanel.ets",
+      "line": 79,
+      "column": 17,
+      "severity": "Warning",
+      "rule": "@performance/high-frequency-log-check",
+      "message": "Avoid printing logs in frequent functions. The call chain here is as follows: entry\\src\\main\\ets\\pages\\view\\Reader\\RuleGroupTypePanel.ets:79:console.info"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\RssSourceGroup.ets",
+      "line": 58,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\rssSourcesHelp.ets",
+      "line": 11,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\RssSourcesHistory.ets",
+      "line": 18,
+      "column": 23,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\RssSourcesHistory.ets",
+      "line": 73,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\SubscriptionContent.ets",
+      "line": 141,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\SubscriptionContent.ets",
+      "line": 175,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\SubscriptionContent.ets",
+      "line": 343,
+      "column": 8,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\SubscriptionContent.ets",
+      "line": 429,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\SubscriptionSearch.ets",
+      "line": 121,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\WebSetup.ets",
+      "line": 31,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\components\\WebSetupUA.ets",
+      "line": 28,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\IndexSubscription.ets",
+      "line": 58,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\IndexSubscription.ets",
+      "line": 206,
+      "column": 9,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\IndexSubscription.ets",
+      "line": 299,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\RssSources\\dialogNewSources.ets",
+      "line": 93,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\SubscriptionIndex.ets",
+      "line": 200,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Subscription\\SubscriptionIndex.ets",
+      "line": 371,
+      "column": 7,
+      "severity": "Warning",
+      "rule": "@performance/foreach-args-check",
+      "message": "For performance purposes, set keyGenerator for ForEach."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\provider\\configProvider.ets",
+      "line": 9,
+      "column": 15,
+      "severity": "Warning",
+      "rule": "@performance/avoid-overusing-custom-component-check",
+      "message": "Preferentially use the @Builder method instead of custom components."
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\types\\rule\\index.ets",
+      "line": 1,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\types\\rule\\index.ets",
+      "line": 2,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\types\\rule\\index.ets",
+      "line": 3,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\types\\rule\\index.ets",
+      "line": 4,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\types\\rule\\index.ets",
+      "line": 5,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\types\\rule\\index.ets",
+      "line": 6,
+      "column": 1,
+      "severity": "Warning",
+      "rule": "@performance/hp-arkts-no-use-any-export-other",
+      "message": "Do not use export * to export types and data defined in the other module"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets",
+      "line": 174,
+      "column": 11,
+      "severity": "Warning",
+      "rule": "@performance/high-frequency-log-check",
+      "message": "Avoid printing logs in frequent functions. The call chain here is as follows: readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets:174:console.info"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets",
+      "line": 178,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/high-frequency-log-check",
+      "message": "Avoid printing logs in frequent functions. The call chain here is as follows: readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets:178:console.info"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets",
+      "line": 190,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/high-frequency-log-check",
+      "message": "Avoid printing logs in frequent functions. The call chain here is as follows: readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets:190:console.info"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets",
+      "line": 192,
+      "column": 13,
+      "severity": "Warning",
+      "rule": "@performance/high-frequency-log-check",
+      "message": "Avoid printing logs in frequent functions. The call chain here is as follows: readerLibrary\\src\\main\\ets\\view\\SimulateCurlView.ets:192:console.error"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\myCenter\\FileManagement.ets",
+      "line": 84,
+      "column": 17,
+      "severity": "Suggestion",
+      "rule": "@performance/hp-arkui-set-cache-count-for-lazyforeach-grid",
+      "message": "Set cachedCount to an appropriate value when using LazyForEach in grids"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\ReaderPage2.ets",
+      "line": 797,
+      "column": 15,
+      "severity": "Suggestion",
+      "rule": "@performance/hp-arkui-set-cache-count-for-lazyforeach-grid",
+      "message": "Set cachedCount to an appropriate value when using LazyForEach in grids"
+    },
+    {
+      "file": "D:\\Arkts\\3.8.11\\legado-harmonydsh\\entry\\src\\main\\ets\\pages\\view\\Reader\\ReaderPage3.ets",
+      "line": 2239,
+      "column": 7,
+      "severity": "Suggestion",
+      "rule": "@performance/hp-arkui-set-cache-count-for-lazyforeach-grid",
+      "message": "Set cachedCount to an appropriate value when using LazyForEach in grids"
+    }
+  ],
+  "summary": {
+    "filesChecked": 125,
+    "issues": 212,
+    "errors": 56,
+    "warnings": 153,
+    "suggestions": 3
+  }
+}

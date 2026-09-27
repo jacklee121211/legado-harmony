@@ -8,6 +8,6 @@ export default struct BookShelf {
     Column(){
       IndexShelf()
     }
-    .backgroundColor('rgba(255, 255, 255, 0.8)')
+    .backgroundColor($r('app.color.page_bg'))
   }
 }

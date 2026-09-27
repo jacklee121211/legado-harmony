@@ -1,4 +1,5 @@
 import { ThemeStorageKey } from '../../common/constants/Theme'
+import { Haptics } from '../../common/utils/Haptics';
 import { ThemeItem } from '../../common/model/Theme'
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
@@ -43,6 +44,7 @@ export default struct groupTypeSearchPanel{
         }.alignItems(VerticalAlign.Bottom)
         Row({space:12}){
           Image($r('app.media.close')).width(24).height(20).onClick(()=>{
+            Haptics.tap();
             this.groupCoverShow = false
           })
         }
@@ -62,11 +64,12 @@ export default struct groupTypeSearchPanel{
               }
             }.width('25%')
             .onClick(() => {
+              Haptics.tap();
               this.clickGroup = item
               this.isShowBookFolderInfoDialog = true
             })
           }
-        })
+        }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
       }
 
       Flex({
@@ -87,11 +90,12 @@ export default struct groupTypeSearchPanel{
                 this.GroupType(item.groupName)
               }
               .onClick(()=>{
+                Haptics.tap();
                 this.clickGroup = item
                 this.isShowBookFolderInfoDialog = true
               })
               .width('25%')
-          })
+          }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
         }
       } else {
         Flex({

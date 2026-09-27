@@ -42,10 +42,11 @@ export default class MySetConstants {
    */
   static readonly SET_IMG_ANTI: string = 'setImgAnti';
 
-  /**
-   *Webservice唤醒锁
-   */
-  static readonly SET_AWAKEN: string = 'setAwaken';
+  // T31（本次对话）：已删除 `SET_AWAKEN`（'setAwaken'，"Webservice唤醒锁"）。
+  // 删除原因：该开关在代码里**只有 UI 翻转、没有任何功能**（全仓 5 处引用全为定义/绑定/显示/翻转），
+  // 属于**误导用户**的假开关 —— 用户实测"关闭它之后被杀后台"实为时间巧合
+  // （日志证据：第一段锁屏 2 分 22 秒未杀，长时任务 `notification 42` 正常；
+  //   第二段被杀，长时任务 `notification -1` 异常）。
 
   /**
    *全程响应耳机按键
@@ -71,4 +72,21 @@ export default class MySetConstants {
   static readonly SET_USER_AGENT: string = 'setUserAgent';
 
   static readonly SET_LANGUAGE: string = 'setLanguage';
+
+  /**
+   * 震动反馈开关（2026-09-25 新增，全局震动方案）。
+   * ⚠️ 与其他 SET_* 不同：这个键**真正落盘**（Preferences `HapticsEnabled`，
+   * 见 `common/utils/Haptics.ets`）—— 旧 SET_* 键只存在 AppStorage、重启即丢。
+   */
+  static readonly SET_HAPTICS: string = 'setHaptics';
+
+  /**
+   * 听书引擎切换（2026-09-25 双引擎架构）。⚠️ 仅暗门解锁后可见/可点
+   * （ListenUnlock.isUnlocked()）；切换真正落盘到 TtsPrefs.ttsEngine。
+   */
+  static readonly SET_EDGE_TTS: string = 'setEdgeTts';
+  /** 标定模式（开发者）开关（2026-09-26）：解锁后在我的-设置出现，读写 TtsHlCalibV3 的 dev 字段 */
+  static readonly SET_CALIB_DEV: string = 'setCalibDev';
+  /** 书架书名是否显示文件拓展名（2026-09-27 新增，默认关=隐藏 .txt 等后缀） */
+  static readonly SET_EXT_NAME: string = 'setExtName';
 }

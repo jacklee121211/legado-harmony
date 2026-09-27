@@ -5,6 +5,7 @@
  * 加入书单弹窗
  */
 import CommonConstants from '../../../../../common/constants/CommonConstants'
+import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
@@ -14,6 +15,7 @@ import worksListsDao from '../../../../../database/dao/WorksListsDao'
 import { WorksBookList } from '../../../../../database/entities/WorksBookList'
 import { WorksLists } from '../../../../../database/entities/WorksLists'
 import newBookShelf from '../bookManage/newBookShelf'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
 export default struct catalogAddShelf{
@@ -26,6 +28,8 @@ export default struct catalogAddShelf{
   @State worksBook:WorksLists = new WorksLists()
   @State worksLists:WorksLists[] =[]
   @State newBookIds:number[] = []
+  /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走资源 token / `ShelfColors`） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   getWorkLists() {
@@ -69,7 +73,7 @@ export default struct catalogAddShelf{
           Text('加入书单').fontSize(16).fontWeight(700).lineHeight(24)
         }
         .padding({right:20,left:20,top:12,bottom:12})
-        Divider().strokeWidth(0.5)
+        Divider().strokeWidth(0.5).color(ShelfColors.line())
         Flex(){
           this.ColumnTitle()
         }
@@ -77,7 +81,7 @@ export default struct catalogAddShelf{
           Column(){
             ForEach(this.worksLists,(item:WorksLists)=>{
               this.ColumnTitle(item)
-            })
+            }, (item: WorksLists): string => item.worksId !== undefined ? 'w' + item.worksId : item.worksName)
           }
         }
         .align(Alignment.TopStart)
@@ -85,10 +89,11 @@ export default struct catalogAddShelf{
         .scrollBar(BarState.Off)
       }
       Column(){
-        Divider().strokeWidth(0.5)
+        Divider().strokeWidth(0.5).color(ShelfColors.line())
 
         Text('取消')
           .onClick(() => {
+            Haptics.tap();
             this.onClickShelf(false)
           })
           .margin({
@@ -130,7 +135,7 @@ export default struct catalogAddShelf{
         bookIds: this.newBookIds
       })
     }
-    .backgroundColor(Color.White)
+    .backgroundColor(ShelfColors.pageBg())
   }
 
   @Builder ColumnTitle(work?:WorksLists) {
@@ -146,6 +151,7 @@ export default struct catalogAddShelf{
             Image($r('app.media.add')).width(24).fillColor(this.theme.mainColor)
             Text('新建书单').fontSize(14).fontColor(this.theme.mainColor).fontWeight(400).lineHeight(22)
           }.onClick(()=>{
+            Haptics.tap();
             this.workBookListStatus = 0
             this.isShowEditBook = true
           })
@@ -158,7 +164,7 @@ export default struct catalogAddShelf{
           Row({
             space:12
           }){
-            Image($r('app.media.shelf')).width(24)
+            Image($r('app.media.shelf')).width(24).fillColor(ShelfColors.icon())
             Text(work.worksName)
               .fontSize(14)
               .fontWeight(400)
@@ -171,12 +177,13 @@ export default struct catalogAddShelf{
           }
 
           if (this.isExistBook(work.worksBookList ?? [])) {
-            Text('已在书单').fontSize(12).fontWeight(400).lineHeight(20).fontColor('rgba(0, 0, 0, 0.45)')
+            Text('已在书单').fontSize(12).fontWeight(400).lineHeight(20).fontColor($r('app.string.color_black_45'))
           } else {
-            Image($r('app.media.ic_public_return_right')).width(24).height(24)
+            Image($r('app.media.ic_public_return_right')).width(24).height(24).fillColor(ShelfColors.icon())
           }
         }
         .onClick(() => {
+          Haptics.tap();
           if (this.newBookIds.length === 0){
             showMessage('暂无相关内容可加入')
             return

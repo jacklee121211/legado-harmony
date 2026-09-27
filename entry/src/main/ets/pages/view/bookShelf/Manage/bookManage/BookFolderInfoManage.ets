@@ -1,7 +1,9 @@
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
+import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import BookOverlay from '../../../../../componets/bookDetail/BookOverlay'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 /**
  * 文件夹列表_管理页
@@ -14,6 +16,8 @@ export default struct BookFolderInfoManage {
   onSelect:Function = () => {}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
     Flex(
       {
@@ -36,7 +40,7 @@ export default struct BookFolderInfoManage {
           Text(this.group.groupName)
             .fontWeight(700)
           Column(){
-            Text(`共${this.group.bookIds?.length||0}本`).fontSize(12).fontColor('rgb(174,174,174)')
+            Text(`共${this.group.bookIds?.length||0}本`).fontSize(12).fontColor(ShelfColors.textSub())
               .textOverflow({
                 overflow:TextOverflow.Ellipsis
               })
@@ -71,7 +75,7 @@ export default struct BookFolderInfoManage {
               }
             })
             .onClick(()=>{
-              this.onSelect()
+              Haptics.tap(); this.onSelect()
             })
         }
         .padding({ left: 15, right: 15, bottom: 5, top: 5 })

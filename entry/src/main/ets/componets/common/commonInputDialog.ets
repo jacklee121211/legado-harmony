@@ -6,11 +6,21 @@ import PaddingConstants from '../../common/constants/PaddingConstants'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 import { showMessage } from './promptShow'
+import { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil'
 
 @CustomDialog
 export default struct commonInputDialog {
 
   controller?: CustomDialogController
+
+  /**
+   * 弹窗背板（2026-09-21 接入沉浸光感）。本弹窗是小尺寸输入框，
+   * 属官方"合理尺寸"范围。用修饰器而不是 `.backgroundColor(Color.White)` 的原因见
+   * `MaterialColumnModifier` 注释：官方原文「已主动设置背景色…则不呈现沉浸光感效果」，
+   * 而系统在 default 模式下**本来就会**给 Dialog 自动开沉浸光感 —— 是我们这行白底把它挡住的。
+   * 关闭（回退）时自动落回白色。
+   */
+  private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White)
 
   cancel: () => void = () => {
   }
@@ -53,7 +63,7 @@ export default struct commonInputDialog {
       }.padding({top:PaddingConstants.PADDING_20,bottom:PaddingConstants.PADDING_20})
     }
     .padding({left:PaddingConstants.PADDING_20,right:PaddingConstants.PADDING_20})
-    .backgroundColor(Color.White)
+    .attributeModifier(this.surface)
   }
   //输入框提示
   @Prop placeholder:string = '请输入内容'

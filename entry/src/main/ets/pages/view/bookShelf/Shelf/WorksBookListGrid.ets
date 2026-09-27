@@ -1,6 +1,8 @@
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
+import { Haptics } from '../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../common/model/Theme'
 import { WorksLists } from '../../../../database/entities/WorksLists'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 @Component
 export default struct WorksBookListGrid {
@@ -11,6 +13,8 @@ export default struct WorksBookListGrid {
   onSelect:Function = () => {}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** App 级夜间开关：只为触发重绘（取色走 ShelfColors） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
     Column() {
       Stack() {
@@ -22,15 +26,17 @@ export default struct WorksBookListGrid {
             Checkbox()
               .zIndex(2)
               .selectedColor(this.theme.mainColor)
-              .unselectedColor('rgba(0, 0, 0, 0.35)')
+              .unselectedColor(ShelfColors.checkboxIdle())
               .select(this.work.worksId?this.checkGroup[this.work.worksId] ?? false:false)
               .selectedColor(this.theme.mainColor)
               .onChange((val: boolean) => {
+                Haptics.tap();
                 if (this.work.worksId) {
                   this.checkGroup[this.work.worksId] = val
                 }
               })
               .onClick(() => {
+                Haptics.tap();
                 this.onSelect()
               })
           }
@@ -75,7 +81,7 @@ export default struct WorksBookListGrid {
       }
       .align(Alignment.BottomStart)
 
-      Row().width(100).height(20).backgroundColor('rgba(255, 255, 255, 0.6)').borderRadius(10)
+      Row().width(100).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
 
       Text(this.work.worksName)
           .fontSize(15)
@@ -85,7 +91,7 @@ export default struct WorksBookListGrid {
           })
           .ellipsisMode(EllipsisMode.END)
           .maxLines(2)
-        Text(`共${this.work.worksBookNum}本`).fontSize(12).fontColor('rgb(174,174,174)')
+        Text(`共${this.work.worksBookNum}本`).fontSize(12).fontColor(ShelfColors.textSub())
           .textOverflow({
             overflow:TextOverflow.Ellipsis
           })

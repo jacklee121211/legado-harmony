@@ -1,0 +1,34 @@
+{
+  "shortcuts": [
+    {
+      "shortcutId": "quick_listen",
+      "label": "$string:shortcut_quick_listen",
+      "icon": "$media:headphones_fill",
+      "wants": [
+        {
+          "bundleName": "com.jk.reader",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "quickAction": "listen"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "quick_read",
+      "label": "$string:shortcut_quick_read",
+      "icon": "$media:ebook",
+      "wants": [
+        {
+          "bundleName": "com.jk.reader",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "quickAction": "read"
+          }
+        }
+      ]
+    }
+  ]
+}

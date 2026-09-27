@@ -1,5 +1,6 @@
 import { ThemeStorageKey } from "../../common/constants/Theme"
 import { ThemeItem } from "../../common/model/Theme"
+import { Haptics } from "../../common/utils/Haptics"
 
 @CustomDialog
 export default struct confirmDialogExample {
@@ -24,13 +25,18 @@ export default struct confirmDialogExample {
           space:8
         }){
           Checkbox().selectedColor(this.theme.mainColor).select(this.delCache)
+            .onChange((value: boolean) => {
+              Haptics.tap();
+              this.delCache = value
+            })
           Text('同时删除本地缓存')
-            .fontColor('rgba(0, 0, 0, 0.45)').fontSize(14).fontWeight(400).lineHeight(22)
+            .fontColor($r('app.color.text_secondary')).fontSize(14).fontWeight(400).lineHeight(22)
         }
       }
       Row({space:24}) {
         Text('取消')
           .onClick(() => {
+            Haptics.tap();
             if (this.controller != undefined) {
               this.controller.close()
               this.cancel()
@@ -42,6 +48,7 @@ export default struct confirmDialogExample {
           .backgroundColor(this.theme.secondColor)
         Text('确认')
           .onClick(() => {
+            Haptics.tap();
             if (this.controller != undefined) {
               this.controller.close()
               this.confirm()

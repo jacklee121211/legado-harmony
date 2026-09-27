@@ -5,6 +5,7 @@ import AppDatabaseUtil from '../AppDatabaseUtil';
 import { Books } from '../entities/Books';
 import { BooksTypeSearchParams } from '../types/BooksType';
 import { ColumnInfo } from '../types/ColumnInfo';
+import { PreferencesUtil } from '@pura/harmony-utils';
 
 class BooksDao {
   TABLE_NAME: string = 'books'
@@ -17,7 +18,17 @@ class BooksDao {
         return
       }
       await DbUtil.createTable(createSql)
-      AppDatabaseUtil.existsTable(this.TABLE_NAME)
+      // ── finishedTime 列迁移（2026-09-21）──────────────────────────────────
+      // `CREATE TABLE IF NOT EXISTS` 对**已存在**的表不会补列，而本工程
+      // `AppDatabase/index.ets` 的 `formatVersion` 固定为 1、**没有任何 upgrade 路径**
+      // （全文件无 ALTER/version 分支）。所以后加的列必须在这里显式补。
+      // 对"列已存在"的报错**必须容忍** —— 新装用户走 createSql 建好列后会命中这里。
+      try {
+        await DbUtil.executeSql('ALTER TABLE books ADD COLUMN finishedTime INTEGER NOT NULL DEFAULT 0')
+      } catch (e) {
+        // 列已存在（新装/已迁移）⇒ 正常情况，忽略
+      }
+      await AppDatabaseUtil.existsTable(this.TABLE_NAME)
       return
     } catch (err) {
       console.info('TagInfo', JSON.stringify(err))
@@ -155,8 +166,12 @@ class BooksDao {
         sql += ` isTop DESC, createTime DESC`;
       }
 
-      const offset = (pageNumber - 1) * pageSize;
-      sql += ` LIMIT ${pageSize} OFFSET ${offset}`;
+      // pageSize <= 0 ⇒ 不加 LIMIT（全量）。管理页需要列出全部书籍，
+      // 旧实现写死 (1,100) 导致超过 100 本只显示 100 本（2026-09-24 用户反馈）。
+      if (pageSize > 0) {
+        const offset = (pageNumber - 1) * pageSize;
+        sql += ` LIMIT ${pageSize} OFFSET ${offset}`;
+      }
 
       const bookDbList = await DbUtil.querySqlForList<Books>(sql, column);
       console.log("TagInfo", '书籍：' + bookDbList.length)
@@ -193,8 +208,17 @@ class BooksDao {
         }
       }
       books.createTime = Date.now()
-      await DbUtil.insert(this.TABLE_NAME, books, column)
-      console.log('TagInfo', '创建成功')
+      // ⚠️ 必须把新 rowid **回填**到对象上（T5-1 的前置条件）。
+      //    `DbUtil.insert` 本就 resolve 了 rowid（DbUtil.ets:133-139 `resolve(id)`），
+      //    但旧实现丢弃了返回值 ⇒ 调用方手里的 `Books` 没有 id，
+      //    只有"从数据库回读"的对象才带 id（依赖"恰好"而非"保证"）。
+      //    另：`buildValueBucket` 会跳过 undefined 字段（DbUtil.ets:299），
+      //    故 id 未设时 SQLite 按 `INTEGER PRIMARY KEY`（rowid 别名）自动分配并返回。
+      const newId: number = await DbUtil.insert(this.TABLE_NAME, books, column)
+      if (newId > 0) {
+        books.id = newId
+      }
+      console.log('TagInfo', '创建成功', newId)
       return true
     } catch (err) {
       console.log('TagInfo, Error, ', JSON.stringify(err))
@@ -423,10 +447,227 @@ class BooksDao {
       return [];
     }
   }
+  /**
+   * 取「真正最后一次阅读」的书（桌面快捷方式「快速听书 / 快速阅读」用）。
+   *
+   * ## 为什么**不能**用 `durChapterTime` 排序（实测踩坑记录）
+   * 初版实现按 `durChapterTime DESC` + `greaterThan('durChapterTime', 0)` 取第一条，
+   * **真机实测始终返回 null**（日志：`quickAction=listen` 后 10ms 就弹了"还没有阅读记录"）。
+   * 查证原因：**当前阅读页 `ReaderPage3` 根本不写数据库的 `durChapterTime`** ——
+   * 全文件对 `durChapterTime` / `BookHistory` / `updateBook` 的引用数为 **0**；
+   * 它把进度存在 **Preferences** 的 `BookCurrentData_<书名>`（见 `ReaderPage3:482-488`）。
+   * 会写 `durChapterTime` 的只有**旧**阅读页 `ReaderPage2:883`、`BookDetailPage:374`
+   * 与 `BookHistoryUtils`，当前路径一个都不过。⇒ 该字段对所有用新阅读页读过的书恒为 0，
+   * 过滤条件把所有书都排除了。
+   *
+   * ## 现方案：读「阅读页自己写的标记」
+   * `ReaderPage3.registerPageShow()` 在每次翻页时写入
+   * `LastReadBookName` / `LastReadBookUrl` 两个 Preferences 键。
+   * 这里按这两个键回查 `books` 表拿完整 `Books` 对象（阅读页需要完整 bookData）。
+   * 不按 `bookName` 单独查是为了避免同名不同源的书串台。
+   *
+   * @returns 最近阅读的书；无标记或表里查不到时返回 null（由调用方走兜底提示）
+   */
+  async getLastReadBook(): Promise<Books | null> {
+    try {
+      const name = PreferencesUtil.getSync('LastReadBookName', '') as string;
+      const url = PreferencesUtil.getSync('LastReadBookUrl', '') as string;
+      if (typeof name !== 'string' || name.length === 0) {
+        return null;
+      }
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const predicates = DbUtil.getPredicates(this.TABLE_NAME);
+      predicates.equalTo('bookName', name);
+      if (typeof url === 'string' && url.length > 0) {
+        predicates.equalTo('bookUrl', url);
+      }
+      const books = await DbUtil.queryForList<Books>(predicates, column);
+      if (books.length === 0) {
+        return null;
+      }
+      return books[0];
+    } catch (e) {
+      console.log('getLastReadBook, Error, ', JSON.stringify(e));
+      return null;
+    }
+  }
+
+  /**
+   * 「读过」计数：有阅读记录的书（`durChapterTime > 0`）。
+   * 与「读完」**相互独立** —— 删除读过记录不影响读完记录（见 `clearReadRecord`）。
+   */
+  async countRead(): Promise<number> {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const p = DbUtil.getPredicates(this.TABLE_NAME);
+      p.greaterThan('durChapterTime', 0);
+      const list = await DbUtil.queryForList<Books>(p, column);
+      return list.length;
+    } catch (e) {
+      console.log('countRead, Error, ', JSON.stringify(e));
+      return 0;
+    }
+  }
+
+  /**
+   * 「读完」计数：**曾经**读到过末章（`finishedTime > 0`）。
+   * 只写一次（读到末章时若为 0 才写），所以"读完后回第一章重看"仍算读完、
+   * "同一本第二次到 100%" 不会重复计。
+   */
+  async countFinished(): Promise<number> {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const p = DbUtil.getPredicates(this.TABLE_NAME);
+      p.greaterThan('finishedTime', 0);
+      const list = await DbUtil.queryForList<Books>(p, column);
+      return list.length;
+    } catch (e) {
+      console.log('countFinished, Error, ', JSON.stringify(e));
+      return 0;
+    }
+  }
+
+  /** 「读过」列表：按最后阅读时间倒序 */
+  async listRead(): Promise<Books[]> {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const p = DbUtil.getPredicates(this.TABLE_NAME);
+      p.greaterThan('durChapterTime', 0);
+      p.orderByDesc('durChapterTime');
+      return await DbUtil.queryForList<Books>(p, column);
+    } catch (e) {
+      console.log('listRead, Error, ', JSON.stringify(e));
+      return [];
+    }
+  }
+
+  /** 「读完」列表：按首次读完时间倒序 */
+  async listFinished(): Promise<Books[]> {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const p = DbUtil.getPredicates(this.TABLE_NAME);
+      p.greaterThan('finishedTime', 0);
+      p.orderByDesc('finishedTime');
+      return await DbUtil.queryForList<Books>(p, column);
+    } catch (e) {
+      console.log('listFinished, Error, ', JSON.stringify(e));
+      return [];
+    }
+  }
+
+  /**
+   * 删除「读过」记录 —— **只删记录，不删书**。
+   * 按用户口径：清掉该书的阅读进度字段，让它从「读过」列表消失；
+   * **刻意不动 `finishedTime`** ⇒ 若它曾读完，「读完」里仍保留（三项相互独立）。
+   */
+  async clearReadRecord(id: number): Promise<boolean> {
+    if (id === undefined || id === null || id <= 0) {
+      return false;
+    }
+    try {
+      await DbUtil.executeSql(
+        `UPDATE books SET durChapterTime = 0, durChapterIndex = 0, durChapterPos = 0,`
+          + ` durChapterTitle = '' WHERE id = ${Math.floor(id)}`)
+      return true;
+    } catch (e) {
+      console.log('clearReadRecord, Error, ', JSON.stringify(e));
+      return false;
+    }
+  }
+
+  /** 删除「读完」记录 —— 只清 `finishedTime`，不影响「读过」与书签 */
+  async clearFinishRecord(id: number): Promise<boolean> {
+    if (id === undefined || id === null || id <= 0) {
+      return false;
+    }
+    try {
+      await DbUtil.executeSql(
+        `UPDATE books SET finishedTime = 0 WHERE id = ${Math.floor(id)}`)
+      return true;
+    } catch (e) {
+      console.log('clearFinishRecord, Error, ', JSON.stringify(e));
+      return false;
+    }
+  }
+
+  /** 标记「读完」（只写一次：已是 >0 则不动）——由阅读页读到末章时调用 */
+  async markFinished(id: number): Promise<void> {
+    if (id === undefined || id === null || id <= 0) {
+      return;
+    }
+    try {
+      await DbUtil.executeSql(
+        `UPDATE books SET finishedTime = ${Date.now()} WHERE id = ${Math.floor(id)} AND (finishedTime IS NULL OR finishedTime = 0)`)
+    } catch (e) {
+      console.log('markFinished, Error, ', JSON.stringify(e));
+    }
+  }
+
+  /**
+   * 写入「阅读进度 + 最后阅读时间」到数据库。
+   *
+   * ⚠️ **为什么必须由阅读页显式调用**（2026-09-21 真机取证）：
+   * 当前阅读页 `ReaderPage3` 把进度只写进 **Preferences**（`BookCurrentData_<书名>`），
+   * **从不写数据库的 `durChapterTime`** —— 全文件对该字段引用数为 0。
+   * 而会写它的只有**旧**阅读页 `ReaderPage2`、`BookDetailPage`、`BookHistoryUtils`，当前路径一个都不过。
+   * 后果有两个（都已被实测确认）：
+   *   ① `books` 表 `durChapterTime` 恒为 0 ⇒「我的 → 读过」计数永远是 0；
+   *   ② 书架「最近阅读」排序（`BooksDao:63` `isTop DESC, durChapterTime DESC`）同样失效；
+   *   ③ 桌面快捷方式「快速听书/快速阅读」也因此取不到"最后阅读"（已改用独立标记绕过）。
+   * 本方法就是把这个缺口补上。
+   *
+   * @param chapterTitle 传空串时**不改**该列（避免阅读页还没拿到章节名时把它清空）
+   * @param totalChapterNum 总章数；传 0 时**不改**该列。
+   *
+   * ⚠️ **`totalChapterNum` 为什么必须在这里补写**（2026-09-21 真机日志取证）：
+   * 全工程对 `books.totalChapterNum` 只有**一个**写入点 —— `ReaderPage3.ets:652`
+   * `this.bookData.totalChapterNum = this.CatalogList.totalCount()`，它只改**内存对象**，
+   * 从不落库 ⇒ 数据库里恒为 `0`。
+   * 后果（真机日志 `catalog list length: 765` 说明内存里其实是 765）：
+   *   ① 「我的 → 读过」的进度百分比 `(cur+1)/total` 除零 ⇒ 恒 0%；
+   *   ② 书签列表进度百分比同源除零 ⇒ 恒 0%；
+   *   ③ `ReaderPage3.checkFinished()` 首行 `if (total <= 0) return` ⇒「读完」永不触发、计数恒 0。
+   * 故在此连同进度一起补写（传 0 表示本次拿不到，保留原值，不覆盖）。
+   */
+  async stampReadProgress(id: number, chapterIndex: number, chapterTitle: string,
+    totalChapterNum: number = 0): Promise<void> {
+    if (id === undefined || id === null || id <= 0) {
+      return;
+    }
+    try {
+      const t = Date.now();
+      const idx = Math.max(0, Math.floor(chapterIndex));
+      const total = Math.max(0, Math.floor(totalChapterNum || 0));
+      const totalSql = total > 0 ? `, totalChapterNum = ${total}` : '';
+      if (chapterTitle.length > 0) {
+        await DbUtil.executeSql(
+          `UPDATE books SET durChapterTime = ${t}, durChapterIndex = ${idx},`
+            + ` durChapterTitle = '${chapterTitle.replace(/'/g, "''")}'${totalSql}`
+            + ` WHERE id = ${Math.floor(id)}`);
+      } else {
+        await DbUtil.executeSql(
+          `UPDATE books SET durChapterTime = ${t}, durChapterIndex = ${idx}${totalSql}`
+            + ` WHERE id = ${Math.floor(id)}`);
+      }
+    } catch (e) {
+      console.log('stampReadProgress, Error, ', JSON.stringify(e));
+    }
+  }
+
   //部分更新
   async partialUpdate(books: Books) {
     if (!(books instanceof Books)) {
       console.warn('Invalid Books instance.');
+      return;
+    }
+    // ⚠️ id 缺失时必须直接返回（T5-8 核查发现的一致性问题）。
+    //    旧实现把可能为 undefined 的 id 直接传给 `predicates.equalTo('id', …)`，
+    //    全靠"底层抛错被下面的 catch 吃掉"或"= NULL 恒不匹配"才没出事 —— 是**运气**不是设计。
+    //    同一工程内 `SubscriptionDao.ets:97` 就有正确写法：
+    //      `if (rssSource.id !== 0 && rssSource.id !== undefined) { predicates.equalTo('id', …) }`
+    //    典型触发路径：搜索 → 详情页 → 直接阅读（该路径的 bookData 无 id，见 T5-1 第 ② 步查证）。
+    if (books.id === undefined || books.id === null || books.id <= 0) {
+      console.warn('partialUpdate skipped: book id is missing.');
       return;
     }
 

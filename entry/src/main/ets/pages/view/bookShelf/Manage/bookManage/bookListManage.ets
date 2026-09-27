@@ -1,6 +1,7 @@
 import BookInfoManage from './BookInfoManage'
 import BookInfoGridManage from './BookInfoGridManage'
 import { Books } from '../../../../../database/entities/Books'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
 export default struct bookListManage{
@@ -9,12 +10,14 @@ export default struct bookListManage{
   @Prop isManage:boolean = true
   @Link checkGroup:Record<number, boolean>
   @State delCache:boolean = false
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   onSelect:Function = () => {}
   build() {
     if (this.bookList === null || this.bookList.length === 0) {
       Column() {
         Image($r('app.media.no_record')).width(200).height(200)
-        Text('暂无浏览记录').fontSize(12).fontColor('rgba(96, 96, 96, 0.6)').fontWeight(500).padding(5)
+        Text('暂无浏览记录').fontSize(12).fontColor(ShelfColors.textSub()).fontWeight(500).padding(5)
       }
       .margin({ top: 120 })
 
@@ -37,7 +40,7 @@ export default struct bookListManage{
                  }
                })
              }
-           })
+           }, (item: Books): string => item.id !== undefined ? 'b' + item.id : (item.bookUrl ?? item.bookName))
          }
         } else {
           Column({
@@ -52,7 +55,7 @@ export default struct bookListManage{
                   this.onSelect()
                 }
               })
-            })
+            }, (item: Books): string => item.id !== undefined ? 'b' + item.id : (item.bookUrl ?? item.bookName))
           }
         }
       }

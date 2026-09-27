@@ -1,6 +1,8 @@
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
+import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
+import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 /**
  * 文件夹宫格_管理页
@@ -13,6 +15,8 @@ export default struct BookFolderGridManage {
   onSelect:Function = () => {}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** App 级深浅色：订阅只为深浅切换时触发重绘 */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
     Column() {
       Stack() {
@@ -28,7 +32,7 @@ export default struct BookFolderGridManage {
                 }
               })
               .onClick(()=>{
-                this.onSelect()
+                Haptics.tap(); this.onSelect()
               })
           }
           Stack(){
@@ -57,7 +61,7 @@ export default struct BookFolderGridManage {
         .zIndex(0).width(100).height(100)
       }
       .alignContent(Alignment.BottomStart)
-      Row().width(100).height(20).backgroundColor('rgba(255, 255, 255, 0.6)').borderRadius(10)
+      Row().width(100).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
       Text(this.group.groupName)
           .fontSize(15)
           .fontWeight(700)
@@ -66,7 +70,7 @@ export default struct BookFolderGridManage {
           })
           .ellipsisMode(EllipsisMode.END)
           .maxLines(2)
-      Text(`共${this.group.bookIds?.length||0}本`).fontSize(12).fontColor('rgb(174,174,174)')
+      Text(`共${this.group.bookIds?.length||0}本`).fontSize(12).fontColor(ShelfColors.textSub())
           .textOverflow({
             overflow:TextOverflow.Ellipsis
           })

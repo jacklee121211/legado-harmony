@@ -43,6 +43,26 @@ export default class BasicDataSource<T> implements IDataSource {
             this.notifyDataAdd(this.originDataArray.length - 1);
         }
     }
+
+    /**
+     * **一次性替换全部数据**（2026-09-24 新增，给书架的 LazyForEach 用）。
+     *
+     * 与 `clear()` + `pushAllData()` 的区别：后者会先发一次 `RELOAD`、再发 **N 次** `onDataAdd`；
+     * 《LazyForEach：数据懒加载》原文（documentId
+     * `开发指南/ArkUI_方舟UI框架/…/LazyForEach_数据懒加载/arkts-rendering-control-lazyforeach`）：
+     *   「`onDatasetChange`：进行批量的数据处理后，调用 `onDatasetChange` 接口通知组件按照
+     *     dataOperations 刷新组件。」
+     * ⇒ 批量场景应当走一次批量通知。这里只发一次 `RELOAD`（`notifyDataReload()` 内部就是
+     * `listener.onDatasetChange([{type: DataOperationType.RELOAD}])`），
+     * 列表只会重算一次，不会为 100 本书排 100 次队。
+     */
+    public resetAllData(data: T[]): void {
+        this.originDataArray = [];
+        for (const d of data) {
+            this.originDataArray.push(d);
+        }
+        this.notifyDataReload();
+    }
     // 追加数据
     public appendData(data: T): void {
         this.originDataArray.push(data);
