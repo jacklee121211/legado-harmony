@@ -175,6 +175,34 @@ const NET_PAUSE_PROBE_MS: number = 30000;
 const NET_SKIP_RETRY_MS: number = 120000;
 
 /**
+ * ── F4 网络失败重试退避（2026-09-29）：指数 0.5/1/2/4s → 0.3/0.6/1.2/2.4s ──────
+ * 目的：**缩短探活一轮的墙钟**，从而缩短"网络已恢复但还没续播"的等待。
+ *
+ * 真机依据（`Downloads/2.md`，09-29 断网段 01:17:53 → 01:21:21）：
+ *  · 20 轮 `silence keepalive: one probe round failed, keep padding`，间隔**不稳定**：
+ *    多数 7.7~7.8s，但出现 6 次 13.8~14.3s（例：`01:18:09.453 → 01:18:23.756`）。
+ *    原因正是 `doSynth` 内退避 7.5s（0.5+1+2+4）**叠加**实际握手墙钟（DNS NXDOMAIN 时
+ *    NETSTACK 侧约 0.9~3.3s/次）⇒ 一轮最长可到 ~14s。
+ *  · ⇒ 用户打开网络后，最坏情况要等**约 14 秒**才会重新出声。
+ * 换成本数组后一轮退避 4.5s，同口径最长等待降到 ~6s 量级。
+ *
+ * 与旧路径的关系：`TTS_NET_RESILIENCE=false` 时仍走旧的 `250 * (attempt+1)`（250/500/750ms），
+ * **旧行为逐字保留**，本常量只服务新路径。
+ *
+ * 回退：把 `NET_RETRY_BACKOFF_MS` 清空或改成长度 0 即回落旧公式（见 `doSynth` 分支）。
+ */
+const NET_RETRY_BACKOFF_MS: number[] = [300, 600, 1200, 2400];
+
+/** 第 attempt 次失败后的退避时长。新路径查表（越界钳到末项），旧路径维持原公式。 */
+function netRetryBackoffMs(attempt: number): number {
+  if (!TTS_NET_RESILIENCE || NET_RETRY_BACKOFF_MS.length === 0) {
+    return 250 * (attempt + 1);
+  }
+  const last: number = NET_RETRY_BACKOFF_MS.length - 1;
+  return NET_RETRY_BACKOFF_MS[attempt > last ? last : attempt];
+}
+
+/**
  * ── T2 子开关：网络失败时「静音垫片保活」（假水池 / silence padding）──────────
  * **true = 已启用**（2026-09-25 经用户确认；此前 false 默认导致 09-24 18:17 实测仍走
  * 旧路径"疯狂跳段后暂停"）。仅 TTS_NET_RESILIENCE=true 时生效。
@@ -283,6 +311,59 @@ const PAD_CLIP_SILENT_WARN_MS: number = 200;
 const SILENCE_SAMPLE_RATE: number = 24000;
 
 /**
+ * ── F5 垫片素材时长上限（2026-09-29）：60s → 120s ────────────────────────────
+ * 原上限 60s 会把素材**静默截断**。真机日志实证（`Downloads/2.md` 09-29 01:17:48）：
+ *   `pad clip too long 60081.625000ms -> truncate 60s`
+ * 用户素材实际 60081.6ms，**只差 81.6ms 就被砍掉尾部**。放宽到 120s 后该截断不再发生。
+ *
+ * 代价（内存）：24kHz × 单声道 × S16LE × 120s ≈ **5.76MB** Int16Array。
+ * 一次性构建、全程缓存复用（`padSlices`），断网第二次起零成本。
+ * 回退：改回 60 即恢复原行为。
+ */
+const PAD_CLIP_MAX_SEC: number = 120;
+
+/**
+ * ── F1 垫片 PCM 构建「主线程让出」间隔（2026-09-29，真机日志驱动）────────────
+ * 数值 = 每次 `await sleep(0)` 之间处理的**样本数**。按 24k 输出样本计，
+ * 16384 样本 ≈ 683ms 音频，单次同步片约 0.5~3ms，让出一次 ⇒ 主线程保持可响应。
+ *
+ * 为什么必须做 —— 真机物证（`Downloads/2.md`，09-29，pid 23297）：
+ *  · `01:17:53.276 XCollie MainThread TraceCollector ... Duration Time: 11881 ms`
+ *    `01:17:53.276 BlockMonitor event name: DecodeMp3, Duration Time: 11881 ms`
+ *    ⇒ 垫片 PCM 处理把**主线程堵死 11.88 秒**；
+ *  · `01:17:45.526 AppDfr ... THREAD_BLOCK_3S` + `NotifyAppFault:THREAD_BLOCK_3S`
+ *    ⇒ 触发系统冻结告警（这正是"日常掉后台"的物证）；
+ *  · `01:17:53.277 [DfxWriteInterval] write interval too long cost 13556`
+ *    ⇒ 同期渲染器 13.5 秒没收到任何数据，音频彻底断流；
+ *  · 断流区间内 `IncSoundData` **零命中**（该计数仅在"有声音数据"时打印）。
+ *
+ * 阻塞源：`pad.mp3` 的解码虽是异步 NAPI（`ttsdec.cpp:381 napi_queue_async_work`），
+ * 但**解码之后的全部重活都是同步 ArkTS 大循环**——立体声折叠、线性重采样、
+ * 峰值扫描、逐样本归一+淡入淡出、近零段扫描、切片。
+ * 60s / 44.1kHz / 立体声素材 ⇒ 源样本 264.9 万，重采样后 144 万，多趟循环合计**数百万次迭代**，
+ * 中间没有任何 `await` ⇒ 主线程完全不可响应。
+ *
+ * 本常量把上述每一趟循环都切成 ≤16384 样本的片，片间 `await TtsEngine.sleep(0)` 让出事件循环。
+ * **计算结果逐位不变**（同样的输入→同样的输出），只改变调度，故无音频行为风险。
+ * 让出总开销 ≈ (144万×4 + 265万)/16384 ≈ 515 次 × ~4ms ≈ 2s 墙钟（仅首次断网一次，之后走缓存）。
+ *
+ * 回退：设成 `Number.MAX_SAFE_INTEGER` 即等价于"永不切分"（回到旧的单趟大循环行为）。
+ */
+const PAD_BUILD_YIELD_SAMPLES: number = 16384;
+
+/**
+ * ── F1 辅助：垫片构建期间的让出点 ────────────────────────────────────────────
+ * `setTimeout(0)` 归还事件循环（与 `TtsEngine.sleep` 同款实现，只是不引入类依赖）。
+ * 每片处理 16384 个输出样本 ≈ 683ms 音频，同步耗时 0.5~3ms，
+ * 让出后主线程可正常处理输入/渲染/定时器，XCollie 的 3s 阈值不可能被触及。
+ */
+async function padYield(): Promise<void> {
+  await new Promise<void>((resolve: () => void): void => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/**
  * ── T1-A4 AVSession 完整接入开关 ──────────────────────────────────────────
  * **默认 false = 旧行为**（只设 metadata + 注册 play/pause/stop）。
  * 系统播控行为无法本地验证，故新路径默认关闭；真机验证通过后再改为 true。
@@ -378,6 +459,32 @@ export class TtsEngine {
   private static padSlices: Int16Array[] | null = null;
   /** 垫片当前切片下标（循环播放游标） */
   private static padSliceIdx: number = 0;
+  /**
+   * ── F2：垫片构建的**单飞**句柄 ───────────────────────────────────────────
+   * 旧实现：`playSilenceChunk()` 里 `if (padSlices === null) padSlices = await build()`
+   * ⇒ 没有任何去重。垫片循环每轮 `await playSilenceChunk()`，而构建期间主线程被占满，
+   * 一旦让出（F1 之后）就可能出现**多个并发构建**，各自解码同一份 1.4MB mp3、各占 5.76MB。
+   * 现在：构建只允许一份在飞，所有调用方 await 同一个 Promise；构建成功即缓存到 `padSlices`。
+   *
+   * 真机依据（`Downloads/2.md` 09-29）：第一轮垫片窗口（01:17:39.872 → 01:17:53.888）
+   * **一条 `power: chunk pcmMs=2000`（垫片切片）都没有** —— 因为 `buildPadSlices()`
+   * 把主线程占满 11.88 秒，`playSilenceChunk()` 根本没轮到执行，垫音完全没发出去。
+   * 详见 PAD_BUILD_YIELD_SAMPLES 注释。
+   */
+  private static padBuildPromise: Promise<Int16Array[]> | null = null;
+  /**
+   * ── F2：垫片**预热**开关（2026-09-29）────────────────────────────────────
+   * **true = 新路径**：一旦检测到网络失败（预取 catch / 兜底探活失败），
+   * 就在后台开始构建垫片 PCM，**不等**播放循环真正走到垫片分支。
+   *
+   * 为什么要预热：`Downloads/2.md` 实证——首次预取失败（01:17:17.641）到真正进入垫片
+   * （01:17:39.872）之间有 **22 秒**。这段时间书还在播（渲染器有数据），
+   * 完全够把垫片建好（F1 让出后构建墙钟约 2s）。预热后进入垫片时 `padSlices` 已就绪，
+   * 首片可以在 0ms 内发出，**不再出现"断网后十几秒空洞"**。
+   *
+   * 回退：改回 false 即回到"进垫片时才构建"（与改动前一致，只是构建本身已被 F1 切成不阻塞）。
+   */
+  private static readonly PAD_PREWARM: boolean = true;
   /** 最近一次网络失败时间戳（预取失败刷新/预取成功清零）。播放点据此跳过已知必败的 doSynth 重试。 */
   private static lastNetFailAt: number = 0;
   /** 正在播放的块下标（供 prevSegment 回退） */
@@ -857,11 +964,25 @@ export class TtsEngine {
     TtsEngine.seekToChapter(target);
   }
 
-  /** 下一段：提前结束当前块（run 循环自然 i++ 推进） */
+  /**
+   * 下一段：提前结束当前块（run 循环自然 i++ 推进）。
+   *
+   * ── F6（2026-09-29）修「垫片期间点下一段没反应」────────────────────────────
+   * 旧实现只调 `abortPlay()`（= `player.stop()`，仅把 PcmPlayer 的 `abortFlag` 置位）。
+   * 但垫片分支的循环每轮都调 `playSilenceChunk()`，而 `play()` 开头会
+   * `this.abortFlag = false`（`PcmPlayer.ets:383`）⇒ 该标志被复位，
+   * 垫片照常续播下一片、`i` 不动 ⇒ **用户的"下一段"被静默吞掉**。
+   * 改为复用既有跳段通道 `seekToSegment(i+1)`：
+   *  · 立即更新面板锚点（与滑杆同一语义）；
+   *  · 置 `segTarget` ⇒ 垫片循环的 `segTarget >= 0` 守卫会让出到外层块循环消费，
+   *    同时 `seekToSegment` 内部的 `abortPlay()` 负责打断当前垫片切片。
+   * 回退：改回 `TtsEngine.abortPlay();` 一行即可（无其它残留）。
+   */
   static nextSegment(): void {
-    if (TtsEngine.state !== 'stopped') {
-      TtsEngine.abortPlay();
+    if (TtsEngine.state === 'stopped') {
+      return;
     }
+    TtsEngine.seekToSegment(TtsEngine.playingSegIndex + 1);
   }
 
   /** 上一块：段循环回到上一块重播（缓存+解码，即时响应） */
@@ -1107,8 +1228,32 @@ export class TtsEngine {
           if (TTS_NET_RESILIENCE && TTS_SILENCE_KEEPALIVE) {
               hilog.warn(DOMAIN, TAG, 'silence keepalive start (net down) chunk=%{public}d', i);
               TtsEngine.cb?.onToast('网络不佳，静音等待恢复…');
+              // ── F2（2026-09-29）：先保底垫音，再谈探活 ─────────────────────────
+              // 旧顺序是「先启动探活 → 再 await playSilenceChunk()」，本意是并行；
+              // 但 playSilenceChunk 内部第一步要构建垫片 PCM，而旧构建是**同步大循环**，
+              // 主线程被占满 11.88 秒 ⇒ 探活的 Promise 回调根本没机会跑，
+              // **整个第一轮垫片窗口一片垫音都没发出去**。
+              // 真机实证（`Downloads/2.md`）：01:17:39.872 进垫片 → 01:17:53.888 才退出，
+              // 这 14.01 秒内 `power: chunk pcmMs=2000`（垫片切片）**零命中**，
+              // 同时 `[DfxWriteInterval] write interval too long cost 13556`
+              // + 该区间 `IncSoundData` 零命中 ⇒ 音频彻底断流 13.5 秒。
+              // 现顺序：先拿（可能已预热好的）垫片切片并发出首片，再并行探活。
+              // 预热命中时首片在毫秒级发出；未命中时构建已被 F1 切成不阻塞，也不会再出现空洞。
+              const slices0 = await TtsEngine.ensurePadSlices();
+              if (slices0.length > 0) {
+                await TtsEngine.playSilenceChunk();
+                if (!TtsEngine.alive(gen)) {
+                  return;
+                }
+              } else {
+                hilog.warn(DOMAIN, TAG, 'silence keepalive: no pad slices yet, probe first');
+              }
               let recovered = false;
-              while (TtsEngine.alive(gen) && !TtsEngine.isPaused() && !recovered) {
+              // F6：`segTarget >= 0`（用户点了下一段/上一段/进度条）时立即让出，
+              // 由外层块循环消费跳转意图；否则 `play()` 会复位 abortFlag 把垫片续播下去，
+              // 用户的跳段操作被静默吞掉。
+              while (TtsEngine.alive(gen) && !TtsEngine.isPaused() && !recovered
+                && TtsEngine.segTarget < 0) {
                 // 探活与垫静音并行：串行探活空窗会抽干熄屏缓冲（≤10000ms）再次触发冻结
                 const probeOnce = async (): Promise<boolean> => {
                   try {
@@ -1125,13 +1270,19 @@ export class TtsEngine {
                 }, (): void => {
                   settled = true;
                 });
-                while (!settled && TtsEngine.alive(gen) && !TtsEngine.isPaused()) {
+                while (!settled && TtsEngine.alive(gen) && !TtsEngine.isPaused()
+                  && TtsEngine.segTarget < 0) {
                   await TtsEngine.playSilenceChunk();
                 }
                 recovered = await probe;
-                if (!recovered) {
+                if (!recovered && TtsEngine.segTarget < 0) {
                   hilog.info(DOMAIN, TAG, 'silence keepalive: one probe round failed, keep padding');
                 }
+              }
+              // F6：跳段意图优先于"网络恢复"提示（避免误报"网络已恢复"）
+              if (TtsEngine.segTarget >= 0) {
+                hilog.info(DOMAIN, TAG, 'silence keepalive end (segment jump) chunk=%{public}d', i);
+                continue;
               }
               if (!TtsEngine.alive(gen)) {
                 return;
@@ -1432,7 +1583,9 @@ export class TtsEngine {
         return 1;
       } catch (e) {
         lastErr = e instanceof Error ? e : new Error(String(e));
-        await TtsEngine.sleep(TTS_NET_RESILIENCE ? 500 * (2 ** attempt) : 250 * (attempt + 1));
+        // F4：新路径查 NET_RETRY_BACKOFF_MS 表（300/600/1200/2400ms）；
+        // 旧路径仍是 250/500/750ms（netRetryBackoffMs 内部分流，旧行为逐字保留）
+        await TtsEngine.sleep(netRetryBackoffMs(attempt));
       }
     }
     throw lastErr;
@@ -1521,6 +1674,9 @@ export class TtsEngine {
     }).catch((e: Error): number => {
       TtsEngine.lastNetFailAt = Date.now(); // 断网实锤（此时书还在播 ⇒ 应用不可冻结）
       hilog.warn(DOMAIN, TAG, 'prefetch fail: %{public}s', e.message);
+      // F2：断网第一时间预热垫片。真机窗口（`Downloads/2.md`）：首次预取失败 01:17:17.641
+      // → 真正进入垫片 01:17:39.872，中间有 22 秒书还在播 ⇒ 足够把垫片建好（F1 后约 2s）。
+      TtsEngine.prewarmPad();
       return -1;
     });
     TtsEngine.synthInFlight.set(path, task);
@@ -1708,12 +1864,13 @@ export class TtsEngine {
     if (player === null) {
       return;
     }
-    if (TtsEngine.padSlices === null) {
-      TtsEngine.padSlices = await TtsEngine.buildPadSlices();
-      TtsEngine.padSliceIdx = 0;
+    // F2：走单飞构建（并发调用共用同一份 Promise），构建完成即落 `padSlices` 缓存
+    const slices = await TtsEngine.ensurePadSlices();
+    if (slices.length === 0) {
+      return; // 理论不可达（buildPadSlices 至少兜底一片）
     }
-    const slice = TtsEngine.padSlices[TtsEngine.padSliceIdx];
-    TtsEngine.padSliceIdx = (TtsEngine.padSliceIdx + 1) % TtsEngine.padSlices.length;
+    const slice = slices[TtsEngine.padSliceIdx];
+    TtsEngine.padSliceIdx = (TtsEngine.padSliceIdx + 1) % slices.length;
     TtsEngine.playingMidFile = true;
     try {
       await player.play(slice, SILENCE_SAMPLE_RATE, (_ms: number): void => {
@@ -1728,12 +1885,68 @@ export class TtsEngine {
   }
 
   /**
+   * ── F2：垫片切片「单飞 + 预热」入口 ─────────────────────────────────────────
+   *  · 已缓存 ⇒ 直接返回（零成本）；
+   *  · 有构建在飞 ⇒ 复用同一 Promise（不重复解码 1.4MB mp3、不重复占 5.76MB）；
+   *  · 否则启动构建。`PAD_PREWARM` 开启时由预取失败路径提前调用（见 `prewarmPad`）。
+   *
+   * 失败降级：构建抛异常时清空句柄并返回空数组 ⇒ 调用方本轮跳过，下一轮重试，
+   * 绝不会打断 run 协程（垫片路径的硬约束）。
+   */
+  private static async ensurePadSlices(): Promise<Int16Array[]> {
+    const cached = TtsEngine.padSlices;
+    if (cached !== null) {
+      return cached;
+    }
+    const pending = TtsEngine.padBuildPromise !== null
+      ? TtsEngine.padBuildPromise
+      : TtsEngine.buildPadSlices();
+    TtsEngine.padBuildPromise = pending;
+    let built: Int16Array[];
+    try {
+      built = await pending;
+    } catch (e) {
+      TtsEngine.padBuildPromise = null; // 允许下一轮重试
+      hilog.warn(DOMAIN, TAG, 'pad build failed: %{public}s',
+        e instanceof Error ? e.message : String(e));
+      return [];
+    }
+    // 成功：落地缓存并释放句柄（此后所有调用走上面的 cache 快路径）
+    TtsEngine.padSlices = built;
+    TtsEngine.padSliceIdx = 0;
+    TtsEngine.padBuildPromise = null;
+    return built;
+  }
+
+  /**
+   * ── F2：垫片预热（fire-and-forget，不阻塞调用方、不改变任何播放状态）──────────
+   * 网络失败的第一时间调用（预取 catch / 兜底探活失败），把垫片 PCM 提前建好。
+   * 真机依据见 `PAD_PREWARM` 注释：首次预取失败到进入垫片之间有 22 秒可用窗口。
+   */
+  private static prewarmPad(): void {
+    if (!TTS_SILENCE_KEEPALIVE || !TtsEngine.PAD_PREWARM) {
+      return;
+    }
+    if (TtsEngine.padSlices !== null || TtsEngine.padBuildPromise !== null) {
+      return; // 已有缓存或在飞：不重复
+    }
+    hilog.info(DOMAIN, TAG, 'pad prewarm: start');
+    TtsEngine.padBuildPromise = TtsEngine.buildPadSlices();
+    // 预热是旁路：成功留给 ensurePadSlices 消费；失败只落日志（下一轮再试）
+    TtsEngine.padBuildPromise.catch((e: Error): void => {
+      TtsEngine.padBuildPromise = null;
+      hilog.warn(DOMAIN, TAG, 'pad prewarm failed: %{public}s', e.message);
+    });
+  }
+
+  /**
    * 构建垫片 PCM 并按 SILENCE_CHUNK_SEC(2s) 切片（一次性，缓存进 padSlices）。
    * 切片理由见 playSilenceChunk 注释：恢复信号检查频率 = 切片时长。
    * 优先级：rawfile/pad.mp3（用户自定义环境音）→ TTS_PAD_AUDIBLE 粉噪 → 纯静音。
    * 片段缺失/解码失败自动回退，不抛异常（垫片路径绝不能打断 run 协程）。
    */
   private static async buildPadSlices(): Promise<Int16Array[]> {
+    const t0: number = Date.now();
     const pcm = await TtsEngine.buildPadPcm();
     const sliceN: number = SILENCE_SAMPLE_RATE * SILENCE_CHUNK_SEC;
     const slices: Int16Array[] = [];
@@ -1746,6 +1959,10 @@ export class TtsEngine {
     if (slices.length === 0) {
       slices.push(new Int16Array(sliceN)); // 兜底：全零 2s（理论不可达）
     }
+    hilog.info(DOMAIN, TAG,
+      'pad build done: slices=%{public}d sliceSec=%{public}d totalMs=%{public}d wallMs=%{public}d',
+      slices.length, SILENCE_CHUNK_SEC, Math.round(pcm.length * 1000 / SILENCE_SAMPLE_RATE),
+      Date.now() - t0);
     return slices;
   }
 
@@ -1779,9 +1996,14 @@ export class TtsEngine {
 
   /**
    * 加载 rawfile/pad.mp3 → 24k 单声道 Int16 PCM；任何失败返回 null（回退粉噪）。
-   * 处理链：立体声折叠 → 线性重采样 24k → 软上限 60s 截断 → 峰值归一 →
+   * 处理链：立体声折叠 → 线性重采样 24k → 软上限 PAD_CLIP_MAX_SEC 截断 → 峰值归一 →
    * 循环接缝 8ms 淡入淡出 → 近零段扫描（不垫噪声底——用户保证片段无静音；
    * 扫描只为把选材坑暴露在日志里，>200ms 告警）。
+   *
+   * ── F1（2026-09-29）：每一趟循环都按 PAD_BUILD_YIELD_SAMPLES 切片并让出主线程 ──
+   * 真机物证：旧实现（单趟同步大循环）把主线程堵死 11.88 秒，触发 `THREAD_BLOCK_3S`
+   * 冻结告警，同时渲染器 13.5 秒收不到数据（详见 PAD_BUILD_YIELD_SAMPLES 注释）。
+   * 本实现**只改调度不改数值**：同样的输入产生逐位相同的输出。
    */
   private static async loadPadClipPcm(): Promise<Int16Array | null> {
     if (TtsEngine.context === null) {
@@ -1795,35 +2017,49 @@ export class TtsEngine {
       return null; // 文件不存在 ⇒ 常态路径，静默回退
     }
     try {
+      const t0: number = Date.now();
       const decoded = await decodeMp3ToPcm(mp3);
+      const yieldStart: number = Date.now();
       let src = new Int16Array(decoded.pcm);
       // 立体声（交错）折叠单声道
       if (decoded.channels >= 2) {
-        const mono = new Int16Array(Math.floor(src.length / 2));
-        for (let i = 0; i < mono.length; i++) {
-          mono[i] = Math.round((src[i * 2] + src[i * 2 + 1]) / 2);
+        const monoLen: number = Math.floor(src.length / 2);
+        const mono = new Int16Array(monoLen);
+        for (let off = 0; off < monoLen; off += PAD_BUILD_YIELD_SAMPLES) {
+          const end: number = Math.min(off + PAD_BUILD_YIELD_SAMPLES, monoLen);
+          for (let i = off; i < end; i++) {
+            mono[i] = Math.round((src[i * 2] + src[i * 2 + 1]) / 2);
+          }
+          await padYield(); // F1：让出主线程
         }
         src = mono;
       }
       // 线性重采样到 24k（与 TTS 输出一致，避免垫片⇄语音切换时渲染器重建）
       let s: Int16Array = src;
       if (decoded.sampleRate !== SILENCE_SAMPLE_RATE && decoded.sampleRate > 0) {
-        const outN: number = Math.round(s.length * SILENCE_SAMPLE_RATE / decoded.sampleRate);
+        const outN: number = Math.round(src.length * SILENCE_SAMPLE_RATE / decoded.sampleRate);
         const rs = new Int16Array(outN);
-        for (let i = 0; i < outN; i++) {
-          const pos: number = i * decoded.sampleRate / SILENCE_SAMPLE_RATE;
-          const i0: number = Math.floor(pos);
-          const frac: number = pos - i0;
-          const a: number = s[i0];
-          const b: number = i0 + 1 < s.length ? s[i0 + 1] : a;
-          rs[i] = Math.round(a + (b - a) * frac);
+        const step: number = decoded.sampleRate / SILENCE_SAMPLE_RATE;
+        const lastIdx: number = src.length - 1;
+        for (let off = 0; off < outN; off += PAD_BUILD_YIELD_SAMPLES) {
+          const end: number = Math.min(off + PAD_BUILD_YIELD_SAMPLES, outN);
+          for (let i = off; i < end; i++) {
+            const pos: number = i * step;
+            const i0: number = Math.floor(pos);
+            const frac: number = pos - i0;
+            const a: number = i0 <= lastIdx ? src[i0] : src[lastIdx];
+            const b: number = i0 + 1 <= lastIdx ? src[i0 + 1] : a;
+            rs[i] = Math.round(a + (b - a) * frac);
+          }
+          await padYield(); // F1：让出主线程
         }
         s = rs;
       }
-      // 软上限：60s（PCM 内存 24k×2B×60 ≈ 2.9MB）
-      const maxN: number = SILENCE_SAMPLE_RATE * 60;
+      // F5：软上限 120s（原 60s 会把 60081.6ms 的素材静默砍掉尾部 81.6ms，真机日志实证）
+      const maxN: number = SILENCE_SAMPLE_RATE * PAD_CLIP_MAX_SEC;
       if (s.length > maxN) {
-        hilog.warn(DOMAIN, TAG, 'pad clip too long %{public}dms -> truncate 60s', s.length * 1000 / SILENCE_SAMPLE_RATE);
+        hilog.warn(DOMAIN, TAG, 'pad clip too long %{public}dms -> truncate %{public}ds',
+          s.length * 1000 / SILENCE_SAMPLE_RATE, PAD_CLIP_MAX_SEC);
         s = s.slice(0, maxN);
       }
       if (s.length === 0) {
@@ -1831,53 +2067,68 @@ export class TtsEngine {
       }
       // 峰值归一（任意来源 mp3 拉到同一响度）
       let peak: number = 0;
-      for (let i = 0; i < s.length; i++) {
-        const a: number = s[i] < 0 ? -s[i] : s[i];
-        if (a > peak) {
-          peak = a;
+      const total: number = s.length;
+      for (let off = 0; off < total; off += PAD_BUILD_YIELD_SAMPLES) {
+        const end: number = Math.min(off + PAD_BUILD_YIELD_SAMPLES, total);
+        for (let i = off; i < end; i++) {
+          const a: number = s[i] < 0 ? -s[i] : s[i];
+          if (a > peak) {
+            peak = a;
+          }
         }
+        await padYield(); // F1：让出主线程
       }
       if (peak === 0) {
         return null; // 全零文件
       }
       const gain: number = 32767 * PAD_CLIP_PEAK / peak;
-      const out = new Int16Array(s.length);
-      for (let i = 0; i < s.length; i++) {
-        let v: number = Math.round(s[i] * gain);
-        v = v < -32768 ? -32768 : (v > 32767 ? 32767 : v);
-        // 循环接缝 8ms 淡入淡出（去咔哒；真机验证 206s/百次接缝零 slient 回翻）
-        const fadeN: number = Math.round(SILENCE_SAMPLE_RATE * 0.008);
-        if (i < fadeN) {
-          v = Math.round(v * i / fadeN);
-        } else if (i >= s.length - fadeN) {
-          v = Math.round(v * (s.length - 1 - i) / fadeN);
+      const out = new Int16Array(total);
+      const fadeN: number = Math.round(SILENCE_SAMPLE_RATE * 0.008);
+      for (let off = 0; off < total; off += PAD_BUILD_YIELD_SAMPLES) {
+        const end: number = Math.min(off + PAD_BUILD_YIELD_SAMPLES, total);
+        for (let i = off; i < end; i++) {
+          let v: number = Math.round(s[i] * gain);
+          v = v < -32768 ? -32768 : (v > 32767 ? 32767 : v);
+          // 循环接缝 8ms 淡入淡出（去咔哒；真机验证 206s/百次接缝零 slient 回翻）
+          if (i < fadeN) {
+            v = Math.round(v * i / fadeN);
+          } else if (i >= total - fadeN) {
+            v = Math.round(v * (total - 1 - i) / fadeN);
+          }
+          out[i] = v;
         }
-        out[i] = v;
+        await padYield(); // F1：让出主线程
       }
       // 近零段扫描：最长连续 |v| ≤ 0.1% FS 的区间（不干预，仅日志哨兵）
       const nearZero: number = Math.round(32767 * 0.001);
       let run: number = 0;
       let maxRun: number = 0;
-      for (let i = 0; i < out.length; i++) {
-        const a: number = out[i] < 0 ? -out[i] : out[i];
-        if (a <= nearZero) {
-          run++;
-          if (run > maxRun) {
-            maxRun = run;
+      for (let off = 0; off < total; off += PAD_BUILD_YIELD_SAMPLES) {
+        const end: number = Math.min(off + PAD_BUILD_YIELD_SAMPLES, total);
+        for (let i = off; i < end; i++) {
+          const a: number = out[i] < 0 ? -out[i] : out[i];
+          if (a <= nearZero) {
+            run++;
+            if (run > maxRun) {
+              maxRun = run;
+            }
+          } else {
+            run = 0;
           }
-        } else {
-          run = 0;
         }
+        await padYield(); // F1：让出主线程（run/maxRun 为跨片连续状态，不受切分影响）
       }
       const maxRunMs: number = Math.round(maxRun * 1000 / SILENCE_SAMPLE_RATE);
       if (maxRunMs > PAD_CLIP_SILENT_WARN_MS) {
         hilog.warn(DOMAIN, TAG, 'pad clip near-zero run %{public}dms > %{public}dms — 可能让音频服务判 slient（→挂起风险），建议换无静音片段',
           maxRunMs, PAD_CLIP_SILENT_WARN_MS);
       }
-      hilog.info(DOMAIN, TAG, 'pad pcm: clip %{public}s inRate=%{public}d ch=%{public}d durMs=%{public}d peak→%{public}s nearZeroRun=%{public}dms',
+      hilog.info(DOMAIN, TAG,
+        'pad pcm: clip %{public}s inRate=%{public}d ch=%{public}d durMs=%{public}d peak→%{public}s nearZeroRun=%{public}dms decodeMs=%{public}d yieldMs=%{public}d',
         PAD_CLIP_RAWFILE, decoded.sampleRate, decoded.channels,
-        Math.round(s.length * 1000 / SILENCE_SAMPLE_RATE),
-        PAD_CLIP_PEAK.toFixed(2), maxRunMs);
+        Math.round(total * 1000 / SILENCE_SAMPLE_RATE),
+        PAD_CLIP_PEAK.toFixed(2), maxRunMs,
+        yieldStart - t0, Date.now() - yieldStart);
       return out;
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'pad clip decode err -> noise fallback: %{public}s',
