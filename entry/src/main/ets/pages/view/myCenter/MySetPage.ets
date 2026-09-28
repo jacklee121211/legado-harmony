@@ -10,6 +10,11 @@ import { PreferencesUtil } from '@pura/harmony-utils'
 // 默认=系统本地引擎（Core Speech Kit，离线可用）；Edge TTS 仅暗门解锁后出现在此切换。
 import { ListenUnlock } from '../../../common/utils/ListenUnlock'
 import { loadTtsPrefs, saveTtsPrefs } from '../../../tts/TtsPrefs'
+import { NightMode } from '../../../common/utils/NightMode'
+// ── 测试账号（2026-09-28 迁入）：登录下线后，测试登录+彩蛋解锁入口迁到本页顶部 ──
+import UiMotion from '../../../common/utils/UiMotion'
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
+import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -29,6 +34,8 @@ export default struct MySetPage{
 
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
+  /** App 级夜间开关：测试账号弹窗深浅适配用（2026-09-28） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
 
   // ── 全局震动反馈（2026-09-25 新增，用户需求）────────────────────────────────
   // 开关 + 0-500 强度滑块（每 50 一档）。真正落盘到 Preferences（键 HapticsEnabled /
@@ -162,9 +169,83 @@ export default struct MySetPage{
   }
 
 
+  // ── 测试账号（2026-09-28 迁入）────────────────────────────────────────────
+  // 登录从「我的」页下线后，测试账号表单（登录 + 彩蛋解锁双职能）迁到本页顶部。
+  private testAccountDialog: CustomDialogController | null = null
+
+  private openTestAccountDialog(): void {
+    this.testAccountDialog = new CustomDialogController({
+      builder: TestAccountDialog({
+        dark: this.nightOn, // 深浅适配（2026-09-28 用户反馈：黑底黑字修复）
+        onClose: (): void => {
+          this.testAccountDialog?.close()
+          this.testAccountDialog = null
+        },
+        onUnlocked: (): void => {
+          // ⚠️ 先 close 再清引用：只置 null 不 close 会留下关不掉的孤儿弹窗
+          this.testAccountDialog?.close()
+          this.testAccountDialog = null
+          this.showUnlockAlert()
+        },
+        onLoginOk: (): void => {
+          this.testAccountDialog?.close()
+          this.testAccountDialog = null
+          this.getUIContext().getPromptAction().showToast({ message: '测试账号登录成功' })
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.testAccountDialog = null
+      }
+    })
+    this.testAccountDialog.open()
+  }
+
+  /** 彩蛋解锁成功弹窗（原「改名解锁」文案，2026-09-28 随入口迁入） */
+  private showUnlockAlert(): void {
+    Haptics.success();
+    this.getUIContext().showAlertDialog({
+      title: '🎉 解锁成功',
+      // 免责声明（2026-09-25 用户要求）：解锁面参数明用途边界——学习测试可用、禁商用。
+      message: `你已永久解锁隐藏功能！\n「我的-设置」里会出现 Edge TTS 引擎与标定模式开关，阅读界面底部也能看到「听书」按钮。\n\n【免责声明】\n· 本功能（含 Edge TTS 云端合成）仅供个人学习与技术测试；\n· 严禁用于任何商业用途；\n· 音频内容的合规性由使用者自行负责；\n· 本应用与微软、华为无隶属或合作关系。`,
+      autoCancel: false,
+      confirm: {
+        value: '太好了',
+        action: () => {
+          Haptics.tap();
+        }
+      }
+    })
+  }
+
   build() {
     Column(){
       SetHead({titleName:'我的设置'}).height(48).padding({left:20})
+
+      // ── 测试账号入口（2026-09-28 迁入，置于页首；UI 不留彩蛋提示）────────────
+      Row({ space: 12 }) {
+        Text('测试账号')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        Text('›')
+          .fontSize(16)
+          .fontColor($r('app.color.text_primary'))
+          .opacity(0.4)
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+      .onClick(() => {
+        Haptics.tap();
+        this.openTestAccountDialog()
+      })
 
       List(){
 

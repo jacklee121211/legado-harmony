@@ -137,8 +137,15 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageCreate(windowStage: window.WindowStage) {
     // 初始化db数据库/创建相关数据表
-    DbUtil.initDB(this.context).then(() => {
-      DataBase.initAllTable()
+    // 2026-09-28 修首次安装竞态：原实现 initAllTable() 裸跑不等待——首屏（书架分组
+    // 胶囊 GroupType.aboutToAppear → BookGroupsDao.search）在表建好**之前**查询，
+    // 查到空列表 ⇒ 首次安装分组栏文字/按钮全空，杀后台重开才正常。
+    // 修法：等建表完成后再广播一次分组刷新信号（GroupType 已 @Watch 该键），
+    // 建表先于首屏完成时该信号也无害（挂载后首次查询本就能查到）。
+    DbUtil.initDB(this.context).then(async () => {
+      await DataBase.initAllTable()
+      const t = (AppStorage.get<number>('BOOK_IS_BOOK_GROUPS_REFRESHING') ?? 0) + 1
+      AppStorage.setOrCreate('BOOK_IS_BOOK_GROUPS_REFRESHING', t)
     })
     WindowAbility.getInstance().setWindowStage(windowStage);
     this.initWindowProcess(windowStage);

@@ -17,9 +17,11 @@ import { ThemeItem } from '../../../common/model/Theme'
 import { image } from '@kit.ImageKit'
 import { resourceManager } from '@kit.LocalizationKit'
 import { BusinessError } from '@kit.BasicServicesKit'
-// ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
+// ── 全局震动反馈（2026-09-25 新增）+ 会员（2026-09-28 会员化改造）─────────────
 import { Haptics } from '../../../common/utils/Haptics'
-import { ListenUnlock } from '../../../common/utils/ListenUnlock'
+import { VipManager } from '../../../common/utils/VipManager'
+import { IapManager } from '../../../common/utils/IapManager'
+import { VipDialog } from '../../../componets/myCenter/VipDialog'
 
 // T29-③（Round 40）：去掉 `@Entry`。
 // 编译器原文：`It's not a recommended way to export struct with '@Entry' decorator,
@@ -52,20 +54,13 @@ export default struct MyCenter {
    * 后续刷新走上面的 `myCenterTick` 钩子。
    */
   aboutToAppear(): void {
-    // 头像 / 用户名（2026-09-21 新增）：从 Preferences 读回。
-    // 存的是**沙箱路径**，显示时要用 `fileUri.getUriFromPath()` 转成沙箱 URI ——
-    // 官方 FAQ `faqs-arkui-154` 原文：「Image组件不能直接传入应用沙箱路径，
-    // 需要传入应用沙箱URI」。
-    const savedAvatarPath = PreferencesUtil.getSync('MyAvatarPath', '') as string
-    if (savedAvatarPath.length > 0) {
-      try {
-        fileIo.accessSync(savedAvatarPath) // 文件可能被系统清理过，先确认存在
-        this.avatarUri = fileUri.getUriFromPath(savedAvatarPath)
-      } catch (e) {
-        this.avatarUri = ''
-      }
-    }
-    this.userName = PreferencesUtil.getSync('MyUserName', this.userName) as string
+    // VIP（2026-09-28）：Preferences → AppStorage（@StorageLink 驱动头部 UI，
+    // 键为编译期字面量，与 VipManager 约定一致）。
+    AppStorage.setOrCreate('vipUnlocked', VipManager.isVip())
+    // VIP 事实源刷新（2026-09-28 阶段2）：以华为 IAP 服务器已购记录为准（异步，不阻塞）。
+    // 卸载重装/换机场景：同一华为账号进「我的」页即自动恢复 VIP。
+    // ⚠️ refreshVip 只升不降（沙盒查不到已发货订单，见 IapManager 注释）。
+    IapManager.refreshVip(getContext(this) as common.UIAbilityContext)
     this.loadHeadCounts()
   }
 
@@ -93,23 +88,56 @@ export default struct MyCenter {
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
 
-  // ── 头像 / 用户名（2026-09-21 重建，改用华为官方 API）──────────────────────
-  /** 头像的**沙箱 URI**（`fileUri.getUriFromPath()` 的结果）。空 = 用默认头像。 */
-  @State avatarUri: string = ''
-  /** 用户名（可改，默认「阅读者」） */
-  @State userName: string = '阅读者'
-  /** 改名半模态开关 */
-  @State isShowNameEdit: boolean = false
-  /** 改名草稿（点「保存」才落盘） */
-  @State nameDraft: string = ''
   /** 设置图标的 Q弹缩放值（2026-09-25 二次调优，`runJellyClick` 自驱 `.scale()`） */
   @State setIconScale: number = 1
+
+  // ── 会员（2026-09-28 会员化改造·二版：登录下线，VIP 跟系统华为账号）────────
+  /** VIP 解锁缓存位（事实源在 IAP，见 VipManager；进本页自动 refreshVip 核对） */
+  @StorageLink('vipUnlocked') vipOn: boolean = false
+  /** VIP 购买弹窗控制器 */
+  private vipDialog: CustomDialogController | null = null
+
+  /** 打开 VIP 弹窗（未登录也能直接买：IAP 跟系统华为账号走） */
+  private openVipDialog(): void {
+    this.vipDialog = new CustomDialogController({
+      builder: VipDialog({
+        dark: this.nightOn,
+        vipOwned: VipManager.isVip(),
+        onClose: (): void => {
+          this.vipDialog?.close()
+          this.vipDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.vipDialog = null
+      }
+    })
+    this.vipDialog.open()
+  }
 
   build() {
     Column() {
       // Blank(this.topRectHeight-20)
       //右上角模式图标
       Row({ space: 10 }) {
+        // VIP 金标（2026-09-28 用户要求：已开通时放在设置按钮左侧旁边）
+        if (this.vipOn) {
+          Text('VIP')
+            .fontSize(12)
+            .fontWeight(700)
+            .fontColor(Color.White)
+            .backgroundColor('#F5A623')
+            .borderRadius(8)
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+        }
         //设置图标（2026-09-25：换成 SymbolGlyph，用户要求与书架页同批换 symbol。
         //符号名 `gearshape` 在 SDK 符号表 `…\Sdk\23\previewer\common\resources\entry\resources.txt`
         //查得，不猜名字。点击 Q弹缩放由 `.scale()` + `runJellyClick` 驱动（2026-09-25 二次调优：
@@ -134,42 +162,6 @@ export default struct MyCenter {
         // 整页**向上对齐**（用户要求）：内层 Column 显式撑满高度 + Start 对齐，
         // 并去掉原来垫在最上面的 `Blank(24)`，内容直接从顶部开始排。
         Column() {
-          // ── 头像 + 用户名（2026-09-21 用华为官方 API 重建）──────────────
-          // 之前那版是空壳（`avatar_onclick()` 空函数体、昵称写死「夏目友人」、
-          // `reading_time` 无写入方 ⇒ 恒显「今日阅读0分钟」）。现在换成：
-          //   ① 点头像 → 系统相册选图，**带系统内置裁切编辑**；
-          //   ② 点名字 → 改名；
-          //   ③ 两者都持久化到 Preferences。
-          // 用到的两个官方 API 的声明原文见 `pickAvatar()` 的注释。
-          Row({ space: 14 }) {
-            Image(this.avatarUri.length > 0 ? this.avatarUri : $r('app.media.user_avatar'))
-              .width(64)
-              .height(64)
-              .borderRadius(64)
-              .interpolation(ImageInterpolation.Medium)
-              .onClick(() => {
-                Haptics.tap();
-                this.pickAvatar()
-              })
-            Row({ space: 6 }) {
-              Text(this.userName)
-                .fontSize(18)
-                .fontWeight(600)
-                .lineHeight(26)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Image($r('app.media.ic_public_edit')).width(16).height(16).opacity(0.5)
-            }.onClick(() => {
-              Haptics.tap();
-              this.openNameEditor()
-            })
-            .clickEffect(UiMotion.CLICK)
-          }
-          // 2026-09-24：删掉了头像下方的「点头像换头像…」提示行（用户要求），
-          // 用户名行与 64vp 头像垂直居中对齐（Row 的 alignItems 显式声明，避免依赖默认值）。
-          .alignItems(VerticalAlign.Center)
-          .width('100%')
-          .padding({ left: 20, right: 20, top: 8, bottom: 8 })
 
           // 统计数据
           Row() {
@@ -240,6 +232,34 @@ export default struct MyCenter {
           // 用很淡的 0.06 透明度，避免在浅色渐变背景上显脏。
           .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
 
+          // ── 开通 VIP 卡片（2026-09-28 用户设计：未开通时显示）────────────────
+          // 主题卡下方、整页水平居中、宽 30%（够字宽即可）、高度与主题卡持平（80）。
+          if (!this.vipOn) {
+            Row() {
+              Row() {
+                Text('开通 VIP')
+                  .fontSize(14)
+                  .fontWeight(600)
+                  .fontColor('#F5A623')
+              }
+              .width('100%')
+              .height(80)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor($r('app.color.card_bg'))
+              .borderRadius(10)
+              // 与主题卡同一套浮起层次（同款淡阴影）
+              .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+              .clickEffect(UiMotion.CLICK)
+              .onClick(() => {
+                Haptics.tap();
+                this.openVipDialog()
+              })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .margin({ top: 16 })
+          }
+
         }
         .width('100%')
         .height('100%')
@@ -259,21 +279,7 @@ export default struct MyCenter {
         [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]]
     })
     .height('100%')
-    // 改名半模态（2026-09-21 接入沉浸光感）。
-    // 官方对「弹出框（Dialog）」的原文：「弹出框支持通过弹出框 options 参数中的
-    // systemMaterial 字段设置沉浸光感效果，如 CustomDialogControllerOptions、
-    // AlertDialogParam、ActionSheetOptions、**SheetOptions** 等。」
-    // ⚠️ 两条硬约束都遵守了：
-    //   ① 这里**没有**设置 backgroundColor / backgroundBlurStyle
-    //      （官方：「已主动设置背景色、背景模糊等自定义样式属性，则不呈现沉浸光感效果」）；
-    //   ② **没有**给内容 Column 另设材质（官方禁止材质嵌套，同一子树只设最外层一次）。
-    // 关闭（回退）时 sheetMaterial() 返回 undefined，sheet 自动回到系统默认底。
-    .bindSheet($$this.isShowNameEdit, this.nameEditorSheet(), {
-      height: 220,
-      dragBar: false,
-      showClose: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-    })
+    // 改名半模态（2026-09-28 移除）：登录下线后头像/昵称一并移除，改名半模态随之删除。
   }
 
   /**
@@ -325,158 +331,6 @@ export default struct MyCenter {
         AppRouter.push(RouteName.THEME_CONFIG)
         break
     }
-  }
-
-  // ── 头像 / 用户名（2026-09-21 新增，华为官方 API）─────────────────────────
-
-  /**
-   * 换头像：**系统相册选图 + 系统内置裁切编辑**，结果拷进应用沙箱后持久化。
-   *
-   * 用到的两个官方 API（SDK 声明原文，文件
-   * `…\sdk\default\openharmony\ets\api\@ohos.file.photoAccessHelper.d.ts`）：
-   *
-   *  ① **相册选择**
-   *     `class PhotoViewPicker { select(option?: PhotoSelectOptions): Promise<PhotoSelectResult>; }`
-   *     （`:4443` / `:4474`；`@since 10`；`@syscap SystemCapability.FileManagement.PhotoAccessHelper.Core`）
-   *
-   *  ② **裁切 / 编辑**
-   *     `PhotoSelectOptions.isEditSupported?: boolean;`
-   *     原文：`Whether the image can be edited. true if editable, false otherwise.`
-   *     （`:4219`-`:4227`；`@since 11`）
-   *     置 `true` 后系统选择器会带上「编辑」能力（可在选图时裁切）再返回结果。
-   *
-   * ⚠️ **为什么还要再拷一次进沙箱**：同一个 `select()` 的 NOTE 原文写着 ——
-   *   `photoUris in the PhotoSelectResult object returned by this API has permanent
-   *    authorization and can be used only by calling photoAccessHelper.getAssets(...)`
-   *   ⇒ 这个 URI **不能直接当图片地址**喂给 `Image()`。所以先 `fileIo` 拷进 `filesDir`，
-   *   再用 `fileUri.getUriFromPath()` 转成**应用沙箱 URI** 显示。
-   *   官方 FAQ `faqs-arkui-154` 原文：「Image组件不能直接传入应用沙箱路径，需要传入
-   *   应用沙箱URI。…然后调用 fileUri.getUriFromPath 方法将沙箱路径转化为沙箱URI，
-   *   传入之后即可正常显示沙箱图片。」
-   */
-  private async pickAvatar(): Promise<void> {
-    try {
-      // 能力守卫：新 API 的 syscap 是 `SystemCapability.FileManagement.PhotoAccessHelper.Core`
-      // （见上面 `select()` 的 SDK 原文）。工程里 `common/utils/photoViewPicker.ets` 正是
-      // 因为这条 syscap 与旧实现的 `…UserFileService` 不同，才默认走旧 API 的。
-      // 这里先判一次，能力缺失时给明确提示，而不是让它抛异常。
-      if (!canIUse('SystemCapability.FileManagement.PhotoAccessHelper.Core')) {
-        this.getUIContext().getPromptAction().showToast({
-          message: '当前设备不支持相册选择能力'
-        })
-        return
-      }
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
-      const options = new photoAccessHelper.PhotoSelectOptions()
-      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
-      options.maxSelectNumber = 1
-      options.isEditSupported = true // ★ API②：让系统选择器带裁切/编辑
-      const pickerView = new photoAccessHelper.PhotoViewPicker()
-      const res = await pickerView.select(options) // ★ API①
-      if (res.photoUris === undefined || res.photoUris.length === 0) {
-        return // 用户取消
-      }
-      const newPath = `${ctx.filesDir}/avatar_${Date.now()}.jpg`
-      // 按 fd 拷贝：`openSync` 支持带授权的媒体 URI；fd→fd 的 `copyFileSync` 最稳
-      const src = fileIo.openSync(res.photoUris[0], fileIo.OpenMode.READ_ONLY)
-      try {
-        const dst = fileIo.openSync(newPath,
-          fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE)
-        try {
-          fileIo.copyFileSync(src.fd, dst.fd)
-        } finally {
-          fileIo.closeSync(dst)
-        }
-      } finally {
-        fileIo.closeSync(src)
-      }
-      // 删掉上一张，避免沙箱里越积越多
-      const oldPath = PreferencesUtil.getSync('MyAvatarPath', '') as string
-      if (oldPath.length > 0 && oldPath !== newPath) {
-        try {
-          fileIo.unlinkSync(oldPath)
-        } catch (e) {
-          // 旧文件不在了就算了
-        }
-      }
-      PreferencesUtil.putSync('MyAvatarPath', newPath)
-      this.avatarUri = fileUri.getUriFromPath(newPath)
-      this.getUIContext().getPromptAction().showToast({ message: '头像已更新' })
-    } catch (e) {
-      this.getUIContext().getPromptAction().showToast({
-        message: '换头像失败：' + (e instanceof Error ? e.message : String(e))
-      })
-    }
-  }
-
-  /** 打开改名半模态（内容见 `nameEditorSheet()`） */
-  private openNameEditor(): void {
-    this.nameDraft = this.userName
-    this.isShowNameEdit = true
-  }
-
-  /** 保存用户名（空名拒绝；限 20 字）。改名命中暗号时触发听书入口解锁（2026-09-25） */
-  private saveName(): void {
-    const n = this.nameDraft.trim()
-    if (n.length === 0) {
-      this.getUIContext().getPromptAction().showToast({ message: '名字不能为空' })
-      return
-    }
-    this.userName = n.length > 20 ? n.substring(0, 20) : n
-    PreferencesUtil.putSync('MyUserName', this.userName)
-    this.isShowNameEdit = false
-    // ── 听书入口解锁（2026-09-25，暗号方案）──────────────────────────────
-    // tryUnlock 只在「尚未解锁 且 名字命中暗号」时返回 true ⇒ 解锁成功只弹一次；
-    // 之后改名（改成什么都好）不再弹、也不再影响解锁位（与用户名解耦）。
-    if (ListenUnlock.tryUnlock(this.userName)) {
-      Haptics.success();
-      this.getUIContext().showAlertDialog({
-        title: '🎉 解锁成功',
-        // 免责声明（2026-09-25 用户要求）：解锁面参数明用途边界——学习测试可用、禁商用。
-        message: `「${this.userName}」，你已永久解锁听书功能！\n打开任意书籍的阅读界面，底部就能看到「听书」按钮了。\n\n【免责声明】\n· 本功能（含 Edge TTS 云端合成）仅供个人学习与技术测试；\n· 严禁用于任何商业用途；\n· 音频内容的合规性由使用者自行负责；\n· 本应用与微软、华为无隶属或合作关系。`,
-        autoCancel: false,
-        confirm: {
-          value: '太好了',
-          action: () => {
-            Haptics.tap();
-          }
-        }
-      })
-    }
-  }
-
-  /** 改名半模态内容（`$$` 是 ArkUI 官方双向绑定写法） */
-  @Builder
-  nameEditorSheet() {
-    Column({ space: 16 }) {
-      Text('修改用户名').fontSize(16).fontWeight(600)
-      TextInput({ text: $$this.nameDraft, placeholder: '请输入用户名（最多 20 字）' })
-        .maxLength(20)
-        .height(40)
-      Row({ space: 16 }) {
-        Button('取消')
-          .backgroundColor($r('app.color.sub_btn_bg'))
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-          .onClick(() => {
-            Haptics.tap();
-            this.isShowNameEdit = false
-          })
-        Button('保存')
-          .layoutWeight(1)
-          .onClick(() => {
-            Haptics.tap();
-            this.saveName()
-          })
-          // 主题色沉浸光感材质（用户拍板）。开启时由 buttonMaterial 喂半透明主题色，
-          // 关闭时回落到原来的主题色实底 + 白字（见 MaterialButtonModifier）。
-          .attributeModifier(new MaterialButtonModifier(this.theme.mainColor, Color.White,
-            ImmersiveMaterialUtil.tint(this.theme.mainColor, 0.75)))
-      }.width('100%')
-    }
-    .width('100%')
-    .height(220)
-    .padding({ left: 20, right: 20, top: 16, bottom: 16 })
   }
 
   toMySetPage() {
