@@ -41,6 +41,9 @@ import { ReaderTextureDialog } from './ReaderTextureDialog';
 import { ReaderFontLib } from '../../../common/utils/ReaderFontLib';
 import { ReaderFontDialog } from './ReaderFontDialog';
 import { ReaderSchemeDialog } from './ReaderSchemeDialog';
+// ── 会员化（2026-09-28）：免费用户点锁定功能 → VIP 弹窗 ─────────────────────
+import { VipDialog } from '../../../componets/myCenter/VipDialog';
+import { VipManager } from '../../../common/utils/VipManager';
 import { ReaderBgPalette } from './ReaderBgPalette';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
@@ -1690,6 +1693,37 @@ export default struct ReaderPage3 {
       }
     })
     this.schemeDialog?.open()
+  }
+
+  /** 「VIP 购买」弹窗控制器（2026-09-28 会员化：免费点锁定功能 → 本弹窗） */
+  private vipDialog: CustomDialogController | null = null
+
+  /** 打开 VIP 弹窗（先收设置面板，关闭后 reopenSettings——与字体/材质弹窗同款协调） */
+  private openVipDialog(): void {
+    this.settingDialog.close()
+    this.vipDialog = new CustomDialogController({
+      builder: VipDialog({
+        dark: this.colorMode == 0,
+        vipOwned: VipManager.isVip(),
+        onClose: (): void => {
+          this.vipDialog?.close()
+          this.vipDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.vipDialog = null
+        this.reopenSettings()
+      }
+    })
+    this.vipDialog.open()
   }
 
   private commitScheme(): void {
@@ -4726,6 +4760,11 @@ export default struct ReaderPage3 {
           .clickEffect(UiMotion.CLICK)
           .onClick(() => {
             Haptics.tap();
+            // 会员化（2026-09-28）：「更多材质」为 VIP 特权，免费用户 → VIP 弹窗
+            if (!VipManager.isVip()) {
+              this.openVipDialog()
+              return
+            }
             this.openTexDialog()
           })
 
@@ -4746,6 +4785,11 @@ export default struct ReaderPage3 {
           .clickEffect(UiMotion.CLICK)
           .onClick(() => {
             Haptics.tap();
+            // 会员化（2026-09-28）：「更多方案」为 VIP 特权，免费用户 → VIP 弹窗
+            if (!VipManager.isVip()) {
+              this.openVipDialog()
+              return
+            }
             this.openSchemeDialog()
           })
       }
@@ -4908,12 +4952,34 @@ export default struct ReaderPage3 {
           Text('自定义颜色')
             .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
           // ── 自定义颜色开关（进入/退出自定义颜色模式），紧贴标签（用户指定）────
-          Toggle({ type: ToggleType.Switch, isOn: this.customBgOn })
-            .selectedColor('#007DFF')
-            .onChange((value: boolean) => {
+          if (VipManager.isVip()) {
+            Toggle({ type: ToggleType.Switch, isOn: this.customBgOn })
+              .selectedColor('#007DFF')
+              .onChange((value: boolean) => {
+                Haptics.tap();
+                this.toggleCustomBg(value)
+              })
+          } else {
+            // 会员化（2026-09-28）：免费用户看到锁定样式的假开关，点击 → VIP 弹窗
+            //（不用真 Toggle：避免"点了先弹开又弹回"的视觉回弹问题）
+            Stack({ alignContent: Alignment.End }) {
+              Row()
+                .width(40)
+                .height(22)
+                .borderRadius(11)
+                .backgroundColor('rgba(128, 128, 128, 0.45)')
+              Row()
+                .width(18)
+                .height(18)
+                .borderRadius(9)
+                .backgroundColor(Color.White)
+                .margin({ right: 2 })
+            }
+            .onClick(() => {
               Haptics.tap();
-              this.toggleCustomBg(value)
+              this.openVipDialog()
             })
+          }
           if (this.customBgOn) {
             Blank()
             // ── "背景 / 文字"滑块：切调色盘的编辑目标（用户口中的"通过滑块切换"）────

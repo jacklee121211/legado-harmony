@@ -23,6 +23,11 @@ import { http } from '@kit.NetworkKit';
 import { picker } from '@kit.CoreFileKit';
 import { ReaderFontLib, FontLibItem } from '../../../common/utils/ReaderFontLib';
 import { Haptics } from '../../../common/utils/Haptics';
+// ── 会员化（2026-09-28）：导入/下载字体为 VIP 特权 ──────────────────────────
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
+import UiMotion from '../../../common/utils/UiMotion';
+import { VipDialog } from '../../../componets/myCenter/VipDialog';
+import { VipManager } from '../../../common/utils/VipManager';
 
 /** 与原面板一致的快捷档位（字号） */
 const FONT_PRESETS: number[] = [12, 18, 24, 32, 40, 48];
@@ -77,6 +82,34 @@ export struct ReaderFontDialog {
     this.fontSize = this.initFontSize
     this.lineHeight = this.initLineHeight
     this.refreshList()
+  }
+
+  /** 「VIP 购买」弹窗控制器（嵌套打开：字体管理保持打开，VIP 弹窗盖上） */
+  private vipDialog: CustomDialogController | null = null
+
+  private openVip(): void {
+    this.vipDialog = new CustomDialogController({
+      builder: VipDialog({
+        dark: this.colorMode == 0,
+        vipOwned: VipManager.isVip(),
+        onClose: (): void => {
+          this.vipDialog?.close()
+          this.vipDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.vipDialog = null
+      }
+    })
+    this.vipDialog.open()
   }
 
   /** 读库 + 预注册（导入/下载字体的预览与测量通道都要注册，串行幂等） */
@@ -504,6 +537,11 @@ export struct ReaderFontDialog {
             .height(34)
             .padding({ left: 14, right: 14 })
             .onClick(() => {
+              // 会员化（2026-09-28）：导入字体为 VIP 特权，免费用户 → VIP 弹窗
+              if (!VipManager.isVip()) {
+                this.openVip()
+                return
+              }
               this.importFont()
             })
           Button('开始下载字体')
@@ -515,6 +553,11 @@ export struct ReaderFontDialog {
             .padding({ left: 14, right: 14 })
             .onClick(() => {
               Haptics.tap();
+              // 会员化（2026-09-28）：下载字体为 VIP 特权，免费用户 → VIP 弹窗
+              if (!VipManager.isVip()) {
+                this.openVip()
+                return
+              }
               this.startDownload()
             })
         }
