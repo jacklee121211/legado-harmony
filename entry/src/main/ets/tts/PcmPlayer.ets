@@ -224,6 +224,50 @@ const SYSCAP_AUDIO_PRECHECK: boolean = false;
 const SYSCAP_AUDIO_CORE: string = 'SystemCapability.Multimedia.Audio.Core';
 const SYSCAP_AUDIO_RENDERER: string = 'SystemCapability.Multimedia.Audio.Renderer';
 
+/**
+ * ── F3 听书流用途开关（2026-09-29，真机日志驱动）─────────────────────────────
+ * **默认 false = 旧行为**（`STREAM_USAGE_MUSIC`，线上已实测功耗可接受）。
+ * 音频通路/焦点/功耗策略属**不可本地验证**改动，故新路径默认关闭；
+ * 真机对照实测（同一本书、同样时长、同屏幕状态）确认不掉电、不断流后再翻 true。
+ * 任何异常：把下面这一行改回 false，即完全回退（行为逐字不变）。
+ *
+ * 官方依据（原文）：
+ *  · SDK `@ohos.multimedia.audio.d.ts:1380-1388`
+ *      `STREAM_USAGE_AUDIOBOOK = 12,`  @since 10
+ *      注释原文：「Audiobooks (including crosstalks and storytelling), news radio, and podcasts.」
+ *    （`@ohos.multimedia.audio.d.ts:1291` `STREAM_USAGE_MUSIC = 1,` @since 7）
+ *  · 文档 `开发指南/Audio_Kit_音频服务/音频播放/选择合适的播放流类型/using-right-streamusage-for-playback`：
+ *      `STREAM_USAGE_AUDIOBOOK`「**适用于播放有声读物、新闻、播客等。**」
+ *      同页「低功耗播放通路」表：「通过大缓存减少与硬件交互，以降低功耗。| **长时间播放音乐、有声读物等。**」
+ *  · 文档 `开发指南/Audio_Kit_音频服务/音频播放/低功耗音频播放/power-saving-for-playback`：
+ *      「流类型使用 STREAM_USAGE_MUSIC、**STREAM_USAGE_AUDIOBOOK**……系统默认为低功耗渲染器。」
+ *      「低功耗渲染器缓冲区：**亮屏场景下，最大 1000ms；熄屏场景下，最大 10000ms**。」
+ *
+ * 为什么值得一试 —— 真机实测的瓶颈（`Downloads/2.md`，09-29 01:08–01:21，pid 23297）：
+ *  · `[GetBufferSize]Buffer size is 960, mode is RENDER_MODE_NORMAL` —— **162/162 次全部如此**
+ *    ⇒ 960 字节 ÷ 2 ÷ 24000Hz = **有效缓冲仅 20ms**，与文档"最大 1000/10000ms"差 50~500 倍；
+ *  · 同一次会话 57 个真实语音块的 `power: chunk` 实测：`pcmMs` 平均 9803ms、
+ *    `writeMs` 平均 9405ms，其中 **14 块 slack 为负**（最差 `slack=-5418`）
+ *    ⇒ 主线程任何 >20ms 的停顿都会立刻变成音频空洞。
+ *
+ * ⚠️ 反过来也要记住：当前普通渲染器下**写入被实时背压节流**，CPU 大部分时间在休眠，
+ *   实测整机功耗已经不高。换成大缓冲后是"一口气灌满再睡更久"，**不保证更省电** ——
+ *   这正是本开关默认 false、必须真机 A/B 实测（重点看熄屏 30 分钟平均电流）的原因。
+ *
+ * 验证点（翻 true 后）：
+ *  1. 日志 `power: create … usage=12`，且 `[GetBufferSize]` 应显著变大（或 mode 变化）；
+ *  2. `power: chunk … slack=` 应趋近 `pcmMs`（整块被一次吞下）；
+ *  3. 熄屏听书 30 分钟：平均电流不得高于 MUSIC 基线，且不得出现新的空洞/冻结；
+ *  4. 音量行为不变（两者音量类型同为媒体音量 MEDIA）。
+ */
+const HL_STREAM_USAGE_AUDIOBOOK: boolean = false;
+/** 实际下发给渲染器的 usage。切换只改这一个函数，不做散落分支。 */
+function hlStreamUsage(): audio.StreamUsage {
+  return HL_STREAM_USAGE_AUDIOBOOK
+    ? audio.StreamUsage.STREAM_USAGE_AUDIOBOOK
+    : audio.StreamUsage.STREAM_USAGE_MUSIC;
+}
+
 export class PcmPlayer {
   private renderer: audio.AudioRenderer | null = null;
   private rendererRate: number = 0;
@@ -278,7 +322,7 @@ export class PcmPlayer {
         encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
       },
       rendererInfo: {
-        usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
+        usage: hlStreamUsage(),
         rendererFlags: 0
       }
     };
