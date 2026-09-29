@@ -14,6 +14,8 @@ class bookGroupUtils{
     return await BookGroupsDao.onlyGroupUpdateName(id,newName)
   }
   //置顶分组
+  // ⚠️ 逐个 await（2026-09-29，审核问题②）：与 booksUtils.isTopBook 同因 ——
+  // forEach 裸调不等待 ⇒ 调用方 resolve 后立即重查会查到旧 isTop。
   async isTopGroup(id: number|number[], isTop: boolean) {
     let Ids:number[] = []
     if (typeof id === 'number'){
@@ -21,10 +23,9 @@ class bookGroupUtils{
     } else {
       Ids = id
     }
-    Ids.forEach((item:number)=>{
-      BookGroupsDao.isUpdateGroupTop(item, isTop)
-    })
-
+    for (const item of Ids) {
+      await BookGroupsDao.isUpdateGroupTop(item, isTop)
+    }
   }
   //添加分组
   async addGroup(books: BookGroups){

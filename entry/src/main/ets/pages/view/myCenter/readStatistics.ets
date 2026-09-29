@@ -69,6 +69,17 @@ export default struct readStatistics {
   @State bookList: readBookList[] = []
   /** 与 `bookList` **下标对齐**的原始 Books，删除时取 id */
   private rawBooks: Books[] = []
+  /**
+   * 当前页类型（读过/读完）的**全量**记录 —— 页签过滤的数据源。
+   * 2026-09-29（审核问题⑤）：页签（小说/漫画/有声书）过去只动 `readTabs`
+   * 内部的滑块、从不上报 ⇒ 列表恒为全量、"筛选无效果"。
+   * 现在 `typeIndex` 记住选中页签（0=小说/1=漫画/2=有声书，与 `bookType` 同码），
+   * `applyTypeFilter()` 按它过滤；`rawBooks` 与渲染列表**同源同过滤**，
+   * 保证批量删除时下标始终对齐。
+   */
+  private allTypeBooks: Books[] = []
+  /** 当前选中的类型页签（0=小说 / 1=漫画 / 2=有声书） */
+  @State typeIndex: number = 0
   /** 书签列表（文字两行） */
   @State markList: BookmarkRow[] = []
   /** 书签被选中待删的 time 集合 */
@@ -217,7 +228,12 @@ export default struct readStatistics {
           this.markListBuilder()
         } else {
           readTabs({
-            read_list: this.read_list
+            read_list: this.read_list,
+            // 页签切换 → 过滤列表（回调见 `readTabs.onIndexChange`，2026-09-29 新增）
+            onIndexChange: (index: number): void => {
+              this.typeIndex = index
+              this.applyTypeFilter()
+            }
           })
           readStatisticsDataList({
             dateValue: this.dateValue,
@@ -389,14 +405,6 @@ export default struct readStatistics {
         m.set(b.bookName, b.totalChapterNum ?? 0)
       }
       this.totalChapMap = m
-      // 小说/漫画/有声书 三个小标签：按 bookType 真实统计
-      let n0 = 0
-      let n1 = 0
-      let n2 = 0
-      for (const b of all) {
-        if (b.bookType === 0) { n0++ } else if (b.bookType === 1) { n1++ } else if (b.bookType === 2) { n2++ }
-      }
-      this.read_list = [new dataItem("小说", n0), new dataItem("漫画", n1), new dataItem("有声书", n2)]
       this.title_list = [
         new dataItem("读过", await BooksDao.countRead()),
         new dataItem("读完", await BooksDao.countFinished()),
@@ -419,14 +427,34 @@ export default struct readStatistics {
       console.log('readStatistics loadData list, Error, ', JSON.stringify(e))
       list = []
     }
-    this.rawBooks = list
-    // ★「YYYY年度过/读完 N 本」= **当前自然年**内有对应记录的书数。
-    //   原值是底座样例遗留的硬编码 `[2023, 36]`（`@State dateValue` 初值），
-    //   曾因为表头 @Builder 按值传参不刷新而在真机上一直显示「2023年读过36本」。
+    this.allTypeBooks = list
+    // 小说/漫画/有声书 三个页签的数量：按**当前口径列表**（读过/读完）真实统计。
+    // 原实现统计的是全书架 ⇒ 页签上的数字与列表内容对不上。
+    let n0 = 0
+    let n1 = 0
+    let n2 = 0
+    for (const b of list) {
+      if (b.bookType === 0) { n0++ } else if (b.bookType === 1) { n1++ } else if (b.bookType === 2) { n2++ }
+    }
+    this.read_list = [new dataItem("小说", n0), new dataItem("漫画", n1), new dataItem("有声书", n2)]
+    this.applyTypeFilter()
+  }
+
+  /**
+   * 按选中页签过滤（2026-09-29，审核问题⑤）。
+   *
+   * `rawBooks` 必须与渲染列表**同一次过滤**产出 —— `onAccept()` 靠下标对齐
+   * （`bookList[i]` ↔ `rawBooks[i]`）取删除 id，两处过滤口径不一致就会删错书。
+   * 表头「YYYY年读过/读完 N 本」同步改为过滤后的口径，与列表一致。
+   */
+  private applyTypeFilter(): void {
+    const t = Number(this.type)
+    const filtered: Books[] = this.allTypeBooks.filter((b: Books) => b.bookType === this.typeIndex)
+    this.rawBooks = filtered
     const year = new Date().getFullYear()
     const yearStart = new Date(year, 0, 1, 0, 0, 0, 0).getTime()
     let inYear = 0
-    for (const b of list) {
+    for (const b of filtered) {
       const stamp = t === 0 ? (b.durChapterTime ?? 0) : (b.finishedTime ?? 0)
       if (stamp >= yearStart) {
         inYear++
@@ -434,7 +462,7 @@ export default struct readStatistics {
     }
     this.dateValue = [year, inYear]
     const out: readBookList[] = []
-    for (const b of list) {
+    for (const b of filtered) {
       const total = b.totalChapterNum ?? 0
       const cur = b.durChapterIndex ?? 0
       const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((cur + 1) / total * 100))) : 0

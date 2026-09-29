@@ -7,10 +7,7 @@ import groupTypeComponent from '../../../../componets/group/GroupType'
 import { Haptics } from '../../../../common/utils/Haptics';
 import IndexSearchType from '../../../../componets/head/IndexSearchType'
 import AppRouter, { RouteName, BookManageRouteParam } from '../../../../common/router/AppRouter'
-import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import BookContentRefresh from './BookContentRefresh'
-import bookHistoryUtils from '../../../../common/utils/BookHistoryUtils'
-import { showMessage } from '../../../../componets/common/promptShow'
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 
 @Component
@@ -27,7 +24,14 @@ export default struct BookBodyContent {
   @State groupCoverShow: boolean = false
   @State bookBodyIndex: number = 0
   tabsBookBodyController: TabsController = new TabsController();
-  @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0
+  /**
+   * 「最近阅读」行**尾部**的动作区（2026-09-29 新增）。
+   * 由 `IndexShelf` 传入 `ShelfTopActions()`（搜索 / 更多 两个图标）——原来它们挂在
+   * 顶部「小说/漫画/有声书」行的右侧；摘除「浏览历史」后本行尾部空了、与上一行
+   * 失去对齐，用户裁定把图标挪到这个空位。@BuilderParam 的箭头函数闭包绑在
+   * IndexShelf 上 ⇒ 弹窗/菜单/动效状态都在父组件（官方依据见 IndexShelf 同日注释）。
+   */
+  @BuilderParam trailingActions: () => void
   /** App 级夜间开关：只为触发重绘（取色走 NightMode/ShelfColors） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   build() {
@@ -46,15 +50,13 @@ export default struct BookBodyContent {
           }) {
             Row({ space: 15 }) {
               IndexSearchType({ title: this.title, searchValue: this.searchValue })
-              IndexSearchType({ title: '浏览历史', searchValue: this.searchValue })
-                .onClick(() => {
-                  Haptics.tap();
-                  this.GROUP = '标签'
-                  this.searchValue = '浏览历史'
-                })
-              if (this.searchValue !== '浏览历史') {
-                this.GroupBuilder()
-                this.ExhibitBuilder()
+              // ── 「浏览历史」入口已移除（2026-09-29，审核问题①）──────────────────
+              // book_history 表全工程只有一个写入点（BookDetailPage.jumpReadPage），
+              // 书架→阅读器的主流程不经过它 ⇒ 列表恒空；功能又与「最近阅读」重叠。
+              // 数据表与 DAO 保留（BookDetailPage 仍在写），后续想恢复入口可直接接回
+              // BookHistoryContent（BookContentRefresh 里的分支同日一并摘除）。
+              this.GroupBuilder()
+              this.ExhibitBuilder()
                 Text('管理')
                   .onClick(() => {
                     Haptics.tap();
@@ -68,7 +70,6 @@ export default struct BookBodyContent {
                   .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.6)' : 'rgba(0,0,0,0.5)')
                   .fontSize(15)
                   .fontWeight(400)
-              }
             }
             // ── 2026-09-23「书架顶部向沉浸光感看齐」（用户选 A：调到最像）──────────────
             // 自绘内容拿不到真材质（官方生效范围见 `IndexShelf` 顶部同款注释）⇒ 通用属性模拟，
@@ -82,29 +83,21 @@ export default struct BookBodyContent {
         .scrollBar(BarState.Off)
         .scrollable(ScrollDirection.Horizontal)
 
-        if (this.searchValue === '浏览历史') {
-          Row() {
-            Text('清空')
-              .onClick(() => {
-                Haptics.tap();
-                if (this.IndexShelf != null) {
-                  this.IndexShelf.open()
-                }
-              })
-          }
+        // ── 行尾动作区：搜索 / 更多（2026-09-29 自顶部行下移，填充「浏览历史」撤除后的空位）──
+        // Flex 是 SpaceBetween ⇒ 本节点贴行尾；垂直随 alignItems 与胶囊居中。
+        if (this.trailingActions) {
+          this.trailingActions()
         }
       }
       .padding(15)
 
       Stack() {
-        if (this.searchValue !== '浏览历史') {
-          groupTypeComponent({
+        groupTypeComponent({
             bookTypeNumber:this.bookTypeNumber,
             currentIndex: this.currentIndex,
             groupCoverShow: this.groupCoverShow,
             GROUP: this.GROUP
           }).zIndex(999)
-        }
         Tabs({
           controller:this.tabsBookBodyController,
           index: this.bookBodyIndex
@@ -137,31 +130,6 @@ export default struct BookBodyContent {
       .alignContent(Alignment.Top)
     }
   }
-  @State delCache: boolean = false
-  IndexShelf: CustomDialogController | null = new CustomDialogController({
-    builder: confirmDialogExample({
-      confirm: () => {
-        this.onAccept()
-      },
-      title: '清空',
-      delCache: this.delCache
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    // offset: { dx: 0, dy: '-40%' },
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25
-  })
-
-  onAccept() {
-    bookHistoryUtils.deleteAllBookHistory()
-    setTimeout(() => {
-      this.isBookHistoryRefreshing++
-      showMessage('清空成功!')
-    },200)
-  }
-
 
   @Builder
   GroupBuilder() {

@@ -24,6 +24,8 @@ export default struct BookInfoDialogs{
   //推送提醒
   @Prop bookData:Books
   @State pushReminder:boolean = false
+  // ⚠️ 第 1 项（置顶）的 title 只是**兜底初值** —— build() 里会按 bookData.isTop 实时覆盖
+  // （数组初始化器只在组件创建时执行一次，不能依赖它联动，依据见 build() 内注释）。
   @State buttonListInfo:buttonList[] = [
     new buttonList(1,this.bookData.isTop?'取消置顶':'置顶',$r('app.media.top')),
     new buttonList(2,'移动至',$r('app.media.folder')),
@@ -94,7 +96,10 @@ export default struct BookInfoDialogs{
           GridCol(){
             InsideCircleIcon({
               icon:item.icon,
-              title:item.title
+              // ⚠️ 置顶键字样**渲染时实时**按 bookData.isTop 取（2026-09-29）：
+              // buttonListInfo 数组初始化器只在弹窗组件创建时执行一次，bookData 若是
+              // 旧对象就会永远显示"置顶"（审核反馈：置顶后重进弹窗不变成"取消置顶"）。
+              title:item.id === 1 ? (this.bookData.isTop ? '取消置顶' : '置顶') : item.title
             })
               .onClick(()=>{
                 Haptics.tap();

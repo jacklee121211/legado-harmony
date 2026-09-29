@@ -4,6 +4,7 @@ import BookOverlay from '../../../componets/bookDetail/BookOverlay'
 import { showMessage } from '../../../componets/common/promptShow'
 import { folderList } from '../../../componets/dataList/folderList'
 import BookGroupsDao from '../../../database/dao/BookGroupsDao'
+import booksDao from '../../../database/dao/BooksDao'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import BookManageDialog from './components/dialog/BookManageDialog'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
@@ -90,13 +91,37 @@ export default struct BookFolder {
 
   @State groupList: BookGroups[] = []
 
-  getGroupList() {
-    BookGroupsDao.search({
-      type: this.currentIndex
-    }).then((val) => {
+  /**
+   * 拉分组列表（2026-09-29 修审核问题④「未分组的书未存放在未分组组别」）。
+   *
+   * 「未分组」是系统分组（isSystem=true），而 build() 过去把系统分组**全部**过滤掉
+   * ⇒ 文件夹视图里根本没有"未分组"这个文件夹，默认 bookGroup=3（未分组）的书
+   * 在文件夹视图里无家可归（「全部 / 未分组」两个页签能看到，文件夹视图看不到）。
+   * ① 放行名为「未分组」的系统分组（按名字认，不按 groupId 认 —— 系统分组由
+   *    `initGroupData` 按固定顺序插入，老库 groupId 可能漂移，名字才是稳定标识）；
+   * ② 它的 `bookIds` **库里恒空**（默认入架的书从不走 updateAddBookIds）⇒
+   *    这里按 `books.bookGroup === 未分组.groupId` **现算**，封面角标"共N本"才真实。
+   * 点进文件夹走 BookManageDialog，查询口径同样是 `bookGroup = groupId`，天然一致。
+   */
+  async getGroupList() {
+    try {
+      const val = await BookGroupsDao.search({
+        type: this.currentIndex
+      })
+      const ungrouped = val.find((g: BookGroups) => g.isSystem && g.groupName === '未分组')
+      if (ungrouped && ungrouped.groupId !== undefined) {
+        try {
+          const books = await booksDao.search({ bookGroup: ungrouped.groupId })
+          ungrouped.bookIds = books.map((b) => String(b.id ?? ''))
+        } catch (e) {
+          console.log('BookFolder 未分组bookIds现算失败: ', JSON.stringify(e))
+        }
+      }
       this.replayEntrance(val.length)
       this.groupList = val
-    })
+    } catch (e) {
+      console.log('BookFolder getGroupList, Error, ', JSON.stringify(e))
+    }
   }
 
   build() {
@@ -104,7 +129,9 @@ export default struct BookFolder {
       columns: this.EXHIBIT === '宫格' ? 3 : 1
     }) {
       ForEach(this.groupList, (item: BookGroups, index: number) => {
-        if (item.show && !item.isSystem) {
+        // ⚠️ 放行「未分组」系统分组（2026-09-29，审核问题④）：其余系统分组
+        // （分组/全部/本地/书单）不是"装书的地方"，维持排除。
+        if (item.show && (!item.isSystem || item.groupName === '未分组')) {
           GridCol() {
             Column() {
               if (this.EXHIBIT === '宫格') {

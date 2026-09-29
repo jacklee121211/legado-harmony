@@ -362,12 +362,17 @@ export default struct BookManagePage {
     }
     .onClick(async () => {
       Haptics.tap();
+      // ⚠️ 返回前先广播刷新（2026-09-29 修正）：旧实现在 `AppRouter.back()` **之后**
+      // setTimeout(100) 里才 `isBookRefreshing++` —— 那时本组件可能已随出栈销毁，
+      // @StorageLink 不再回写 AppStorage ⇒ 书架不刷新（"置顶/删除后书架还是旧排序"）。
+      // 组件还活着时写，保证书架（BookContent / GroupType / BookFolder）收到信号。
+      if (this.bookTypeNumber === 1) {
+        this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      } else if (this.bookTypeNumber !== 5) {
+        this.isBookRefreshing++
+      }
       // 迁 Navigation 第 4 期：本页现在是 NavDestination ⇒ 必须走门面返回。
       AppRouter.back()
-      setTimeout(()=>{
-        this.refreshData()
-        this.isBookRefreshing++
-      },100)
     })
   }
   //书单底部操作栏
@@ -466,19 +471,27 @@ export default struct BookManagePage {
     }
   }
   //置顶功能
-  manageTop(){
-    if(this.bookTypeNumber === 1){
-      bookGroupUtil.isTopGroup(this.checkListNumber, this.topTitle==='置顶'?true:false)
+  // ⚠️ 2026-09-29 重写（审核问题②「置顶成功后数据未实时更新」）：
+  // ① 旧实现写入不 await，靠 setTimeout(500) 赌写库完成 ⇒ 慢一时就查到旧数据；
+  // ② 重查后**没有**给书架广播刷新信号（`isBookRefreshing++` 被注释）⇒ 身后的
+  //    书架一直停在旧排序。现在写入完成 → 立即重查本页 + 广播书架刷新。
+  async manageTop(){
+    const top: boolean = this.topTitle === '置顶'
+    if (this.bookTypeNumber === 1) {
+      await bookGroupUtil.isTopGroup(this.checkListNumber, top)
     } else {
-      booksUtil.isTopBook(this.checkListNumber, this.topTitle==='置顶'?true:false)
+      await booksUtil.isTopBook(this.checkListNumber, top)
     }
-    setTimeout(()=>{
-      this.refreshData()
-      this.checkListNumber = []
-      this.checkLists = {}
-      this.topTitle = '置顶'
-      showMessage('操作成功')
-    },500)
+    // 写库已完成 ⇒ 本页列表立即按新 isTop 重排（查询本身按 `isTop DESC` 排序）
+    this.refreshData()
+    this.checkListNumber = []
+    this.checkLists = {}
+    this.topTitle = '置顶'
+    // 同步广播给身后的书架（BookContent 监听 BOOK_IS_BOOK_REFRESHING 重查）
+    if (this.bookTypeNumber !== 1) {
+      this.isBookRefreshing++
+    }
+    showMessage('操作成功')
   }
   //删除确认弹窗
   @State delCache:boolean = false

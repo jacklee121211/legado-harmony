@@ -72,6 +72,24 @@ export struct SleepTimerDialog {
   @State activePane: number = 0
 
   /**
+   * 时间滚轮的**当前指向时刻**（时:分，闹钟式）。
+   *
+   * ⚠️ 2026-09-29 重写（审核问题③「调整时间错乱」）——旧实现把 `selected` 绑到
+   * `this.minutesToDate()`（= 用**剩余分钟数**反推一个墙上时刻）：
+   *   用户拨滚轮 → onChange 算出剩余分钟 → 状态变化触发重渲染 → `selected` 被
+   *   重新应用成"剩余分钟当时钟"的**另一个时刻** → 滚轮自己跳位 → 再 onChange…
+   *   （例：现在 23:00，拨到 09:00 ⇒ 剩余 600 分钟 ⇒ 滚轮被重设到 10:00 ⇒
+   *     剩余 660 ⇒ 又跳到 11:00 …… 一直往上跑。）
+   * SDK 依据（MCP hover `TimePickerOptions.selected` 原文）：
+   *   「Time of the selected item. **Default value: current system time.**
+   *     Since API version 10, this parameter supports two-way binding through $$」
+   * ⇒ `selected` 是**可随渲染重设**的参数，绝不能绑一个"随选择结果漂移"的表达式。
+   * 修法：滚轮位置只由 `pickedTime` 驱动，且它**只在 onChange（用户亲手拨动）时更新**，
+   * 更新的值就是用户刚选的值 ⇒ 重渲染后滚轮原地不动，反馈环消失。
+   */
+  @State pickedTime: Date = new Date()
+
+  /**
    * 材质背板（调用方已通过 options 提供材质 ⇒ 传 true 让出背景）。
    * 兜底色按日夜模式给：材质不可用（`ImmersiveMaterialUtil.ENABLED = false` /
    * 设备不支持）时才会落到它，夜里必须是深底，否则白色兜底 + 白色文字。
@@ -109,6 +127,13 @@ export struct SleepTimerDialog {
     this.chapterOptions = arr;
     this.selChapters = this.initChapters;
     this.selMinutes = this.initMinutes;
+    // 时间滚轮初始指向（2026-09-29 重写）：
+    //  · 已设时长 ⇒ 指到"目标时刻"（现在 + 剩余分钟）—— 闹钟式语义下与剩余量自洽；
+    //    旧实现"剩余分钟当时钟"（300 分钟 ⇒ 显示 05:00）就是错乱的来源之一。
+    //  · 未设 ⇒ 系统当前时间（SDK 对 `selected` 的默认口径，见 pickedTime 注释）。
+    this.pickedTime = this.selMinutes > 0
+      ? new Date(Date.now() + this.selMinutes * 60000)
+      : new Date();
     // 材质不可用时的兜底色（夜里给深底，否则白底 + 白字）
     this.surface = new MaterialColumnModifier(
       this.colorMode == 0 ? '#1F1F1F' : Color.White, true);
@@ -117,14 +142,6 @@ export struct SleepTimerDialog {
   /** 选中项在 `chapterOptions` 中的下标（0 = 关） */
   private chapterIndex(): number {
     return this.selChapters <= 0 ? 0 : this.selChapters;
-  }
-
-  /** 把分钟数转成 TimePicker 需要的 Date */
-  private minutesToDate(): Date {
-    const d = new Date();
-    const m = this.selMinutes > 0 ? this.selMinutes : 0;
-    d.setHours(Math.floor(m / 60), m % 60, 0, 0);
-    return d;
   }
 
   /** 把目标时刻（时:分）换算成"距离现在还有多少分钟" —— **闹钟式语义** */
@@ -226,8 +243,9 @@ export struct SleepTimerDialog {
           })
       } else {
         // 时间：**闹钟式** —— 选目标时刻（时:分），剩余分钟由差值算出并显示在右上角
+        // ⚠️ `selected` 只绑 `pickedTime`（稳定值，见其注释），绝不能绑随 selMinutes 漂移的表达式
         TimePicker({
-          selected: this.minutesToDate(),
+          selected: this.pickedTime,
           format: TimePickerFormat.HOUR_MINUTE
         })
           .width('100%')
@@ -242,8 +260,14 @@ export struct SleepTimerDialog {
           //   显式设为 true 即只显示"时:分"。
           .useMilitaryTime(true)
           .onChange((value: TimePickerResult) => {
-            this.selMinutes = this.computeRemainingMinutes(
-              this.safeHour(value), this.safeMinute(value));
+            const h = this.safeHour(value);
+            const m = this.safeMinute(value);
+            // ★ 滚轮位置回写**用户亲手选的时刻**（原地不动，不产生跳位反馈环）；
+            //   剩余分钟按闹钟式差值另算（早于现在的时刻 = 明天的这一时刻）。
+            const d = new Date();
+            d.setHours(h, m, 0, 0);
+            this.pickedTime = d;
+            this.selMinutes = this.computeRemainingMinutes(h, m);
             Haptics.tick();
           })
       }

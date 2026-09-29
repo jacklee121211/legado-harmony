@@ -1360,7 +1360,16 @@ export default struct ReaderPage3 {
     .height(30)
     .width(inScroll ? 60 : '100%')
     .layoutWeight(inScroll ? 0 : 1)
-    .borderRadius(30)
+    // ⚠️ 圆角必须配 clip（2026-09-29 修"八个预览背景是四直角"）：borderRadius 只圆
+    // **自身**的背景/边框，**不裁子节点** —— 旧实现底色层与预览图层都是直角铺满 100%，
+    // 从圆角轮廓处溢出去 ⇒ 格子看起来是四直角（只有边框层自己是圆的）。
+    // SDK 依据（MCP hover `CommonMethod.clip` 原文）：「Sets whether to clip the areas of
+    //   child components that extend beyond this component's bounds, that is, whether to
+    //   perform clipping based on **the edge contour of the parent container**.」
+    // ⇒ `clip(true)` 按"父容器边缘轮廓"（含 borderRadius 圆角）裁剪子节点。
+    // 半径与内部"边框层"取同值 20，保证裁剪轮廓与边框完全重合（不露直角毛边）。
+    .borderRadius(20)
+    .clip(true)
     .borderStyle(BorderStyle.Solid)
     .onClick(() => {
       Haptics.tap();
