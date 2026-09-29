@@ -1,5 +1,6 @@
 import { UIContext } from '@kit.ArkUI'
 import { image } from '@kit.ImageKit'
+import UiMotion from './UiMotion'
 
 /**
  * 一镜到底（书架 → 阅读器）· 飞行数据与几何 —— 2026-09-23
@@ -48,6 +49,20 @@ export class LongTakeFlightData {
    * 持有到返回动画结束（onDisAppear 清空），约一整屏内存（1320×2848×4 ≈ 15MB）。
    */
   backdrop: image.PixelMap | null = null
+  /**
+   * **封面卡片的定格位图**（2026-09-30 七轮新增，治"关闭动画底部空洞"）。
+   *
+   * 为什么必须位图化：飞行封面层的盒子高度 = `ltClipH`，会从封面纵横比（0.75）
+   * 一路长到整屏纵横比（1320/2848 ≈ 0.4635）；而 `Image(图源)` 只按图源自己的
+   * 纵横比铺（默认封面走 `.alt()` 的 SVG `90×120`）⇒ 除最后一帧外，
+   * 盒子底部恒有一条"没人画"的空洞，漏出下面的书架定格图（真机日志 + 截图逐像素实证，
+   * 见 `UiMotion.LT_COVER_SNAPSHOT` 的完整取证）。
+   * 位图（PixelMap）一定吃 `ImageFit.Fill` ⇒ 铺满盒子、空洞消失。
+   * 分辨率：封面卡片 202.5×270px，`scale: 4` ⇒ 810×1080px（放大到整屏也不糊）；
+   * 文档同时提醒"不要截超过屏幕尺寸的大图"，这个尺寸安全。
+   * 仅日志用、失败即 null（调用方退回 `Image(coverUrl)` 老路径）。
+   */
+  coverShot: image.PixelMap | null = null
   /** 仅日志用 */
   bookName: string = ''
 
@@ -83,6 +98,35 @@ export class LongTakeFlightData {
       } catch (e2) {
         f.backdrop = null
         console.info('LTBOOK', `capture backdrop failed: ${(e2 as Error).message}`)
+      }
+      // 封面定格位图（七轮）：治"飞行封面层底部空洞"（见 UiMotion.LT_COVER_SNAPSHOT 取证）。
+      // 刻意**不开** waitUntilRenderFinished：SDK 原文「The snapshot captures content rendered in
+      // the last frame」⇒ 拿到的正是"按下之前那一帧"的封面（clickEffect 的 0.96 按压缩放还没进去），
+      // 既省点击侧耗时，又正是我们要的那张图。失败不阻塞（飞行层退回 Image(coverUrl)）。
+      if (UiMotion.LT_COVER_SNAPSHOT) {
+        // ⚠️ 九轮（2026-09-30）：**取法①（从 `main` 按 region 抠封面）已试过并被真机否决**。
+        //   用户原话：「现在边飞边放大的不是书的封页，而是**类似于顶部的截图**」——
+        //   即 `SnapshotOptions.region` 的坐标空间与我按 px 传入的封面窗口坐标不一致
+        //   （SDK `componentSnapshot.d.ts:67-100` 的 `SnapshotRegion.left/right/top/bottom`
+        //   文档写「Unit: px」，但真机取到的是别处的画面）。
+        //   ⇒ 不再用 region，回到**直接截封面节点本身**（七/八轮真机验证过封面是对的）。
+        // 另注（同一 SDK 文件的原文）：未填满区域会是**透明像素**，且带 **image effects**
+        //   （封面卡片上有 `.shadow()`）的组件「the resulting snapshot may not be as expected」
+        //   ⇒ 若真机上再看到封面位图边缘异常，就走"整窗截图 + 本地裁剪"那条路
+        //   （原文给的建议是 `window.snapshot`，本工程暂不需要）。
+        let shot: image.PixelMap | null = null
+        try {
+          shot = ui.getComponentSnapshot().getSync(componentId, { scale: 4 })
+          console.info('LTBOOK', `capture cover shot ok id=${componentId}`)
+        } catch (e3) {
+          shot = null
+          console.info('LTBOOK', `capture cover shot failed: ${(e3 as Error).message}`)
+        }
+        f.coverShot = shot
+        if (shot !== null) {
+          const ci: image.ImageInfo = shot.getImageInfoSync()
+          console.info('LTBOOK', `cover shot px=${ci.size.width}x${ci.size.height}`)
+        }
       }
       console.info('LTBOOK',
         `capture id=${componentId} book=${bookName} cover=(${f.coverLeftPx},${f.coverTopPx} ` +
