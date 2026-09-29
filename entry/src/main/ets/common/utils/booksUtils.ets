@@ -4,12 +4,16 @@ import bookGroupUtils from './bookGroupUtils'
 import toolsUtils from './ToolsUtils'
 
 class booksUtils{
+  // ⚠️ 必须**逐个 await**（2026-09-29，审核问题②）：
+  // 旧实现 `Ids.forEach(item => BooksDao.isUpdateBookTop(item, isTop))` 裸调不等待 ⇒
+  // 本方法 resolve 时写库**尚未完成**，调用方（BookManagePage.manageTop）随即重查列表，
+  // 查到的还是旧 isTop ⇒ 表现为"置顶成功后数据未实时更新"。
   async isTopBook(id: number|number[], isTop: boolean): Promise<boolean>{
     let Ids:number[] = toolsUtils.numberArrays(id)
     try {
-      Ids.forEach((item:number)=>{
-        BooksDao.isUpdateBookTop(item, isTop)
-      })
+      for (const item of Ids) {
+        await BooksDao.isUpdateBookTop(item, isTop)
+      }
       return true
     } catch (e){
       return false

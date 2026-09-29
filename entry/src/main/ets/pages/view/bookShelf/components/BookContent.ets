@@ -205,9 +205,19 @@ export default struct BookContent {
               })
             }
           }
-        }, (item: Books, index: number): string => item.id !== undefined ? 'b' + item.id
-          : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl
-            : 'n' + item.bookName + '#' + index))
+        }, (item: Books, index: number): string => {
+          // ⚠️ 键值必须带上**会变、且影响封面显示**的字段（2026-09-29 修"置顶角标/弹窗字样不联动"）：
+          // LazyForEach 对键值相同的项**复用旧组件、不重绑数据** —— 旧键 `'b'+id` 在置顶前后
+          // 不变 ⇒ 复用组件里的 Books 还是旧对象：封面"置顶"角标不出现、长按弹窗（捕获的
+          // 正是这个旧对象）永远显示"置顶"。管理页是普通 ForEach + 全量重查 + 重排重建，
+          // 所以那边一直正常 —— 以它为准，把变化特征并进键值：
+          //   · isTop：置顶/取消置顶 ⇒ 角标与弹窗字样立即同步（重建就一条，开销可忽略）；
+          //   · durChapterTime：读书回来"读到第X章"文案同理会停留旧值，一并修掉。
+          const flag: string = (item.isTop ? 'T' : 'F') + (item.durChapterTime ?? 0)
+          return item.id !== undefined ? 'b' + item.id + flag
+            : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl + flag
+              : 'n' + item.bookName + '#' + index)
+        })
       }
       .alignListItem(ListItemAlign.Center)
       .layoutWeight(1)

@@ -244,18 +244,21 @@ class BooksDao {
     }
   }
   //置顶
+  // ⚠️ 逐本 await 写入（2026-09-29，审核问题②）：forEach 裸调 + 不等待 ⇒ 调用方
+  // 拿到 resolve 时写库未完成，随即重查列表查到旧值（"置顶后不实时更新"根因之一）。
   async isUpdateBookTop(id: number, isTop: boolean) {
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       const predicates = DbUtil.getPredicates(this.TABLE_NAME);
       predicates.equalTo('id', id)
       const count = await DbUtil.queryForList<Books>(predicates, column)
-      if (column.length > 0) {
-        count.forEach((item) => {
+      // 旧实现误判 `column.length > 0`（列定义恒非空）—— 应判**查询结果**
+      if (count.length > 0) {
+        for (const item of count) {
           item.isTop = isTop
           item.updateTime = Date.now()
-          this.update(item)
-        })
+          await this.update(item)
+        }
         return true
       }
       return false

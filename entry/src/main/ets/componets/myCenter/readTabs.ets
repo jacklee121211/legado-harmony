@@ -8,6 +8,13 @@ export struct readTabs{
   /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
 
+  /**
+   * 页签切换回调（2026-09-29 新增，审核问题⑤「读过/读完筛选无效果」）。
+   * 旧实现的选中态是组件内部 `@State read_index`，切换**只动滑块、不上报**，
+   * 父页面无从得知 ⇒ 列表永远是全量。现在把新下标交回父页面去做过滤。
+   * （index 即 `bookType`：0=小说 / 1=漫画 / 2=有声书，与父页面统计口径一致。）
+   */
+  onIndexChange: (index: number) => void = (_index: number): void => {}
 
   @Prop read_list:dataItem[]
   @State read_index:number=0
@@ -37,6 +44,7 @@ export struct readTabs{
             }
           }
           this.read_index=index
+          this.onIndexChange(index)
         })
       }, (item: dataItem): string => item.title)
     }.height(30)

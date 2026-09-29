@@ -8,7 +8,6 @@ import RefreshComponent from '../../../../componets/common/RefreshComponent'
 import BookFolder from '../BookFolder'
 import WorksBookLists from '../Shelf/WorksBookLists'
 import BookContent from './BookContent'
-import BookHistoryContent from './BookHistoryContent'
 
 @Component
 export default struct BookContentRefresh {
@@ -16,7 +15,6 @@ export default struct BookContentRefresh {
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') isGroupRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_WORKS_BOOK_LIST') isWorksBookListRefreshing: number = 0
-  @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0
   /** 「分组 / 全部 / 未分组 / 本地」那一栏的**实测高度**（`GroupType` 上报）——用于给列表让位 */
   @StorageLink('shelfGroupRowH') shelfGroupRowH: number = 0
   @State counter: number = 0
@@ -40,14 +38,11 @@ export default struct BookContentRefresh {
           this.isBookRefreshing++
           break
       }
-      if (this.searchValue === '浏览历史') {
-        this.isBookHistoryRefreshing++
-      }
     }
   }
   build() {
     Refresh({ refreshing: $$this.isRefreshing, builder: this.refreshComponent }) {
-      if (this.bookTypeNumber !== 5 && this.bookTypeNumber !== 1 && this.searchValue !== '浏览历史' ){
+      if (this.bookTypeNumber !== 5 && this.bookTypeNumber !== 1){
         BookContent({
           currentIndex:this.currentIndex,
           bookTypeNumber:this.bookTypeNumber,
@@ -57,7 +52,7 @@ export default struct BookContentRefresh {
       } else {
         Scroll() {
           Column() {
-            if (this.bookTypeNumber === 5 && this.searchValue !== '浏览历史') {
+            if (this.bookTypeNumber === 5) {
               WorksBookLists({
                 checkGroup: this.checkGroup,
                 EXHIBIT: this.EXHIBIT,
@@ -65,17 +60,10 @@ export default struct BookContentRefresh {
                 isShowCheck:false
               })
             } else {
-              if (this.searchValue === '浏览历史') {
-                BookHistoryContent({
-                  currentIndex:this.currentIndex,
-                  searchValue: this.searchValue
-                })
-              } else {
-                BookFolder({
-                  EXHIBIT: this.EXHIBIT,
-                  currentIndex:this.currentIndex
-                })
-              }
+              BookFolder({
+                EXHIBIT: this.EXHIBIT,
+                currentIndex:this.currentIndex
+              })
             }
           }
           .padding({ left: 10, right: 10, bottom: 30 })
@@ -88,9 +76,9 @@ export default struct BookContentRefresh {
     // 原来这里是写死的 `30`；分组栏加了胶囊外观后实际更高 ⇒ 会压住第一行书。
     // 现在按 `GroupType` 用 onAreaChange **实测上报**的高度算：`实测高度 + 4`（4 = 视觉间隙）；
     // 拿不到实测值时回落旧的 30。**只在这一处让位**（`BookBodyContent` 里那份叠加已删除）。
+    // （2026-09-29 摘除「浏览历史」后不再有 0 让位的分支 —— 见 BookBodyContent 同日注释。）
     .margin({
-      top: this.searchValue === '浏览历史' ? 0
-        : (this.shelfGroupRowH > 0 ? this.shelfGroupRowH + 4 : 30)
+      top: this.shelfGroupRowH > 0 ? this.shelfGroupRowH + 4 : 30
     })
     .onStateChange((refreshStatus: RefreshStatus) => {
       if (refreshStatus === 1 || refreshStatus === 2) {

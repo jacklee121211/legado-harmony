@@ -201,6 +201,13 @@ export default struct IndexShelf {
           //   「最近阅读/浏览历史…」和「分组/全部/未分组…」那两处的胶囊保留（用户没反对）。
         }
 
+        // ── 搜索 / 更多已下移（2026-09-29 用户裁定）────────────────────────────
+        // 用户原话：摘掉「浏览历史」后「最近阅读这一行后面空了，和下面这一行不对齐，
+        //   上面小说这一行还有一个搜索和一个更多的图标，放在下面是不是非常完美」。
+        // ⇒ 两个图标挪进「最近阅读」行的尾部（本组件只留「小说/漫画/有声书」一行），
+        //   全部交互逻辑（搜索浮窗 / ⋯菜单 / Q弹动效）仍在 IndexShelf，
+        //   经 `BookBodyContent.trailingActions`（@BuilderParam）注入渲染，
+        //   与设置 sheet 复用页面 @Builder 是同一官方模式（faqs-arkui-826）。
         Row() {
           Flex() {
           }
@@ -217,65 +224,7 @@ export default struct IndexShelf {
               // this.clickBookType = ''
             }
           })
-
-
-          Row({ space: 16 }) {
-            // ── 搜索按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
-            // 符号名 `magnifyingglass` 在 SDK 符号表
-            //   `…\Sdk\23\previewer\common\resources\entry\resources.txt` 查得，不猜名字。
-            // 颜色沿用 `ShelfColors.icon()`（日/夜双档，替代原 SVG 的显式染色；
-            //   夜间不染色的坑见原注释，现在由 icon() 统一保证）。
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
-              .fontSize(24)
-              .fontColor([ShelfColors.icon()])
-              .scale({ x: this.searchScale, y: this.searchScale })
-              .onClick(() => {
-              Haptics.tap();
-              runJellyClick((v: number) => {
-                this.searchScale = v
-              })
-              // ★ 2026-09-22：改为**本地书架搜索浮窗**（用户要求）。
-              //   用户原话：「书架顶部搜索是假的，进入之后是假的，直觉删除，保留搜索按钮，
-              //   点击后直接出现浮窗搜索，可以搜索书名，支持拼音，首字母，汉字等多种搜索模式」。
-              //   原来这里 `AppRouter.push(RouteName.SEARCH)` 去的是 `SearchBook.ets`，
-              //   而那一页是**搜网络书源**的（`taskSearchBook` 在线搜索），
-              //   对"找我自己书架上的书"来说是假的（`SearchBook` 页面本身保留 ——
-              //   它的在线搜书能力另有用途，本次只是不再从书架入口进它）。
-              this.isShowShelfSearch = true
-              this.shelfSearchDialog?.open()
-            })
-              .clickEffect(UiMotion.CLICK)
-              // ★★ 2026-09-22 改为 @CustomDialog（用户拍板「既然能统一，那就全 @CustomDialog」）★★
-              //   原因：sheet 的 `preferType: SheetType.CENTER` 真机**毫无变化**
-              //   （试过 detents / height / preferType 四种组合都不居中），
-              //   而 `@CustomDialog` 由 `offset` **直接控制位置**，不受 sheet 锚定行为限制；
-              //   这条路已在本工程验证成功三次（长按弹窗 / 加入书单 / 睡眠定时）。
-              //   而且 `@CustomDialog` 还能拿到**真沉浸光感材质**（sheet 拿不到）。
-
-            // ── 更多按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
-            // 符号名 `more`（横向三点）同表查得；`more_fill` 也在表里（未用）。
-            SymbolGlyph($r('sys.symbol.more'))
-              .fontSize(24)
-              .fontColor([ShelfColors.icon()])
-              .scale({ x: this.moreScale, y: this.moreScale })
-              .bindMenu(this.MenuBuilder())
-              .bindSheet($$this.isShowImport, this.ImportDialog(), {
-                // 书籍导入弹窗绑定元素
-                height: 200,
-                showClose: false,
-                dragBar: false,
-                backgroundColor: ShelfColors.surface(),
-                blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-              })
-              .onClick(() => {
-                Haptics.tap();
-                runJellyClick((v: number) => {
-                  this.moreScale = v
-                })
-              })
-              .clickEffect(UiMotion.CLICK)
-          }
-        }.margin({ bottom: 12 })
+        }
       }
       .padding({ top: this.topRectHeight === 0 ? 30 : this.topRectHeight, left: 20, right: 20 })
 
@@ -291,7 +240,11 @@ export default struct IndexShelf {
                 currentIndex: this.currentIndex,
                 EXHIBIT: this.EXHIBIT,
                 GROUP: this.GROUP,
-                bookTypeNumber: this.bookTypeNumber
+                bookTypeNumber: this.bookTypeNumber,
+                // 搜索/更多图标：下移到「最近阅读」行尾（2026-09-29，见 build() 同日注释）
+                trailingActions: (): void => {
+                  this.ShelfTopActions()
+                }
               })
             }
           }
@@ -343,6 +296,71 @@ export default struct IndexShelf {
    *   `CustomPopupOptions.popupColor`（SDK 该接口确有 `popupColor`/`radius`/`shadow` 字段，
    *   可完全接管底色），代价是 `bindMenu` → `bindPopup` 要自己维护显隐 `@State`。
    */
+  /**
+   * 「最近阅读」行尾部的 搜索 / 更多 两个图标（2026-09-29 自顶部行下移，见 build() 同日注释）。
+   * 经 `BookBodyContent.trailingActions`（@BuilderParam）渲染在那一行的尾部空位；
+   * `this` 绑定 IndexShelf（箭头函数闭包）⇒ 弹窗 / 菜单 / 动效状态全部还是本组件的。
+   */
+  @Builder
+  ShelfTopActions() {
+    Row({ space: 16 }) {
+      // ── 搜索按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
+      // 符号名 `magnifyingglass` 在 SDK 符号表
+      //   `…\Sdk\23\previewer\common\resources\entry\resources.txt` 查得，不猜名字。
+      // 颜色沿用 `ShelfColors.icon()`（日/夜双档，替代原 SVG 的显式染色；
+      //   夜间不染色的坑见原注释，现在由 icon() 统一保证）。
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(24)
+        .fontColor([ShelfColors.icon()])
+        .scale({ x: this.searchScale, y: this.searchScale })
+        .onClick(() => {
+          Haptics.tap();
+          runJellyClick((v: number) => {
+            this.searchScale = v
+          })
+          // ★ 2026-09-22：改为**本地书架搜索浮窗**（用户要求）。
+          //   用户原话：「书架顶部搜索是假的，进入之后是假的，直觉删除，保留搜索按钮，
+          //   点击后直接出现浮窗搜索，可以搜索书名，支持拼音，首字母，汉字等多种搜索模式」。
+          //   原来这里 `AppRouter.push(RouteName.SEARCH)` 去的是 `SearchBook.ets`，
+          //   而那一页是**搜网络书源**的（`taskSearchBook` 在线搜索），
+          //   对"找我自己书架上的书"来说是假的（`SearchBook` 页面本身保留 ——
+          //   它的在线搜书能力另有用途，本次只是不再从书架入口进它）。
+          this.isShowShelfSearch = true
+          this.shelfSearchDialog?.open()
+        })
+        .clickEffect(UiMotion.CLICK)
+        // ★★ 2026-09-22 改为 @CustomDialog（用户拍板「既然能统一，那就全 @CustomDialog」）★★
+        //   原因：sheet 的 `preferType: SheetType.CENTER` 真机**毫无变化**
+        //   （试过 detents / height / preferType 四种组合都不居中），
+        //   而 `@CustomDialog` 由 `offset` **直接控制位置**，不受 sheet 锚定行为限制；
+        //   这条路已在本工程验证成功三次（长按弹窗 / 加入书单 / 睡眠定时）。
+        //   而且 `@CustomDialog` 还能拿到**真沉浸光感材质**（sheet 拿不到）。
+
+      // ── 更多按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
+      // 符号名 `more`（横向三点）同表查得；`more_fill` 也在表里（未用）。
+      SymbolGlyph($r('sys.symbol.more'))
+        .fontSize(24)
+        .fontColor([ShelfColors.icon()])
+        .scale({ x: this.moreScale, y: this.moreScale })
+        .bindMenu(this.MenuBuilder())
+        .bindSheet($$this.isShowImport, this.ImportDialog(), {
+          // 书籍导入弹窗绑定元素
+          height: 200,
+          showClose: false,
+          dragBar: false,
+          backgroundColor: ShelfColors.surface(),
+          blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
+        })
+        .onClick(() => {
+          Haptics.tap();
+          runJellyClick((v: number) => {
+            this.moreScale = v
+          })
+        })
+        .clickEffect(UiMotion.CLICK)
+    }
+  }
+
   @Builder
   MenuBuilder() {
     Column() {
