@@ -100,6 +100,21 @@ struct Main {
    * null = 快照失败 ⇒ 保留底下那层纯黑兜底（回到四轮前的观感）。
    */
   @State ltBackdrop: image.PixelMap | null = null
+  /**
+   * 飞行封面层的图源 = **封面卡片定格位图**（七轮 2026-09-30）。
+   * `null` = 截图失败 ⇒ 退回 `ltCoverUrl`（老路径）。
+   * 为什么不能直接用 `ltCoverUrl`：飞行封面层的盒子高度 = `ltClipH`，比图源自己的纵横比高，
+   * 会留一条"没人画"的空洞漏出书架定格图 —— 完整取证见 `UiMotion.LT_COVER_SNAPSHOT`。
+   */
+  @State ltCoverShot: image.PixelMap | null = null
+  /**
+   * 「内容页长什么样」——由 `ReaderPage3.publishLtPageBg()` 发布（键名同时写在
+   * `UiMotion.LT_PAGE_BG_KEY` / `LT_PAGE_IMG_KEY` 上）。
+   * ⚠️ 这里的装饰器参数必须是**字符串字面量**（ArkTS 限制）⇒ 与 UiMotion 里那两个常量
+   * 是"两处同一份真相"，改一处必须同步改另一处。
+   */
+  @StorageLink('ltReaderPageBg') ltPageBg: string = ''
+  @StorageLink('ltReaderPageImg') ltPageImg: string = ''
   /** 当前这次飞行的数据/几何（非 @State：只在 delegate 里读写，不参与渲染） */
   private ltFlight: LongTakeFlightData | null = null
   private ltGeom: LongTakeGeom | null = null
@@ -514,6 +529,20 @@ struct Main {
   // 真正编排由 event 里的显式 animateTo 串行驱动（探针已验证该机制真机成立）。
 
   /**
+   * 飞行封面层的图源（七轮 2026-09-30）：优先用点击瞬间截的**封面位图**，
+   * 失败/关开关时退回书架同源的 `ltCoverUrl`（老路径）。
+   *
+   * 为什么不是直接用 `Image(coverUrl)`：图层盒子的高度 = `ltClipH`，比图源自身纵横比高，
+   * 图源只按自己比例铺 ⇒ 底部留空洞漏出书架定格图（真机日志 + 截图逐像素实证，
+   * 见 `UiMotion.LT_COVER_SNAPSHOT`）。位图一定吃 `ImageFit.Fill` ⇒ 铺满。
+   * `Image(src)` 的形参类型是 `PixelMap | ResourceStr | DrawableDescriptor`
+   * （SDK `component/image.d.ts`）⇒ 这里返回 `PixelMap | string` 可直接传入。
+   */
+  private ltCoverSrc(): image.PixelMap | string {
+    return this.ltCoverShot !== null ? this.ltCoverShot : this.ltCoverUrl
+  }
+
+  /**
    * READER「飞行分支」的 customTransition delegate。
    * 只有飞行分支会挂它 ⇒ 走到这里就意味着本次是书架点击进入（rp.longTake 必有值）。
    */
@@ -543,6 +572,8 @@ struct Main {
       this.ltCoverOpacity = 1
       this.ltCoverUrl = f.coverUrl
       this.ltBackdrop = f.backdrop
+      // 七轮：封面位图（治"底部空洞"）；截图失败时 f.coverShot = null ⇒ 飞行层退回旧图源
+      this.ltCoverShot = f.coverShot
       const trans: Array<NavDestinationTransition> = [{
         duration: UiMotion.LT_ENTER_DUR,
         curve: Curve.Linear,
@@ -581,12 +612,51 @@ struct Main {
   }
 
   /**
-   * 进场编排（四轮定型的"打开一本书"模型；五轮仅把背景从变暗层换成书架定格快照）：
-   * ① 包络 0→TOTAL：整本书（封面+内容页连体）放大、铰链从封面原位漂移到屏幕左缘；
-   *   内容页裁切窗口同步从封面纵横比长到全屏 —— "内容页随放大变成全屏阅读器"
-   * ② 封面绕书脊掀开 80→560ms：左侧两角（书脊）小幅度、右侧两角大幅度向左扫，
-   *   透视下投影渐窄 ⇒ 内容页从右侧渐进露出
-   * ③ 封面淡出 480→560ms：盖住 >90° 背面镜像穿帮
+   * 转场探针（八轮 2026-09-30，`UiMotion.LT_PROBE` 控制，查完可关）。
+   *
+   * 为什么必须加：`Image.onComplete` 的 `componentHeight` 在转场开始 4ms 就报出**终值**
+   * （真机日志 `Downloads\2.md`：33.911 报 2848px，而 2848px 是 560ms 动画的终值），
+   * 无法据此判断"裁切窗口到底是在跳变还是平滑插值"。
+   * `getRectangleById` 拿的是**布局尺寸**（官方文档：返回的组件位置为布局位置，
+   * 且 rotate/translate/scale 等图形变换不计入）⇒ 正是"这个状态变量当前被解释成多大"的直接证据。
+   */
+  private ltProbe(tag: string): void {
+    if (!UiMotion.LT_PROBE) {
+      return
+    }
+    const ui = this.getUIContext()
+    for (const ms of [0, 60, 150, 300, 470]) {
+      setTimeout((): void => {
+        let cover: string = 'n/a'
+        let clipLayer: string = 'n/a'
+        try {
+          const r = ui.getComponentUtils().getRectangleById('ltCoverNode')
+          cover = `${Math.round(r.size.width)}x${Math.round(r.size.height)}`
+        } catch (e) {
+          cover = 'no-cover'
+        }
+        try {
+          const r2 = ui.getComponentUtils().getRectangleById('ltClipNode')
+          clipLayer = `${Math.round(r2.size.width)}x${Math.round(r2.size.height)}`
+        } catch (e2) {
+          clipLayer = 'no-clip'
+        }
+        console.info('LTBOOK',
+          `probe ${tag} t=${ms} clipH=${this.ltClipH.toFixed(1)} scale=${this.ltScale.toFixed(3)} ` +
+          `t=(${this.ltTx.toFixed(1)},${this.ltTy.toFixed(1)}) angle=${this.ltCoverAngle.toFixed(1)} ` +
+          `cover=${cover} cliplayer=${clipLayer}`)
+      }, ms)
+    }
+  }
+
+  /**
+   * 进场编排（八轮 2026-09-30：改成"**先飞大、后开盖**"——见 `UiMotion.LT_COVER_FIRST`）。
+   *
+   * ① 0→`LT_GROW_DUR`：整本书（封面**合着**，把内容页盖住）放大、铰链从封面原位漂移到屏幕左缘，
+   *   内容页裁切窗口同步从封面纵横比长到全屏 —— 这一整段是"一坨整体"在飞，
+   *   封面把内容页挡着 ⇒ 阅读器还没画好也看不见（用户口述："让阅读器隐藏在封页的下面"）。
+   * ② `LT_GROW_DUR`→+`LT_FLIP2_DUR`：封面绕书脊掀开，露出（此时已加载好的）阅读器。
+   * ③ 末段封面淡出：盖住 >90° 背面镜像穿帮（spec §5.2）。
    * 背景（快照垫层）全程静止不动 —— 与真书架像素级一致，无衔接感。
    */
   private ltRunEnter(): void {
@@ -595,36 +665,70 @@ struct Main {
       return
     }
     const ui = this.getUIContext()
-    // ① 包络：书整体放大向左靠拢，内容页（裁切窗口）同步长到全屏（全是图形变换，正文不重排）
-    ui.animateTo({
-      duration: UiMotion.LT_ENTER_DUR,
-      curve: Curve.Friction,
-      onFinish: (): void => {
-        console.info('LTBOOK', 'enter flight done')
-      }
-    }, (): void => {
-      this.ltScale = 1
-      this.ltTx = 0
-      this.ltTy = 0
-      this.ltClipH = g.clipH1
-    })
-    // ② 封面绕书脊掀开（方向语义见 UiMotion.LT_FLIP_ANGLE 注释；真机上若方向反了改那个符号）
-    ui.animateTo({
-      delay: UiMotion.LT_FLIP_DELAY,
-      duration: UiMotion.LT_FLIP_DUR,
-      curve: Curve.Friction
-    }, (): void => {
-      this.ltCoverAngle = UiMotion.LT_FLIP_ANGLE
-    })
-    // ③ 封面淡出：盖住 >90° 时背面镜像的穿帮（spec §5.2）
-    ui.animateTo({
-      delay: UiMotion.LT_FADE_DELAY,
-      duration: UiMotion.LT_FADE_DUR
-    }, (): void => {
-      this.ltCoverOpacity = 0
-    })
-    // 诊断（五轮）：飞行中段量一次书架根节点 'main' 的实际宽度 ——
-    // 若小于窗口宽 ⇒ 证实"系统把 NavBar 缩宽"（右侧黑条的另一候选根因），留给下轮排查
+    this.ltProbe('enter')
+    if (UiMotion.LT_COVER_FIRST) {
+      // ① 整本书飞大到位（封面未动 ⇒ 内容页被盖住）
+      ui.animateTo({
+        duration: UiMotion.LT_GROW_DUR,
+        curve: Curve.Friction
+      }, (): void => {
+        this.ltScale = 1
+        this.ltTx = 0
+        this.ltTy = 0
+        this.ltClipH = g.clipH1
+      })
+      // ② 封面随后掀开
+      ui.animateTo({
+        delay: UiMotion.LT_GROW_DUR,
+        duration: UiMotion.LT_FLIP2_DUR,
+        curve: Curve.Friction,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'enter flight done')
+        }
+      }, (): void => {
+        this.ltCoverAngle = UiMotion.LT_FLIP_ANGLE
+      })
+      // ③ 末段淡出（LT_GROW_DUR + LT_FLIP2_DUR − 80 = 480，与旧 LT_FADE_DELAY 对齐）
+      ui.animateTo({
+        delay: UiMotion.LT_GROW_DUR + UiMotion.LT_FLIP2_DUR - UiMotion.LT_FADE_DUR,
+        duration: UiMotion.LT_FADE_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 0
+      })
+    } else {
+      // ── 一镜到底（**默认**，`LT_COVER_FIRST = false`）：包络与翻盖**同时从 0ms 起跑** ──
+      // 用户口径：「边飞边放大，非常丝滑的动画。一镜到底的效果」——所以这三段必须同时进行，
+      // 不能拆成"先飞大再翻页"（八轮试过，已被否决，见 UiMotion.LT_COVER_FIRST 注释）。
+      // ① 包络：书整体放大向左靠拢，内容页（裁切窗口）同步长到全屏（全是图形变换，正文不重排）
+      ui.animateTo({
+        duration: UiMotion.LT_ENTER_DUR,
+        curve: Curve.Friction,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'enter flight done')
+        }
+      }, (): void => {
+        this.ltScale = 1
+        this.ltTx = 0
+        this.ltTy = 0
+        this.ltClipH = g.clipH1
+      })
+      // ② 封面绕书脊掀开（方向语义见 UiMotion.LT_FLIP_ANGLE 注释；真机上若方向反了改那个符号）
+      ui.animateTo({
+        delay: UiMotion.LT_FLIP_DELAY,
+        duration: UiMotion.LT_FLIP_DUR,
+        curve: Curve.Friction
+      }, (): void => {
+        this.ltCoverAngle = UiMotion.LT_FLIP_ANGLE
+      })
+      // ③ 封面淡出：盖住 >90° 时背面镜像的穿帮（spec §5.2）
+      ui.animateTo({
+        delay: UiMotion.LT_FADE_DELAY,
+        duration: UiMotion.LT_FADE_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 0
+      })
+    }
+    // 诊断（五轮）：飞行中段量一次书架根节点 'main' 的实际宽度
     setTimeout((): void => {
       try {
         const m = ui.getComponentUtils().getRectangleById('main')
@@ -637,9 +741,13 @@ struct Main {
   }
 
   /**
-   * 返回编排（进场的镜像）：
-   * ① 封面立即淡入 0→80ms → ② 包络倒放 0→560ms（整本缩回封面原位，内容页缩回书脸）
-   *   ∥ 封面合上 0→480ms；背景（快照垫层）全程不动，落地 onDisAppear 时换回真书架。
+   * 返回编排（八轮 2026-09-30：改成"**先合盖、后缩小**"——进场的镜像，见 `UiMotion.LT_COVER_FIRST`）。
+   *
+   * ① 0→`LT_POP_FADEIN_DUR`：封面立即恢复不透明（起始是进场末尾的"掀开+透明"态）。
+   * ② 封面合上（`LT_FLIP2_DUR`）：**此阶段刻意不动 scale/translate/clipH** ⇒
+   *   全屏阅读器保持全屏，只是被合上来的封面盖住（用户口述："阅读器始终是矩形，跟随整体缩放"）。
+   * ③ `LT_FLIP2_DUR`→`LT_ENTER_DUR`：整本书（封面已盖住内容页）缩回书架封面原位原尺寸。
+   * 背景（快照垫层）全程不动，落地 onDisAppear 时换回真书架。
    */
   private ltRunPop(): void {
     const g = this.ltGeom
@@ -647,32 +755,68 @@ struct Main {
       return
     }
     const ui = this.getUIContext()
-    // ① 封面先恢复不透明
-    ui.animateTo({
-      duration: UiMotion.LT_POP_FADEIN_DUR
-    }, (): void => {
-      this.ltCoverOpacity = 1
-    })
-    // ②a 包络倒放：整本书缩回书架封面原位原尺寸
-    ui.animateTo({
-      duration: UiMotion.LT_POP_DUR,
-      curve: Curve.Friction,
-      onFinish: (): void => {
-        console.info('LTBOOK', 'pop shrink done')
-      }
-    }, (): void => {
-      this.ltScale = g.s0
-      this.ltTx = g.tx0
-      this.ltTy = g.ty0
-      this.ltClipH = g.clipH0
-    })
-    // ②b 封面合上（0→480ms，与包络同步，进场掀开的镜像）
-    ui.animateTo({
-      duration: UiMotion.LT_FLIP_DELAY + UiMotion.LT_FLIP_DUR,
-      curve: Curve.Friction
-    }, (): void => {
-      this.ltCoverAngle = 0
-    })
+    this.ltProbe('pop')
+    if (UiMotion.LT_COVER_FIRST) {
+      // ① 封面先恢复不透明（起始态 = 进场末尾的"掀开 + 透明"）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_FADEIN_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 1
+      })
+      // ② 封面合上盖住全屏阅读器 —— 此阶段**不动** scale/translate/clipH，
+      //    所以阅读器一直保持"全屏矩形"，不会出现"阅读器被裁成半屏"的观感。
+      ui.animateTo({
+        duration: UiMotion.LT_FLIP2_DUR,
+        curve: Curve.Friction
+      }, (): void => {
+        this.ltCoverAngle = 0
+      })
+      // ③ 整本书（封面已盖住内容页）缩回书架封面原位原尺寸
+      ui.animateTo({
+        delay: UiMotion.LT_FLIP2_DUR,
+        duration: UiMotion.LT_ENTER_DUR - UiMotion.LT_FLIP2_DUR,
+        curve: Curve.Friction,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'pop shrink done')
+        }
+      }, (): void => {
+        this.ltScale = g.s0
+        this.ltTx = g.tx0
+        this.ltTy = g.ty0
+        this.ltClipH = g.clipH0
+      })
+    } else {
+      // ── 一镜到底（**默认**，`LT_COVER_FIRST = false`）：三段**同时从 0ms 起跑** ─────
+      // 用户口径：「应该是边飞边放大，非常丝滑的动画。一镜到底的效果」
+      // ① 封面先恢复不透明（起始态 = 进场末尾的"掀开 + 透明"）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_FADEIN_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 1
+      })
+      // ② 封面**快速**合上（180ms < 560ms）：同样从 0ms 起跑（不破坏一镜到底），
+      //    但比缩小快得多 ⇒ 等窗口明显变小时内容页已被封面盖住，
+      //    "阅读器被裁成半屏"那一下自然看不见（见 UiMotion.LT_POP_FLIP_DUR 的取证）。
+      ui.animateTo({
+        duration: UiMotion.LT_POP_FLIP_DUR,
+        curve: Curve.FastOutSlowIn
+      }, (): void => {
+        this.ltCoverAngle = 0
+      })
+      // ③ 整本书缩回书架封面原位原尺寸（560ms，起步慢的曲线 ⇒ 不会"头 100ms 走一半"）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_DUR,
+        curve: UiMotion.LT_POP_SHRINK_CURVE,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'pop shrink done')
+        }
+      }, (): void => {
+        this.ltScale = g.s0
+        this.ltTx = g.tx0
+        this.ltTy = g.ty0
+        this.ltClipH = g.clipH0
+      })
+    }
   }
 
   /**
@@ -773,33 +917,95 @@ struct Main {
             //（用户实测：右侧复刻出一个被拉着缩放的书架页、关闭时下移消失）。
             Stack() {
               Stack() {
+                // ── clip 层（裁出"书脸"）：内容页 + 封面在这里按 ltClipH 裁切 ──────
                 Stack() {
-                  // 内容页：真阅读器，裁到"书脸"（高度=书脊高度，与封面等高相连）
-                  ReaderPage3({ initParam: param as ReaderRouteParam })
+                // ── 内容页底衬（七轮 2026-09-30，治"关闭时露出书架"）──────────────
+                // 真机日志（Downloads\2.md）：返回一开始 NavDestination 就进 onHidden
+                // （22:07:16.894），而我们的自定义转场 16.895 才起 ⇒ 阅读器的 RS surface
+                // 那一层不再合成，裁剪层是"空的"，没被封面盖到的地方会直接漏出书架定格图。
+                // 这里按 `ReaderPage3.publishLtPageBg()` 发布的真实页面外观补一层：
+                // 纯色底 + （自定义材质/纹理时）同图。它在阅读期被真阅读器完全盖住 ⇒ 零影响。
+                //
+                // ★★ 必须是**裁剪层的子节点**，绝不能把 `.backgroundColor()` 挂在裁剪层自己身上 ★★
+                //   `.clip()` 只裁**子节点**，**不裁组件自身的背景** ⇒ 背景会铺满裁剪层的
+                //   100%×100% 盒子（整窗，且跟着 scale/translate 一起走）。真机实测（用户逐帧截图）：
+                //     · 进书最初十几毫秒 `ltPageBg` 还是空串 ⇒ `Color.Transparent` 那块**渲染成纯黑**
+                //       ⇒ 打开动画里封面下方出现一块 240×188 的黑矩形（IMG_...232950 量得，
+                //       尺寸 = (843.85−521.48)vp × s0.18 × 3.375 ≈ 191px，与"多出来的那块区域"吻合）；
+                //     · 发布之后又变成一块页面色的矩形铺在封面下方（IMG_...232953 实测灰白矩形）
+                //       ⇒ 观感就是"关闭的一瞬间阅读器变成一半"。
+                //   放进裁剪层内部 ⇒ 一定被裁到 ltClipH，与封面盒子严丝合缝（且不再用
+                //   `Color.Transparent`：条件不满足时干脆不建这一层，回到改造前的行为）。
+                // 回退：`UiMotion.LT_PAGE_BG = false` ⇒ 不铺底，回到现状。
+                if (UiMotion.LT_PAGE_BG && this.ltPageBg !== '') {
+                  Column()
+                    .width('100%')
+                    .height('100%')
+                    .backgroundColor(this.ltPageBg)
+                    .hitTestBehavior(HitTestMode.None)
                 }
-                .width('100%')
-                .height('100%')
-                .clip(new Rect({ width: '100%', height: this.ltClipH }))
-                // ⚠️ Rect 原点恒为组件左上角（SDK `rect.d.ts` 的 RectOptions 没有 x/y）
-                // 封面：与书架封面同图源（命中缓存，首帧即显）；高度=内容页高度（书脊等高）。
-                // ⚠️ 它是裁切层的**兄弟层**（同在 scale 层里）：掀开时要扫出"书"的边界，
-                // 放进裁切层会被 clip 切掉 3D 感。
-                Image(this.ltCoverUrl)
-                  .draggable(false)
-                  .alt($r('app.media.icon_book_default_cover_one'))
-                  .width('100%')
-                  .height(this.ltClipH)
-                  .borderRadius(this.ltCoverRadius)
-                  .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.22)', offsetX: 0, offsetY: 5 })
-                  .rotate({ y: 1, centerX: 0, angle: this.ltCoverAngle })
-                  .opacity(this.ltCoverOpacity)
-                  // 纯视觉层：rest 态下它是一张铺满全屏的透明图，若不退出命中测试，
-                  // 会把正文的点击/翻页手势全吃掉（Image 无子节点，AGENTS.md 的"子节点照样吃触摸"不适用）
-                  .hitTestBehavior(HitTestMode.None)
+                if (UiMotion.LT_PAGE_BG && this.ltPageImg !== '') {
+                  // 自定义背景材质：与引擎用的同一张图（沙箱 URI，见 ReaderPage3.publishLtPageBg）
+                  Image(this.ltPageImg)
+                    .width('100%')
+                    .height('100%')
+                    .objectFit(ImageFit.Cover)
+                    .draggable(false)
+                    .hitTestBehavior(HitTestMode.None)
+                }
+                // 内容页：真阅读器，裁到"书脸"（高度=书脊高度，与封面等高相连）
+                ReaderPage3({ initParam: param as ReaderRouteParam })
               }
               .width('100%')
               .height('100%')
-              .alignContent(Alignment.TopStart)
+              .id('ltClipNode')
+              .clip(new Rect({ width: '100%', height: this.ltClipH }))
+              // ⚠️ Rect 原点恒为组件左上角（SDK `rect.d.ts` 的 RectOptions 没有 x/y）
+              // 封面：高度=内容页高度（书脊等高）。**图源优先用点击瞬间截的封面位图**
+              // （七轮 2026-09-30）：`Image(coverUrl)` 的图源只按自己的纵横比铺，
+              // 而这里的盒子被 ltClipH 拉得比图更高 ⇒ 底部留一条空洞漏出书架定格图
+              // （真机日志 + 截图逐像素实证见 `UiMotion.LT_COVER_SNAPSHOT`）。
+              // 位图 + `ImageFit.Fill` 一定铺满盒子；`ImageFit.Fill` 也正是本效果的原始意图
+              // （盒子从封面纵横比长到整屏纵横比 = spec §9.6 的"越掀越修长"）。
+              // ⚠️ 它是裁切层的**兄弟层**（同在 scale 层里）：掀开时要扫出"书"的边界，
+              // 放进裁切层会被 clip 切掉 3D 感。
+              Image(this.ltCoverSrc())
+                .id('ltCoverNode')
+                .draggable(false)
+                .alt($r('app.media.icon_book_default_cover_one'))
+                .width('100%')
+                .height(this.ltClipH)
+                // 铺满盒子：位图源一定吃 Fill；若退化成 SVG 图源（老路径）可能无效
+                // ⇒ 这正是要位图化的原因（见 UiMotion.LT_COVER_SNAPSHOT）。
+                .objectFit(ImageFit.Fill)
+                .borderRadius(this.ltCoverRadius)
+                .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.22)', offsetX: 0, offsetY: 5 })
+                // 绕书脊（左缘）翻折。**显式给 perspective**：不给就走系统自算的"近距离"相机，
+                // 透视过强 ⇒ 封面投影的右上/右下各露出一块三角形，露出的是后面的内容页
+                // （用户描述："阅读器还是要比封页多出来一块，在底部"）。取证与调参见
+                // UiMotion.LT_COVER_PERSPECTIVE 的注释（SDK common.d.ts:4857-4879 原文）。
+                .rotate({
+                  y: 1,
+                  centerX: 0,
+                  angle: this.ltCoverAngle,
+                  perspective: UiMotion.LT_COVER_PERSPECTIVE
+                })
+                .opacity(this.ltCoverOpacity)
+                .hitTestBehavior(HitTestMode.None)
+                // 诊断（七轮）：contentWidth/Height/Offset 是"图在组件里实际画了多大"的官方
+                // 回调字段（SDK `image.d.ts` onComplete 事件：width/height/componentWidth/
+                // componentHeight/loadingStatus/contentWidth/contentHeight/contentOffsetX/Y）
+                // ⇒ 一行日志即可判定"封面到底铺满没有"，不必再靠肉眼猜。
+                .onComplete((e) => {
+                  console.info('LTBOOK',
+                    `cover node ${e?.componentWidth}x${e?.componentHeight} ` +
+                    `src ${e?.width}x${e?.height} content ${e?.contentWidth}x${e?.contentHeight} ` +
+                    `offset ${e?.contentOffsetX},${e?.contentOffsetY} status ${e?.loadingStatus}`)
+                })
+            }
+            .width('100%')
+            .height('100%')
+            .alignContent(Alignment.TopStart)
               .scale({ x: this.ltScale, y: this.ltScale, centerX: 0, centerY: 0 })
             }
             .width('100%')
@@ -861,6 +1067,8 @@ struct Main {
             this.ltFlight = null
             this.ltGeom = null
             this.ltBackdrop = null
+            // 七轮：封面位图同批释放（810×1080×4 ≈ 3.5MB，别留着占内存）
+            this.ltCoverShot = null
             console.info('LTBOOK', 'arm released')
           }, 80)
         })

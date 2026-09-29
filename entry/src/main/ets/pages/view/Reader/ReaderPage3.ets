@@ -6,7 +6,7 @@ import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { ClickUtil, PreferencesUtil } from '@pura/harmony-utils';
 import { Books } from '../../../database/entities/Books';
 import { WindowAbility } from '../../../entryability/WindowAbility';
@@ -1408,6 +1408,7 @@ export default struct ReaderPage3 {
       if (this.customBgOn) {
         this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
       }
+      this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
       this.readerComponentController.setPageConfig(this.readerSetting);
     })
   }
@@ -1521,6 +1522,7 @@ export default struct ReaderPage3 {
     this.bgFocus = 'preset'
     NightMode.setReaderNight(night)
     this.syncAbilityColorMode()
+    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
     this.customBgTouched = true
     this.saveCustomBg()
@@ -1915,6 +1917,7 @@ export default struct ReaderPage3 {
     const now: number = Date.now()
     if (commit || now - this.customBgAppliedAt >= CUSTOM_BG_APPLY_GAP_MS) {
       this.customBgAppliedAt = now
+      this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
       this.readerComponentController.setPageConfig(this.readerSetting)
     }
     if (commit) {
@@ -2020,6 +2023,7 @@ export default struct ReaderPage3 {
     if (flipped) {
       this.syncAbilityColorMode()
     }
+    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
     // ── 后台预生成全部 5 档（含当前档，磁盘命中零成本）⇒ 之后拖动条切档零等待 ──
     if (this.bgBlurOn && finalPath.length > 0) {
@@ -2125,6 +2129,7 @@ export default struct ReaderPage3 {
     // 焦点：恢复色恰好是最后一次应用的方案 ⇒ 圈落回「更多方案」按钮；否则落推荐色
     this.bgFocus = (this.schemeFocusBg.length > 0
       && this.schemeFocusBg === ReaderCustomBg.hexOf(rgb)) ? 'scheme' : 'preset'
+    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
     this.customBgTouched = true
     this.saveCustomBg()
@@ -2255,6 +2260,52 @@ export default struct ReaderPage3 {
     this.readerSetting.nightMode = ReaderCustomBg.isDarkBg(rgb)
     // `colorMode` 由 `aboutToAppear` 后面那句 `this.readerSetting.nightMode ? 0 : 1` 统一收口，
     // 这里不重复写（避免两处口径）。
+  }
+
+  /**
+   * 把「内容页长什么样」发布给书架→阅读器一镜到底的飞行层（七轮 2026-09-30）。
+   *
+   * ── 为什么需要 ────────────────────────────────────────────────────────────
+   * 真机日志（`Downloads\2.md`）实证：返回一开始 NavDestination 就进 `onHidden`
+   * （22:07:16.894），而我们的自定义转场 22:07:16.895 才起 ⇒ 阅读器的 RS surface
+   * 那一层不再合成（截图逐像素也证明：飞行书盒子内部能看到书架自己的黑色标题字）
+   * ⇒ 飞行层裁剪层是"空的"，没被封面盖住的地方直接漏出书架定格图
+   * （用户原话："原位有一本书在，然后我们的书关闭动画缩放完又落在上面了"）。
+   * 飞行层拿不到 `readerSetting`（它是本页私有状态）⇒ 由本页把页面外观发布到 AppStorage，
+   * 飞行层照它铺一层底衬（见 `Index.ets` 飞行分支的裁剪层 / `UiMotion.LT_PAGE_BG`）。
+   *
+   * ── 调用点 ────────────────────────────────────────────────────────────────
+   * 每个**真正改页面外观**的地方，紧挨着既有的 `setPageConfig(...)`：
+   * 推荐色、自定义颜色、材质/纹理背景、日夜标准色、`aboutToAppear` 首次下发。
+   * 幂等、无副作用（只写两个 AppStorage 字符串）。
+   */
+  private publishLtPageBg(): void {
+    if (!UiMotion.LT_PAGE_BG) {
+      return
+    }
+    // 背景图：`themeBgImg` 是**沙箱路径**（见 applyTextureBg / applyComposedBg）；
+    // ⚠️ `Image` **不接受裸沙箱路径**，必须转成沙箱 URI —— 官方 FAQ
+    // `FAQ/UI框架/组件使用/Image组件如何读入沙箱内的图片/faqs-arkui-154` 原文：
+    //   「Image组件**不能直接传入应用沙箱路径**，需要传入应用沙箱URI。…调用
+    //    `fileUri.getUriFromPath` 方法将沙箱路径转化为沙箱 URI，传入之后即可正常显示沙箱图片。」
+    // （API：`fileUri.getUriFromPath(path: string): string`，SDK `@ohos.file.fileuri.d.ts`，
+    //   @since 15，会抛 401 ⇒ 必须包 try/catch。）
+    // 非绝对路径（例如 themeBgImg 里存的是 rawfile 名）一律不发布图片，只留纯色底。
+    const raw: string = this.readerSetting.themeBgImg ?? ''
+    let img: string = ''
+    if (raw.startsWith('/')) {
+      try {
+        img = fileUri.getUriFromPath(raw)
+      } catch (e) {
+        img = ''
+        hilog.info(0x0000, 'testTag', 'LTBOOK publish page bg img uri failed: %{public}s',
+          (e as BusinessError)?.message ?? 'error')
+      }
+    }
+    AppStorage.setOrCreate(UiMotion.LT_PAGE_BG_KEY, this.readerSetting.themeColor ?? '')
+    AppStorage.setOrCreate(UiMotion.LT_PAGE_IMG_KEY, img)
+    hilog.info(0x0000, 'testTag', 'LTBOOK publish page bg color=%{public}s img=%{public}s',
+      this.readerSetting.themeColor ?? '', img)
   }
 
   async aboutToAppear() {
@@ -2411,6 +2462,7 @@ export default struct ReaderPage3 {
       //   onPageDataNeedUpdate 不再触发 ⇒ Draw Cur Page 不执行 ⇒ XComponent 无帧黑屏，
       //   真机日志 2026-09-27 01:57）。加粗（正文）暂无安全注入点，诚实搁置。
       this.readerComponentController.registerBookParser(this.BookHandler);
+      this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
       this.readerComponentController.setPageConfig(this.readerSetting);
       this.readerComponentController.startPlay(resourceIndex || 0, domPos);
       this.CatalogList.pushAllData(this.BookHandler?.getCatalogList() || []); //获取目录列表
