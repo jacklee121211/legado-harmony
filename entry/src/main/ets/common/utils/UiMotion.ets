@@ -325,9 +325,15 @@ export default class UiMotion {
    */
   static readonly LONGTAKE_ENABLED: boolean = true
 
-  /** 进场/返回总时长（ms），两段对称。v3.7：560→620（用户"加点时长"——更从容的一镜到底） */
+  /** 进场总时长（ms）。v3.7：560→620（用户"加点时长"——更从容的一镜到底） */
   static readonly LT_ENTER_DUR: number = 620
-  static readonly LT_POP_DUR: number = 620
+  /**
+   * 返回总时长（ms）。v3.10：620→**720**（用户实测"回落还是有点快"）——
+   * 关闭是"从大到小落定"的运动，感知上比打开更需要余韵；+100ms 全部给
+   * FastOutSlowIn 的减速尾段 ⇒ 落位更绵。翻折（LT_POP_FLIP_DUR）与收缩
+   * 继续同曲线同时长，"一个动作落位"设计不变。
+   */
+  static readonly LT_POP_DUR: number = 720
 
   /** 封面开始掀开的时刻（ms）：早掀 —— 透视下投影渐窄，内容页从右侧渐进露出 */
   static readonly LT_FLIP_DELAY: number = 80
@@ -462,7 +468,7 @@ export default class UiMotion {
    * ⇒ 关闭的丝滑 = 翻折与收缩同相：同曲线（FastOutSlowIn 起步斜率减半）、
    *   同时长（都 620ms）⇒ 封面挂一拍 → 与书体一起加速 → 一起减速 → 同帧落位。
    */
-  static readonly LT_POP_FLIP_DUR: number = 620
+  static readonly LT_POP_FLIP_DUR: number = 720
   /**
    * 关闭时「整本书缩小」用的曲线。
    * 为什么不用 `Curve.Friction`（= cubic-bezier(0.2,0,0.2,1)，起步极快）：560ms 的回落在
