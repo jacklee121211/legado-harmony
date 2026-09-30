@@ -33,6 +33,11 @@ import ReadStatistics from './view/myCenter/readStatistics'
 import MyThemeConfig from './view/myCenter/MyThemeConfig'
 import MySetPage from './view/myCenter/MySetPage'
 import CreateCustomTheme from './view/myCenter/CreateCustomTheme'
+// ── 关于我们回填（2026-09-30）──────────────────────────────────────────────
+import AboutPage from './view/myCenter/about/AboutPage'
+import VersionLogPage from './view/myCenter/about/VersionLogPage'
+import PrivacyPage from './view/myCenter/about/PrivacyPage'
+import LicensePage from './view/myCenter/about/LicensePage'
 import { common } from '@kit.AbilityKit'
 import { NightMode, ShelfColors } from '../common/utils/NightMode'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
@@ -1245,6 +1250,34 @@ struct Main {
       // ── 第 4 期：我的设置 ─────────────────────────────────────────────
       NavDestination() {
         MySetPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.ABOUT) {
+      // ── 关于我们（2026-09-30 回填）────────────────────────────────────
+      NavDestination() {
+        AboutPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.VERSION_LOG) {
+      // ── 更新日志 ──────────────────────────────────────────────────────
+      NavDestination() {
+        VersionLogPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.PRIVACY) {
+      // ── 用户隐私与协议（应用内 Web 组件）─────────────────────────────
+      NavDestination() {
+        PrivacyPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.LICENSE) {
+      // ── 开源许可 ──────────────────────────────────────────────────────
+      NavDestination() {
+        LicensePage()
       }
       .hideTitleBar(true)
       .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))

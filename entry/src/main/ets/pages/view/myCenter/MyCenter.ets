@@ -232,6 +232,67 @@ export default struct MyCenter {
           // 用很淡的 0.06 透明度，避免在浅色渐变背景上显脏。
           .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
 
+          // ── Web服务卡片（2026-09-30 回填，用户需求）────────────────────────
+          // wifi传书 / 电脑阅读 / 隔空传送（替代基座的"电脑写源"——书源体系已整体移除）。
+          // 基座考古结论：基座的 Web 服务是**纯空壳**（假开关 + 写死的假地址 192.168.41.12:1122，
+          // 无任何 HTTP/Socket 服务端实现，见基座 WebdavService.ets）⇒ 服务端为全新开发
+          //（方案与范围待用户确认，本轮先落入口与样式）。图标用 symbol、点按走
+          // clickEffect + Haptics（全 app 现有机制）。
+          Column({ space: 12 }) {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.display'))
+                .fontSize(16)
+                .fontColor([this.theme.mainColor])
+              Text('Web服务')
+                .fontSize(14).fontWeight(600)
+                .fontColor($r('app.color.text_primary'))
+            }
+            .width('100%')
+
+            Row({ space: 10 }) {
+              this.webServiceItem($r('sys.symbol.wifi'), 'wifi传书')
+              this.webServiceItem($r('sys.symbol.computer'), '电脑阅读')
+              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '隔空传送')
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor($r('app.color.card_bg'))
+          .borderRadius(10)
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          .margin({ top: 16 })
+
+          // ── 关于我们入口（2026-09-30 回填，用户需求）────────────────────────
+          // 与主题卡同款视觉（card_bg + 圆角 10 + 同款淡阴影），图标用 About 自己的
+          // symbol（sys.symbol.info），点击进关于页（检查更新/更新日志/隐私协议/开源许可）。
+          Row({ space: 10 }) {
+            SymbolGlyph($r('sys.symbol.info_circle'))
+              .fontSize(20)
+              .fontColor([this.theme.mainColor])
+            Text('关于我们')
+              .fontSize(14).fontWeight(600)
+              .fontColor($r('app.color.text_primary'))
+            Blank(8)
+            SymbolGlyph($r('sys.symbol.chevron_forward'))
+              .fontSize(14)
+              .fontColor([$r('app.color.text_primary')])
+              .opacity(0.35)
+          }
+          .width('100%')
+          .height(56)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor($r('app.color.card_bg'))
+          .borderRadius(10)
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          .margin({ top: 16 })
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            Haptics.tap()
+            AppRouter.push(RouteName.ABOUT)
+          })
+
           // ── 开通 VIP 卡片（2026-09-28 用户设计：未开通时显示）────────────────
           // 主题卡下方、整页水平居中、宽 30%（够字宽即可）、高度与主题卡持平（80）。
           if (!this.vipOn) {
@@ -323,6 +384,34 @@ export default struct MyCenter {
 
   //主题点击事件（2026-09-21 精简：只剩「主题」一项；
   //原「备份」「书源」「净化」的 case 1/3/4 已删除）
+  /**
+   * Web服务三宫格单项（2026-09-30 回填）：symbol 图标 + 标签。
+   * 点按走全 app 既有机制：clickEffect（按压反馈）+ Haptics（全局震动管理）。
+   * 服务端尚未实现（基座为空壳，见卡片注释）⇒ 本轮先以 toast 占位，
+   * 服务端落地后改为各自的路由/弹层。
+   */
+  @Builder
+  webServiceItem(icon: Resource, label: string) {
+    Column({ space: 6 }) {
+      SymbolGlyph(icon)
+        .fontSize(24)
+        .fontColor([this.theme.mainColor])
+      Text(label)
+        .fontSize(12)
+        .fontColor($r('app.color.text_primary'))
+    }
+    .layoutWeight(1)
+    .height(68)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(10)
+    .backgroundColor(ShelfColors.card())
+    .clickEffect(UiMotion.CLICK)
+    .onClick(() => {
+      Haptics.tap()
+      this.getUIContext().getPromptAction().showToast({ message: '功能建设中，敬请期待' })
+    })
+  }
+
   centerOnclick(value: number | string) {
     switch (value) {
     // 点击主题

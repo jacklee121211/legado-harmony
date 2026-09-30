@@ -220,4 +220,12 @@ export class RouteName {
   static readonly CUSTOM_THEME: string = 'CreateCustomTheme';
   /** 书架管理（`pages/view/bookShelf/Manage/BookManagePage`） */
   static readonly BOOK_MANAGE: string = 'BookManagePage';
+  /** 关于我们（`pages/view/myCenter/about/AboutPage`，2026-09-30 回填） */
+  static readonly ABOUT: string = 'AboutPage';
+  /** 更新日志（`pages/view/myCenter/about/VersionLogPage`） */
+  static readonly VERSION_LOG: string = 'VersionLogPage';
+  /** 用户隐私与协议（应用内 Web 组件打开远程协议页） */
+  static readonly PRIVACY: string = 'PrivacyPage';
+  /** 开源许可（`pages/view/myCenter/about/LicensePage`） */
+  static readonly LICENSE: string = 'LicensePage';
 }
