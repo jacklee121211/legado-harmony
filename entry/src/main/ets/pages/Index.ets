@@ -864,15 +864,15 @@ struct Main {
       }, (): void => {
         this.ltCoverOpacity = 1
       })
-      // ② 封面合上（十二轮 v3.6：**480ms 可读翻折**，与进场翻折同规格对称）——
-      //    旧值 180ms 是八轮的权宜之计：当年"瞬间半屏"的真因（clip(Rect) 参数不随
-      //    隐式动画插值）已在 v3 用可动画的书脸高度修掉 ⇒ 掩护不再需要；而 180ms
-      //    在透视 0 下糊成一闪，用户实测"返回封面还是矩形"。
-      //    现在与进场相同：480ms + Friction，梯形全程可读；书脸高度随包络同步缩放
-      //    ⇒ 诉求 D（不得瞬间半屏）由 v3 的同步书脸保证，不再依赖快翻掩护。
+      // ② 封面合上（十二轮 v3.9：**与书体收缩同曲线、同时长**，一个动作落位）——
+      //    v3.6 用 480ms+Friction 对称进场，但 Friction 起步斜率是 FastOutSlowIn 的
+      //    约两倍：全屏封面回落第一瞬间就高速下拍，与慢起步的书体收缩**不同相**
+      //    ⇒ 用户实测"关闭不丝滑、太快"。改为 LT_POP_DUR + FastOutSlowIn：
+      //    封面挂一拍 → 与书体一起加速 → 一起减速 → 同帧落位，整本书一个动作。
+      //    （梯形全程仍可读；诉求 D 由 v3 的同步书脸保证。）
       ui.animateTo({
         duration: UiMotion.LT_POP_FLIP_DUR,
-        curve: Curve.Friction
+        curve: Curve.FastOutSlowIn
       }, (): void => {
         this.ltCoverAngle = 0
       })
