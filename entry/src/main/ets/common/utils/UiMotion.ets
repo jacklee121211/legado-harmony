@@ -476,33 +476,74 @@ export default class UiMotion {
    * 封面 3D 翻折的**观看距离**（`rotate({ y:1, centerX:0, angle, perspective })`，单位 px）。
    *
    * SDK 原文（`component/common.d.ts` `RotateOptions.perspective`）：
-   *   「Distance from the user to the z=0 plane. … **Default value: 0**」；
-   *   API 26 文本：「Z-axis coordinate of the camera. The value indicates the **viewing distance**…
-   *     **When perspective is set to 0, the system automatically calculates a proper camera Z-axis
-   *     position. The value is negative.**」
+   *   「Z-axis coordinate of the camera. The value indicates the **viewing distance**…
+   *     **When perspective is set to 0, the system automatically calculates a proper camera
+   *     Z-axis position. The value is negative.**」——自算相**机位很近** ⇒ 近端放大极狠。
    *
-   * ── 十轮（2026-09-30）恢复系统自算（0）────────────────────────────────────
-   * 用户反馈：「封面变飞边放大的时候，这个封面是**矩形**的，**不是之前的梯形**，完全丧失了
-   *   翻页的效果和既视感」——与规格书验收标准 #3（`docs/shelf-to-reader-longtake-spec.md:41`）
-   *   「过程中有透视变形…**不是水平压扁**｜验收：**能看出梯形透视**」直接冲突。
-   * 根因就是上一轮取的 -12000：观看距离拉得太远 ⇒ 透视趋近于零，绕书脊的翻折退化为
-   *   "水平压扁"（注释原文：「三角缩到约 5%，既几乎看不见」）。而当年杀透视是为了治
-   *   "阅读器比封页多出来一块"——那个毛病的真正根源（露出的裁剪层内容不对：黑块/底色缺）
-   *   已在七轮用 `LT_PAGE_BG`/封面位图修掉 ⇒ 现在露出来的是真正的阅读器页面背景，
-   *   恢复透视后角落露出的是"书页相连"的自然渐进露出，不再破相。
-   * 回退 / 调参：改回 **-12000** ≈ 无透视（矩形）；想更强翻页感取更接近 0 的负值
-   *   （如 -3000）；想收敛一点取更远的负值（如 -6000）。符号必须为负
-   *   （SDK 原文：自算值就是负的，正负决定相机观察方向）。
+   * ── 十二轮 v3.2（2026-09-30）恢复 **0（系统自算）**，用户两组截图一锤定音 ──────
+   *   · 旧版（9-29 23:44 录屏，perspective=0）：梯形**扑出矩形之外**——右缘比书脊高一大截、
+   *     顶角冲向屏幕上缘，用户认可"真的有透视感"的效果就是它；
+   *   · v3.1（-3000，我取的"安全值"）：梯形只比盒子大一点，翻折像"被套在灰色矩形里"
+   *     （用户 9-30 09:58 录屏，本轮"束缚感"投诉的直接原因）——**力度不足，否决**。
+   *   · 结论：这个参数只有"够近"和"不够近"的区别，宁近勿远。v3 架构下封面投影即使
+   *     大幅越出书脸盒，越出部分压在书架快照/书体块上，都是合法画面，无暴露风险。
+   * 调参：想再凶一点没法比 0 更近（0 即自算极值）；想收敛取负值（-1500 起步，-3000 已证太温）。
    */
   static readonly LT_COVER_PERSPECTIVE: number = 0
   /**
-   * 转场探针（默认开，排查用；查完置 false 即零日志）。
-   * 为什么需要：`Image.onComplete` 的 `componentHeight` 在转场开始 4ms 就报出终值
-   * （真机日志 23:41:33.911），无法判断动画是"跳变"还是"平滑插值"；
-   * `getRectangleById` 返回的是**布局尺寸**（SDK 原文：返回的组件位置为布局位置），
-   * 是判断"裁切窗口/封面层到底有没有在动"最直接的证据。
+   * 转场探针（排查用；2026-09-30 十一轮起默认关 = 零日志）。
+   * ⚠️ 它读的是 **JS 状态变量**：animateTo 闭包同步执行 ⇒ t=0 永远读到终值，
+   * 既证明不了"跳变"也证明不了"平滑"；`getRectangleById` 返回布局终值同理。
+   * 真正的时长证据 = animateTo onFinish 时间戳（`pop shrink done` 等）。需要时再置 true。
    */
-  static readonly LT_PROBE: boolean = true
+  static readonly LT_PROBE: boolean = false
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 十二轮 v3（2026-09-30 深夜）：**快照飞行层** —— 飞行层里只有图片，零活组件
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── 为什么推倒重来（架构级根因，十一轮 v1/v2 真机证伪链）────────────────────
+  //   v1（梯形遮罩跟随）与 v2（书脸高度同步 + clip(true)）都没能治住"漏/黑/折断"，
+  //   用户原话「还是一样的效果，还是漏」。把十轮→十一轮的全部 bug 对账后收敛到
+  //   **一个架构级根因**：我们把**活的阅读器**（XComponent，独立 RS surface，
+  //   真机日志 `RSSurfaceNode::Create name: interactiveSurface`）塞进了动画层里飞——
+  //   它在转场期间：surface 停止合成（变黑）、不理会祖先裁剪、布局值瞬间报终值，
+  //   这些行为 ArkTS 侧完全不可控。十轮以来所有怪象（底部空洞/黑块/瞬间半屏/
+  //   拦腰折断/长出20%黑边）全部源于此。参数调不好不是手艺问题，是地基问题。
+  // ── 正规架构（取自 `hmos-arkui-longtake-transition` skill 的生态范式）───────
+  //   一镜到底的通行做法是**飞行层只飞"照片"，真页面垫底、落地才呈现**：
+  //   `@hmanimations/ezcustomtransition`（本工程九轮前试过、因时长硬编码 250ms/
+  //   封面 50ms/截图糊被否——否决有效）的 LongTakeTransitionDelegate 就是这个模型。
+  //   我们采纳**架构**、保留自研**编排**（560ms/边飞边放大/梯形翻折/书脊对齐全是自己的）。
+  // ── v3 结构 ─────────────────────────────────────────────────────────────
+  //   NavDestination(飞行分支)
+  //   └─ Stack
+  //      ├─ ReaderPage3            ← 真阅读器**垫底**：全程不参与动画、不被裁剪、
+  //      │                            飞行期间被覆盖层挡住（它加载它的，落地即呈现）
+  //      └─ if (ltFlightOverlay)   ← 飞行覆盖层：**全部是图片**
+  //         ├─ 黑底兜底 + 书架定格快照（照旧）
+  //         └─ 包络(translate/scale/书脸clip)
+  //            ├─ 页色书体块（LT_PAGE_BG 底衬，照旧）
+  //            └─ 封面位图（翻折，照旧）
+  //   · 进场：覆盖层挡住一切，560ms 飞完 → onTransitionEnd 撤覆盖层 ⇒ 阅读器"直接呈现"
+  //     （背景色与书体块同源 = themeColor/材质图，交换瞬间只有文字出现，无跳底色）。
+  //   · 返回：ltRunPop 首帧同步重建覆盖层盖住阅读器（surface 变黑也看不见），
+  //     整本书（书体块+封面）缩回落位 → NavDestination 销毁。
+  // ── 顺带的简化 ──────────────────────────────────────────────────────────
+  //   · "书脸"高度同步（v2 的 .height(ltClipH)+.clip(true)）保留：书体块必须与封面
+  //     同步缩放（clip(Rect) 参数不随隐式动画插值——v2 取证仍成立）。
+  //   · v2 的 LT_AUTO_COVER/LT_AUTO_COVER_PERSPECTIVE 开关删除：活阅读器出动画层后
+  //     不再需要双路径，透视统一走 LT_COVER_PERSPECTIVE(-3000)。
+  // ── 回退 ────────────────────────────────────────────────────────────────
+  //   git checkout 92932fc -- entry/src/main/ets   （回到十轮检查点，活阅读器在动画层的老路径）
+  /**
+   * 飞行封面位图的铺放方式（治"封面画被拉伸变形"）：
+   * false = `ImageFit.Fill`（检查点现状：一定铺满盒子，但盒子纵横比从 0.75 变到 0.4635
+   *         的过程中封面画最多被竖向拉 ~1.62 倍）；
+   * true  = `ImageFit.Cover`（保比例裁切铺放：数学上同样盖满盒子（七轮空洞的根源是
+   *         SVG 图源不吃 objectFit，位图源正常），且不变形；代价是纵横比差得远时
+   *         只显示封面画中段——**【待验证】**真机确认观感）。
+   */
+  static readonly LT_COVER_FIT_CROP: boolean = false
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
