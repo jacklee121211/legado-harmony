@@ -23,6 +23,13 @@ import { ThemeItem } from '../../../../common/model/Theme';
 import { ThemeStorageKey } from '../../../../common/constants/Theme';
 import AppRouter, { BookManageRouteParam } from '../../../../common/router/AppRouter';
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode';
+// ── 分享/碰一碰（2026-09-30 回填，官方取证见本文件 manageShare/注释）──────────
+import { systemShare, harmonyShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor } from '@kit.ArkData';
+import { fileUri } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
+import { FileHandler } from '../../../../common/utils/FileHandler';
+import UiMotion, { runJellyClick } from '../../../../common/utils/UiMotion';
 
 /**
  * 管理跳转页面
@@ -137,6 +144,20 @@ export default struct BookManagePage {
     this.EXHIBIT = this.routeParam.EXHIBIT
     this.bookTypeNumber = this.routeParam.bookTypeNumber
     this.pageInit()
+    // 碰一碰监听（官方文档：离开页面/退后台应及时 off —— 本页 aboutToDisappear 处理；
+    // 系统能力用官方推荐的 canIUse 判定，不支持碰一碰的设备静默跳过）
+    if (canIUse('SystemCapability.Collaboration.HarmonyShare')) {
+      harmonyShare.on('knockShare', (target: harmonyShare.SharableTarget) => {
+        this.knockCallback(target)
+      })
+    }
+  }
+
+  aboutToDisappear(): void {
+    // 官方要求：不需要碰一碰或离开页面/退后台时及时取消监听，避免资源浪费与异常触发
+    if (canIUse('SystemCapability.Collaboration.HarmonyShare')) {
+      harmonyShare.off('knockShare')
+    }
   }
 
   //初始
@@ -390,50 +411,38 @@ export default struct BookManagePage {
     .alignItems(HorizontalAlign.Center)
     .padding(20)
   }
+  // 底部操作栏（2026-09-30 v3 回填：图标全面 symbol 化 + 新增「分享」）
+  // symbol 名全部经 SDK 符号表（sysResource.js，4042 项）核实存在。
   @State buttonListInfo5:buttonList[] = [
-    new buttonList(1,'置顶',$r('app.media.top')),
-    new buttonList(2,'移动至',$r('app.media.folder')),
-    new buttonList(3,'加入书单',$r('app.media.shelf')),
-    new buttonList(4,'隐藏分组',$r('app.media.hide')),
-    new buttonList(5,'删除',$r('app.media.ic_public_delete'))
+    new buttonList(1,'置顶',$r('sys.symbol.pin')),
+    new buttonList(2,'移动至',$r('sys.symbol.folder')),
+    new buttonList(3,'加入书单',$r('sys.symbol.book')),
+    new buttonList(4,'隐藏分组',$r('sys.symbol.eye_slash')),
+    new buttonList(5,'删除',$r('sys.symbol.trash')),
+    new buttonList(6,'分享',$r('sys.symbol.share'))
   ]
 
   @State buttonListInfo4:buttonList[] = [
-    new buttonList(1,'置顶',$r('app.media.top')),
-    new buttonList(2,'移动至',$r('app.media.folder')),
-    new buttonList(3,'加入书单',$r('app.media.shelf')),
-    new buttonList(5,'删除',$r('app.media.ic_public_delete'))
+    new buttonList(1,'置顶',$r('sys.symbol.pin')),
+    new buttonList(2,'移动至',$r('sys.symbol.folder')),
+    new buttonList(3,'加入书单',$r('sys.symbol.book')),
+    new buttonList(5,'删除',$r('sys.symbol.trash')),
+    new buttonList(6,'分享',$r('sys.symbol.share'))
   ]
-  //底部操作栏
+  //底部操作栏（2026-09-30：按钮抽成子组件 ManageToolButton —— 每键独立 Q弹 + symbol）
   @Builder footerTitle(){
       GridRow({
-        columns:this.bookTypeNumber===1?5:4
+        columns:this.bookTypeNumber===1?6:5
       }){
         ForEach(this.bookTypeNumber===1?this.buttonListInfo5:this.buttonListInfo4,(item:buttonList)=>{
           GridCol(){
-            if (item.id === 1) {
-              Column({
-                space:5
-              }){
-                Image(item.icon).width(25).fillColor(ShelfColors.icon())
-                Text(this.topTitle).fontSize(14).fontWeight(500)
-              }
-              .onClick(()=>{
-                Haptics.tap();
+            ManageToolButton({
+              icon: item.icon,
+              label: item.id === 1 ? this.topTitle : item.title,
+              onTap: (): void => {
                 this.bookInfoButton(item.id)
-              })
-            } else {
-              Column({
-                space:5
-              }){
-                Image(item.icon).width(25).fillColor(ShelfColors.icon())
-                Text(item.title).fontSize(14).fontWeight(500)
               }
-              .onClick(()=>{
-                Haptics.tap();
-                this.bookInfoButton(item.id)
-              })
-            }
+            })
           }
         })
       }
@@ -468,7 +477,101 @@ export default struct BookManagePage {
         break
       case 5 :
         this.delDialog?.open(); break;
+      case 6 :
+        this.manageShare(); break;
     }
+  }
+
+  /**
+   * 分享选中书籍（2026-09-30 回填）——官方 API：
+   * `systemShare.SharedData`（SharedRecord: utd+uri，官方 share-system-share 示例同款）
+   * + `ShareController.show(context, options)` 拉起系统分享面板。
+   * utd 由文件后缀运行时解析（官方 knock 示例：
+   * `uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix)`）；
+   * 沙箱路径转 uri 用 `fileUri.getUriFromPath`（官方 Share Kit 术语/uri 说明）。
+   * 对端装了喵阅（注册 ShareExtensionAbility）⇒ 分享面板推荐区直达 ⇒ 分享即入库。
+   */
+  private async manageShare(){
+    if (this.bookTypeNumber === 1) {
+      showMessage('分组暂不支持分享，请选择书籍');
+      return
+    }
+    const checked = new Set<number>(this.checkListNumber)
+    const books: Books[] = this.bookList.filter((b: Books) => checked.has(b.id ?? -1) && !!b.bookUrl)
+    if (books.length <= 0) {
+      showMessage('选中书籍没有可分享的文件');
+      return
+    }
+    try {
+      const shareData: systemShare.SharedData | null = this.buildBookShareData(books)
+      if (shareData === null) {
+        showMessage('书籍文件不存在，无法分享');
+        return
+      }
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData)
+      const context: common.UIAbilityContext =
+        this.getUIContext().getHostContext() as common.UIAbilityContext
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.BATCH,
+        previewMode: systemShare.SharePreviewMode.DEFAULT
+      })
+    } catch (err) {
+      const e = err as BusinessError
+      console.error(`LTBOOK share failed. code: ${e.code}, message: ${e.message}`)
+      showMessage('分享失败：' + e.message)
+    }
+  }
+
+  /** 把选中书籍构造成 SharedData（首条进构造器、其余 addRecord，官方范式） */
+  private buildBookShareData(books: Books[]): systemShare.SharedData | null {
+    let data: systemShare.SharedData | null = null
+    for (const b of books) {
+      const path: string = b.bookUrl ?? ''
+      if (!path) {
+        continue
+      }
+      const suffix: string = path.substring(path.lastIndexOf('.'))
+      let utdId: string = 'general.text'
+      try {
+        utdId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix) ?? 'general.text'
+      } catch (err) {
+        // 后缀无法识别时退回 general.text（txt 场景的官方声明值）
+      }
+      const record: systemShare.SharedRecord = {
+        utd: utdId,
+        uri: fileUri.getUriFromPath(path),
+        title: b.bookName ?? '书籍'
+      }
+      if (data === null) {
+        data = new systemShare.SharedData(record)
+      } else {
+        data.addRecord(record)
+      }
+    }
+    return data
+  }
+
+  /**
+   * 碰一碰回调（2026-09-30 回填）——官方 API（最佳实践 bpta-application-knock-file-share）：
+   * `harmonyShare.on('knockShare', (target: harmonyShare.SharableTarget) => {...})`
+   * 回调里构建 SharedData 后 `target.share(shareData)`；页面离开/后台必须 off。
+   * 约束：双端亮屏+解锁+华为分享开启；应用路由需手动签名（联调注意）。
+   */
+  private knockCallback(target: harmonyShare.SharableTarget): void {
+    if (this.bookTypeNumber === 1 || this.checkListNumber.length <= 0) {
+      showMessage('请先勾选要碰一碰分享的书籍');
+      return
+    }
+    const checked = new Set<number>(this.checkListNumber)
+    const books: Books[] = this.bookList.filter((b: Books) => checked.has(b.id ?? -1) && !!b.bookUrl)
+    if (books.length <= 0) {
+      return
+    }
+    const shareData: systemShare.SharedData | null = this.buildBookShareData(books)
+    if (shareData === null) {
+      return
+    }
+    target.share(shareData)
   }
   //置顶功能
   // ⚠️ 2026-09-29 重写（审核问题②「置顶成功后数据未实时更新」）：
@@ -601,5 +704,39 @@ export default struct BookManagePage {
     this.dataCheckList()
     this.selectIsAllTop()
     this.allCheck = this.checkListNumber.length !== 0
+  }
+}
+
+/**
+ * 管理页底部操作按钮（2026-09-30 v3 回填抽取为子组件）：
+ * symbol 图标 + 独立 Q弹（runJellyClick 自驱 scale，与书架顶部按钮同款配方）
+ * + 统一震动（Haptics.tap）。抽子组件是为了每个按钮有**独立的弹跳状态**
+ * （父组件里用数组下标更新不会触发 V1 渲染）。
+ */
+@Component
+struct ManageToolButton {
+  icon: Resource = $r('sys.symbol.pin')
+  label: string = ''
+  onTap: () => void = (): void => {}
+  @State jellyScale: number = 1
+
+  build() {
+    Column({ space: 5 }) {
+      SymbolGlyph(this.icon)
+        .fontSize(24)
+        .fontColor([ShelfColors.icon()])
+        .scale({ x: this.jellyScale, y: this.jellyScale })
+      Text(this.label)
+        .fontSize(14).fontWeight(500)
+        .fontColor(ShelfColors.icon())
+        .maxLines(1)
+    }
+    .onClick(() => {
+      Haptics.tap()
+      runJellyClick((v: number) => {
+        this.jellyScale = v
+      })
+      this.onTap()
+    })
   }
 }
