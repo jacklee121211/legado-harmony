@@ -74,26 +74,29 @@ export default struct AboutPage {
             .backgroundColor($r('app.color.card_bg'))
             .borderRadius(10)
             .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-
-            // ── 页脚：应用名 + 版本 ────────────────────────────────────────
-            Column({ space: 4 }) {
-              Text('喵阅')
-                .fontSize(16).fontWeight(600)
-                .fontColor($r('app.color.text_primary'))
-              Text(`${this.versionName}`)
-                .fontSize(12)
-                .opacity(0.45)
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Center)
-            .margin({ top: 24 })
           }
           .width('100%')
-          .padding({ left: 20, right: 20, bottom: this.bottomRectHeight + 20 })
+          .padding({ left: 20, right: 20 })
         }
         .layoutWeight(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
+
+        // ── 页脚：应用名 + 版本（**固定在页面底部**，不随卡片列表滚动）──────
+        // v3.7 布局调整（用户需求："顶部标题向上对齐，喵阅以及版本字样在底部"）：
+        // 旧版页脚在 Scroll 内容末尾，卡片少时悬在半空；改为 Scroll 之外的
+        // 常驻底栏，layoutWeight 让卡片列表吃掉全部中间空间。
+        Column({ space: 4 }) {
+          Text('喵阅')
+            .fontSize(16).fontWeight(600)
+            .fontColor($r('app.color.text_primary'))
+          Text(`${this.versionName}`)
+            .fontSize(12)
+            .opacity(0.45)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding({ bottom: this.bottomRectHeight + 16 })
       }
       .width('100%')
       .height('100%')

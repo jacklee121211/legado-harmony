@@ -1,5 +1,5 @@
 import { Attribute } from '../../../common/utils/Attribute'
-import AppRouter, { RouteName, ReadStatisticsRouteParam } from '../../../common/router/AppRouter'
+import AppRouter, { RouteName, ReadStatisticsRouteParam, BookManageRouteParam } from '../../../common/router/AppRouter'
 import { promptAction } from '@kit.ArkUI'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
@@ -22,6 +22,7 @@ import { Haptics } from '../../../common/utils/Haptics'
 import { VipManager } from '../../../common/utils/VipManager'
 import { IapManager } from '../../../common/utils/IapManager'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
+import { WifiTransferDialog } from '../../../componets/myCenter/WifiTransferDialog'
 
 // T29-③（Round 40）：去掉 `@Entry`。
 // 编译器原文：`It's not a recommended way to export struct with '@Entry' decorator,
@@ -71,13 +72,8 @@ export default struct MyCenter {
     // 「勋章」已移除（2026-09-21）：原为硬编码的假数据，点进去是空分支（见 head_onclick），
     // 无数据源、无功能，属纯占位符。索引保持 0=读过 / 1=读完 / 2=书签 不变。
   ]
-  // 2026-09-21 精简：原 4 项里「备份」「书源」「净化」已删 ——
-  //   · 备份 → `cloudDisk.ets` 整页无任何 WebDAV 实现（假设备名/假备份列表，
-  //     「立刻备份」只是转 720° + toast「备份成功」）；
-  //   · 书源 / 净化 → `centerOnclick` 里本来就是 `case 3/4: break` **空分支**，点了没反应。
-  @State center_list: dataItem[] = [
-    new dataItem("主题", 2, $r("app.media.my_center_book_icon")),
-  ]
+  // 「主题」卡片入口已删（2026-09-30 v3.12）：功能迁至顶部 symbol 主题按钮。
+
   // 「关于我们」入口已于 2026-09-21 删除（用户决定），`end_list` 整块随之移除
   //（它原来也只承载这一个入口）。
   @StorageLink('topRectHeight') topRectHeight: number = 0
@@ -90,6 +86,16 @@ export default struct MyCenter {
 
   /** 设置图标的 Q弹缩放值（2026-09-25 二次调优，`runJellyClick` 自驱 `.scale()`） */
   @State setIconScale: number = 1
+  /** 主题图标的 Q弹缩放值（2026-09-30 顶部主题按钮，同款配方） */
+  @State themeIconScale: number = 1
+
+  // ── Web服务（2026-09-30 回填）────────────────────────────────────────────
+  /** 传书对话框控制器（wifi传书/电脑阅读共用） */
+  private wifiDialog: CustomDialogController | null = null
+  /** 三个服务项各自的 Q弹缩放值（runJellyClick 自驱） */
+  @State wifiScale: number = 1
+  @State readScale: number = 1
+  @State airScale: number = 1
 
   // ── 会员（2026-09-28 会员化改造·二版：登录下线，VIP 跟系统华为账号）────────
   /** VIP 解锁缓存位（事实源在 IAP，见 VipManager；进本页自动 refreshVip 核对） */
@@ -142,6 +148,21 @@ export default struct MyCenter {
         //符号名 `gearshape` 在 SDK 符号表 `…\Sdk\23\previewer\common\resources\entry\resources.txt`
         //查得，不猜名字。点击 Q弹缩放由 `.scale()` + `runJellyClick` 驱动（2026-09-25 二次调优：
         //内置 ScaleSymbolEffect 节奏定死太慢，借参考工程同款实现）。
+        // 主题按钮（2026-09-30 v3.12：从卡片入口改为顶部同规格 symbol 按钮，
+        // 用户需求"删除当前的主题按钮，在顶部设置按钮左侧放置同样规格的 symbol 主题按钮"。
+        // 图标 paintpalette 经 SDK 符号表核实；Q弹+震动与设置按钮同款配方。
+        SymbolGlyph($r('sys.symbol.paintpalette'))
+          .fontSize(26)
+          .fontColor([ShelfColors.icon()])
+          .scale({ x: this.themeIconScale, y: this.themeIconScale })
+          .onClick(() => {
+            Haptics.tap();
+            runJellyClick((v: number) => {
+              this.themeIconScale = v
+            })
+            AppRouter.push(RouteName.THEME_CONFIG)
+          })
+          .clickEffect(UiMotion.CLICK)
         SymbolGlyph($r('sys.symbol.gearshape'))
           .fontSize(26)
           .fontColor([ShelfColors.icon()])
@@ -163,7 +184,48 @@ export default struct MyCenter {
         // 并去掉原来垫在最上面的 `Blank(24)`，内容直接从顶部开始排。
         Column() {
 
-          // 统计数据
+          // ── Web服务卡片（2026-09-30 回填，用户需求）────────────────────────
+          // wifi传书 / 电脑阅读 / 隔空传送（替代基座的"电脑写源"——书源体系已整体移除）。
+          // 基座考古结论：基座的 Web 服务是**纯空壳**（假开关 + 写死的假地址 192.168.41.12:1122，
+          // 无任何 HTTP/Socket 服务端实现，见基座 WebdavService.ets）⇒ 服务端为全新开发
+          //（方案与范围待用户确认，本轮先落入口与样式）。图标用 symbol、点按走
+          // clickEffect + Haptics（全 app 现有机制）。
+          Column({ space: 12 }) {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.display'))
+                .fontSize(16)
+                .fontColor([this.theme.mainColor])
+              Text('Web服务')
+                .fontSize(14).fontWeight(600)
+                .fontColor($r('app.color.text_primary'))
+            }
+            .width('100%')
+
+            Row({ space: 10 }) {
+              this.webServiceItem($r('sys.symbol.wifi'), 'wifi传书', (): void => {
+                this.openWifiDialog()
+              })
+              this.webServiceItem($r('sys.symbol.computer'), '电脑阅读', (): void => {
+                this.openWifiDialog()
+              })
+              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '隔空传送', (): void => {
+                // 用户拍板：点击直接跳书架管理页（管理/批量管理同页），勾选后碰一碰分享
+                AppRouter.push(RouteName.BOOK_MANAGE,
+                  { currentIndex: 0, EXHIBIT: '', bookTypeNumber: 0 } as BookManageRouteParam)
+              })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor($r('app.color.card_bg'))
+          .borderRadius(10)
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          // v3.12：与顶部按钮区 24（用户"web服务与顶部过于接近"）；与统计行 16（下一行）
+          .margin({ top: 24 })
+
+          // 统计数据（v3.12：与 Web 卡之间 16，用户圈点——原结构两者之间无间隔）
           Row() {
             ForEach(this.head_list, (item: dataItem, index: number) => {
               Column({ space: 5 }) {
@@ -193,6 +255,7 @@ export default struct MyCenter {
               .clickEffect(UiMotion.CLICK)
             })
           }.justifyContent(FlexAlign.SpaceBetween).width("100%").padding({ left: 20, right: 20 })
+          .margin({ top: 16 })
 
           // 固定高度间隔（**绝对不能用 `Blank`**）：
           // 本 Column 是 `height('100%')`，而 `Blank` 的语义是**撑满剩余空间**，
@@ -200,69 +263,8 @@ export default struct MyCenter {
           //   （用户截图反馈「主题不够靠上」）。改成定高占位即可。
           Row().width('100%').height(16)
 
-          //云盘 书源 主题 净化设置
-          // 2026-09-24（用户反馈）：列表精简到只剩「主题」一项后，`SpaceBetween` 会把它
-          //   排到整张卡片的最左边，且只有图标那 80vp 宽的小块能点。
-          // ⇒ ① `justifyContent(Center)`：图标在整张卡里居中；
-          //   ② 每项 `layoutWeight(1)`：单项时占满整行 = **整张卡片可点**，
-          //      将来加回第二项也自动均分、各自可点。
-          Row() {
-            ForEach(this.center_list, (item: dataItem) => {
-              Column({ space: 4 }) {
-                Image(item.icon).size({ width: 24, height: 24 })
-                Text(item.title).fontSize(12)
-              }
-              .height(48)
-              .justifyContent(FlexAlign.Center)
-              .layoutWeight(1)
-              .onClick(() => {
-                Haptics.tap();
-                this.centerOnclick(item.value)
-              })
-              .clickEffect(UiMotion.CLICK)
-            })
-          }
-          .width("100%")
-          .justifyContent(FlexAlign.Center)
-          .padding({ top: 16, bottom: 16 })
-          .backgroundColor($r('app.color.card_bg'))
-          .borderRadius(10)
-          // 卡片层次（2026-09-21）：与封面投影同一套视觉语言，给白色卡片一点"浮起来"的层次。
-          // 纯增量属性、不动尺寸/布局 ⇒ 零回归风险；不想要就删这一行。
-          // 用很淡的 0.06 透明度，避免在浅色渐变背景上显脏。
-          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-
-          // ── Web服务卡片（2026-09-30 回填，用户需求）────────────────────────
-          // wifi传书 / 电脑阅读 / 隔空传送（替代基座的"电脑写源"——书源体系已整体移除）。
-          // 基座考古结论：基座的 Web 服务是**纯空壳**（假开关 + 写死的假地址 192.168.41.12:1122，
-          // 无任何 HTTP/Socket 服务端实现，见基座 WebdavService.ets）⇒ 服务端为全新开发
-          //（方案与范围待用户确认，本轮先落入口与样式）。图标用 symbol、点按走
-          // clickEffect + Haptics（全 app 现有机制）。
-          Column({ space: 12 }) {
-            Row({ space: 8 }) {
-              SymbolGlyph($r('sys.symbol.display'))
-                .fontSize(16)
-                .fontColor([this.theme.mainColor])
-              Text('Web服务')
-                .fontSize(14).fontWeight(600)
-                .fontColor($r('app.color.text_primary'))
-            }
-            .width('100%')
-
-            Row({ space: 10 }) {
-              this.webServiceItem($r('sys.symbol.wifi'), 'wifi传书')
-              this.webServiceItem($r('sys.symbol.computer'), '电脑阅读')
-              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '隔空传送')
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.SpaceBetween)
-          }
-          .width('100%')
-          .padding(16)
-          .backgroundColor($r('app.color.card_bg'))
-          .borderRadius(10)
-          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-          .margin({ top: 16 })
+          // ── 主题卡片入口已删除（2026-09-30 v3.12，用户需求）：主题功能改由
+          // 顶部设置按钮左侧的 paintpalette symbol 按钮承载（见 build 顶部 Row）。
 
           // ── 关于我们入口（2026-09-30 回填，用户需求）────────────────────────
           // 与主题卡同款视觉（card_bg + 圆角 10 + 同款淡阴影），图标用 About 自己的
@@ -385,17 +387,17 @@ export default struct MyCenter {
   //主题点击事件（2026-09-21 精简：只剩「主题」一项；
   //原「备份」「书源」「净化」的 case 1/3/4 已删除）
   /**
-   * Web服务三宫格单项（2026-09-30 回填）：symbol 图标 + 标签。
-   * 点按走全 app 既有机制：clickEffect（按压反馈）+ Haptics（全局震动管理）。
-   * 服务端尚未实现（基座为空壳，见卡片注释）⇒ 本轮先以 toast 占位，
-   * 服务端落地后改为各自的路由/弹层。
+   * Web服务三宫格单项（2026-09-30 回填）：symbol 图标 + 标签 + **Q弹**（runJellyClick
+   * 自驱 scale，与书架顶部按钮同款配方）+ 统一震动（Haptics.tap）。
+   * 动作由调用方注入：wifi传书/电脑阅读 → WifiTransferDialog；隔空传送 → 管理页。
    */
   @Builder
-  webServiceItem(icon: Resource, label: string) {
+  webServiceItem(icon: Resource, label: string, onTap: () => void) {
     Column({ space: 6 }) {
       SymbolGlyph(icon)
         .fontSize(24)
         .fontColor([this.theme.mainColor])
+        .scale({ x: this.wifiScaleOn(label), y: this.wifiScaleOn(label) })
       Text(label)
         .fontSize(12)
         .fontColor($r('app.color.text_primary'))
@@ -408,19 +410,62 @@ export default struct MyCenter {
     .clickEffect(UiMotion.CLICK)
     .onClick(() => {
       Haptics.tap()
-      this.getUIContext().getPromptAction().showToast({ message: '功能建设中，敬请期待' })
+      this.jellyByLabel(label)
+      onTap()
     })
   }
 
-  centerOnclick(value: number | string) {
-    switch (value) {
-    // 点击主题
-      case 2:
-        // 迁 Navigation 第 4 期：主题配置页已改为 NavDestination，改走路由门面。
-        AppRouter.push(RouteName.THEME_CONFIG)
-        break
+  /** 三宫格各自的 Q弹 scale 取值（label → state 的桥接，避免数组下标更新不刷 UI） */
+  private wifiScaleOn(label: string): number {
+    if (label === 'wifi传书') {
+      return this.wifiScale
+    }
+    if (label === '电脑阅读') {
+      return this.readScale
+    }
+    return this.airScale
+  }
+
+  private jellyByLabel(label: string): void {
+    if (label === 'wifi传书') {
+      runJellyClick((v: number) => {
+        this.wifiScale = v
+      })
+    } else if (label === '电脑阅读') {
+      runJellyClick((v: number) => {
+        this.readScale = v
+      })
+    } else {
+      runJellyClick((v: number) => {
+        this.airScale = v
+      })
     }
   }
+
+  /** 打开 WiFi 传书/电脑阅读对话框（同一个服务的两个入口） */
+  private openWifiDialog(): void {
+    this.wifiDialog = new CustomDialogController({
+      builder: WifiTransferDialog({
+        dark: this.nightOn,
+        onClose: (): void => {
+          this.wifiDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '86%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.wifiDialog = null
+      }
+    })
+    this.wifiDialog.open()
+  }
+
 
   toMySetPage() {
     // 迁 Navigation 第 4 期：我的设置已改为 NavDestination，改走路由门面。

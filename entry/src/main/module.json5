@@ -35,6 +35,15 @@
         "usedScene": {
           "when":"inuse"
         }
+      },
+      {
+        // wifi传书（2026-09-30 回填）：读取手机 IP 展示给 PC 访问。
+        // `wifiManager.getIpInfo()`（@ohos.wifiManager）标注
+        // `@permission ohos.permission.GET_WIFI_INFO`（normal / system_grant）。
+        "name" : "ohos.permission.GET_WIFI_INFO",
+        "usedScene": {
+          "when":"inuse"
+        }
       }
     ],
     "deviceTypes": [
@@ -74,6 +83,43 @@
             ],
             "actions": [
               "action.system.home"
+            ]
+          }
+        ]
+      }
+    ],
+    // ── 分享接收端（2026-09-30 回填，官方文档：
+    //    开发指南/Share_Kit_分享服务/系统分享/目标应用处理分享内容/分享详情页处理分享内容/share-sec-panel）──
+    // 接收方注册三要素（官方原文）：type: "share" + skills.actions: ohos.want.action.sendData
+    // + uris 穷举支持的 utd。作用：华为分享面板/碰一碰（应用路由模式）把书送进本 App 沙箱
+    // ⇒ ShareExtensionAbility(onSessionCreate) → systemShare.getSharedData → 导入书架。
+    // utd 穷举：general.text（txt，官方示例同款）+ general.epub
+    // （SDK @ohos.data.uniformTypeDescriptor.d.ts:409 EPUB = 'general.epub'）。
+    "extensionAbilities": [
+      {
+        "name": "BookShareExtension",
+        "srcEntry": "./ets/entryability/BookShareExtensionAbility.ets",
+        "type": "share",
+        "description": "$string:EntryAbility_desc",
+        "exported": true,
+        "label": "$string:EntryAbility_label",
+        "icon": "$media:layered_image",
+        "skills": [
+          {
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.text",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.epub",
+                "maxFileSupported": 100
+              }
             ]
           }
         ]
