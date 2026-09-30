@@ -325,9 +325,9 @@ export default class UiMotion {
    */
   static readonly LONGTAKE_ENABLED: boolean = true
 
-  /** 进场/返回总时长（ms），两段对称 */
-  static readonly LT_ENTER_DUR: number = 560
-  static readonly LT_POP_DUR: number = 560
+  /** 进场/返回总时长（ms），两段对称。v3.7：560→620（用户"加点时长"——更从容的一镜到底） */
+  static readonly LT_ENTER_DUR: number = 620
+  static readonly LT_POP_DUR: number = 620
 
   /** 封面开始掀开的时刻（ms）：早掀 —— 透视下投影渐窄，内容页从右侧渐进露出 */
   static readonly LT_FLIP_DELAY: number = 80
@@ -449,19 +449,19 @@ export default class UiMotion {
    */
   static readonly LT_FLIP2_DUR: number = 260
   /**
-   * **关闭时封面合上的时长（ms）**——刻意比缩小（560ms）**快得多**，但**同时起跑**：
-   * 一镜到底的观感不变，而等窗口明显缩小时内容页已经被封面盖住，
-   * 于是"阅读器被裁成半屏"那一下根本看不见。
+   * **关闭时封面合上的时长（ms）**——十二轮 v3.6：180 → **480**，与进场翻折（LT_FLIP_DUR）
+   * 完全对称，梯形透视全程可见。
    *
-   * ── 为什么需要（真机日志 + 用户逐帧截图）────────────────────────────────
-   * 旧编排里封面合上是 `LT_FLIP_DELAY + LT_FLIP_DUR = 480ms`，比缩小的前段还慢：
-   * 回落开始 ~100ms 时窗口已缩到约 55%（`Curve.Friction` 起步极快），
-   * 而封面因为还没合上（`angle` 才转到约 -46°，投影只盖住左侧约 69%）
-   * ⇒ 右侧露出"被切掉下半部分的阅读器"，用户描述为「第二帧阅读器一下就变成半屏」。
-   * 改成 180ms 后：~100ms 时封面已盖住约九成，窗口只缩到约 97%（曲线也换成起步慢的
-   * `FastOutSlowIn`）⇒ 切页过程被藏住，观感是"整本书一起缩小回落"。
+   * ── 为什么原来的 180ms 会让返回封面"还是矩形"（v3.6 用户实测）────────────
+   * 180ms 是八轮的权宜之计：当年"阅读器瞬间变半屏"的真因（clip(Rect) 参数不随隐式
+   * 动画插值，v2 取证）尚未定位，只能用快翻让封面抢在缩窗前盖住正文来遮症状。
+   * v3 架构里书脸高度已是可动画布局属性（与封面同步、无跳变）⇒ 掩护不再需要；
+   * 而 180ms + 透视 0（强放大）＝翻折糊成一闪，用户看到的只有"封面啪一下变平"
+   * ⇒ 返回读感是矩形、进场却是漂亮梯形的不对称。
+   * ⇒ 现在与进场同规格：480ms，曲线同样 Friction（Index 返回编排 ② 同步改），
+   *   梯形全程可读；书脸高度随包络平滑缩放 ⇒ 诉求 D（不得瞬间半屏）依旧满足。
    */
-  static readonly LT_POP_FLIP_DUR: number = 180
+  static readonly LT_POP_FLIP_DUR: number = 480
   /**
    * 关闭时「整本书缩小」用的曲线。
    * 为什么不用 `Curve.Friction`（= cubic-bezier(0.2,0,0.2,1)，起步极快）：560ms 的回落在

@@ -34,7 +34,7 @@ import MyThemeConfig from './view/myCenter/MyThemeConfig'
 import MySetPage from './view/myCenter/MySetPage'
 import CreateCustomTheme from './view/myCenter/CreateCustomTheme'
 import { common } from '@kit.AbilityKit'
-import { NightMode } from '../common/utils/NightMode'
+import { NightMode, ShelfColors } from '../common/utils/NightMode'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../common/utils/Haptics'
 import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
@@ -76,6 +76,14 @@ struct Main {
   @State ltActive: boolean = false
   /** 飞行层动画值：缩放（锚点取内容 (0,0)） */
   @State ltScale: number = 1
+  /**
+   * 飞行层动画值：**纵向缩放**（十二轮 v3.7，与 ltScale 拆分的理由见 LongTakeGeom.sy0）：
+   * 盒子从全窗到槽位改为**四边各自线性插值**后，横向由 ltScale 承担（宽的 lerp 与
+   * W·sx 逐位相同），纵向由 ltScaleY 承担（sy0→1 线性）⇒ 盒子高 = clipH1×ltScaleY，
+   * 槽位在进/返回全程被盒子包含（旧"scale×clipH 乘积"对下半屏的书会中段露缝）。
+   * 初值 1（= 全窗高，与 ltClipH 初值 0 的保险丝同理：没就绪就不该有可见的书脸）。
+   */
+  @State ltScaleY: number = 1
   /** 飞行层动画值：平移（vp，首帧 = 封面左上角在窗口里的位置；终态 = 屏幕左上角 = 参考效果的"铰链落点"） */
   @State ltTx: number = 0
   @State ltTy: number = 0
@@ -596,6 +604,7 @@ struct Main {
       this.ltGeom = g
       // 起始帧：同步设置（此刻目标页尚未渲染首帧 —— 探针已验证此机制生效）
       this.ltScale = g.s0
+      this.ltScaleY = g.sy0
       this.ltTx = g.tx0
       this.ltTy = g.ty0
       this.ltClipH = g.clipH0
@@ -720,6 +729,7 @@ struct Main {
         curve: Curve.Friction
       }, (): void => {
         this.ltScale = 1
+        this.ltScaleY = 1
         this.ltTx = 0
         this.ltTy = 0
         this.ltClipH = g.clipH1
@@ -763,6 +773,7 @@ struct Main {
         }
       }, (): void => {
         this.ltScale = 1
+        this.ltScaleY = 1
         this.ltTx = 0
         this.ltTy = 0
         this.ltClipH = g.clipH1
@@ -839,6 +850,7 @@ struct Main {
         }
       }, (): void => {
         this.ltScale = g.s0
+        this.ltScaleY = g.sy0
         this.ltTx = g.tx0
         this.ltTy = g.ty0
         this.ltClipH = g.clipH0
@@ -852,16 +864,21 @@ struct Main {
       }, (): void => {
         this.ltCoverOpacity = 1
       })
-      // ② 封面**快速**合上（180ms < 560ms）：同样从 0ms 起跑（不破坏一镜到底），
-      //    但比缩小快得多 ⇒ 等窗口明显变小时内容页已被封面盖住，
-      //    "阅读器被裁成半屏"那一下自然看不见（见 UiMotion.LT_POP_FLIP_DUR 的取证）。
+      // ② 封面合上（十二轮 v3.6：**480ms 可读翻折**，与进场翻折同规格对称）——
+      //    旧值 180ms 是八轮的权宜之计：当年"瞬间半屏"的真因（clip(Rect) 参数不随
+      //    隐式动画插值）已在 v3 用可动画的书脸高度修掉 ⇒ 掩护不再需要；而 180ms
+      //    在透视 0 下糊成一闪，用户实测"返回封面还是矩形"。
+      //    现在与进场相同：480ms + Friction，梯形全程可读；书脸高度随包络同步缩放
+      //    ⇒ 诉求 D（不得瞬间半屏）由 v3 的同步书脸保证，不再依赖快翻掩护。
       ui.animateTo({
         duration: UiMotion.LT_POP_FLIP_DUR,
-        curve: Curve.FastOutSlowIn
+        curve: Curve.Friction
       }, (): void => {
         this.ltCoverAngle = 0
       })
-      // ③ 整本书缩回书架封面原位原尺寸（560ms，起步慢的曲线 ⇒ 不会"头 100ms 走一半"）
+      // ③ 整本书缩回书架封面原位原尺寸（620ms，起步慢的曲线 ⇒ 不会"头 100ms 走一半"）
+      //    v3.7：ltScaleY 同步缩回 sy0 —— 盒子四边线性插值，槽位全程被包含
+      //    （修"下半屏的书回落时像原书还在、被压上去"）
       ui.animateTo({
         duration: UiMotion.LT_POP_DUR,
         curve: UiMotion.LT_POP_SHRINK_CURVE,
@@ -870,6 +887,7 @@ struct Main {
         }
       }, (): void => {
         this.ltScale = g.s0
+        this.ltScaleY = g.sy0
         this.ltTx = g.tx0
         this.ltTy = g.ty0
         this.ltClipH = g.clipH0
@@ -974,28 +992,39 @@ struct Main {
             // 头 1~2 帧会渲染目标尺寸（clipH1 全高 ⇒ 封面被拉长）再弹回
             //（用户实测："封页被拉长→瞬间恢复→继续动画+整屏抖动"，检查点无此现象）。
             // 阅读期用 visibility(None) 隐藏（节点与布局保留 ⇒ 返回时同帧复现，无赛跑）。
-              Stack() {
-                // 兜底黑底（**无条件**，十二轮 v3.5 恢复检查点行为）——取证链：
+            Stack() {
+                // 兜底垫底（**无条件**，十二轮 v3.5 恢复 + v3.7 换色）——取证链：
                 // · 两份真机日志的框架事件序列完全一致（挂载→NavBar隐藏→动画→自定义转场），
                 //   差异只在我们的树 ⇒ 抖动来自"对框架行为的可见性"变了；
                 // · 新版日志（10:52）：delegate 点火 21.727 → **NavBar 隐藏 21.729**（框架在
                 //   push 时隐藏书架 NavBar 并引发全屏重排，五轮注释"包络四周露出黑虚空"
                 //   记录的同一事件）→ 快照 ImageLoadSuccess **21.732** —— 即NavBar 隐藏的
                 //   重排落在快照上屏前的 1~2 帧空窗里；
-                // · v3.1 曾把黑底改成"仅快照失败才建"（为治 v3.0 的黑屏观感）⇒ 空窗期透出
-                //   **真实书架**，NavBar 隐藏的重排当着用户的面演一遍 = "打开动画全屏抖动"
-                //   （v3.1~v3.4 抖动的唯一根源；检查点黑底垫着故无抖动）。
-                // · v3.0 的"黑屏"投诉则是因为当时阅读器还在飞行层拖慢首帧、黑窗更长；
-                //   现在阅读器已移出飞行层，黑窗与检查点同短（1~2 帧），且完全被快照接管。
+                // · v3.1 曾把垫底改成"仅快照失败才建"（为治 v3.0 的黑屏观感）⇒ 空窗期透出
+                //   **真实书架**，NavBar 隐藏的重排当着用户的面演一遍 = "打开动画全屏抖动"；
+                //   v3.5 恢复无条件垫底后抖动消失（用户验收）✔
+                // · v3.7：垫底色黑 → **书架页背景同色**（ShelfColors.pageBg()，主题自适应）
+                //   ——用户仍可在起飞头 1~2 帧察觉一帧垫底，黑色与浅色书架反差最大；
+                //   换成同底色后垫底帧与书架底色一致，只缺书封/卡片 ⇒ 观感为"一帧空书架"
+                //   而非"黑屏帧"（用户本轮反馈"点击出现了一个黑屏帧"）。
                 Column()
                   .width('100%')
                   .height('100%')
-                  .backgroundColor(Color.Black)
+                  .backgroundColor(ShelfColors.pageBg())
                   .hitTestBehavior(HitTestMode.None)
                 if (this.ltBackdrop !== null) {
                   Image(this.ltBackdrop)
                     .width('100%')
                     .height('100%')
+                    // v3.8：**同步加载**——治"起飞第一帧白屏"（用户截图 12:24：整屏只剩
+                    // 垫底色+封面，书架画面缺失一帧）。根因：Image 组件默认异步加载，
+                    // 常驻覆盖层虽在挂载即布局，位图仍要 ~26ms 后才首次上屏
+                    // （日志：mount 56.939 → ImageLoadSuccess 56.965）⇒ 门闩打开后的
+                    // 第一帧缺书架画面。syncLoad 让位图在首次布局时就同步就位
+                    // ⇒ 第一个可见帧 = 完整书架。代价：加载阻塞 UI 线程一帧——
+                    // 官方 FAQ 建议大图用异步，此处刻意违背：该帧发生在姿态门闩
+                    // 关闭的隐形窗口内（用户不可见），且 PixelMap 已解码、无解码开销。
+                    .syncLoad(true)
                     .hitTestBehavior(HitTestMode.None)
                 }
                 // ── 书的包络（六轮修正 2026-09-23）────────────────────────────────
@@ -1032,18 +1061,21 @@ struct Main {
                         }
                       }
                       .width('100%')
-                      .height(this.ltGeom !== null ? this.ltGeom.clipH1 : '100%')
+                      // v3.7：容器回归 '100%' —— 盒子的纵向收缩改由 scale.y 承担
+                      //（四边线性插值几何，见 LongTakeGeom.sy0），层内不再需要动画高度
+                      .height('100%')
                     }
                     .width('100%')
-                    // "书脸"高度 = 可动画布局属性（与封面同一状态、同一动画曲线 ⇒ 永远同步）。
-                    // 为什么不用 clip(Rect) 的高度参数做"书脸"：其参数不随隐式动画插值
-                    // （v2 真机取证：进场瞬间跳全窗/返回瞬间跳 1760 ⇒ "长出20%黑边"/"拦腰折断"）。
-                    .height(this.ltClipH)
+                    // v3.7：书脸层高度回归静态 '100%' —— 纵向收缩由 scale.y（sy0→1 线性）
+                    // 承担后，"书脸"不再是动画布局属性（布局属性隐式动画有首帧跳变前科，
+                    // v2 取证）；横向照旧由 scale.x 承担。盒子的可见边界 = 本层尺寸×scale。
+                    .height('100%')
                     .id('ltClipNode')
-                    // 裁到组件自身边界，边界随高度动画逐帧跟随
+                    // 裁到组件自身边界（容器不溢出时为无操作，留作保险）
                     .clip(true)
-                    // 封面：高度=书脸高度（书脊等高）。**图源优先用点击瞬间截的封面位图**（七轮），
-                    // 位图 + Fill 一定铺满盒子（SVG 图源不吃 objectFit 的教训见 LT_COVER_SNAPSHOT）。
+                    // 封面：**铺满盒子**（宽高都 '100%'，随 scale.x/y 各向收缩）。
+                    // **图源优先用点击瞬间截的封面位图**（七轮），位图 + Fill 一定铺满盒子
+                    // （SVG 图源不吃 objectFit 的教训见 LT_COVER_SNAPSHOT）。
                     // ⚠️ 它是裁切层的**兄弟层**（同在 scale 层里）：掀开时要扫出"书"的边界，
                     // 放进裁切层会被 clip 切掉 3D 感。
                     Image(this.ltCoverSrc())
@@ -1051,9 +1083,12 @@ struct Main {
                       .draggable(false)
                       .alt($r('app.media.icon_book_default_cover_one'))
                       .width('100%')
-                      .height(this.ltClipH)
+                      .height('100%')
                       // Cover = 保比例裁切铺放（不变形）；Fill 会竖向拉 ~1.6×（LT_COVER_FIT_CROP 取证）
                       .objectFit(UiMotion.LT_COVER_FIT_CROP ? ImageFit.Cover : ImageFit.Fill)
+                      // v3.8：同步加载——与快照同理，保证第一个可见帧封面位图就在位
+                      //（否则首帧书脸位置是页色垫底，封面晚一帧浮现）
+                      .syncLoad(true)
                       .borderRadius(this.ltCoverRadius)
                       .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.22)', offsetX: 0, offsetY: 5 })
                       // 绕书脊（左缘）翻折；显式透视 -3000（十二轮 v3：右缘变高方向，
@@ -1077,7 +1112,9 @@ struct Main {
                   .width('100%')
                   .height('100%')
                   .alignContent(Alignment.TopStart)
-                  .scale({ x: this.ltScale, y: this.ltScale, centerX: 0, centerY: 0 })
+                  // v3.7：横向 ltScale（s0→1）+ 纵向 ltScaleY（sy0→1）各自线性
+                  // ⇒ 盒子四边 lerp（全窗↔槽位），槽位在进/返回全程被包含
+                  .scale({ x: this.ltScale, y: this.ltScaleY, centerX: 0, centerY: 0 })
                 }
                 .width('100%')
                 .height('100%')

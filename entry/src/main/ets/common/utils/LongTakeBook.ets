@@ -154,6 +154,19 @@ export class LongTakeGeom {
   clipH0: number = 0
   /** 终态裁切高度（vp）= 窗口高 */
   clipH1: number = 0
+  /**
+   * **纵向缩放终值**（十二轮 v3.7）= 槽位高 / 窗口高 = px2vp(封面高) / clipH1。
+   * ── 为什么需要（用户实测"下半屏的书回落时像原书还在、被回落的书压上去"）──────
+   * 旧几何的盒子高 = scale×clipH **两个收缩因子的乘积**，对 ty0 大（下半屏）的书，
+   * 盒子下缘会在回落中段（p≈0.4~0.75）缩到**槽位上缘之上** ⇒ 槽位原书露出，
+   * 尾段再被压回去（上半屏 ty0 小故全程覆盖，用户感知"上半屏天然挡得住"）。
+   * v3.7 改为**四边各自线性插值**（left/top/right/bottom 分别 lerp）——数学上可证
+   * 槽位全程被盒子包含（四条边单调趋近槽位且永不过越）。实现：横缩放 sx 不变
+   * （宽的 lerp 与 W·sx 逐位相同），纵缩放拆出独立的 **scale.y: sy0→1（线性）**，
+   * 盒子高 = clipH1×sy —— 乘积消失，书脸层高度回归静态 '100%'。
+   * 进场/返回共用同一几何（镜像），两向都全程包含槽位。
+   */
+  sy0: number = 1
   /** 封面圆角本地值（vp）：视觉圆角 = 本值 × 当前缩放 ⇒ 首帧与书架一致 */
   coverRadius: number = 0
 
@@ -164,9 +177,10 @@ export class LongTakeGeom {
     g.ty0 = ui.px2vp(f.coverTopPx)
     g.clipH0 = ui.px2vp(f.coverHeightPx / g.s0)
     g.clipH1 = ui.px2vp(f.winHeightPx)
+    g.sy0 = ui.px2vp(f.coverHeightPx) / g.clipH1
     g.coverRadius = ui.px2vp(f.radiusPx) / g.s0
     console.info('LTBOOK',
-      `geom book=${f.bookName} s0=${g.s0} t=(${g.tx0},${g.ty0}) clipH=${g.clipH0}→${g.clipH1} r0=${g.coverRadius}`)
+      `geom book=${f.bookName} s0=${g.s0} sy0=${g.sy0} t=(${g.tx0},${g.ty0}) clipH=${g.clipH0}→${g.clipH1} r0=${g.coverRadius}`)
     return g
   }
 }
