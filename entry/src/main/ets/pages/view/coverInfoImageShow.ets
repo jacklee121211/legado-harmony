@@ -2,8 +2,18 @@
  * @author 2008
  * @datetime 2024/5/27 16:09
  * @className: coverInfoImageShow
+ * 分组封面弹窗的预览列（封面样式弹窗 coverInfoDialog 的子部件）。
+ *
+ * 2026-10-01 变更（用户："布局溢出"、"自定义和全图样式功能重叠就删一个"）：
+ *   · 删除 coverCount===3「全图样式」列 —— 它与「自定义」共用同一个选图器，渲染上唯一
+ *     差异是 BookOverlay 的 `coverType !== 2` 才画的底部装饰叠层（BookOverlay.ets:37、
+ *     BookFolder.ets:232），0(默认)与1(自定义)渲染完全一样 ⇒ 三选二重，删全图。
+ *     存量 coverType=2 的分组照常渲染（BookOverlay 的判断保留，老数据不受影响）。
+ *   · 「默认样式」列的 9 张缩略图行**移交宿主**（coverInfoDialog 全宽网格，原来挤在
+ *     ~1/3 宽的列里必然溢出 —— 9×26vp+间距 ≈ 282vp）。
  */
 import CommonConstants from '../../common/constants/CommonConstants'
+import { Haptics } from '../../common/utils/Haptics'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 import BookOverlay from '../../componets/bookDetail/BookOverlay'
@@ -14,23 +24,31 @@ export default struct coverInfoImageShow {
   @Prop image:Resource|string
   @Prop imageString:string
   @Prop selectImage:number = 0
+  /** v3.21：默认样式网格选中项（0-based；-1=未选）；宿主维护 */
+  @Prop pickDefault:number = -1
   onSelectImageNumber:Function = (_selectImage:number)=>{}
+  /** v3.21：默认封面网格点选回调（宿主写 coverUrl=default://…） */
+  onPickDefault:Function = (_index:number)=>{}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   build() {
     if (this.coverCount === 1){
-      this.coverImageOne(this.image)
+      this.coverImageOne(typeof this.image === 'string' ? this.image : '')
     } else if (this.coverCount === 2){
       this.coverImageTwo()
-    } else if (this.coverCount === 3){
-      this.coverImageThree()
     }
   }
 
-  @Builder coverImageOne(bookImage:Resource|string){
+  @Builder coverImageOne(bookImage:string){
     Column(){
       BookOverlay({
-        bookImage:bookImage
+        // v3.21：默认样式 = 内置 9 封面（网格选中项优先于原封面）。
+        // 2026-10-01：bookImage 为空（分组从未设置/存的是自定义图）时落内置默认 c1，
+        // 保证"默认样式"预览永远是内置封面的真实对照（用户："如果用户没在此处修改过，
+        // 则分组显示默认封面"）。
+        bookImage: this.pickDefault >= 0
+          ? ('default://cover_defaults/c' + (this.pickDefault + 1) + '.svg')
+          : (bookImage !== '' ? bookImage : 'default://cover_defaults/c1.svg')
       })
       Row().width(86)
         .height(20)
@@ -69,11 +87,22 @@ export default struct coverInfoImageShow {
           if (this.imageString) {
             Image(this.imageString).draggable(false)
           } else {
+            // 2026-10-01（用户）：未选图时的灰黑蒙版改成「点击选择」浅色虚线占位，
+            // 明示这是可点击的选图入口（原深色块像一张没加载出来的封面）。
             Column(){
-              Image($r('app.media.add_image')).width(24).height(24).draggable(false)
-              Text('添加图片或gif').fontColor(Color.White).fontWeight(400).fontSize(10).lineHeight(18)
+              Text('点击选择')
+                .fontColor($r('app.string.color_black_45'))
+                .fontWeight(400)
+                .fontSize(12)
+                .lineHeight(18)
             }
             .padding({top:19,bottom:19,left:17,right:17})
+            .border({
+              width: 1,
+              color: 'rgba(0,0,0,0.20)',
+              style: BorderStyle.Dashed,
+              radius: 5
+            })
           }
         }
         .borderRadius(5)
@@ -110,44 +139,6 @@ export default struct coverInfoImageShow {
           .width(20).height(20)
           .onChange((val)=>{
             val? this.onSelectImageNumber(1):''
-          })
-      }
-      .padding({top:8})
-    }
-  }
-
-  @Builder coverImageThree(){
-    Column(){
-      Flex({
-        alignItems: ItemAlign.End,
-      }){
-        if (this.imageString) {
-          Image(this.imageString)
-        } else {
-          Column(){
-            Image($r('app.media.add_image')).width(24).height(24)
-            Text('添加图片或gif').fontColor(Color.White).fontWeight(400).fontSize(10).lineHeight(18)
-          }.padding({top:37,bottom:37,left:14,right:13})
-        }
-      }
-      .borderRadius(5)
-      .backgroundColor($r('app.string.color_black_65'))
-      .align(Alignment.Start)
-      .width(CommonConstants.NOVEL_IMG_WIDTH + 14).height(CommonConstants.NOVEL_IMG_HEIGHT + 18)
-      Row({
-        space:12
-      }){
-        Text('全图样式')
-          .fontWeight(400).fontSize(14).fontColor($r('app.string.color_black_45')).lineHeight(22)
-        Radio({value:JSON.stringify('2'),group:'radioGroup'})
-          .checked(this.selectImage === 2)
-          .radioStyle({
-            checkedBackgroundColor: this.theme.mainColor
-          })
-          .border({width:2,color:'rgba(255, 255, 255, 0.10)'})
-          .width(20).height(20)
-          .onChange((val)=>{
-            val? this.onSelectImageNumber(2):''
           })
       }
       .padding({top:8})

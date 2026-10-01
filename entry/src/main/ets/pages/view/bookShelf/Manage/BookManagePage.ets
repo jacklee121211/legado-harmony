@@ -13,7 +13,7 @@ import BookSelectGroupDialog from '../components/dialog/BookSelectGroupDialog';
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao';
 import { BookGroups } from '../../../../database/entities/BookGroups';
 import bookGroupUtil from '../../../../common/utils/bookGroupUtils';
-import catalogAddShelf from './components/catalogAddShelf';
+import AddToBookListDialog from '../components/dialog/AddToBookListDialog';
 import Header from '../../../../componets/common/Header';
 import WorksBookLists from '../Shelf/WorksBookLists';
 import worksListsDao from '../../../../database/dao/WorksListsDao';
@@ -174,7 +174,40 @@ export default struct BookManagePage {
     }
   }
 
-  @State isCatalogAddShelf:boolean = false
+  /**
+   * 「加入书单」统一弹窗（2026-10-01 从 bindSheet 改 CustomDialog）。
+   * sheet 载不了沉浸光感材质（SheetOptions 无 systemMaterial 字段，取证见
+   * AddToBookListDialog 类注释）；控制器**打开时新建**——SDK NOTE「Custom dialog box
+   * parameters do not support dynamic updates」，ids/bookOrFolder 随勾选变化只能快照。
+   * 本页是整页（非弹窗），背后无需退出，子关闭后原地刷新列表即可。
+   */
+  private addToBookListDialog: CustomDialogController | null = null
+  private openAddToBookList(): void {
+    this.addToBookListDialog = new CustomDialogController({
+      builder: AddToBookListDialog({
+        currentIndex: this.currentIndex,
+        ids: this.checkListNumber,
+        bookOrFolder: this.bookOrFolder,
+        cancel: () => {
+          this.addToBookListDialog = null
+          this.refreshData()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '80%',
+      height: 400,
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.addToBookListDialog = null
+      }
+    })
+    this.addToBookListDialog.open()
+  }
   @State showNumber:number = 0
   @State bookOrFolder:number = 0
   build() {
@@ -207,15 +240,6 @@ export default struct BookManagePage {
         }
         .layoutWeight(1)
         .backgroundColor(ShelfColors.pageBg())
-        Flex()
-          .bindSheet($$this.isCatalogAddShelf, this.dialogCatalogAddShelf(), {
-            height:400,
-            dragBar: true,
-            showClose: false,
-            onDisappear: () => {
-              this.isCatalogAddShelf = false
-            }
-          })
       }
       .margin({
         bottom:this.bottomRectHeight
@@ -291,19 +315,8 @@ export default struct BookManagePage {
     }
   }
   //书单弹窗
-  @Builder dialogCatalogAddShelf(){
-    Column(){
-      catalogAddShelf({
-        onClickShelf:(val:boolean)=>{
-          this.isCatalogAddShelf = val
-          this.refreshData()
-        },
-        currentIndex:this.currentIndex,
-        ids:this.checkListNumber,
-        bookOrFolder:this.bookOrFolder
-      })
-    }
-  }
+  //（2026-10-01 已删除 bindSheet 版 @Builder dialogCatalogAddShelf：SheetOptions 没有
+  //  systemMaterial 字段载不了沉浸光感，统一改走 AddToBookListDialog，见 openAddToBookList。）
   @State allCheck:boolean = false
   @Builder
   selectAll() {
@@ -465,12 +478,12 @@ export default struct BookManagePage {
       case 2 :
         this.bookMoveGroup?.open(); break;
       case 3 :
-        this.isCatalogAddShelf = true
         if (this.bookTypeNumber === 1) {
           this.bookOrFolder = 1
         } else {
           this.bookOrFolder = 0
         }
+        this.openAddToBookList();
         break;
       case 4 :
         this.clickHideDialog?.open()

@@ -1381,7 +1381,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
         bookName: safeName,
         bookUrl: dst,
         author: '暂无',
-        bookGroup: 4,
+        bookGroup: 3,  // 未分组（v3.21 对齐导入口径）
         latestChapterTime: 0,
         totalChapterNum: 0,
         durChapterIndex: 0,

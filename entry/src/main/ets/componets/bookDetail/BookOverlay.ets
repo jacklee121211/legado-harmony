@@ -1,11 +1,40 @@
 import CommonConstants from '../../common/constants/CommonConstants'
+import { DEFAULT_COVER_PREFIX } from '../../common/utils/CoverSource'
 
 @Component
 export default struct BookOverlay {
-  @Prop bookImage:Resource|string
+  @Prop bookImage: Resource|string = ''
   @Prop isTop:boolean
   @Prop isShow:boolean = false
   @Prop coverType:number = 0
+
+  /**
+   * 封面源解析（2026-10-01 重写，修两处真机事故，日志见 2.md）：
+   * ① 闪退：BookFolder.ets:302（group.coverUrl）/ WorksBookListInfo.ets:34（worksCoverUrl）
+   *    对未设置封面的分组/书单传 undefined ⇒ 原表达式 `this.bookImage.toString()` 直接抛
+   *    "Cannot read property toString of undefined"（16:59:04 点击分组闪退、17:09:43
+   *    点击书单闪退，两次 Kill Reason: Js Error，进程被杀）。
+   * ② 分组封面预览/卡片永不更新：原 `substring(10)` 只剥掉 'default://'（10 字符），把
+   *    'default://cover_defaults/c3.svg' 拼成
+   *    $rawfile('cover_defaults/' + 'cover_defaults/c3.svg') ⇒ 路径翻倍、文件永远找不到，
+   *    用户实测"点击默认款式其他款，上面的预览没有实时更新"（17:05 分组封面测试）。
+   *    存储协议以 `CoverSource.DEFAULT_COVER_PREFIX`（25 字符）为准，与单本弹窗
+   *    （CoverStyleDialog）/书架渲染（BookInfos→resolveCoverSource）保持同一契约。
+   */
+  private coverSrc(): ResourceStr {
+    const raw: string = this.bookImage === undefined || this.bookImage === null
+      ? '' : this.bookImage.toString()
+    if (raw.startsWith(DEFAULT_COVER_PREFIX)) {
+      return $rawfile('cover_defaults/' + raw.substring(DEFAULT_COVER_PREFIX.length))
+    }
+    if (raw === '') {
+      // 2026-10-01 用户需求："如果用户没在此处修改过，则分组显示默认封面" ——
+      // 分组/书单卡片未设置封面时显示内置默认封面 c1（真实对照，不再露空白 alt 图）。
+      return $rawfile('cover_defaults/c1.svg')
+    }
+    return this.bookImage
+  }
+
   build() {
 
     Stack(){
@@ -23,7 +52,7 @@ export default struct BookOverlay {
           Text('置顶').fontColor(Color.White).fontWeight(300).fontSize(8).padding(3).borderRadius(5)
             .backgroundColor('rgba(0, 0, 0, 0.45)').zIndex(1)
         }
-        Image(this.bookImage)
+        Image(this.coverSrc())
           .draggable(false)
           .alt($r('app.media.icon_book_default_cover_one'))
           .width(CommonConstants.NOVEL_IMG_WIDTH)

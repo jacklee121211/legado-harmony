@@ -133,6 +133,10 @@ class BooksDao {
       if (bookGroup !== undefined && bookGroup !== 2) {
         if (bookGroup === 4) {
           whereClause.push(`bookGroup = ${bookGroup} or isLocalBook = ${true}`);
+        } else if (bookGroup === 3) {
+          // 未分组（v3.21）：新导入书 bookGroup=3；存量导入书仍为 4（本地组）
+          // ⇒ 用 isLocalBook 兜底把它们也列进"未分组"（用户口径：未归组即未分组）
+          whereClause.push(`bookGroup = ${bookGroup} or (bookGroup = 4 and isLocalBook = ${true})`);
         } else {
           whereClause.push(`bookGroup = ${bookGroup}`);
         }
@@ -203,7 +207,11 @@ class BooksDao {
         predicates.equalTo('id', books.id)
         const count = await DbUtil.queryForCount(predicates, column)
         if (count > 0) {
-          this.update(books)
+          // ⚠️ 2026-10-01 必须 await：原裸调 `this.update(books)` 不等待，insert 在 UPDATE
+          // 提交**前**就 resolve ⇒ 调用方（如 CoverStyleDialog 换封面）紧接着广播
+          // BOOK_IS_BOOK_REFRESHING，书架重查读到的还是旧行 ⇒ 界面不更新，要等下次
+          // 手动刷新才好（真机日志 2.md 16:56 单本封面保存后弹窗/书架均不联动）。
+          await this.update(books)
           return true
         }
       }
@@ -429,7 +437,7 @@ class BooksDao {
 
 
   //根据书籍Id获取书籍
-  async getBookByIds(ids: number[]) {
+  async getBookByIds(ids: number[]): Promise<Books[]> {
 
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);

@@ -11,6 +11,8 @@ import { Books } from '../../database/entities/Books'
 import { BookHistory } from '../../database/entities/BookHistory'
 import bookHistoryUtils from '../../common/utils/BookHistoryUtils'
 import booksUtil from '../../common/utils/booksUtils'
+import booksDao from '../../database/dao/BooksDao'
+import { resolveCoverSource } from '../../common/utils/CoverSource'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 import { bookParser } from '@kit.ReaderKit'
@@ -115,12 +117,31 @@ export default struct BookDetailPage {
 
   onPageShow() {
     this.isShow = true
+    // 2026-10-01：从阅读器/其它页返回时重查本书——换封面等修改要实时反映（用户反馈
+    // "书籍详情没有同步更新最新的封面"）。initBook 是进入页面瞬间的路由快照，会过期。
+    this.refreshBook()
+  }
+
+  /** 按 id 重查本书并整体刷新 @State（封面/书名/简介等全部取最新落库值） */
+  private async refreshBook(): Promise<void> {
+    const id = this.bookData.id ?? this.initBook.id
+    if (id === undefined) {
+      return
+    }
+    const fresh = await booksDao.getBookByIds([id])
+    if (fresh.length > 0) {
+      this.bookData = fresh[0]
+    }
   }
 
   async aboutToAppear() {
     // 迁移后参数由 NavDestination 构建器经 `initBook` 注入，这里不再需要 `router.getParams()`。
     // 整体赋给 `@State` ⇒ 触发一次刷新（等价于原来 `aboutToAppear` 里那次赋值）。
     this.bookData = this.initBook
+    // 2026-10-01：路由快照可能是旧数据（换封面后从书架长按进入）⇒ 先按 id 重查最新
+    if (this.bookData.id !== undefined) {
+      await this.refreshBook()
+    }
     if (!this.bookData.isJoin) {
       this.bookData.isJoin = await booksUtil.isExistBooks(this.bookData.bookUrl, this.bookData.bookName)
     }
@@ -321,7 +342,9 @@ export default struct BookDetailPage {
 
       // 小说标题
       Row({ space: CommonConstants.SPACE_20 }) {
-        Image(this.bookData.coverUrl)
+        // 2026-10-01：封面走 customCoverUrl 优先（resolveCoverSource 处理 default:// 协议），
+        // 与书架渲染同一契约；无自定义封面回退原 coverUrl。
+        Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
           .alt($r('app.media.icon_book_default_cover_ten'))
           .width(CommonConstants.NOVEL_IMG_WIDTH)
           .height(CommonConstants.NOVEL_IMG_HEIGHT)

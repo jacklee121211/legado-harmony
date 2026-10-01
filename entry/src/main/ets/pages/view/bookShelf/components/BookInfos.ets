@@ -1,7 +1,10 @@
+import { resolveCoverSource } from "../../../../common/utils/CoverSource"
+
 import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
+import booksDao from '../../../../database/dao/BooksDao'
 import FontConstants from '../../../../common/constants/FontConstants'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
@@ -89,7 +92,11 @@ export default struct BookInfos {
   }
   bookInfoDialog: CustomDialogController | null = new CustomDialogController({
     builder: BookInfoDialogs({
-      bookData: this.book, cancel: () => {
+      bookData: this.book,
+      // 真开真关（2026-10-01 用户方案）：子弹窗关闭后由创建者重查数据再 open ——
+      // 弹窗全新实例=全新 @Prop 快照，天然刷新；同时根除 @Consume 重建崩溃（140112）。
+      reopen: (): void => { this.reopenInfoDialog() },
+      cancel: () => {
         this.exitDialog()
       }
     }),
@@ -122,6 +129,27 @@ export default struct BookInfos {
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
   })
 
+  /**
+   * 真开真关（2026-10-01 用户方案）：长按弹窗里的子弹窗（封面样式/加入书单等）关闭后，
+   * 由创建者**重查本书并刷新列表项数据**，再 open 弹窗——弹窗是全新实例，
+   * @Prop 快照天然是新数据（旧实例复用的快照不具备刷新能力）。
+   * `book` 是 @ObjectLink（指向列表项本体，@Observed），就地更新字段即可联动列表与弹窗。
+   */
+  private async reopenInfoDialog(): Promise<void> {
+    const id = this.book.id
+    if (id !== undefined) {
+      const fresh = await booksDao.getBookByIds([id])
+      if (fresh.length > 0) {
+        this.book.customCoverUrl = fresh[0].customCoverUrl
+        this.book.coverUrl = fresh[0].coverUrl
+        this.book.bookName = fresh[0].bookName
+        this.book.author = fresh[0].author
+        this.book.isTop = fresh[0].isTop
+      }
+    }
+    this.bookInfoDialog?.open()
+  }
+
   build() {
     Flex({
       alignItems: ItemAlign.Center, justifyContent: FlexAlign.SpaceBetween
@@ -153,7 +181,7 @@ export default struct BookInfos {
                 .backgroundColor($r('app.color.mask_45'))
                 .zIndex(1)
             }
-            Image(this.book.coverUrl)
+            Image(resolveCoverSource(this.book.customCoverUrl ?? '') ?? this.book.coverUrl)
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
               // 视觉升级（2026-09-21）：给封面加圆角 + 柔和投影。

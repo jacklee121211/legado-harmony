@@ -6,11 +6,9 @@ import AppRouter, { RouteName } from '../../../../../common/router/AppRouter'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
+import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
-import ShelfAddToBookListDialog from './ShelfAddToBookListDialog'
-import PaddingConstants from '../../../../../common/constants/PaddingConstants'
-import CommonConstants from '../../../../../common/constants/CommonConstants'
-import BasicDataSource from '../../../../../common/LazyIDataSource/BasicDataSource'
+import AddToBookListDialog from './AddToBookListDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode } from '../../../../../common/utils/NightMode'
 // ── v3.20：长按弹窗按钮 symbol 化 + Q弹 + 单本分享（与管理页同款配方）─────────
@@ -20,6 +18,9 @@ import { uniformTypeDescriptor } from '@kit.ArkData';
 import { fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { ShelfColors } from '../../../../../common/utils/NightMode'
+import { resolveCoverSource } from '../../../../../common/utils/CoverSource'
+import CoverStyleDialog from './CoverStyleDialog'
+import MarkToolButton from '../../../../../componets/common/MarkToolButton'
 
 @CustomDialog
 /**
@@ -30,6 +31,14 @@ export default struct BookInfoDialogs{
   //推送提醒
   @Prop bookData:Books
   @State pushReminder:boolean = false
+  /**
+   * 真开真关（2026-10-01 用户方案）：子弹窗关闭后由**创建者**（BookInfos/BookInfoGrids）
+   * 重查数据并**新建 controller** 全新实例打开。未传（null）时回退旧的自恢复路径。
+   * ⚠️ 背景：本弹窗原来的 `@Consume('booksDataSource')` 在 close→open 复用重建时
+   * 解析不到 @Provide，真机 BusinessError 140112 三连闪退（2.md 18:22/18:23，进程被杀）
+   * —— @Consume 字段本身已随死代码一并删除，此类崩溃不可能再发生。
+   */
+  reopen: (() => void) | null = null
   // ⚠️ 第 1 项（置顶）的 title 只是**兜底初值** —— build() 里会按 bookData.isTop 实时覆盖
   // （数组初始化器只在组件创建时执行一次，不能依赖它联动，依据见 build() 内注释）。
   // v3.20：图标 symbol 化（SDK 符号表核实）+ 新增「分享」（华为分享，单本直达对方喵阅）
@@ -40,7 +49,43 @@ export default struct BookInfoDialogs{
     new buttonList(4,'删除',$r('sys.symbol.trash')),
     new buttonList(6,'分享',$r('sys.symbol.share'))
   ]
-  @Consume('booksDataSource')  booksDataSource: BasicDataSource<Books>
+  // （2026-10-01 已删除 `@Consume('booksDataSource')` 死字段：它只被从未被调用的
+  //  getIndexByIsTopFalse() 引用，且在弹窗 close→open 复用重建时 @Provide 解析失败，
+  //  真机 BusinessError 140112 三连闪退（2.md 18:22:50 / 18:22:59 / 18:23:41）。
+  //  数据刷新已统一走 BOOK_IS_BOOK_REFRESHING 广播 + LazyForEach 键值重建。）
+
+  private coverStyleDialog: CustomDialogController | null = null
+  // ── 子进父退 / 子退父进（2026-10-01 统一联动规范，与 FolderInfoDialog 同款）──────
+  // 出规则：子弹窗打开前先关掉本弹窗；入规则：子弹窗取消/遮罩关闭后把本弹窗开回来。
+  // 例外（确认后父弹窗**不**恢复）：移动至（书已搬走）、删除（书已不存在）。
+  private openChildDialog(controller: CustomDialogController | null): void {
+    this.controller?.close()
+    controller?.open()
+  }
+  private childDialogClosed(): void {
+    this.controller?.open()
+  }
+  /** 父弹窗恢复前重查本书（2026-10-01 修"换封面后长按弹窗头部预览还是旧封面"）：
+   *  CustomDialog 的 @Prop 是**创建瞬间的快照**（SDK NOTE「Custom dialog box parameters
+   *  do not support dynamic updates」），controller.open() 复用旧快照 ⇒ 必须显式重查。 */
+  private async refreshSelfBook(): Promise<void> {
+    if (!this.bookData.id) {
+      return
+    }
+    const fresh: Books[] = await booksDao.getBookByIds([this.bookData.id])
+    if (fresh.length > 0) {
+      this.bookData = fresh[0]
+    }
+  }
+  /** 父弹窗恢复：优先走创建者的"真开真关"重建；未传时回退旧的 refresh+open */
+  private reopenSelf(): void {
+    if (this.reopen) {
+      this.reopen()
+      return
+    }
+    this.refreshSelfBook()
+    this.controller?.open()
+  }
   cancel: () => void = () => {
   }
   @StorageLink('topRectHeight') topRectHeight: number = 0
@@ -62,29 +107,69 @@ export default struct BookInfoDialogs{
 
   build() {
     Column(){
-      Row(){
-        Row({
-          space:CommonConstants.SPACE_12
-        }){
-          Image(this.bookData.coverUrl)
-            .alt($r('app.media.icon_book_default_cover_one'))
-            .width(45).height(65)
-          Column({
-            space:PaddingConstants.PADDING_20
-          }){
-            Text(this.bookData.bookName).fontSize(16).fontWeight(500).fontColor($r('app.string.color_black_88'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('75%')
-            Text(this.bookData.author).fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
-          }
-          .alignItems(HorizontalAlign.Start)
+      // ── 头部行（2026-10-01 重排，修"书名与右侧图标间距过大、封面/书籍详情溢出"）──
+      // 旧结构：左侧 Row 固定 `width('80%')` + 书名 Text 固定 `width('75%')`，
+      // 书名把右侧（封面/书籍详情/箭头）挤出边界。新结构：封面图 + 中间列
+      // `layoutWeight(1)`（自适应吃剩余宽度、书名/作者超长省略）+ 右侧动作区
+      // `flexShrink(0)`（绝不压缩），间距由 layoutWeight 自然分配。
+      Row({ space: 12 }){
+        // v3.21：小封面也走 resolveCoverSource（换默认/自定义封面后本弹窗预览实时同步）
+        Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
+          .alt($r('app.media.icon_book_default_cover_one'))
+          .width(45).height(65)
+          .draggable(false)
+          .borderRadius(4)
+        Column({ space: 4 }){
+          Text(this.bookData.bookName).fontSize(16).fontWeight(500).fontColor($r('app.string.color_black_88'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.bookData.author).fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        .width('80%')
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
 
         Row({
           space:8
         }){
+          // v3.21：自定义封面入口（用户需求：书籍详情前加 symbol 图标按钮）
+          Row({
+            space:4
+          }){
+            SymbolGlyph($r('sys.symbol.picture'))
+              .fontSize(14)
+              .fontColor([$r('app.string.color_black_45')])
+            Text('封面').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
+          }
+          .onClick(()=>{
+            Haptics.tap();
+            // 子弹窗出现 ⇒ 父弹窗退出（出规则，见 coverStyleDialog 联动）
+            this.controller?.close()
+            this.coverStyleDialog = new CustomDialogController({
+              builder: CoverStyleDialog({
+                bookData: this.bookData,
+                onClose: (): void => {
+                  this.coverStyleDialog = null
+                  // 子弹窗退出 ⇒ 父弹窗出现（入规则）
+                  this.reopenSelf()
+                }
+              }),
+              autoCancel: true,
+              alignment: DialogAlignment.Center,
+              width: '92%',
+              cornerRadius: 20,
+              customStyle: false,
+              systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+              openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+              closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+              cancel: (): void => {
+                this.coverStyleDialog = null
+                this.reopenSelf()
+              }
+            })
+            this.coverStyleDialog?.open()
+          })
           Text('书籍详情').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
           Image($r('app.media.icon_right')).width(20).height(20).fillColor($r('app.string.color_black_45'))
         } .onClick(()=>{
@@ -93,12 +178,15 @@ export default struct BookInfoDialogs{
           AppRouter.push(RouteName.BOOK_DETAIL, this.bookData)
           this.controller?.close()
         })
+        .flexShrink(0)
       }
-      .justifyContent(FlexAlign.SpaceBetween)
+      .alignItems(VerticalAlign.Center)
       .margin(20)
-      Divider().strokeWidth(0.5).padding({bottom:16})
+      // v3.21：移除按钮区上下两条 Divider（用户反馈"上下各有一条灰色的线"）
+      // 图标区间距与长按分组弹窗同规范（grid_row.d.ts:371 gutter.y；组与取消键间距 24）
       GridRow({
-        columns:5
+        columns:5,
+        gutter:{ x:0, y:12 }
       }){
         ForEach(this.buttonListInfo,(item:buttonList)=>{
           GridCol(){
@@ -113,7 +201,8 @@ export default struct BookInfoDialogs{
           }
         })
       }
-      Divider().strokeWidth(0.5).padding({bottom:16})
+      .padding({ left:12, right:12, top:8 })
+      // v3.21：移除第二条 Divider（用户反馈）
       Column(){
         Text('取消')
           .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)')
@@ -125,6 +214,7 @@ export default struct BookInfoDialogs{
         this.controller?.close()
       })
       .alignItems(HorizontalAlign.Center)
+      .margin({ top:24 })
       .padding({bottom:16})
 
       Flex()
@@ -165,20 +255,32 @@ export default struct BookInfoDialogs{
    * `offset{dy:-16}`（悬空四圆角），与长按弹窗**完全同款**。
    */
   catalogAddShelfDialog: CustomDialogController | null = new CustomDialogController({
-    builder: ShelfAddToBookListDialog({
-      bookData: this.bookData,
+    builder: AddToBookListDialog({
+      currentIndex: this.bookData.bookType,
+      ids: this.bookData.id ? [this.bookData.id] : [],
+      bookOrFolder: 0,
       cancel: () => {
-        this.catalogAddShelfDialog?.close()
+        // 子退父进：加入书单弹窗取消 ⇒ 本弹窗恢复
+        this.childDialogClosed()
       }
     }),
-    cancel: this.exitApp,
     autoCancel: true,
     // 2026-09-25 用户反馈：加入书单弹窗改**标准居中四圆角材质**（原贴底老款式）
+    // 2026-10-01 补 `height: 400`：内部 catalogAddShelf 根节点是 `height('100%')`，
+    // 弹窗层无确定高度时百分比按最大约束解 ⇒ 弹窗被撑满整屏、圆角顶到屏幕边缘，
+    // 观感退回老式全屏 sheet（用户复测："还是没有实现四圆角那种项目统一"）。
+    // 固定高 400 与"移动分组"弹窗同款（其 options 即 `height: 400`）。
     alignment: DialogAlignment.Center,
     width: '80%',
+    height: 400,
     cornerRadius: 20,
     customStyle: false,
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    cancel: (): void => {
+      this.childDialogClosed()
+    }
   })
 
   bookInfoButton(id:number){
@@ -186,11 +288,11 @@ export default struct BookInfoDialogs{
       case 1 :
         this.isTopBook(); break;
       case 2 :
-        this.bookMoveGroup?.open(); break;
+        this.openChildDialog(this.bookMoveGroup); break;
       case 3 :
-        this.catalogAddShelfDialog?.open();break;
+        this.openChildDialog(this.catalogAddShelfDialog); break;
       case 4 :
-        this.bookDelDialog?.open(); break;
+        this.openChildDialog(this.bookDelDialog); break;
       case 6 :
         this.shareSingle(); break;
     }
@@ -238,14 +340,17 @@ export default struct BookInfoDialogs{
  bookDelDialog: CustomDialogController | null = new CustomDialogController({
     builder: confirmDialogExample({
       confirm: ()=> { this.deleteGroup() },
-      delCache:this.delCache
+      delCache:this.delCache,
+      cancel: ()=> { this.childDialogClosed() }
     }),
-    cancel: this.exitApp,
     autoCancel: true,
     alignment: DialogAlignment.Center,
     gridCount: 4,
     customStyle: false,
     cornerRadius: 25,
+    cancel: (): void => {
+      this.childDialogClosed()
+    }
   })
 
   deleteGroup() {
@@ -253,9 +358,6 @@ export default struct BookInfoDialogs{
     this.cancel()
   }
 
-  exitApp() {
-    this.bookDelDialog?.close()
-  }
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
 
   async deleteBook(){
@@ -295,12 +397,8 @@ export default struct BookInfoDialogs{
     },200)
 
   }
-  //从booksDataSource数据中查询从第一位查询最先出现isTop为false下标返回
-  getIndexByIsTopFalse() {
-    const dataArray = this.booksDataSource.getOriginDataArray();
-    const index = dataArray.findIndex(item => !item.isTop);
-    return index;
-  }
+  //（2026-10-01 已删除 getIndexByIsTopFalse()：唯一调用点早已被注释，其唯一数据依赖
+  //  @Consume booksDataSource 正是 140112 闪退源头。）
 
   //移动分组
   //弹窗
@@ -316,12 +414,15 @@ export default struct BookInfoDialogs{
           this.isBookRefreshing++
         },200)
       },
+      // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ 本弹窗恢复
+      onClose: ()=> {
+        this.childDialogClosed()
+      },
       oldGroupId:this.bookData.bookGroup,
       currentIndex:this.bookData.bookType,
       Ids:this.bookData.id
     }),
     height: 400,
-    cancel: this.exitApp,
     autoCancel: true,
     alignment: DialogAlignment.Center,
     gridCount: 4,
@@ -336,6 +437,9 @@ export default struct BookInfoDialogs{
     // 配套：`BookSelectGroupDialog` 的根 Column 已用 `MaterialColumnModifier(Color.White, true)`
     // 让出背景（否则白底会挡住材质）。
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    cancel: (): void => {
+      this.childDialogClosed()
+    }
   })
 
   //刷新懒加载数据
@@ -343,35 +447,4 @@ export default struct BookInfoDialogs{
     // this.booksDataSource.reloadNewData([this.bookData])
   }
 
-}
-/**
- * 长按书籍弹窗按钮（v3.20）：symbol + 独立 Q弹 + 震动——与书架管理页
- * ManageToolButton 同款配方（每键独立弹跳状态，父组件数组下标更新不触发 V1 渲染）。
- */
-@Component
-struct MarkToolButton {
-  icon: Resource = $r('sys.symbol.pin')
-  label: string = ''
-  onTap: () => void = (): void => {}
-  @State jellyScale: number = 1
-
-  build() {
-    Column({ space: 6 }) {
-      SymbolGlyph(this.icon)
-        .fontSize(24)
-        .fontColor([ShelfColors.icon()])
-        .scale({ x: this.jellyScale, y: this.jellyScale })
-      Text(this.label)
-        .fontSize(12).fontWeight(400)
-        .fontColor($r('app.string.color_black_65'))
-        .maxLines(1)
-    }
-    .onClick(() => {
-      Haptics.tap();
-      runJellyClick((v: number) => {
-        this.jellyScale = v
-      })
-      this.onTap()
-    })
-  }
 }

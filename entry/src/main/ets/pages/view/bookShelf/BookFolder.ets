@@ -8,10 +8,12 @@ import booksDao from '../../../database/dao/BooksDao'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import BookManageDialog from './components/dialog/BookManageDialog'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
+import coverInfoDialog from './components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
+import { resolveCoverSource } from '../../../common/utils/CoverSource'
 
 /**
  * 文件夹
@@ -145,6 +147,16 @@ export default struct BookFolder {
             LongPressGesture({ repeat: false, duration: 500 })
               .onAction((event: GestureEvent) => {
                 Haptics.tap();
+                // 五个系统单元锁定（2026-10-01 用户定义）：全部/本地/分组/未分组不提供
+                // 长按弹窗；书单长按**直达封面样式弹窗**；自建分组仍走原弹窗。
+                if (item.isSystem) {
+                  if (item.groupName === '书单') {
+                    this.openWorksCoverDialog(item)
+                  } else {
+                    showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
+                  }
+                  return
+                }
                 this.dialogGroupData = item
                 this.changeNumber = 1
                 this.groupInfoDialog?.open()
@@ -196,6 +208,14 @@ export default struct BookFolder {
         title: this.clickGroup.groupName,
         currentIndex: this.currentIndex,
         bookTypeNumber: this.clickGroup.groupId,
+        // 子进父退 / 子退父进（2026-10-01）：BookManageDialog 里打开"加入书单"CustomDialog
+        // 前先收起本分组 sheet，子关闭后恢复。
+        onChildDialogOpen: (): void => {
+          this.isShowBookFolderInfoDialog = false
+        },
+        onChildDialogClose: (): void => {
+          this.isShowBookFolderInfoDialog = true
+        }
       })
     }
   }
@@ -220,7 +240,9 @@ export default struct BookFolder {
                     .backgroundColor('rgba(0, 0, 0, 0.45)')
                     .zIndex(1)
                 }
-                Image(item.coverUrl)
+                // 2026-10-01：default:// 协议必须经 resolveCoverSource 转 $rawfile；
+                // 未设置封面（null）时落内置默认封面 c1（用户："没修改过分组的显示默认封面"）
+                Image(resolveCoverSource(item.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
                   .draggable(false)
                   .alt($r('app.media.icon_book_default_cover_one'))
                   .width(88)
@@ -332,6 +354,8 @@ export default struct BookFolder {
   groupInfoDialog: CustomDialogController | null = new CustomDialogController({
     builder: FolderInfoDialog({
       itemData: this.dialogGroupData,
+      // 真开真关（2026-10-01 用户方案）：子关闭→重查该分组→open，全新实例=全新快照
+      reopen: (): void => { this.reopenGroupInfoDialog() },
       cancel: () => {
         this.exitDialog()
       }
@@ -355,5 +379,44 @@ export default struct BookFolder {
   exitDialog() {
     this.changeNumber = 0
     this.groupInfoDialog?.close()
+  }
+
+  /** 真开真关（2026-10-01 用户方案）：重查该分组 → 更新 dialogGroupData → open。
+   *  FolderInfoDialog 无 @Consume，open 重建实例安全且快照天然新数据。 */
+  private async reopenGroupInfoDialog(): Promise<void> {
+    const id = this.dialogGroupData.groupId
+    if (id !== undefined) {
+      const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      const fresh = groups.find((g: BookGroups) => g.groupId === id)
+      if (fresh !== undefined) {
+        this.dialogGroupData = fresh
+      }
+    }
+    this.groupInfoDialog?.open()
+  }
+
+  /** 「书单」（系统单元）长按 → 直达封面样式弹窗（与 GroupType 同款，2026-10-01） */
+  private worksCoverDialog: CustomDialogController | null = null
+  private openWorksCoverDialog(item: BookGroups): void {
+    this.worksCoverDialog = new CustomDialogController({
+      builder: coverInfoDialog({
+        itemData: item,
+        cancel: (): void => {
+          this.worksCoverDialog = null
+        }
+      }),
+      autoCancel: true,
+      width: '92%',
+      alignment: DialogAlignment.Center,
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.worksCoverDialog = null
+      }
+    })
+    this.worksCoverDialog?.open()
   }
 }

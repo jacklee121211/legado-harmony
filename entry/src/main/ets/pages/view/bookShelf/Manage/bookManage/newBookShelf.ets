@@ -14,7 +14,9 @@ import { Books } from '../../../../../database/entities/Books'
 import { WorksBookList } from '../../../../../database/entities/WorksBookList'
 import { WorksLists, WORK_BOOK_LIST_STATUS } from '../../../../../database/entities/WorksLists'
 import shareWorksBook from '../../../dialog/shareWorksBook'
-import newAddShelf from './newAddShelf'
+import NewAddShelfDialog from '../../components/dialog/NewAddShelfDialog'
+import ImmersiveMaterialUtil from '../../../../../common/utils/ImmersiveMaterialUtil'
+import UiMotion from '../../../../../common/utils/UiMotion'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
@@ -29,7 +31,48 @@ export default struct newBookShelf{
   @State addBooksList:Books[] = []
   @Prop bookIds:number[] = []
   @State  @Watch('changeBookIds')newBookIds:number[] = []
-  @State isShowAddBook:boolean = false
+  /**
+   * 「添加书籍」选书弹窗（2026-10-01 从 bindContentCover 改 CustomDialog，见
+   * NewAddShelfDialog 类注释——页面级模态盖不过本组件所在的弹窗）。打开时新建
+   * controller（参数随已选列表变化，SDK：Custom dialog box parameters do not
+   * support dynamic updates）。
+   */
+  private addBookDialog: CustomDialogController | null = null
+  private openAddBookDialog(): void {
+    this.addBookDialog = new CustomDialogController({
+      builder: NewAddShelfDialog({
+        currentIndex: this.currentIndex,
+        lastBookIds: this.newBookIds,
+        addBookList: (selectBookId: number[]): void => {
+          this.addBookDialog = null
+          this.newBookIds = selectBookId
+          showMessage('加入书单成功,提交生效!')
+        },
+        close: (): void => {
+          this.addBookDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '92%',
+      height: '85%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.addBookDialog = null
+      }
+    })
+    this.addBookDialog?.open()
+  }
+  /**
+   * 本组件的宿主形态：false = 整页（保留系统安全区内边距）；true = @CustomDialog
+   * 内（2026-10-01，NewBookShelfDialog）—— 弹窗自带圆角留白，再垫 top/bottomRect
+   * 会在底部多出一条空白（真机截图 19:07"底部 ui 不对"），故置 0。
+   */
+  @Prop embeddedInDialog: boolean = false
   changeShowNumber:Function = (_index:number)=>{
 
   }
@@ -273,37 +316,15 @@ export default struct newBookShelf{
         }
         .backgroundColor(ShelfColors.card())
       }
-      Flex()
-        .bindContentCover($$this.isShowAddBook, this.newAddBook(), {
-          modalTransition: ModalTransition.DEFAULT,
-          onDisappear: () => {
-            this.isShowAddBook = false;
-          }
-        })
     }
     .padding({
-      top:this.topRectHeight,
-      bottom:this.bottomRectHeight
+      top:this.embeddedInDialog ? 0 : this.topRectHeight,
+      bottom:this.embeddedInDialog ? 0 : this.bottomRectHeight
     })
   }
 
-  @Builder newAddBook(){
-    Column(){
-      newAddShelf({
-        currentIndex:this.currentIndex,
-        addBookList:(selectBookId:number[])=>{
-          this.newBookIds = selectBookId
-          this.isShowAddBook = false;
-          showMessage('加入书单成功,提交生效!')
-        },
-        close:() => {
-          this.isShowAddBook = false;
-        },
-        lastBookIds:this.newBookIds
-      })
-    }
-    .backgroundColor(ShelfColors.pageBg())
-  }
+  // （2026-10-01 已删除 @Builder newAddBook + newAddShelf 引用：添加书籍改走
+  //  NewAddShelfDialog CustomDialog，见 openAddBookDialog。）
 
   @Builder newFooter(){
     Row({
@@ -325,7 +346,7 @@ export default struct newBookShelf{
       .borderRadius(20)
       .backgroundColor(ShelfColors.chip())
       .onClick(()=>{
-        Haptics.tap(); this.isShowAddBook = true
+        Haptics.tap(); this.openAddBookDialog()
       })
       Flex({
         justifyContent:FlexAlign.Center,
@@ -411,25 +432,8 @@ export default struct newBookShelf{
             .height(50)
             .ellipsisMode(EllipsisMode.END)
             .maxLines(2).width('75%')
-          Row({
-            space:6
-          }){
-            Row(){
-              Text('卖报小郎君').fontSize(10).fontWeight(400).fontColor(this.theme.mainColor)
-            }
-            .padding({left:6,right:6,top:5,bottom:5}).backgroundColor(this.theme.secondColor).borderRadius(10)
-            Row(){
-              Text('玄幻').fontSize(10).fontWeight(400).fontColor($r('app.string.color_black_45'))
-            }
-            .fontStyles()
-            Row(){
-              Text('完本').fontSize(10).fontWeight(400).fontColor($r('app.string.color_black_45'))
-            }
-            .fontStyles()
-            Row(){
-              Text('380万字').fontSize(10).fontWeight(400).fontColor($r('app.string.color_black_45'))
-            }.fontStyles()
-          }
+          // （2026-10-01 已删除硬编码标签行"卖报小郎君/玄幻/完本/380万字"：
+          //  与所选书籍无关的演示数据，用户要求直接移除。）
         }
         .alignItems(HorizontalAlign.Start)
       }

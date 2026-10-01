@@ -16,6 +16,7 @@ import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
+import UiMotion from '../../../../../common/utils/UiMotion'
 
 @Component
 @CustomDialog
@@ -26,6 +27,13 @@ export default struct BookSelectGroupDialog{
   Ids:number|number[] = 0
   isMoveStatus:number = 0
   moveGroup:Function = ()=>{
+
+  }
+  /**
+   * 本弹窗被取消（取消按钮/遮罩）时通知父级 —— 子退父进（2026-10-01 统一联动规范）。
+   * 注意：moveGroup（确认移动完成）**不**走这里 —— 移动完成后父弹窗保持关闭。
+   */
+  onClose: () => void = () => {
 
   }
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
@@ -85,6 +93,7 @@ export default struct BookSelectGroupDialog{
       }
       .onClick(()=>{
         Haptics.tap();
+        this.onClose()
         this.controller?.close()
       })
       .alignItems(HorizontalAlign.Center)
@@ -121,6 +130,9 @@ export default struct BookSelectGroupDialog{
     .onClick(()=>{
       Haptics.tap();
       if(!item){
+        // v3.21 出规则：子弹窗（新建分组）出现 ⇒ 父弹窗（移动分组）退出；
+        // 子关闭/确定后由 onCancel/onAccept 重开父弹窗
+        this.controller?.close()
         this.addBookType?.open()
         return
       }
@@ -157,39 +169,57 @@ export default struct BookSelectGroupDialog{
     customStyle: false,
     cornerRadius: 20,
     // 2026-09-25 用户反馈：新建分组弹窗材质与全局统一（原来漏了 systemMaterial ⇒ 白实底）
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial()
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    // ── 子开父退 / 子关父回（统一联动规范，2026-10-01 修）───────────────────────
+    // 出/入规则全部由**人肉回调**驱动：点 + 时父弹窗已 close（见 title() builder）、
+    // 取消走 onCancel、确定走 onAccept —— 三条路径各自 `this.controller?.open()` 收尾。
+    // ⚠️ 不要再加 options 级 `onDidAppear` 重开父弹窗：那是在子弹窗**出现时**就把父弹窗
+    // 顶回顶层（真机复测："点击新建后父窗口关闭又弹出，出现在了顶层，多了这一个"）。
+    // （当初想要的 options.onDisappear 在 CustomDialogControllerOptions 里不存在，
+    // 误写成 onDidAppear —— 见 SDK custom_dialog_controller.d.ts 的 options 字段表。）
+    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
   })
   //取消
   onCancel(){
     this.bookType = ''
+    this.controller?.open()
   }
   //确定
   onAccept(){
+    // ⚠️ 子弹窗（addBookTypeDialog）确认时**先自己 close 再回调**本方法 ⇒ 本方法无论走
+    // 哪个分支，末尾都必须把父弹窗（移动分组）open 回来，否则提前 return 的分支
+    // （空名/重名）会让屏幕上两层弹窗全消失。
     if (this.bookType.length === 0) {
       showMessage('分组名称不能为空')
+      this.controller?.open()
       return
     }
     let isInsert = true
     //对比bookType看是否BooTypeList数组中存在
+    // 先留名字再清输入（2026-10-01 修：原来先 `this.bookType=''` 再拼提示语，
+    // toast 永远是"已添加分组"，丢了组名）
+    const newName: string = this.bookType
     this.groupList.forEach((element:BookGroups) => {
-      if (element.groupName === this.bookType) {
-        showMessage(`已存${this.bookType}分组`)
-        this.bookType= ''
+      if (element.groupName === newName) {
+        showMessage(`已存${newName}分组`)
         isInsert = false
       }
     })
+    this.bookType= ''
     if(isInsert){
       let bookGroups = new BookGroups()
-      bookGroups.groupName = this.bookType
+      bookGroups.groupName = newName
       bookGroups.groupType = this.currentIndex
       BookGroupsDao.insert(bookGroups)
-      this.bookType= ''
-      showMessage(`已添加${this.bookType}分组`)
+      showMessage(`已添加${newName}分组`)
       setTimeout(()=>{
         this.BOOK_IS_BOOK_GROUPS_REFRESHING++
         this.getGroupList()
       },500)
     }
+    // 入规则：建组完成（或重名放弃）⇒ 父弹窗（移动分组）恢复
+    this.controller?.open()
   }
 
   //是否确认移动分组
