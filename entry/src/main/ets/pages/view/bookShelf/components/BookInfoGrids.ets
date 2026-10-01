@@ -222,7 +222,11 @@ export default struct BookInfoGrids{
         //   圆角取 10vp：宫格封面图本身无圆角，圆角是外层 Stack 的 borderRadius(10)。
         //   longtakeId 为空（搜索浮窗复用）⇒ 不参与一镜到底，走普通转场。
         const rp: ReaderRouteParam = { bookData: this.book };
-        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+        // ⚠️ 双重冷却闸（与 BookInfos 同款）：ltArm 未释放 / arm released 后 400ms 内
+        // 点击 ⇒ 降级普通转场（危险窗口实测 54~84ms，框架层打断缺陷见 Index.ets 注释）
+        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== ''
+          && AppStorage.get<boolean>('ltArm') !== true
+          && Date.now() - (AppStorage.get<number>('ltArmReleasedAt') ?? 0) > 400) {
           const ui = this.getUIContext()
           const f = LongTakeFlightData.capture(ui, this.longtakeId,
             ui.vp2px(10), this.book.coverUrl ?? '', this.book.bookName)

@@ -3,6 +3,12 @@ import { Haptics } from '../../../common/utils/Haptics';
 import { ThemeItem } from '../../../common/model/Theme'
 import { themeManager } from '../../../common/utils/ThemeManager'
 import { JSON } from '@kit.ArkTS'
+import { VipManager } from '../../../common/utils/VipManager'
+import { VipDialog } from '../../../componets/myCenter/VipDialog'
+import ThemeCustomEditorDialog from './ThemeCustomEditorDialog'
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
+import UiMotion from '../../../common/utils/UiMotion'
+import { NightMode } from '../../../common/utils/NightMode'
 
 // 个性主题组件模块
 @Component
@@ -16,6 +22,105 @@ export struct MyThemeConfigComp {
 
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+
+  /**
+   * 「自定义主题」编辑弹窗（2026-10-01 复活：取色器 + RGB + 方案管理，**VIP 特权**）。
+   * 打开时新建 controller（规范：参数动态/统一范式；见 docs/标准-弹窗与按钮统一规范.md）。
+   */
+  private themeEditorDialog: CustomDialogController | null = null
+  /** 「VIP 购买」弹窗（嵌套打开，与 ReaderFontDialog.openVip 同款） */
+  private vipDialog: CustomDialogController | null = null
+
+  private openVip(): void {
+    this.vipDialog = new CustomDialogController({
+      builder: VipDialog({
+        dark: NightMode.isDarkSurface(),
+        vipOwned: VipManager.isVip(),
+        onClose: (): void => {
+          this.vipDialog?.close()
+          this.vipDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.vipDialog = null
+      }
+    })
+    this.vipDialog?.open()
+  }
+
+  /** 自定义主题入口（VIP 门控范式与导入字体/下载字体一致：非 VIP → VIP 弹窗） */
+  private openThemeEditor(): void {
+    if (!VipManager.isVip()) {
+      this.openVip()
+      return
+    }
+    this.themeEditorDialog = new CustomDialogController({
+      builder: ThemeCustomEditorDialog({
+        onClose: (): void => {
+          this.themeEditorDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.themeEditorDialog = null
+      }
+    })
+    this.themeEditorDialog?.open()
+  }
+
+  /** 「+ 自定义主题」入口瓦片（VIP 金标提示；样式与主题色板瓦片同构） */
+  @Builder
+  addThemeTile() {
+    Column({ space: 8 }) {
+      Column({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(26)
+          .fontColor([this.theme.mainColor])
+        Text('自定义主题')
+          .fontSize(11)
+          .fontColor(this.theme.mainColor)
+        Text('VIP')
+          .fontSize(8)
+          .fontColor('#B8860B')
+          .backgroundColor('rgba(255, 215, 0, 0.28)')
+          .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+          .borderRadius(4)
+          .fontWeight(600)
+      }
+      .width('100%')
+      .height(77)
+      .justifyContent(FlexAlign.Center)
+      .border({
+        width: 1,
+        color: 'rgba(0,0,0,0.15)',
+        style: BorderStyle.Dashed,
+        radius: 8
+      })
+
+      Text(' ')
+        .fontSize(14)
+        .height(22)
+        .lineHeight(22)
+        .width('100%')
+    }
+    .width('100%')
+    .height(107)
+  }
 
   dialog: CustomDialogController = new CustomDialogController({
     builder: this.dialogBuilder,
@@ -111,7 +216,16 @@ export struct MyThemeConfigComp {
   build() {
     Column() {
       Grid() {
-        // 2026-09-25 用户要求：「自定义主题（直接删除）」—— 入口整块移除。
+        // 2026-10-01：自定义主题入口复活（此前 2026-09-25 按用户要求删除的是旧无极版入口；
+        // 现按新方案重建：取色器 + RGB + 方案管理 + VIP 门控）。置于首位。
+        GridItem() {
+          this.addThemeTile()
+        }
+        .onClick(() => {
+          Haptics.tap();
+          this.openThemeEditor()
+        })
+
         ForEach(this.themeList, (item: ThemeItem, index) => {
           GridItem() {
             this.themeItemBuilder(item, index)

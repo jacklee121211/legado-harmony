@@ -77,6 +77,11 @@ struct Main {
   // 回退：UiMotion.LONGTAKE_ENABLED = false ⇒ 点击侧整体旁路（不再置臂、不再捕获）。
   /** 臂旗：书架点击在 push 前置位 ⇒ 本次 READER 建成「飞行分支」。弹栈后由 onDisappear 解除。 */
   @StorageLink('ltArm') ltArm: boolean = false
+  // （2026-10-02 已回退上一轮的"看门狗 + Navigation.enabled 交互闸"：裸 ltTransEndAt
+  //  比较没有代际隔离，新转场清零打点会让所有在途看门狗误判失败、连环强制清空
+  //  正在进行的转场 —— 真机白屏卡死回归（2026-10-02 02:31 日志实证）。
+  //  保留的防御：① pop 分支同步拉进场终态；② 点击侧 ltArm 冷却闸。
+  //  中期方案：迁移官方库 @hmanimations/ezcustomtransition（打断/手势/生命周期已成熟）。）
   /** 本次 READER 是否在演一镜到底（delegate 依据路由参数最终裁决） */
   @State ltActive: boolean = false
   /** 飞行层动画值：缩放（锚点取内容 (0,0)） */
@@ -379,16 +384,19 @@ struct Main {
   }
 
   @Builder
-  TabBuilder(index = 0, name: string, icon_select: Resource, unselected: Resource) {
+  TabBuilder(index = 0, name: string, symbol: Resource) {
     Column() {
       Flex({
         direction: FlexDirection.Column,
         alignItems: ItemAlign.Center,
         justifyContent: FlexAlign.Center
       }) {
-        Image(this.currentTabIndex === index ? icon_select : unselected).height(25)
-          .draggable(false)
-          .fillColor(this.currentTabIndex === index ? this.theme.mainColor : this.tabIdleColor())
+        // 2026-10-01：四个页签全部 symbol 化（用户反馈原媒体图标对无暗色适配 ——
+        // PNG 的 fillColor 不生效，色值烧死在图里）。SymbolGlyph 的 fontColor
+        // 走 tabIdleColor()/主题色，深浅档天然自适应。tabIdleColor 本身已双档取色。
+        SymbolGlyph(symbol)
+          .fontSize(24)
+          .fontColor([this.currentTabIndex === index ? this.theme.mainColor : this.tabIdleColor()])
         Text(name).fontSize(11).margin(5).fontColor(this.currentTabIndex === index ? this.theme.mainColor : this.tabIdleColor())
       }
     }
@@ -397,12 +405,18 @@ struct Main {
     .height("100%")
   }
 
-  // 底部导航（2026-09-21 精简）：**只留「书架」和「我的」**。
-  // 原「发现」与「订阅源」两个 Tab 已整块移除（用户决定），所以索引从 4 个变成 2 个、
-  // 「我的」由 3 变成 1；下面 `onAnimationStart` 里刷新计数的条件也同步改成 1。
+  // 底部导航（2026-10-01 用户改版）：**书架、主题、设置、我的** 四页签。
+  // · 主题/设置原来是「我的」页顶部角落按钮（用户"很难点击"）⇒ 提级为 dock 页签，
+  //   拇指热区直达；两页本来就是设置类页面，做成常驻页签（无返回语义、状态保持）恰好合适。
+  // · 图标：四页签**全部 symbol 化**（书架=book_1、主题=paintpalette、设置=gearshape、
+  //   我的=person，SDK 符号表逐一核实）—— 原媒体图标对（PNG）无暗色适配（fillColor
+  //   对位图不生效），symbol 的 fontColor 深浅档天然自适应。
+  // · ⚠️ 索引连带：`onAnimationStart` 里"我的"刷新计数的条件 1 → 3（见下方）。
   nav: NavItem[] = [
-    new NavItem(0, $r("app.media.HOME_theme"), $r('app.media.HOME_line'), '书架'),
-    new NavItem(1, $r('app.media.MINE_theme'), $r('app.media.MINE_line'), '我的')
+    new NavItem(0, '书架', $r('sys.symbol.book_1')),
+    new NavItem(1, '主题', $r('sys.symbol.paintpalette')),
+    new NavItem(2, '设置', $r('sys.symbol.gearshape')),
+    new NavItem(3, '我的', $r('sys.symbol.person'))
   ]
 
   build() {
@@ -426,11 +440,17 @@ struct Main {
               if (item.index === 0) {
                 BookShelf()
               } else if (item.index === 1) {
+                // 2026-10-01：主题页从 push 页（RouteName.THEME_CONFIG）提级为常驻页签
+                MyThemeConfig()
+              } else if (item.index === 2) {
+                // 2026-10-01：设置页从 push 页（RouteName.MY_SET）提级为常驻页签
+                MySetPage()
+              } else if (item.index === 3) {
                 MyCenter()
               }
             }
           }.tabBar(
-            this.TabBuilder(item.index, item.title, item.selectImg, item.unselected)
+            this.TabBuilder(item.index, item.title, item.symbol!)
           )
           // 内容区延伸到状态栏区域（2026-09-21）。
           // 官方参考实现（documentId `…/沉浸光感典型场景/arkts-immersive-light-sample`）原文把
@@ -521,15 +541,15 @@ struct Main {
         // 左右滑动已被禁，不存在"滑动切页也震"的误触。
         Haptics.tap();
         this.currentTabIndex = targetIndex
-        // ★ 页签变了 ⇒ 重新算配色并下发：书架（0）= 深色档、我的（1）= 浅色档。
+        // ★ 页签变了 ⇒ 重新算配色并下发：书架（0）= 深色档、主题(1)/设置(2)/我的(3) = 浅色档。
         //   规则与依据见 `NightMode.desiredDark()`。
         NightMode.setMainTab(targetIndex)
         NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
-        // 切到「我的」（精简后 index = 1）时通知 `MyCenter` 重拉三个计数（读过/读完/书签）。
-        // 为什么必须在这里做：`MyCenter` 是**子组件**、没有 `onPageShow`，
+        // 切到「我的」（2026-10-01 四页签后 index = 3）时通知 `MyCenter` 重拉三个计数
+        //（读过/读完/书签）。为什么必须在这里做：`MyCenter` 是**子组件**、没有 `onPageShow`，
         // 而"读完一本书 → 返回 → 切到我的"正是不刷新就看不到新数字的主场景。
         // 机制见 `MyCenter.ets` 的 `@StorageLink('myCenterTick')`。
-        if (targetIndex === 1) {
+        if (targetIndex === 3) {
           AppStorage.setOrCreate('myCenterTick', Date.now())
         }
       })
@@ -646,6 +666,16 @@ struct Main {
       if (this.ltFlight === null || this.ltGeom === null) {
         return undefined
       }
+      // ── 打断兜底（2026-10-01 修"快速开合卡死"，本轮保留）────────────────────
+      // 真机日志实证：进场动画未结束（enter transition end 未打点）就按返回时，
+      // 飞行值停在半途（scale/ty/clipH 均非终态）—— pop 若从半途状态起飞，
+      // 与框架丢弃的上一个未完转场竞态，可能整段 pop 不完成（卡死现场）。
+      // ⇒ 先**同步把进场瞬间拉到终态**（满屏阅读器），pop 永远从已定义状态起飞。
+      this.ltScale = 1
+      this.ltScaleY = 1
+      this.ltTx = 0
+      this.ltTy = 0
+      this.ltClipH = this.ltGeom.clipH1
       // 十二轮 v3：返回首帧同步重建覆盖层，盖住真阅读器
       //（onHidden 后其 surface 停止合成/变黑——盖住后与我们无关了）
       this.ltFlightOverlay = true
@@ -1191,6 +1221,11 @@ struct Main {
             this.ltFlightOverlay = false
             // v3.3：姿态门闩复位（下次飞行由 delegate 重新置位）
             this.ltPoseReady = false
+            // 返回冷却打点（2026-10-01）：点击侧在释放后 400ms 内点书 ⇒ 降级普通转场。
+            // 依据：极速打断会触发框架层缺陷（自定义转场被整体丢弃、NavDestination 残留
+            // disabled——2026-10-02 02:37 日志：pop transition end 缺失 + 两次 arm released
+            // + "Touch test result is empty"卡死），冷却把点击挪出危险窗口。
+            AppStorage.setOrCreate('ltArmReleasedAt', Date.now())
             console.info('LTBOOK', 'arm released')
           }, 80)
         })

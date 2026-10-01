@@ -34,13 +34,14 @@ export struct VipDialog {
   /** 关闭回调：关闭权在页面（与更多方案同款协调方式） */
   onClose: () => void = (): void => {}
 
-  /** VIP 特权清单（用户要求"说清楚解锁了什么能力"） */
+  /** VIP 特权清单（用户要求"说清楚解锁了什么能力"；2026-10-01 新增自定义主题） */
   private perks: string[] = [
     '导入字体文件 —— 用自己的字体阅读',
     '下载字体文件 —— 在线字体库一键获取',
     '更多材质 —— 解锁全部背景材质',
     '更多方案 —— 解锁完整背景方案库',
     '自定义颜色 —— 阅读字色/背景随心配',
+    '自定义主题 —— 书架主题取色器+RGB 自由配',
   ]
 
   /** 主文字色（随深浅切换，与阅读弹窗同一套三元） */
@@ -99,15 +100,17 @@ export struct VipDialog {
       Column({ space: 8 }) {
         ForEach(this.perks, (p: string) => {
           Row({ space: 8 }) {
-            Text('✓')
-              .fontSize(14)
-              .fontWeight(700)
-              .fontColor('#ff6600')
+            // 2026-10-01（用户）：文本 √ 换 symbol（sys.symbol.checkmark，
+            // SDK 符号表 resources.txt:3759 核实），与全工程图标规范一致
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(15)
+              .fontColor(['#ff6600'])
             Text(p)
               .fontSize(13)
               .fontColor(this.mainColor())
           }
           .width('100%')
+          .alignItems(VerticalAlign.Center)
         }, (p: string): string => p)
       }
       .width('100%')

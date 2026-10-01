@@ -1,23 +1,7 @@
 export class NavItem {
   /**
-   * 选中图片
-   */
-  selectImg:Resource
-
-  /**
-   * 未选样式
-   */
-  unselected:Resource
-
-  /**
-   * 是否选择
-   */
-  isSelect:boolean = false
-
-  /**
    * 标题
    */
-
   title:string
 
   /**
@@ -25,13 +9,16 @@ export class NavItem {
    */
   index:number
 
+  /**
+   * symbol 图标（2026-10-01：四页签全部 symbol 化 —— 原媒体图标对（PNG）的
+   * fillColor 不生效、无暗色适配；symbol 的 fontColor 深浅档天然自适应）
+   */
+  symbol:Resource
 
-
-  constructor(index = 0 ,selectImg:Resource,unselected:Resource ,title = '') {
-    this.selectImg = selectImg
-    this.unselected = unselected
+  constructor(index = 0 ,title = '', symbol?:Resource) {
     this.title = title
     this.index = index
+    this.symbol = symbol as Resource
   }
 }
 

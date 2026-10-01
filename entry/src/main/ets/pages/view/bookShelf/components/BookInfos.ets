@@ -232,7 +232,15 @@ export default struct BookInfos {
       //   任何一步失败（id 失效/量不到）都自然退回普通转场，不阻塞点书。
       // 参数类型必须显式声明（ArkTS `arkts-no-untyped-obj-literals` 禁止无类型字面量）。
       const rp: ReaderRouteParam = { bookData: this.book };
-      if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+      // ⚠️ 双重冷却闸（2026-10-01/02，修快速开合的错位与卡死）：
+      // ① ltArm 未释放（上一轮飞行含 80ms 清理尾窗）⇒ 退普通转场；
+      // ② arm released 后 400ms 内（真机日志实测危险点击全部落在释放后 54~84ms——
+      //    该窗口内点击会触发框架层缺陷：自定义转场被整体丢弃、NavDestination 残留
+      //    disabled ⇒ "两个书架页"+ 卡死，2026-10-02 02:37 日志实证）⇒ 同样降级。
+      // 代价：极速连点时偶发一次无动画；可回退：删掉 && AppStorage... 一个条件。
+      if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== ''
+        && AppStorage.get<boolean>('ltArm') !== true
+        && Date.now() - (AppStorage.get<number>('ltArmReleasedAt') ?? 0) > 400) {
         const ui = this.getUIContext()
         const f = LongTakeFlightData.capture(ui, this.longtakeId,
           ui.vp2px(4), this.book.coverUrl ?? '', this.book.bookName)

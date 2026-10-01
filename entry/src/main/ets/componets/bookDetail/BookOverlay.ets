@@ -1,5 +1,5 @@
 import CommonConstants from '../../common/constants/CommonConstants'
-import { DEFAULT_COVER_PREFIX } from '../../common/utils/CoverSource'
+import { COVER_DEFAULT_FILES, defaultCoverIndex } from '../../common/utils/CoverSource'
 
 @Component
 export default struct BookOverlay {
@@ -24,8 +24,10 @@ export default struct BookOverlay {
   private coverSrc(): ResourceStr {
     const raw: string = this.bookImage === undefined || this.bookImage === null
       ? '' : this.bookImage.toString()
-    if (raw.startsWith(DEFAULT_COVER_PREFIX)) {
-      return $rawfile('cover_defaults/' + raw.substring(DEFAULT_COVER_PREFIX.length))
+    if (raw.startsWith('default://cover_defaults/')) {
+      // 2026-10-01：改走字面量表（$rawfile 传变量），顺带根除原拼接写法的资源检查误报
+      const idx: number = defaultCoverIndex(raw)
+      return idx > 0 ? $rawfile(COVER_DEFAULT_FILES[idx - 1]) : ''
     }
     if (raw === '') {
       // 2026-10-01 用户需求："如果用户没在此处修改过，则分组显示默认封面" ——

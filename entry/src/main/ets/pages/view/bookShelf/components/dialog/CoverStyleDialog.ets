@@ -5,6 +5,7 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import { Books } from '../../../../../database/entities/Books'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
+import { COVER_DEFAULT_FILES, defaultCoverIndex } from '../../../../../common/utils/CoverSource'
 
 /**
  * 单本封面样式弹窗（v3.21，用户需求"自定义封面真实功能"）。
@@ -18,7 +19,6 @@ import { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMat
  * （BookInfos/BookContent）优先级：customCoverUrl > coverUrl > 默认 alt。
  * `default://` 协议在渲染端转 `$rawfile(...)`（渲染端 helper：CoverSource.ets）。
  */
-const DEFAULT_COVER_PREFIX: string = 'default://cover_defaults/'
 
 @CustomDialog
 export default struct CoverStyleDialog {
@@ -44,27 +44,23 @@ export default struct CoverStyleDialog {
   aboutToAppear(): void {
     const cur: string = this.bookData.customCoverUrl ?? ''
     this.currentCover = cur
-    if (cur.startsWith(DEFAULT_COVER_PREFIX)) {
-      const n: number = parseInt(cur.substring(DEFAULT_COVER_PREFIX.length).replace(/[^1-9]/g, ''))
-      this.pickedIndex = n >= 1 && n <= 9 ? n - 1 : -1
-    } else if (cur !== '') {
+    // 反解统一走 CoverSource.defaultCoverIndex（本文件原有一份重复实现已删）
+    const idx: number = defaultCoverIndex(cur)
+    this.pickedIndex = idx > 0 ? idx - 1 : -1
+    if (idx <= 0 && cur !== '') {
       this.customUri = cur
     }
   }
 
-  /** 渲染端同款解析：值 → Image 可显示源（default:// 走 rawfile） */
-  coverSource(v: string): ResourceStr {
-    if (v.startsWith(DEFAULT_COVER_PREFIX)) {
-      return $rawfile('cover_defaults/' + v.substring(DEFAULT_COVER_PREFIX.length))
-    }
-    return v
-  }
-
+  // （2026-10-01 已删除死方法 coverSource()：定义后从未被调用，且其 `$rawfile('cover_defaults/'
+  //  ' + v.substring(...))` 拼接写法正是 IDE 资源检查误报「No such 'cover_defaults/' resource」
+  //  的来源之一 —— 解析统一走 CoverSource（字面量表 + $rawfile 传变量，告警零噪音）。）
   /** 保存：写 customCoverUrl 落库（booksUtil.addBooks 走 BooksDao.updatePartial 同管线） */
   private save(): void {
     let value: string = ''
     if (this.pickedIndex >= 0) {
-      value = DEFAULT_COVER_PREFIX + 'c' + (this.pickedIndex + 1) + '.svg'
+      // 存储协议值（运行时字符串拼接，非 $rawfile 参数 ⇒ 无资源检查问题）
+      value = 'default://cover_defaults/c' + (this.pickedIndex + 1) + '.svg'
     } else if (this.customUri !== '') {
       value = this.customUri
     }
@@ -100,11 +96,13 @@ export default struct CoverStyleDialog {
         .width('100%')
 
       // ── 9 张默认封面网格（参考阅读器背景预览范式）────────────────────────
+      // ⚠️ $rawfile 传 COVER_DEFAULT_FILES 变量（完整路径字面量表，见 CoverSource 注释），
+      //    不做字符串拼接 —— 拼接会触发 IDE 资源检查误报。
       Grid() {
         ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9], (n: number) => {
           GridItem() {
             Column() {
-              Image($rawfile('cover_defaults/c' + n + '.svg'))
+              Image($rawfile(COVER_DEFAULT_FILES[n - 1]))
                 .width(56).height(76)
                 .borderRadius(6)
                 .border({

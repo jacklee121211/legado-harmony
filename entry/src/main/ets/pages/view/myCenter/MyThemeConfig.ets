@@ -2,14 +2,16 @@ import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { Haptics } from '../../../common/utils/Haptics';
 import { ThemeItem } from '../../../common/model/Theme'
 import { MyThemeConfigComp } from './MyThemeConfigComp'
-import AppRouter from '../../../common/router/AppRouter'
 import { NightMode } from '../../../common/utils/NightMode'
 import { common } from '@kit.AbilityKit'
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
+import { TabHeader } from '../../../componets/common/TabHeader'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
 export default struct MyThemeConfig {
   @StorageLink('topRectHeight') topRectHeight: number = 0
+  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   // 亮暗色重构（2026-09-23）：三档「亮色 / 自动 / 暗色」，持久化键见 NightMode.MODE_KEY。
@@ -46,32 +48,9 @@ export default struct MyThemeConfig {
 
   build() {
     Column() {
-      // 头部标题栏
-      RelativeContainer() {
-        Image($r('sys.media.ohos_ic_public_arrow_left'))
-          .width(24)
-          .aspectRatio(1)
-          .fillColor($r('app.color.icon_color'))
-          .alignRules({
-            center: {anchor: '__container__', align: VerticalAlign.Center},
-            left: {anchor: '__container__', align: HorizontalAlign.Start}
-          })
-          .onClick(() => {
-            Haptics.tap();
-            // 迁 Navigation 第 4 期：本页现在是 NavDestination ⇒ 走门面返回。
-            AppRouter.back()
-          })
-        Text('主题')
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .alignRules({
-            center: {anchor: '__container__', align: VerticalAlign.Center},
-            middle: {anchor: '__container__', align: HorizontalAlign.Center}
-          })
-      }
-      .padding({left: 20, right: 20, top: 12, bottom: 12})
-      .width('100%')
-      .height(48)
+      // 头部标题栏（2026-10-01 统一页签头 TabHeader：居中标题、无返回箭头——
+      // 本页是常驻页签，原返回箭头会弹空 Navigation 栈，已删）
+      TabHeader({ title: '主题' })
 
       // ── 三段滑动开关（2026-09-23 亮暗色重构）────────────────────────────────
       // 「亮色 / 自动 / 暗色」：自动 = 跟随系统深浅色（系统切换即时重涂）。
@@ -97,7 +76,13 @@ export default struct MyThemeConfig {
       Column() {
         MyThemeConfigComp()
       }
-      .padding({left: 20, right: 20, top: 24})
+      .padding({
+        left: 20,
+        right: 20,
+        top: 24,
+        // 底部 dock 让位（2026-10-01）：主题格子滚到底要停在悬浮 dock 之上（自适应）
+        bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
+      })
       .borderRadius({
         topLeft: 12,
         topRight: 12
