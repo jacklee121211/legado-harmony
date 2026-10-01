@@ -3,7 +3,6 @@ import { Haptics } from '../../../../../common/utils/Haptics';
 import { Books } from '../../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import AppRouter, { RouteName } from '../../../../../common/router/AppRouter'
-import InsideCircleIcon from '../../../../../componets/common/InsideCircleIcon'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
@@ -14,6 +13,13 @@ import CommonConstants from '../../../../../common/constants/CommonConstants'
 import BasicDataSource from '../../../../../common/LazyIDataSource/BasicDataSource'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode } from '../../../../../common/utils/NightMode'
+// ── v3.20：长按弹窗按钮 symbol 化 + Q弹 + 单本分享（与管理页同款配方）─────────
+import UiMotion, { runJellyClick } from '../../../../../common/utils/UiMotion';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor } from '@kit.ArkData';
+import { fileUri } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
+import { ShelfColors } from '../../../../../common/utils/NightMode'
 
 @CustomDialog
 /**
@@ -26,11 +32,13 @@ export default struct BookInfoDialogs{
   @State pushReminder:boolean = false
   // ⚠️ 第 1 项（置顶）的 title 只是**兜底初值** —— build() 里会按 bookData.isTop 实时覆盖
   // （数组初始化器只在组件创建时执行一次，不能依赖它联动，依据见 build() 内注释）。
+  // v3.20：图标 symbol 化（SDK 符号表核实）+ 新增「分享」（华为分享，单本直达对方喵阅）
   @State buttonListInfo:buttonList[] = [
-    new buttonList(1,this.bookData.isTop?'取消置顶':'置顶',$r('app.media.top')),
-    new buttonList(2,'移动至',$r('app.media.folder')),
-    new buttonList(3,'加入书单',$r('app.media.shelf')),
-    new buttonList(4,'删除',$r('app.media.ic_public_delete'))
+    new buttonList(1,this.bookData.isTop?'取消置顶':'置顶',$r('sys.symbol.pin')),
+    new buttonList(2,'移动至',$r('sys.symbol.folder')),
+    new buttonList(3,'加入书单',$r('sys.symbol.book')),
+    new buttonList(4,'删除',$r('sys.symbol.trash')),
+    new buttonList(6,'分享',$r('sys.symbol.share'))
   ]
   @Consume('booksDataSource')  booksDataSource: BasicDataSource<Books>
   cancel: () => void = () => {
@@ -90,21 +98,18 @@ export default struct BookInfoDialogs{
       .margin(20)
       Divider().strokeWidth(0.5).padding({bottom:16})
       GridRow({
-        columns:4
+        columns:5
       }){
         ForEach(this.buttonListInfo,(item:buttonList)=>{
           GridCol(){
-            InsideCircleIcon({
-              icon:item.icon,
-              // ⚠️ 置顶键字样**渲染时实时**按 bookData.isTop 取（2026-09-29）：
-              // buttonListInfo 数组初始化器只在弹窗组件创建时执行一次，bookData 若是
-              // 旧对象就会永远显示"置顶"（审核反馈：置顶后重进弹窗不变成"取消置顶"）。
-              title:item.id === 1 ? (this.bookData.isTop ? '取消置顶' : '置顶') : item.title
-            })
-              .onClick(()=>{
-                Haptics.tap();
+            // v3.20：symbol + Q弹（runJellyClick 自驱 scale，与管理页 ManageToolButton 同款）
+            MarkToolButton({
+              icon: item.icon,
+              label: item.id === 1 ? (this.bookData.isTop ? '取消置顶' : '置顶') : item.title,
+              onTap: (): void => {
                 this.bookInfoButton(item.id)
-              })
+              }
+            })
           }
         })
       }
@@ -186,6 +191,45 @@ export default struct BookInfoDialogs{
         this.catalogAddShelfDialog?.open();break;
       case 4 :
         this.bookDelDialog?.open(); break;
+      case 6 :
+        this.shareSingle(); break;
+    }
+  }
+
+  /**
+   * 单本分享（v3.20，与管理页 manageShare 同一 API 链）：systemShare.SharedData
+   * （utd 按后缀解析 + fileUri）→ ShareController.show 拉起华为分享面板。
+   * 对端装了喵阅 ⇒ 分享面板推荐区直达 ⇒ 分享即入库。
+   */
+  private async shareSingle(){
+    const path: string = this.bookData.bookUrl ?? ''
+    if (path === '') {
+      showMessage('该书没有可分享的文件');
+      return
+    }
+    try {
+      const suffix: string = path.substring(path.lastIndexOf('.'))
+      let utdId: string = 'general.text'
+      try {
+        utdId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix) ?? 'general.text'
+      } catch (err) {
+        // 未知后缀退回 general.text
+      }
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: utdId,
+        uri: fileUri.getUriFromPath(path),
+        title: this.bookData.bookName ?? '书籍'
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData)
+      const context: common.UIAbilityContext =
+        this.getUIContext().getHostContext() as common.UIAbilityContext
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DEFAULT
+      })
+    } catch (err) {
+      const e = err as BusinessError
+      showMessage('分享失败：' + e.message)
     }
   }
 
@@ -299,4 +343,35 @@ export default struct BookInfoDialogs{
     // this.booksDataSource.reloadNewData([this.bookData])
   }
 
+}
+/**
+ * 长按书籍弹窗按钮（v3.20）：symbol + 独立 Q弹 + 震动——与书架管理页
+ * ManageToolButton 同款配方（每键独立弹跳状态，父组件数组下标更新不触发 V1 渲染）。
+ */
+@Component
+struct MarkToolButton {
+  icon: Resource = $r('sys.symbol.pin')
+  label: string = ''
+  onTap: () => void = (): void => {}
+  @State jellyScale: number = 1
+
+  build() {
+    Column({ space: 6 }) {
+      SymbolGlyph(this.icon)
+        .fontSize(24)
+        .fontColor([ShelfColors.icon()])
+        .scale({ x: this.jellyScale, y: this.jellyScale })
+      Text(this.label)
+        .fontSize(12).fontWeight(400)
+        .fontColor($r('app.string.color_black_65'))
+        .maxLines(1)
+    }
+    .onClick(() => {
+      Haptics.tap();
+      runJellyClick((v: number) => {
+        this.jellyScale = v
+      })
+      this.onTap()
+    })
+  }
 }

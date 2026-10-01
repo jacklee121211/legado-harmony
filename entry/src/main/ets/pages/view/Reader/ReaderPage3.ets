@@ -5,7 +5,7 @@ import { display, router, LengthMetrics,
 import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, emitter } from '@kit.BasicServicesKit';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { ClickUtil, PreferencesUtil } from '@pura/harmony-utils';
 import { Books } from '../../../database/entities/Books';
@@ -311,6 +311,10 @@ export default struct ReaderPage3 {
    * （曾试过 `onBackPressed` 拦截，会让黑屏时连手势返回都没了，**已撤回**）。
    */
   private disposed: boolean = false;
+  /** 进度同步 v1.1：toast 节流时间戳（2026-10-01） */
+  private webSyncToastAt: number = 0
+  /** 进度同步 v2.1：双锚写入节流时间戳（2.5s 内不重复取文本+写盘） */
+  private webSyncLastWriteAt: number = 0
   @StorageLink('windowWidth') windowWidth: number = 0;
   @StorageLink('windowHeight') windowHeight: number = 0;
   // ⚠️ 亮暗色重构（2026-09-23）：`colorMode` 从 `@StorageLink('colorMode')`（与系统深浅色
@@ -2469,8 +2473,275 @@ export default struct ReaderPage3 {
       // 注：目录过滤数据源已随弹窗改造搬到 `ReaderCatalogDialog` 内部 ——
       //     它在每次打开时从 `CatalogList.getOriginDataArray()` 重新构建，这里不需要再同步。
       hilog.info(0x0000, 'testTag', 'catalog list length: ' + this.CatalogList.totalCount());
+      this.checkWebSyncAnchor(resourceIndex || 0);   // 进度同步 v1（2026-10-01）：web 端锚点检查
+      this.registerWebSyncListener();                // v1.1：阅读中电脑翻章 → toast 知会
     } catch (err) {
       hilog.error(0x0000, 'testTag', `failed to startPlay, Code is ${err.code}, message is ${err.message}`);
+    }
+  }
+
+  /**
+   * 进度同步 v1（章节级，2026-10-01 专项）：开书后检查 web 端写回的阅读锚点。
+   *
+   * 数据流：web 阅读器翻章时 POST /sync → WifiBookServer 写 `WebSync_<书名>`
+   * （JSON {title, ts}）→ 本方法在开书 1.2s 后（引擎与目录已就绪）读取：
+   * ts 比 `WebSyncSeen_<书名>`（已处理标记）新 ⇒ AlertDialog 询问"跳转到该章？"。
+   * 跳转 = 在目录列表按标题匹配章节 index → `startPlay(index, 0)`（引擎现成 API）。
+   * 用户忽略 ⇒ 写入 Seen 标记，同一锚点不再打扰。
+   * 整链 try/catch 包死：任何异常静默（阅读主流程零回归风险）。
+   * 精度说明：v1 章节级（标题匹配）；页级需 domPos↔字符偏移换算（v2）。
+   */
+  /**
+   * 进度同步 v1.1（2026-10-01）：手机**正开着这本书**时，电脑翻章的即时知会。
+   * WifiBookServer 收到 web /sync 写锚点后同进程 emitter.emit(20261001)；
+   * 此处监听 → 匹配当前书名 → toast 知会（30s 节流，不打断阅读——
+   * 用户想跳转：重新打开本书走锚点弹窗，或直接用目录）。
+   * 页级/双向跳转的完整互通在 v2（domPos↔字符偏移换算）。
+   */
+  private registerWebSyncListener(): void {
+    try {
+      const ev: emitter.InnerEvent = { eventId: 20261001 }
+      emitter.on(ev, (event: emitter.EventData): void => {
+        try {
+          if (this.disposed) {
+            return
+          }
+          const p = (event.data ?? {}) as Record<string, string>
+          if (p === null || p === undefined) {
+            return
+          }
+          const name: string = p['name'] ?? ''
+          const title: string = p['title'] ?? ''
+          if (name === '' || name !== (this.bookData?.bookName ?? '')) {
+            return
+          }
+          const now: number = Date.now()
+          if (now - this.webSyncToastAt < 30000) {
+            return
+          }
+          this.webSyncToastAt = now
+          this.getUIContext().getPromptAction().showToast({
+            message: `电脑读到了「${title.slice(0, 16)}」章`
+          })
+        } catch (e) {
+          hilog.error(0x0000, 'testTag', `webSync listener failed: ${(e as Error).message}`)
+        }
+      })
+    } catch (err) {
+      hilog.error(0x0000, 'testTag', `webSync listener setup failed: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * 双锚提取（进度同步 v2）：按 pageRange 取「页首行 / 页末行」各约 40 字摘录。
+   * 文本来源与 currentPageFirstLine 同款两级：TtsEngine.currentNodeTexts()
+   * （朗读中且同章）→ previewNodeTexts 旁路（默读）。摘录做空白规整，
+   * 与 web 端 normEx 同口径 ⇒ 两端可互查定位。
+   */
+  /**
+   * v3.21 优化：节点文本**按章缓存**（`anchorNodeCache`）——默读时旧实现每次翻页
+   * 都走 previewNodeTexts 旁路重解析整章（重且异步竞态：连续翻页时旧请求后返回
+   * 覆盖新锚 ⇒ 锚停留在很早的位置，用户实测"总出现第三章"）。现在同章翻页
+   * 直接复用缓存（零旁路开销、无竞态），跨章才重建。
+   */
+  private anchorNodeCacheSpine: number = -1
+  private anchorNodeCache: string[] | null = null
+
+  private async webSyncAnchors(): Promise<string[]> {
+    const r = this.pageRange
+    if (r === null || r.startNode < 0) {
+      return ['', '']
+    }
+    try {
+      let nodes = TtsEngine.currentNodeTexts()
+      if (nodes === null || TtsEngine.currentChapter() !== r.spine) {
+        if (this.anchorNodeCacheSpine === r.spine && this.anchorNodeCache !== null) {
+          nodes = this.anchorNodeCache
+        } else {
+          nodes = await TtsEngine.previewNodeTexts(this.BookHandler ?? null, r.spine)
+          this.anchorNodeCacheSpine = r.spine
+          this.anchorNodeCache = nodes
+        }
+      }
+      if (nodes === null || nodes.length === 0) {
+        return ['', '']
+      }
+      const norm = (s: string): string => s.replace(new RegExp('\\s{1,}', 'g'), ' ').trim()
+      const startNode: string = nodes[Math.min(r.startNode, nodes.length - 1)] ?? ''
+      const endNode: string = nodes[Math.min(r.endNode, nodes.length - 1)] ?? ''
+      const topRaw = startNode.slice(r.startChar, r.startChar + 40)
+      const botRaw = endNode.slice(Math.max(0, r.endChar - 40), r.endChar + 2)
+      return [norm(topRaw), norm(botRaw)]
+    } catch (e) {
+      return ['', '']
+    }
+  }
+
+  /**
+   * pageShow 挂点：双锚写入 WebSync_<书名>（web 轮询据此提示跳转），失败静默。
+   * v3.21 两点加固：
+   * ① **2.5s 节流**——pageShow 高频触发，旧实现每页都异步取文本+写盘（重且竞态）；
+   * ② **ts 单调**——payload.ts 取 max(now, 存量 ts)：即使竞态让旧请求后落盘，
+   *    也不会把时间戳拉回去（旧锚永远赢不了新锚的 seen 比对）。
+   */
+  private writeWebSyncAnchors(): void {
+    const now: number = Date.now()
+    if (now - this.webSyncLastWriteAt < 2500) {
+      return
+    }
+    this.webSyncLastWriteAt = now
+    this.webSyncAnchors().then((a: string[]): void => {
+      try {
+        if (a[0] === '' && a[1] === '') {
+          return
+        }
+        const name: string = this.bookData?.bookName ?? ''
+        if (name === '') {
+          return
+        }
+        // ts 单调：读存量取较大者（防异步竞态回写旧时间戳）
+        let ts: number = Date.now()
+        try {
+          const prevRaw = PreferencesUtil.getSync(`WebSync_${name}`, '') as string
+          if (prevRaw !== '' && prevRaw !== null) {
+            const prev = JSON.parse(prevRaw) as Record<string, number | string>
+            ts = Math.max(ts, Number(prev['ts'] ?? 0))
+          }
+        } catch (e) {
+          // 存量读不到就用 now
+        }
+        const payload: Record<string, number | string> = {
+          'topEx': a[0],
+          'botEx': a[1],
+          'title': this.bookData.durChapterTitle ?? '',
+          'chapterIndex': this.bookData.durChapterIndex ?? 0,
+          'ts': ts,
+          'src': 'phone'
+        }
+        PreferencesUtil.putSync(`WebSync_${name}`, JSON.stringify(payload))
+      } catch (e) {
+        hilog.error(0x0000, 'testTag', `webSync anchor write failed: ${(e as Error).message}`)
+      }
+    })
+  }
+
+  /**
+   * 摘录 → 引擎位置（node/char）：在目标章块节点文本中做规整化子串匹配，
+   * 命中后经 domPosFor 还原引擎 domPos ⇒ startPlay 精确落位（行级）。
+   * 章定位：数字优先（"第N章"），标题互含兜底。
+   */
+  private async anchorJump(excerpt: string, title: string): Promise<void> {
+    const key = excerpt.replace(new RegExp('\\s{1,}', 'g'), '').slice(0, 12)
+    if (key === '') {
+      return
+    }
+    const total: number = this.CatalogList.totalCount()
+    let spine = -1
+    const numM = title.match(/第(\d+)[章节回卷]/)
+    const wantNum = numM !== null ? parseInt(numM[1]) : -1
+    for (let i = 0; i < total; i++) {
+      const item = this.CatalogList.getData(i)
+      const t: string = item?.catalogName ?? ''
+      if (t === '') {
+        continue
+      }
+      if (wantNum >= 0) {
+        const tm = t.match(/第(\d+)[章节回卷]/)
+        if (tm !== null && parseInt(tm[1]) === wantNum) {
+          spine = i
+          break
+        }
+      }
+    }
+    if (spine < 0) {
+      for (let i = 0; i < total; i++) {
+        const item = this.CatalogList.getData(i)
+        const t: string = item?.catalogName ?? ''
+        if (t !== '' && title.indexOf(t.slice(0, 8)) >= 0) {
+          spine = i
+          break
+        }
+      }
+    }
+    if (spine < 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '未能定位该进度' })
+      return
+    }
+    const nodes = await TtsEngine.previewNodeTexts(this.BookHandler ?? null, spine)
+    if (nodes === null) {
+      this.readerComponentController.startPlay(spine, `${spine}`)
+      return
+    }
+    for (let n = 0; n < nodes.length; n++) {
+      const normed = (nodes[n] ?? '').replace(new RegExp('\\s{1,}', 'g'), '')
+      const hit = normed.indexOf(key)
+      if (hit >= 0) {
+        // 规整化偏移 ≈ 原文偏移（差异仅为被压缩的空白，行级可接受）
+        this.readerComponentController.startPlay(spine, this.domPosFor(n, hit))
+        return
+      }
+    }
+    this.readerComponentController.startPlay(spine, `${spine}`)
+  }
+
+  private checkWebSyncAnchor(defaultIndex: number): void {
+    try {
+      const name: string = this.bookData?.bookName ?? ''
+      if (name === '') {
+        return
+      }
+      setTimeout((): void => {
+        try {
+          const raw = PreferencesUtil.getSync(`WebSync_${name}`, '') as string
+          if (raw === '' || raw === null) {
+            return
+          }
+          const obj = JSON.parse(raw) as Record<string, number | string>
+          const ts: number = Number(obj['ts'] ?? 0)
+          const title: string = String(obj['title'] ?? '')
+          // v3.20 双锚：web/手机同写的"页首行、页末行"摘录（行级定位键）
+          const topEx: string = String(obj['topEx'] ?? '')
+          const botEx: string = String(obj['botEx'] ?? '')
+          const seen = Number(PreferencesUtil.getSync(`WebSyncSeen_${name}`, 0) as number)
+          if (ts <= seen || (topEx === '' && botEx === '' && title === '')) {
+            return
+          }
+          const nl: string = String.fromCharCode(10)
+          const ui = this.getUIContext()
+          ui.showAlertDialog({
+            title: '电脑端阅读进度',
+            // v3.20 双锚（用户设计）：电脑页首/页末各显示一句，用户手动选跳哪个
+            message: `电脑读到：${title !== '' ? `「${title.slice(0, 16)}」` : ''}` +
+              `${topEx !== '' ? `${nl}页首：${topEx.slice(0, 18)}` : ''}` +
+              `${botEx !== '' ? `${nl}页末：${botEx.slice(0, 18)}` : ''}`,
+            primaryButton: {
+              value: topEx !== '' ? '跳到页首' : '知道了',
+              action: (): void => {
+                PreferencesUtil.putSync(`WebSyncSeen_${name}`, ts)
+                if (topEx !== '') {
+                  this.anchorJump(topEx, title)
+                }
+              }
+            },
+            secondaryButton: {
+              value: botEx !== '' ? '跳到页末' : '取消',
+              action: (): void => {
+                PreferencesUtil.putSync(`WebSyncSeen_${name}`, ts)
+                if (botEx !== '') {
+                  this.anchorJump(botEx, title)
+                }
+              }
+            },
+            cancel: (): void => {
+              PreferencesUtil.putSync(`WebSyncSeen_${name}`, ts)
+            }
+          })
+        } catch (e) {
+          hilog.error(0x0000, 'testTag', `webSync check failed: ${(e as Error).message}`)
+        }
+      }, 1200)
+    } catch (err) {
+      hilog.error(0x0000, 'testTag', `webSync anchor setup failed: ${(err as Error).message}`)
     }
   }
 
@@ -2623,6 +2894,8 @@ export default struct ReaderPage3 {
       this.bookData.totalChapterNum = this.CatalogList.totalCount();
       // 保存书籍数据。
       PreferencesUtil.putSync(`BookCurrentData_${this.bookData.bookName}`, this.bookData)
+      // ── 进度同步 v2（2026-10-01，用户设计）：页首/页末双锚写给 web 端 ──
+      this.writeWebSyncAnchors();
       // ★「最后阅读的书」标记 —— 桌面快捷方式「快速听书 / 快速阅读」据此定位目标书。
       //   为什么不用数据库的 `durChapterTime`：**当前阅读页从不写该字段**
       //   （本文件对 durChapterTime 的引用数为 0，只有旧阅读页 ReaderPage2 会写），

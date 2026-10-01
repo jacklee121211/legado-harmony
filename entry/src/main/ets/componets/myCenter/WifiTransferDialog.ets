@@ -1,5 +1,6 @@
 import { pasteboard } from '@kit.BasicServicesKit'
 import { Haptics } from '../../common/utils/Haptics'
+import { common } from '@kit.AbilityKit'
 import { WifiBookServer } from '../../common/utils/WifiBookServer'
 import UiMotion from '../../common/utils/UiMotion'
 
@@ -29,18 +30,22 @@ export struct WifiTransferDialog {
           .onChange((isOn: boolean) => {
             Haptics.tap()
             if (isOn) {
-              WifiBookServer.start((ok: boolean, msg: string) => {
-                this.running = ok
-                this.address = WifiBookServer.address()
-                if (!ok) {
-                  this.getUIContext().getPromptAction().showToast({ message: msg })
-                }
-              })
+              WifiBookServer.start(
+                getContext(this) as common.UIAbilityContext,
+                (ok: boolean, msg: string) => {
+                  this.running = ok
+                  this.address = WifiBookServer.address()
+                  if (!ok) {
+                    this.getUIContext().getPromptAction().showToast({ message: msg })
+                  }
+                })
             } else {
-              WifiBookServer.stop((ok: boolean) => {
-                this.running = false
-                this.address = ''
-              })
+              WifiBookServer.stop(
+                getContext(this) as common.UIAbilityContext,
+                (ok: boolean) => {
+                  this.running = false
+                  this.address = ''
+                })
             }
           })
       }
