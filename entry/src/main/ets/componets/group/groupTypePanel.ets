@@ -94,11 +94,16 @@ export default struct groupTypePanel {
               Haptics.tap();
               this.isShowIcon = !this.isShowIcon
             })
-          Image($r('app.media.close')).width(24).height(20).onClick(() => {
-            Haptics.tap();
-            this.onClose()
-            this.isShowIcon = false
-          })
+          // v3.20：关闭 X 换 SymbolGlyph + 主题色——原 `app.media.close` 位图为固定深色，
+          // 深色模式下不可观测（用户反馈）。`xmark` 经 SDK 符号表核实存在。
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(20)
+            .fontColor([this.theme.mainColor])
+            .onClick(() => {
+              Haptics.tap();
+              this.onClose()
+              this.isShowIcon = false
+            })
         }
       }
 

@@ -64,7 +64,8 @@
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "backgroundModes": [
-          "audioPlayback"
+          "audioPlayback",
+          "dataTransfer"
         ],
         // 桌面静态快捷方式（快速听书 / 快速阅读）。
         // 官方 documentId `开发指南/开发基础知识/典型场景的开发指导/创建应用静态快捷方式/typical-scenario-configuration`：
