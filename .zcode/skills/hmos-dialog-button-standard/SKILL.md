@@ -21,6 +21,7 @@ description: 本项目（legado-harmony 鸿蒙阅读器）弹窗与按钮统一�
 10. **数据变更必须广播 AppStorage**：书 → `BOOK_IS_BOOK_REFRESHING` 自增，分组 → `BOOK_IS_BOOK_GROUPS_REFRESHING` 自增；LazyForEach/ForEach 键值必须并入影响显示的新字段。
 11. **广播必须发生在 DB 提交之后**：DAO 写库路径里裸调 async（不 await）= 提前 resolve = 重查读到旧值（案例：BooksDao.insert 更新分支、bookGroupUtils.updatePartialGroup，2026-10-01）。
 12. **弹窗内开二级全屏用 CustomDialog，禁用 bindContentCover**（页面级模态盖不过弹窗，案例：加入书单→新建书单"点击没用"→ `NewBookShelfDialog`）；`default://` 封面协议解析全工程只走 `CoverSource`，禁止手写 substring。
+13. **自定义 Navigation 转场 vs 快速开合**：pop 分支先同步把进场拉到终态再起飞；点击侧 ltArm 冷却闸（未释放退普通转场）。⚠️ 看门狗/交互闸方案已证伪回退（时间戳无代际隔离 → 看门狗连环误杀正常转场 → 白屏卡死）。**根治 = 迁移官方库 @hmanimations/ezcustomtransition**（skill: hmos-arkui-longtake-transition）。
 
 ## 参考实现（照抄级别）
 

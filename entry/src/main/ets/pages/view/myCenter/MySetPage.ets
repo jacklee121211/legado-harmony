@@ -1,8 +1,8 @@
 import MySetConstants from '../../../common/constants/MySetConstants'
 import { Attribute } from '../../../common/utils/Attribute'
 import { SetList, SetGroupList } from '../../../componets/dataList/SetListGroup'
-import { SetHead } from '../../../componets/myset/SetHead'
 import { SetListView } from '../../../componets/myset/SetListView'
+import { TabHeader } from '../../../componets/common/TabHeader'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
 import { PreferencesUtil } from '@pura/harmony-utils'
@@ -11,6 +11,8 @@ import { PreferencesUtil } from '@pura/harmony-utils'
 import { ListenUnlock } from '../../../common/utils/ListenUnlock'
 import { loadTtsPrefs, saveTtsPrefs } from '../../../tts/TtsPrefs'
 import { NightMode } from '../../../common/utils/NightMode'
+import { ThemeStorageKey } from '../../../common/constants/Theme'
+import { ThemeItem } from '../../../common/model/Theme'
 // ── 测试账号（2026-09-28 迁入）：登录下线后，测试登录+彩蛋解锁入口迁到本页顶部 ──
 import UiMotion from '../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
@@ -34,6 +36,8 @@ export default struct MySetPage{
 
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
+  /** 主题颜色（2026-10-01：测试账号胶囊按钮的 symbol 取色用） */
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级夜间开关：测试账号弹窗深浅适配用（2026-09-28） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
 
@@ -227,27 +231,38 @@ export default struct MySetPage{
 
   build() {
     Column(){
-      SetHead({titleName:'我的设置'}).height(48).padding({left:20})
-
-      // ── 测试账号入口（2026-09-28 迁入，置于页首；UI 不留彩蛋提示）────────────
-      Row({ space: 12 }) {
-        Text('测试账号')
-          .fontSize(14)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        Text('›')
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-          .opacity(0.4)
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 12, bottom: 12 })
-      .onClick(() => {
-        Haptics.tap();
-        this.openTestAccountDialog()
-      })
+      // 2026-10-01：统一页签头 TabHeader（标题改「设置」；SetHead 自带返回箭头，
+      // 页签语境没有返回目标会弹空 Navigation 栈，故弃用）
+      TabHeader({ title: '设置' })
 
       List(){
+        // ── 测试账号入口（2026-10-01 重设计，用户需求）────────────────────────
+        // 原来是左右撑满的列表行；改为**居中胶囊按钮**（dock 同款观感：圆角 + 卡底 + 淡阴影），
+        // 文案前加 person symbol（SDK 符号表核实）。置于 List 首项而非外部 —— 随内容滚动且
+        // 不破坏上方 SetHead 结构。
+        ListItem() {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.person'))
+              .fontSize(18)
+              .fontColor([this.theme.mainColor])
+            Text('测试账号')
+              .fontSize(14)
+              .fontWeight(600)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .justifyContent(FlexAlign.Center)
+          .padding({ left: 28, right: 28, top: 12, bottom: 12 })
+          .borderRadius(22)
+          .backgroundColor($r('app.color.card_bg'))
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            Haptics.tap();
+            this.openTestAccountDialog()
+          })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 12 })
 
         ForEach(this.setGroupList,(group:SetGroupList)=>{
           //分组头部
@@ -355,6 +370,8 @@ export default struct MySetPage{
       .height('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Off)
+      // 底部 dock 让位（2026-10-01）：最后一个设置组滚到底要停在悬浮 dock 之上
+      .contentEndOffset(ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight))
     }
     .padding({
       top:this.topRectHeight,

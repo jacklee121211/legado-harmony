@@ -15,6 +15,7 @@ import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../co
 import UiMotion from '../../../../../common/utils/UiMotion'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
+import { COVER_DEFAULT_FILES } from '../../../../../common/utils/CoverSource'
 
 @CustomDialog
 /**
@@ -139,7 +140,8 @@ export default struct coverInfoDialog{
         ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9], (n: number) => {
           GridItem() {
             Column() {
-              Image($rawfile('cover_defaults/c' + n + '.svg'))
+              // $rawfile 传字面量表变量（见 CoverSource.COVER_DEFAULT_FILES 注释），防资源检查误报
+              Image($rawfile(COVER_DEFAULT_FILES[n - 1]))
                 .width(52).height(72)
                 .borderRadius(6)
                 .border({

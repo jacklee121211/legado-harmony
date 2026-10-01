@@ -282,6 +282,26 @@ export default class ImmersiveMaterialUtil {
   }
 
   /**
+   * 底部悬浮 dock 的**内容末尾让位**（自适应，2026-10-01）。
+   *
+   * barOverlap 悬浮 dock 会盖住 TabContent 的内容（官方语义）⇒ 各页滚动内容的
+   * **最后一个条目**必须垫出 dock 的实际覆盖高度，否则滚到底时被压在 dock 下面。
+   * 覆盖高度 = 条高 56 + 条底边距（bottomRectHeight 系统安全区**实测值** + 8）+ 12 呼吸位
+   * ⇒ bottomRectHeight 由调用方从 `AppStorage('bottomRectHeight')` 注入，
+   *   全面屏手势/三键导航/平板等不同屏幕比例下由系统实时下发，天然自适应。
+   *
+   * ⚠️ 与 `tabsContentBottomInset()` 的区别：那个不含安全区实测值（书架旧值 72，
+   * 手势机上 dock 实际覆盖 ~92 ⇒ 最后一本书仍被压角 —— 2026-10-01 用户反馈的根因），
+   * 新代码一律用本方法。
+   */
+  static dockContentEndOffset(bottomRectHeight: number): number {
+    if (!ImmersiveMaterialUtil.isOn()) {
+      return 12;
+    }
+    return ImmersiveMaterialUtil.TAB_BAR_HEIGHT + 8 + bottomRectHeight + 12;
+  }
+
+  /**
    * **弹窗类**（`bindSheet` 的 `SheetOptions`、`CustomDialog` 的 options 等）的材质。
    * 官方：弹窗类「通常使用较厚的材质样式（THICK或ULTRA_THICK）」。
    *

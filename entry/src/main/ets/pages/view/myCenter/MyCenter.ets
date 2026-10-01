@@ -8,6 +8,7 @@ import { PreferencesUtil } from '@pura/harmony-utils'
 import ImmersiveMaterialUtil, { MaterialColumnModifier, MaterialButtonModifier } from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
 import { dataItem } from '../../../componets/dataList/dataItem'
+import { TabHeader } from '../../../componets/common/TabHeader'
 import BooksDao from '../../../database/dao/BooksDao'
 import BookmarksDao from '../../../database/dao/BookmarksDao'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
@@ -77,6 +78,7 @@ export default struct MyCenter {
   // 「关于我们」入口已于 2026-09-21 删除（用户决定），`end_list` 整块随之移除
   //（它原来也只承载这一个入口）。
   @StorageLink('topRectHeight') topRectHeight: number = 0
+  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   Column = new ColumnModifier()
   // 主题颜色
   // 亮暗色重构（2026-09-23）：订阅派生深色键 —— 渐变背景（ShelfColors.gradientStart/End）
@@ -84,10 +86,8 @@ export default struct MyCenter {
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
 
-  /** 设置图标的 Q弹缩放值（2026-09-25 二次调优，`runJellyClick` 自驱 `.scale()`） */
-  @State setIconScale: number = 1
-  /** 主题图标的 Q弹缩放值（2026-09-30 顶部主题按钮，同款配方） */
-  @State themeIconScale: number = 1
+  // （2026-10-01 已删除 setIconScale/themeIconScale 两个 Q弹状态：顶部主题/设置按钮
+  //   移入底部 dock，见 Index.ets nav。）
 
   // ── Web服务（2026-09-30 回填）────────────────────────────────────────────
   /** 传书对话框控制器（wifi传书/电脑阅读共用） */
@@ -132,7 +132,9 @@ export default struct MyCenter {
   build() {
     Column() {
       // Blank(this.topRectHeight-20)
-      //右上角模式图标
+      // ── 页签标题头（2026-10-01 用户需求）：与主题/设置两页同一标准 TabHeader ──
+      TabHeader({ title: '我的' })
+
       Row({ space: 10 }) {
         // VIP 金标（2026-09-28 用户要求：已开通时放在设置按钮左侧旁边）
         if (this.vipOn) {
@@ -144,39 +146,8 @@ export default struct MyCenter {
             .borderRadius(8)
             .padding({ left: 8, right: 8, top: 3, bottom: 3 })
         }
-        //设置图标（2026-09-25：换成 SymbolGlyph，用户要求与书架页同批换 symbol。
-        //符号名 `gearshape` 在 SDK 符号表 `…\Sdk\23\previewer\common\resources\entry\resources.txt`
-        //查得，不猜名字。点击 Q弹缩放由 `.scale()` + `runJellyClick` 驱动（2026-09-25 二次调优：
-        //内置 ScaleSymbolEffect 节奏定死太慢，借参考工程同款实现）。
-        // 主题按钮（2026-09-30 v3.12：从卡片入口改为顶部同规格 symbol 按钮，
-        // 用户需求"删除当前的主题按钮，在顶部设置按钮左侧放置同样规格的 symbol 主题按钮"。
-        // 图标 paintpalette 经 SDK 符号表核实；Q弹+震动与设置按钮同款配方。
-        SymbolGlyph($r('sys.symbol.paintpalette'))
-          .fontSize(26)
-          .fontColor([ShelfColors.icon()])
-          .scale({ x: this.themeIconScale, y: this.themeIconScale })
-          .onClick(() => {
-            Haptics.tap();
-            runJellyClick((v: number) => {
-              this.themeIconScale = v
-            })
-            AppRouter.push(RouteName.THEME_CONFIG)
-          })
-          .clickEffect(UiMotion.CLICK)
-        SymbolGlyph($r('sys.symbol.gearshape'))
-          .fontSize(26)
-          .fontColor([ShelfColors.icon()])
-          .scale({ x: this.setIconScale, y: this.setIconScale })
-          .onClick(() => {
-            Haptics.tap();
-            runJellyClick((v: number) => {
-              this.setIconScale = v
-            })
-            this.toMySetPage()
-          })
-          .clickEffect(UiMotion.CLICK)
-      //夜间模式图标（2026-09-21 删除）：`night_onclick()` 是**空函数体**，
-      //点了什么都不发生；整片右上角区域还绑着同一个空回调。
+        // （2026-10-01 已删除顶部「主题 / 设置」两个 symbol 按钮：用户反馈顶部太难点击，
+        //  两页提级为底部 dock 页签（书架、主题、设置、我的），见 Index.ets nav 注释。）
       }.justifyContent(FlexAlign.End).width("100%")
 
       Scroll() {
@@ -208,10 +179,13 @@ export default struct MyCenter {
               this.webServiceItem($r('sys.symbol.computer'), '电脑阅读', (): void => {
                 this.openWifiDialog()
               })
-              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '隔空传送', (): void => {
-                // 用户拍板：点击直接跳书架管理页（管理/批量管理同页），勾选后碰一碰分享
+              // 2026-10-01（用户）：「隔空传送」更名「书籍分享」；点击进**全部书籍**管理页。
+              // ⚠️ bookTypeNumber 必须传 2（系统"全部"分组）：BooksDao.searchPage 对
+              // bookGroup===2 **跳过分组过滤**（BooksDao.ets:141）⇒ 列出全库书籍；
+              // 原来传 0（不存在组 0）⇒ 管理页为空（用户实测"进入的是空的管理页"）。
+              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '书籍分享', (): void => {
                 AppRouter.push(RouteName.BOOK_MANAGE,
-                  { currentIndex: 0, EXHIBIT: '', bookTypeNumber: 0 } as BookManageRouteParam)
+                  { currentIndex: 0, EXHIBIT: '', bookTypeNumber: 2 } as BookManageRouteParam)
               })
             }
             .width('100%')
@@ -257,46 +231,9 @@ export default struct MyCenter {
           }.justifyContent(FlexAlign.SpaceBetween).width("100%").padding({ left: 20, right: 20 })
           .margin({ top: 16 })
 
-          // 固定高度间隔（**绝对不能用 `Blank`**）：
-          // 本 Column 是 `height('100%')`，而 `Blank` 的语义是**撑满剩余空间**，
-          // ⇒ 真机表现就是「主题」卡片被顶到页面最底部、与上面三个统计数字之间空出一大片
-          //   （用户截图反馈「主题不够靠上」）。改成定高占位即可。
-          Row().width('100%').height(16)
-
-          // ── 主题卡片入口已删除（2026-09-30 v3.12，用户需求）：主题功能改由
-          // 顶部设置按钮左侧的 paintpalette symbol 按钮承载（见 build 顶部 Row）。
-
-          // ── 关于我们入口（2026-09-30 回填，用户需求）────────────────────────
-          // 与主题卡同款视觉（card_bg + 圆角 10 + 同款淡阴影），图标用 About 自己的
-          // symbol（sys.symbol.info），点击进关于页（检查更新/更新日志/隐私协议/开源许可）。
-          Row({ space: 10 }) {
-            SymbolGlyph($r('sys.symbol.info_circle'))
-              .fontSize(20)
-              .fontColor([this.theme.mainColor])
-            Text('关于我们')
-              .fontSize(14).fontWeight(600)
-              .fontColor($r('app.color.text_primary'))
-            Blank(8)
-            SymbolGlyph($r('sys.symbol.chevron_forward'))
-              .fontSize(14)
-              .fontColor([$r('app.color.text_primary')])
-              .opacity(0.35)
-          }
-          .width('100%')
-          .height(56)
-          .padding({ left: 16, right: 16 })
-          .backgroundColor($r('app.color.card_bg'))
-          .borderRadius(10)
-          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-          .margin({ top: 16 })
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
-            Haptics.tap()
-            AppRouter.push(RouteName.ABOUT)
-          })
-
           // ── 开通 VIP 卡片（2026-09-28 用户设计：未开通时显示）────────────────
-          // 主题卡下方、整页水平居中、宽 30%（够字宽即可）、高度与主题卡持平（80）。
+          // 2026-10-01 上移：紧跟「读过」统计行，间距 16 与 Web服务→读过 一致
+          // （用户反馈原布局读过行上下间距不统一，关于我们挪页尾后 VIP 顶替其位）。
           if (!this.vipOn) {
             Row() {
               Row() {
@@ -323,15 +260,58 @@ export default struct MyCenter {
             .margin({ top: 16 })
           }
 
+          // 弹性占位：把「关于我们」推到页尾、底部 dock 之上（2026-10-01 用户需求）。
+          // 内层 Column 高度确定（height '100%'）⇒ Blank 撑满剩余空间；
+          // 内容超出视口时 Blank 收缩为 0，正常滚动不受影响。
+          // （2026-09-23 那条"绝对不能用 Blank"的注释针对的是"主题卡要靠上"的旧需求，
+          //   本需求恰好要的就是"贴底"语义。）
+          Blank()
+
+          // ── 关于我们入口（2026-09-30 回填，用户需求）────────────────────────
+          // 2026-10-01 挪至整页最底部（dock 之上）：读过行上下间距不再被它挤得不均。
+          // 视觉不变（card_bg + 圆角 10 + 同款淡阴影），图标 sys.symbol.info，
+          // 点击进关于页（检查更新/更新日志/隐私协议/开源许可）。
+          Row({ space: 10 }) {
+            SymbolGlyph($r('sys.symbol.info_circle'))
+              .fontSize(20)
+              .fontColor([this.theme.mainColor])
+            Text('关于我们')
+              .fontSize(14).fontWeight(600)
+              .fontColor($r('app.color.text_primary'))
+            Blank(8)
+            SymbolGlyph($r('sys.symbol.chevron_forward'))
+              .fontSize(14)
+              .fontColor([$r('app.color.text_primary')])
+              .opacity(0.35)
+          }
+          .width('100%')
+          .height(56)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor($r('app.color.card_bg'))
+          .borderRadius(10)
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            Haptics.tap()
+            AppRouter.push(RouteName.ABOUT)
+          })
+
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Start)
         .alignItems(HorizontalAlign.Start)
+        // ── 底部 dock 让位（2026-10-01 用户反馈"关于我们与书架/我的这一行重叠"）────
+        // 底部 dock 是**悬浮 Tabs 条**（barOverlap，Index.ets barFloatingStyle），
+        // 会盖住 TabContent 的内容 —— 必须给滚动内容末尾垫出 dock 的实际覆盖高度。
+        // 自适应依据：条高 56（ImmersiveMaterialUtil.TAB_BAR_HEIGHT）+ 条底边距
+        // （bottomRectHeight 系统安全区实测值 + 8）+ 12 呼吸位 —— 不同屏幕比例下
+        // bottomRectHeight 由系统 avoid-area 实时下发，天然适配。材质关闭时 dock
+        // 走常规布局（不悬浮），只留 12 呼吸位。
+        .padding({ bottom: this.pageBottomInset() })
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
-      .padding({ bottom: 10 })
     }
     .attributeModifier(this.Column)
     .linearGradient({
@@ -357,6 +337,11 @@ export default struct MyCenter {
    * `bookmarks` 表是移植时带过来的遗留物、无任何写入端。
    * 这里刻意走**真实查询**而不是硬编码 0，等写入端做好后无需再改。
    */
+  /** 底部 dock 让位量（自适应：安全区实测值参与计算，统一收口 ImmersiveMaterialUtil） */
+  private pageBottomInset(): number {
+    return ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
+  }
+
   async loadHeadCounts(): Promise<void> {
     try {
       const read = await BooksDao.countRead()
@@ -464,11 +449,5 @@ export default struct MyCenter {
       }
     })
     this.wifiDialog.open()
-  }
-
-
-  toMySetPage() {
-    // 迁 Navigation 第 4 期：我的设置已改为 NavDestination，改走路由门面。
-    AppRouter.push(RouteName.MY_SET)
   }
 }

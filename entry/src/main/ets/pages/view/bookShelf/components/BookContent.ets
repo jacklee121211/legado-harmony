@@ -245,7 +245,10 @@ export default struct BookContent {
       // 悬浮页签条是**叠在列表之上**的（barOverlap 的官方语义）⇒ 给内容末尾留出条高，
       // 滚到底时最后一本书不会被压住。用 `contentEndOffset` 而不是给容器加 padding：
       // 前者只偏移**内容末尾**、不动列表盒子，因此不会露出窗口底色（真机上就是"底部白块"）。
-      .contentEndOffset(ImmersiveMaterialUtil.tabsContentBottomInset())
+      // 2026-10-01 改用 dockContentEndOffset（含安全区实测值）：旧值 72 不含
+      // bottomRectHeight，手势机上 dock 实际覆盖 ~92 ⇒ 最后一本书仍被压角
+      //（用户实测反馈"最后一本书应该停在 dock 上面"）。
+      .contentEndOffset(ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight))
       .onReachEnd(() => {
         if (this.bookList.length < this.bookCount) {
           this.loadMoreBooks()
