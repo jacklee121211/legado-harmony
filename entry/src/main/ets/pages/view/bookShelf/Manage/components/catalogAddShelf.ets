@@ -14,7 +14,9 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import worksListsDao from '../../../../../database/dao/WorksListsDao'
 import { WorksBookList } from '../../../../../database/entities/WorksBookList'
 import { WorksLists } from '../../../../../database/entities/WorksLists'
-import newBookShelf from '../bookManage/newBookShelf'
+import NewBookShelfDialog from '../../components/dialog/NewBookShelfDialog'
+import ImmersiveMaterialUtil from '../../../../../common/utils/ImmersiveMaterialUtil'
+import UiMotion from '../../../../../common/utils/UiMotion'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 
 @Component
@@ -25,7 +27,9 @@ export default struct catalogAddShelf{
   @Prop bookOrFolder:number = 0
   @Prop currentIndex:number = 0
   @Prop showNumber:number = 0
-  @State worksBook:WorksLists = new WorksLists()
+  // （2026-10-01 已删 @State worksBook：编辑目标改由 openNewShelf(status, last) 传参，
+  //  原字段在 bindContentCover 移除后已无引用。）
+
   @State worksLists:WorksLists[] =[]
   @State newBookIds:number[] = []
   /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走资源 token / `ShelfColors`） */
@@ -102,40 +106,54 @@ export default struct catalogAddShelf{
 
       }
       .padding(20)
-
-      Flex()
-        .bindContentCover($$this.isShowEditBook, this.showEditBook(), {
-          modalTransition: ModalTransition.DEFAULT,
-          onDisappear: () => {
-            this.isShowEditBook = false;
-          }
-        })
     }
     .width(CommonConstants.FULL_WIDTH)
     .height(CommonConstants.FULL_HEIGHT)
   }
-  @Prop workBookListStatus:number = 1
-  @State isShowEditBook:boolean = false
-  @Builder showEditBook(){
-    Column(){
-      newBookShelf({
-        currentIndex:this.currentIndex,
-        changeShowNumber:()=>{
-          this.isShowEditBook = false
-          setTimeout(()=>{
+
+  /**
+   * 新建/编辑书单（2026-10-01 从 bindContentCover 改 CustomDialog，修"点击新建没用"）：
+   * bindContentCover 是**页面级**模态，盖不过已打开的加入书单 CustomDialog
+   * （长按书籍/长按分组入口）⇒ 用户实测无反应。CustomDialog 可叠加于弹窗之上，
+   * 页面宿主（管理页）同样成立。控制器打开时新建（参数随选中项变化，
+   * SDK NOTE：Custom dialog box parameters do not support dynamic updates）。
+   */
+  private newShelfDialog: CustomDialogController | null = null
+  openNewShelf(status: number, last?: WorksLists): void {
+    this.newShelfDialog = new CustomDialogController({
+      builder: NewBookShelfDialog({
+        currentIndex: this.currentIndex,
+        workBookListStatus: status,
+        lastWorkBookList: last ?? new WorksLists(),
+        bookIds: this.newBookIds,
+        changeShowNumber: (): void => {
+          this.newShelfDialog = null
+          setTimeout(() => {
             this.getWorkLists()
-          },200)
+          }, 200)
         },
-        submit:()=>{
-          this.isShowEditBook = false
+        submit: (): void => {
+          this.newShelfDialog = null
           this.onClickShelf(false)
         },
-        workBookListStatus:this.workBookListStatus,
-        lastWorkBookList:this.worksBook,
-        bookIds: this.newBookIds
-      })
-    }
-    .backgroundColor(ShelfColors.pageBg())
+        onClose: (): void => {
+          this.newShelfDialog = null
+        }
+      }),
+      autoCancel: false,
+      alignment: DialogAlignment.Center,
+      width: '92%',
+      height: '90%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.newShelfDialog = null
+      }
+    })
+    this.newShelfDialog.open()
   }
 
   @Builder ColumnTitle(work?:WorksLists) {
@@ -152,8 +170,7 @@ export default struct catalogAddShelf{
             Text('新建书单').fontSize(14).fontColor(this.theme.mainColor).fontWeight(400).lineHeight(22)
           }.onClick(()=>{
             Haptics.tap();
-            this.workBookListStatus = 0
-            this.isShowEditBook = true
+            this.openNewShelf(0)
           })
         }
       } else {
@@ -189,11 +206,7 @@ export default struct catalogAddShelf{
             return
           }
           if (!this.isExistBook(work.worksBookList ?? [])) {
-            if (work) {
-              this.worksBook = work
-            }
-            this.workBookListStatus = 2
-            this.isShowEditBook = true
+            this.openNewShelf(2, work)
           }
         })
       }

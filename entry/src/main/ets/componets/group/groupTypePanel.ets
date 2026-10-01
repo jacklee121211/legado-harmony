@@ -6,6 +6,8 @@ import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
 import BookManageDialog from '../../pages/view/bookShelf/components/dialog/BookManageDialog'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
+import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverInfoDialog'
+import UiMotion from '../../common/utils/UiMotion'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil'
 import { updateAppData } from '../../storage/appData'
 import customizeDialogExample from '../common/customizeDialog'
@@ -229,6 +231,16 @@ export default struct groupTypePanel {
             .gesture(
               LongPressGesture({ repeat: false, duration: 500 })
                 .onAction((event: GestureEvent) => {
+                  // 五个系统单元锁定（2026-10-01 用户定义）：全部/本地/分组/未分组无长按
+                  // 弹窗；书单长按直达封面样式；自建分组仍走原弹窗。
+                  if (item.isSystem) {
+                    if (item.groupName === '书单') {
+                      this.openWorksCoverDialog(item)
+                    } else {
+                      showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
+                    }
+                    return
+                  }
                   this.dialogGroupData = item
                   // this.group = item
                   this.changeNumber = 1
@@ -376,6 +388,8 @@ export default struct groupTypePanel {
   groupInfoDialog: CustomDialogController | null = new CustomDialogController({
     builder: FolderInfoDialog({
       itemData: this.dialogGroupData,
+      // 真开真关（2026-10-01 用户方案）：子关闭→重查该分组→open，全新实例=全新快照
+      reopen: (): void => { this.reopenGroupInfoDialog() },
       cancel: () => {
         this.exitDialog()
       }
@@ -398,6 +412,44 @@ export default struct groupTypePanel {
     this.changeNumber = 0
     this.getGroupList()
     this.groupInfoDialog?.close()
+  }
+
+  /** 真开真关（2026-10-01 用户方案）：重查该分组 → 更新 dialogGroupData → open。 */
+  private async reopenGroupInfoDialog(): Promise<void> {
+    const id = this.dialogGroupData.groupId
+    if (id !== undefined) {
+      const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      const fresh = groups.find((g: BookGroups) => g.groupId === id)
+      if (fresh !== undefined) {
+        this.dialogGroupData = fresh
+      }
+    }
+    this.groupInfoDialog?.open()
+  }
+
+  /** 「书单」（系统单元）长按 → 直达封面样式弹窗（与 GroupType 同款，2026-10-01） */
+  private worksCoverDialog: CustomDialogController | null = null
+  private openWorksCoverDialog(item: BookGroups): void {
+    this.worksCoverDialog = new CustomDialogController({
+      builder: coverInfoDialog({
+        itemData: item,
+        cancel: (): void => {
+          this.worksCoverDialog = null
+        }
+      }),
+      autoCancel: true,
+      width: '92%',
+      alignment: DialogAlignment.Center,
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.worksCoverDialog = null
+      }
+    })
+    this.worksCoverDialog?.open()
   }
 
   @State isShowBookFolderInfoDialog: boolean = false

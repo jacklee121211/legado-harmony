@@ -13,9 +13,11 @@ import booksDao from '../../../../../database/dao/BooksDao';
 import { BookGroups } from '../../../../../database/entities/BookGroups';
 import { Books } from '../../../../../database/entities/Books';
 import BookSelectGroupDialog from './BookSelectGroupDialog';
+import AddToBookListDialog from './AddToBookListDialog';
+import ImmersiveMaterialUtil from '../../../../../common/utils/ImmersiveMaterialUtil';
+import UiMotion from '../../../../../common/utils/UiMotion';
 import BookFolderManages from '../../Manage/bookManage/BookFolderManages';
 import bookListManage from '../../Manage/bookManage/bookListManage';
-import catalogAddShelf from '../../Manage/components/catalogAddShelf';
 import CommonConstants from '../../../../../common/constants/CommonConstants';
 import WorksBookLists from '../../Shelf/WorksBookLists';
 import { WorksLists } from '../../../../../database/entities/WorksLists';
@@ -127,8 +129,52 @@ export default  struct BookManageDialog {
     }
   }
 
-  @State isCatalogAddShelf:boolean = false
+  /**
+   * 子弹窗（加入书单）打开/关闭通知（2026-10-01 子进父退/子退父进）：
+   * 本组件由 BookFolder 以 bindSheet 呈现，加入书单 CustomDialog 打开前先收起本 sheet，
+   * 关闭后恢复（宿主在 BookFolder.bookFolderInfoDialog 里传入回调）。
+   */
+  onChildDialogOpen: () => void = () => {
+  }
+  onChildDialogClose: () => void = () => {
+  }
   @State bookOrFolder:number = 0
+  /**
+   * 「加入书单」统一弹窗（2026-10-01 从 bindSheet 改 CustomDialog）。
+   * sheet 载不了沉浸光感材质（SheetOptions 无 systemMaterial 字段，取证见
+   * AddToBookListDialog 类注释）；控制器**打开时新建**——SDK NOTE「Custom dialog box
+   * parameters do not support dynamic updates」，ids/bookOrFolder 随勾选变化只能快照。
+   */
+  private addToBookListDialog: CustomDialogController | null = null
+  private openAddToBookList(): void {
+    this.onChildDialogOpen()
+    this.addToBookListDialog = new CustomDialogController({
+      builder: AddToBookListDialog({
+        currentIndex: this.currentIndex,
+        ids: this.checkListNumber,
+        bookOrFolder: this.bookOrFolder,
+        cancel: () => {
+          this.addToBookListDialog = null
+          this.refreshData()
+          this.onChildDialogClose()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '80%',
+      height: 400,
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.addToBookListDialog = null
+        this.onChildDialogClose()
+      }
+    })
+    this.addToBookListDialog.open()
+  }
   build() {
     Column(){
       Column(){
@@ -165,16 +211,6 @@ export default  struct BookManageDialog {
         this.bookManage()
       }
       .layoutWeight(1)
-
-      Flex()
-        .bindSheet($$this.isCatalogAddShelf, this.dialogCatalogAddShelf(), {
-          height:400,
-          dragBar: true,
-          showClose: false,
-          onDisappear: () => {
-            this.isCatalogAddShelf = false
-          }
-        })
     }
     .padding({
       bottom:this.bottomRectHeight
@@ -303,19 +339,8 @@ export default  struct BookManageDialog {
 
 
   //书单弹窗
-  @Builder dialogCatalogAddShelf(){
-    Column(){
-      catalogAddShelf({
-        onClickShelf:(val:boolean)=>{
-          this.isCatalogAddShelf = val
-          this.refreshData()
-        },
-        currentIndex:this.currentIndex,
-        ids:this.checkListNumber,
-        bookOrFolder:this.bookOrFolder
-      })
-    }
-  }
+  //（2026-10-01 已删除 bindSheet 版 @Builder dialogCatalogAddShelf：SheetOptions 没有
+  //  systemMaterial 字段载不了沉浸光感，统一改走 AddToBookListDialog，见 openAddToBookList。）
   @State allCheck:boolean = false
   @Builder
   selectAll() {
@@ -485,13 +510,13 @@ export default  struct BookManageDialog {
       case 2 :
         this.bookMoveGroup?.open(); break;
       case 3 :
-        this.isCatalogAddShelf = true
         if (this.bookTypeNumber === 1) {
           this.bookOrFolder = 1
         } else {
           this.bookOrFolder = 0
         }
         this.dataCheckList();
+        this.openAddToBookList();
         break;
       case 4 :
         this.clickHideDialog?.open()

@@ -3,8 +3,10 @@ import { BookGroups } from '../../database/entities/BookGroups'
 import BookType from '../head/BookType'
 import { GroupManageDialog } from './GroupManageDialog'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
+import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../common/utils/ImmersiveMaterialUtil'
 import UiMotion, { runJellyClick } from '../../common/utils/UiMotion'
+import { showMessage } from '../common/promptShow'
 import { NightMode, ShelfColors } from '../../common/utils/NightMode'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../common/utils/Haptics'
@@ -40,8 +42,11 @@ export default struct groupTypeComponent {
     this.chipEditDialog = new CustomDialogController({
       builder: FolderInfoDialog({
         itemData: this.editChipGroup,
+        // 真开真关（2026-10-01 用户方案）：子弹窗关闭后由**创建者**重建父弹窗——
+        // 全新实例=全新 @Prop 快照，天然刷新；不再复用旧实例（其快照不具备刷新能力）。
+        reopen: (): void => { this.reopenChipEditDialog() },
         cancel: (): void => {
-          this.chipEditDialog?.close()
+          this.chipEditDialog = null
           this.getGroupList()
         }
       }),
@@ -55,6 +60,47 @@ export default struct groupTypeComponent {
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
     this.chipEditDialog?.open()
+  }
+
+  /** 真开真关：重查该分组 → 更新 editChipGroup → **新建 controller** 全新实例打开 */
+  private async reopenChipEditDialog(): Promise<void> {
+    const id = this.editChipGroup?.groupId
+    if (id !== undefined) {
+      const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      const fresh = groups.find((g: BookGroups) => g.groupId === id)
+      if (fresh !== undefined) {
+        this.editChipGroup = fresh
+      }
+    }
+    this.openChipEditDialog()
+  }
+
+  /**
+   * 「书单」（系统单元）长按 → **直达封面样式弹窗**（2026-10-01 用户定义）。
+   * 封面会真实应用到所有书单内的书（见 coverInfoDialog.resolveTargetBooks 的书单聚合分支）。
+   */
+  private worksCoverDialog: CustomDialogController | null = null
+  private openWorksCoverDialog(item: BookGroups): void {
+    this.worksCoverDialog = new CustomDialogController({
+      builder: coverInfoDialog({
+        itemData: item,
+        cancel: (): void => {
+          this.worksCoverDialog = null
+        }
+      }),
+      autoCancel: true,
+      width: '92%',
+      alignment: DialogAlignment.Center,
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.worksCoverDialog = null
+      }
+    })
+    this.worksCoverDialog?.open()
   }
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`），理由见 `IndexShelf` 同名字段 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
@@ -84,8 +130,42 @@ export default struct groupTypeComponent {
     BookGroupsDao.search({
       type:this.currentIndex
     }).then((val)=>{
-      this.groupList = val
+      this.groupList = this.sortSystemChips(val)
     })
+  }
+
+  /**
+   * 五个系统基础单元（2026-10-01 用户定义，**位置锁定**，顺序恒为）：
+   *   全部 → 本地 → 书单 → 分组 → 未分组
+   * 用户自建分组/书单按原相对顺序排在后面。
+   * ⚠️ 实现必须是"按 isSystem+名字识别后**重建整个数组**"：上一版在 filter 出的子集里
+   * `rest.indexOf(all)`（all 已被滤掉 ⇒ -1 ⇒ splice 位置错乱 + 全部丢失）——真机 18:2x
+   * 复现"全部没了、书单改名后才出现全部"（改名后名字不再等于'书单'、works 找不到 ⇒ 走了
+   * 原序分支）。这版对缺名系统行做兜底（找到几个排几个），customs 永远不会吞掉系统行。
+   */
+  private sortSystemChips(list: BookGroups[]): BookGroups[] {
+    const order: string[] = ['全部', '本地', '书单', '分组', '未分组']
+    const systems: BookGroups[] = []
+    for (const name of order) {
+      const hit = list.find((g: BookGroups) => g.isSystem && g.groupName === name)
+      if (hit !== undefined) {
+        systems.push(hit)
+      }
+    }
+    const customs = list.filter((g: BookGroups) => !systems.includes(g))
+    const result: BookGroups[] = []
+    for (const g of systems) {
+      result.push(g)
+    }
+    for (const g of customs) {
+      result.push(g)
+    }
+    return result
+  }
+
+  /** 五个系统基础单元识别（锁定改名/删除/长按编辑，见各入口守卫） */
+  private isLockedUnit(item: BookGroups): boolean {
+    return item.isSystem && ['全部', '本地', '书单', '分组', '未分组'].includes(item.groupName ?? '')
   }
 
   /**
@@ -172,23 +252,39 @@ export default struct groupTypeComponent {
                 }
                 })
                 // 2026-09-25 用户反馈：显示分组也要能长按编辑（原来只有管理面板里的能长按）
+                // ⚠️ 2026-10-01 五个系统单元锁定（用户定义）：全部/本地/分组/未分组
+                // **不再提供长按弹窗**；书单长按**直达封面样式弹窗**；只有自建分组/书单
+                // 仍走 FolderInfoDialog（且其中改名对系统单元再拦一层）。
                 .gesture(LongPressGesture({ repeat: false, duration: 500 })
                   .onAction(() => {
                     Haptics.tap();
+                    if (this.isLockedUnit(item)) {
+                      if (item.groupName === '书单') {
+                        this.openWorksCoverDialog(item)
+                      } else {
+                        showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
+                      }
+                      return
+                    }
                     this.editChipGroup = item
                     this.openChipEditDialog()
                   }))
               }
-            }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+            }, (item: BookGroups): string => item.groupId !== undefined
+              // 2026-10-01 键值并入显示字段：ForEach 键值相同的项**复用旧组件、不重绑数据**
+              // ⇒ 只用 'g'+groupId 时重命名后 chip 永远显示旧名（真机日志 2.md 17:05
+              // "重命名后没有立刻刷新"）。show 影响显隐 if 分支，一并并入。
+              // 同款修法见 BookContent.ets 键值注释。
+              ? 'g' + item.groupId + item.groupName + (item.show ? 'S' : 'H')
+              : item.groupName)
           }
         }
         .scrollBar(BarState.Off)
         .scrollable(ScrollDirection.Horizontal)
         Row(){
           // ── 分组行尾部按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）──
-          // 原 `app.media.more_search`（三横 SVG）→ `sys.symbol.line_3_horizontal`
-          // （SDK 符号表 `…\Sdk\23\previewer\common\resources\entry\resources.txt` 查得，
-          // 语义就是"三横线"，与原图标形状一致）。
+          // 2026-10-01：justifyContent End ⇒ 三横贴右边距（margin 15），与上一行
+          // 「最近阅读」行尾「更多」按钮中心（右边距 15+12=27vp）垂直对齐。
           SymbolGlyph($r('sys.symbol.line_3_horizontal'))
             .fontSize(24)
             .fontColor([ShelfColors.icon()])
@@ -202,17 +298,24 @@ export default struct groupTypeComponent {
               this.openGroupPanel()
             })
             .clickEffect(UiMotion.CLICK)
-        }.width(
-          '10%'
-        )
+        }.width('10%')
+        .justifyContent(FlexAlign.End)
+        // 2026-10-01（用户，夜间模式反馈）：三横原来贴住胶囊右边缘（上一轮为对齐改成
+        // End+右padding 0），"没有间距"⇒ 往回来 8vp。列右内边距 8 ⇒ 图标右缘在
+        // 右边距 15+8=23vp 处，与上一行「更多」仍基本对齐（中心 35 vs 27，视觉可接受）。
+        .padding({ right: 8 })
       }.margin({ left: 15, right: 15, bottom: 10})
         // ── 2026-09-23「书架顶部向沉浸光感看齐」（用户选 A：调到最像）──────────────
         // 「分组 / 全部 / 未分组 / 本地」这一栏：自绘内容拿不到真材质（官方生效范围见
-        // `IndexShelf` 顶部同款注释）⇒ 通用属性模拟，取值与阅读页胶囊一致。
+        // `IndexShelf` 顶部同款注释）⇒ 通用属性模拟，取色与阅读页胶囊一致。
         .backgroundColor(ShelfColors.surface())
         .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
         .borderRadius(20)
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        // ⚠️ 右 padding 2026-10-01 改 0：三横按钮要与上一行（最近阅读）行尾的「更多」
+        // 按钮对齐 —— 上一行容器 padding 15 ⇒「更多」中心在右边距 15+12=27vp 处；
+        // 本行 margin 15 + 三横列 justifyContent End ⇒ 三横中心同为 27vp（原 right:12
+        // 时中心在 ~39vp，肉眼可见错位，用户点名对齐）。
+        .padding({ left: 12, right: 0, top: 6, bottom: 6 })
         // ★ 2026-09-23 用户反馈：「这一行下面没空间，和下面的书籍叠加了」。
         //   本栏与书籍列表是同一个 Stack 里的两层（本栏 zIndex 999 浮在上面）
         //   ⇒ 把**实测高度**上报，由 `BookBodyContent` 给列表让位（不写死数字）。

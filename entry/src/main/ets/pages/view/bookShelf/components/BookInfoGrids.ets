@@ -4,6 +4,7 @@ import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import AppRouter, { RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
+import booksDao from '../../../../database/dao/BooksDao'
 import CommonConstants from '../../../../common/constants/CommonConstants'
 import FontConstants from '../../../../common/constants/FontConstants'
 import clickUtil from '../../../../common/utils/ClickUtils'
@@ -262,6 +263,8 @@ export default struct BookInfoGrids{
   bookInfoDialog: CustomDialogController | null = new CustomDialogController({
     builder: BookInfoDialogs({
       bookData:this.book,
+      // 真开真关（2026-10-01 用户方案），与 BookInfos.ets 同款：子关闭→创建者重查→open
+      reopen: (): void => { this.reopenInfoDialog() },
       cancel: () => {
         this.exitDialog()
       }
@@ -282,5 +285,24 @@ export default struct BookInfoGrids{
   //退出弹框
   exitDialog(){
     this.bookInfoDialog?.close()
+  }
+
+  /**
+   * 真开真关（2026-10-01 用户方案），与 BookInfos.ets 同款：
+   * 子弹窗关闭后重查本书刷新列表项数据，再 open —— 弹窗全新实例，@Prop 快照天然新数据。
+   */
+  private async reopenInfoDialog(): Promise<void> {
+    const id = this.book.id
+    if (id !== undefined) {
+      const fresh = await booksDao.getBookByIds([id])
+      if (fresh.length > 0) {
+        this.book.customCoverUrl = fresh[0].customCoverUrl
+        this.book.coverUrl = fresh[0].coverUrl
+        this.book.bookName = fresh[0].bookName
+        this.book.author = fresh[0].author
+        this.book.isTop = fresh[0].isTop
+      }
+    }
+    this.bookInfoDialog?.open()
   }
 }

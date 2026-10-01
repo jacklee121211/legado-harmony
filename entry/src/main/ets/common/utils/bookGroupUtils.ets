@@ -107,7 +107,9 @@ class bookGroupUtils{
 
   //更新分组部分数据
   async updatePartialGroup(data:BookGroups){
-    BookGroupsDao.updatePartialGroup(data)
+    // 2026-10-01 必须 await：DAO 内是 async 更新，裸调不等待 ⇒ 调用方（分组封面弹窗
+    // applyGroupCover）紧跟着广播刷新信号时，UPDATE 可能尚未提交，重查读到旧值。
+    await BookGroupsDao.updatePartialGroup(data)
   }
 }
 let bookGroupUtil = new bookGroupUtils();

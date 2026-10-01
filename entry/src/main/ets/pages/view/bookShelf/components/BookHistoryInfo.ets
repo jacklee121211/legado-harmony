@@ -1,3 +1,5 @@
+import { resolveCoverSource } from "../../../../../common/utils/CoverSource"
+
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
@@ -52,7 +54,7 @@ export default struct BookHistoryInfo {
         space: 20
       }) {
         Stack() {
-          Image(this.book.coverUrl ?? '')
+          Image(resolveCoverSource(this.book.customCoverUrl ?? '') ?? (this.book.coverUrl ?? ''))
             .draggable(false)
             .alt($r('app.media.icon_book_default_cover_one'))
             .width(60)

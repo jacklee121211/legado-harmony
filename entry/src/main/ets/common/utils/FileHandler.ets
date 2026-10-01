@@ -69,7 +69,7 @@ export class FileHandler {
         bookName: file.name,
         bookUrl: dstPath,
         author: '暂无',
-        bookGroup: 4,
+        bookGroup: 3,  // v3.21：导入默认「未分组」组（3）——用户心智：未归组即未分组（原 4=本地）
         latestChapterTime: 0,
         totalChapterNum: 0,
         durChapterIndex: 0,
@@ -178,7 +178,7 @@ export class FileHandler {
           bookName: '默认协议.txt',
           bookUrl: dstPath,
           author: '暂无',
-          bookGroup: 4,
+          bookGroup: 3,  // v3.21：导入默认「未分组」组（3）——用户心智：未归组即未分组（原 4=本地）
           latestChapterTime: 0,
           totalChapterNum: 0,
           durChapterIndex: 0,

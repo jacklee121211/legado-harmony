@@ -213,7 +213,12 @@ export default struct BookContent {
           // 所以那边一直正常 —— 以它为准，把变化特征并进键值：
           //   · isTop：置顶/取消置顶 ⇒ 角标与弹窗字样立即同步（重建就一条，开销可忽略）；
           //   · durChapterTime：读书回来"读到第X章"文案同理会停留旧值，一并修掉。
+          //   · customCoverUrl（2026-10-01 修"换封面必须重启才生效"）：封面样式弹窗保存后
+          //     广播 BOOK_IS_BOOK_REFRESHING ⇒ BookContent 重查数据库，但键值若不含封面
+          //     字段，LazyForEach 对键值相同的项**复用旧组件、不重绑数据** ⇒ 封面停在旧值。
+          //     与 CoverStyleDialog 的广播是同一条链的两半，缺一不可。
           const flag: string = (item.isTop ? 'T' : 'F') + (item.durChapterTime ?? 0)
+            + (item.customCoverUrl ?? '')
           return item.id !== undefined ? 'b' + item.id + flag
             : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl + flag
               : 'n' + item.bookName + '#' + index)
