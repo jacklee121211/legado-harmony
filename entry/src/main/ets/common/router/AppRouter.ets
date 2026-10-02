@@ -1,6 +1,7 @@
 import { Books } from '../../database/entities/Books';
 import { router } from '@kit.ArkUI';
 import { LongTakeFlightData } from '../utils/LongTakeBook';
+import { LongTakeTransitionParam } from '../ezlt';
 
 /**
  * 路由门面（2026-09-21 起，为「全量迁 Navigation」铺路）。
@@ -160,12 +161,19 @@ export interface ReaderRouteParam {
   /** 「我的 → 书签」回跳：书签的页首块节点号 */
   bmNode?: number;
   /**
-   * 一镜到底飞行数据（2026-09-23）。
+   * 一镜到底飞行数据（2026-09-23，**自研方案已退役**——2026-10-02 迁移官方库后不再置位，
+   * 字段保留仅为兼容历史引用）。
    * 仅书架点击封面时由 `LongTakeFlightData.capture()` 生成并携带；
    * 详情页 / 快捷方式 / 书签回跳**不传** ⇒ `Index.ets` 的转场 delegate 据此分流：
    * 有 = 演一镜到底，无 = 保持 `T_READER`（EXPLODE）内置转场、行为与从前完全一致。
    */
   longTake?: LongTakeFlightData;
+  /**
+   * 一镜到底官方库参数（2026-10-02 迁移 @hmanimations/ezcustomtransition）。
+   * 书架点击封面时由 `ezCustomTransition.generateLongTakeParam()` 生成并携带；
+   * 详情页 / 快捷方式 / 书签回跳不传 ⇒ 阅读页走普通分支。
+   */
+  longTakeTransitionParam?: LongTakeTransitionParam;
 }
 
 /**

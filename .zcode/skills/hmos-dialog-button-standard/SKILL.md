@@ -21,7 +21,8 @@ description: 本项目（legado-harmony 鸿蒙阅读器）弹窗与按钮统一�
 10. **数据变更必须广播 AppStorage**：书 → `BOOK_IS_BOOK_REFRESHING` 自增，分组 → `BOOK_IS_BOOK_GROUPS_REFRESHING` 自增；LazyForEach/ForEach 键值必须并入影响显示的新字段。
 11. **广播必须发生在 DB 提交之后**：DAO 写库路径里裸调 async（不 await）= 提前 resolve = 重查读到旧值（案例：BooksDao.insert 更新分支、bookGroupUtils.updatePartialGroup，2026-10-01）。
 12. **弹窗内开二级全屏用 CustomDialog，禁用 bindContentCover**（页面级模态盖不过弹窗，案例：加入书单→新建书单"点击没用"→ `NewBookShelfDialog`）；`default://` 封面协议解析全工程只走 `CoverSource`，禁止手写 substring。
-13. **自定义 Navigation 转场 vs 快速开合**：pop 分支先同步把进场拉到终态再起飞；点击侧 ltArm 冷却闸（未释放退普通转场）。⚠️ 看门狗/交互闸方案已证伪回退（时间戳无代际隔离 → 看门狗连环误杀正常转场 → 白屏卡死）。**根治 = 迁移官方库 @hmanimations/ezcustomtransition**（skill: hmos-arkui-longtake-transition）。
+13. **一镜到底 = 受控 fork（2026-10-02 落地）**：官方库 @hmanimations/ezcustomtransition v1.3.0 已 vendor 至 `common/ezlt/`（15 文件），引用一律 `from '../common/ezlt'`（桶出口为**小写 index.ets**——目录导入按小写解析，大写会触发 TS 大小写冲突告警）。契约层（打断闸/手势返回/session 状态机）保持官方原样；动画编排已按本工程需求改造：进场 620ms/返回 720ms、封面绕左缘 3D 翻折（session.coverAngle 0→90 掀开 / 90→0 盖回）、快照淡出与阅读器浮现延后。自研 lt* 机制（Index 飞行分支/ltDelegate）已退役保留。⚠️ 历史教训：自研编排在"快速开合"下三种框架层竞态（转场丢弃/pop 不完成/看门狗误杀），勿回退。
+14. **跨组件 contentBuilder 回调里禁止直接实例化组件**：箭头闭包里的 `ReaderPage3({...})` 会被编译成普通函数调用（结构体没 new）⇒ 真机必崩 `TypeError: class constructor cannot called without 'new'`。正确写法：组件实例化放在父组件的 **@Builder 方法**里，箭头回调只调 `this.xxxBuilder(args)`（官方示例同款）。
 
 ## 参考实现（照抄级别）
 

@@ -325,6 +325,13 @@ export default class UiMotion {
    */
   static readonly LONGTAKE_ENABLED: boolean = true
 
+  /**
+   * 取证日志（TAG = `EZLT`）：打印几何与进/出动画的关键量 + **onFinish 时间戳**
+   * （时长证据只能看时间戳 —— 转场开始瞬间读 JS 状态变量永远读到终值，见下方 LT_PROBE 注释）。
+   * 排查完置 false（零日志）。
+   */
+  static readonly LT_BOOK_LOG: boolean = true
+
   /** 进场总时长（ms）。v3.7：560→620（用户"加点时长"——更从容的一镜到底） */
   static readonly LT_ENTER_DUR: number = 620
   /**
@@ -336,9 +343,63 @@ export default class UiMotion {
   static readonly LT_POP_DUR: number = 720
 
   /** 封面开始掀开的时刻（ms）：早掀 —— 透视下投影渐窄，内容页从右侧渐进露出 */
-  static readonly LT_FLIP_DELAY: number = 80
-  /** 封面掀开时长（ms）：LT_FLIP_DELAY + LT_FLIP_DUR = LT_ENTER_DUR（同时到位） */
+  static readonly LT_FLIP_DELAY: number = 120
+  /**
+   * 封面掀开/合上**单段时长**（ms）。
+   * ⚠️ 2026-10-03 起**新效果层不再读它**：进场的翻折窗口 = `[LT_FLIP_DELAY, LT_ENTER_DUR]`，
+   * 返回 = 该窗口的时间镜像（见 `LongTakeSession.doBackAnimation`），这样"返回 = 倒放"自动成立。
+   * 保留仅供已退役的旧自研分支编译使用。
+   */
   static readonly LT_FLIP_DUR: number = 480
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 「起手 / 收手」（2026-10-02，用户："起飞的太突兀了，没有那种点的那本书
+  //   真的飞起来展开的感觉"）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 现象：第一帧就是"平放的书"，下一帧已经在飞 —— 缺少"被拿起来"的起势。
+  // 做法：进场最前面 `LT_LIFT_DUR` 内，先给书一个**小幅抬起 + 微放大 + 影子分离 +
+  //   封面微掀**（四者同段，之后一直保持"在手里"的姿态再飞）；返回末段收回，
+  //   落位瞬间即平放。二者都不改变起点/落点几何（纯增量姿态），
+  //   所以"从点击的那本书位置起飞 / 落回原位"不受影响。
+  /** 起手（收手）时长（ms） */
+  static readonly LT_LIFT_DUR: number = 200
+  /** 起手时的额外放大倍率（抬起来的书看着略大一点；1 = 关闭起手放大） */
+  static readonly LT_LIFT_SCALE: number = 1.09
+  /** 起手时的额外抬升（vp，向上；0 = 关闭起手抬升） */
+  static readonly LT_LIFT_Y: number = 18
+  /** 贴地（平放）时的封面影子半径 / 纵向偏移（vp） */
+  static readonly LT_COVER_SHADOW_RADIUS: number = 10
+  static readonly LT_COVER_SHADOW_OFFSET_Y: number = 4
+  /** 拿起来时的封面影子半径 / 纵向偏移（vp）—— 离书架越远，影子越大越远 */
+  static readonly LT_LIFT_SHADOW_RADIUS: number = 34
+  static readonly LT_LIFT_SHADOW_OFFSET_Y: number = 22
+  /**
+   * 飞行封面位图的**底衬颜色**（不透明）。默认封面 SVG 是「白底 + 0.2~0.8 透明度的
+   * 红色渐变」，组件截图后透明部分会漏出下面的内容页/书架 ⇒ 用户看到"封面是半透明的"。
+   * 在同一个旋转平面内垫一层本颜色（默认白 = 封面画自己的底色）⇒ 封面实心。
+   */
+  static readonly LT_COVER_BACK_COLOR: ResourceColor = Color.White
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 「转场进行中」闸（2026-10-04，真机日志定位出的"纯黑阅读器"防护）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 现象（用户）：快速「打开→返回→立刻再打开」，第二次打开是**纯黑阅读器**
+  //   —— 顶部/底部栏都在，正文区全黑，返回即回书架。
+  // 真机日志（`Downloads/2.md`，20 次打开中 4 次命中）：
+  //   · 命中那几次的共同点 = 新阅读页是在**上一次返回动画还没跑完**时创建的
+  //     （例：33.901 pop-start，34.356 新 enter-start，落在 720ms 返回动画的第 455ms）；
+  //   · 该次打开的 **EWP 渲染实例从未创建**（`CreatePage ewp_dfx CreatePage` 缺号），
+  //     所以 XComponent 有 surface 却没人往里画 ⇒ 黑；下一次打开才补上（instanceId 顺延）。
+  //   · 同段日志还抓到我们自己的两个缺陷：35 次
+  //     `not support to finish custom animation more than once`（重复 finishTransition）、
+  //     5 次 `custom transition is invalid, do default animation`（注册被误删）。
+  // ⇒ 处置：① 修掉上面两个自身缺陷；② 点击侧加本闸：转场进行中点到书时**推迟**再推路由，
+  //   让新阅读页不在旧页面的转场窗口内创建（上一代自研实现也有同款"冷却闸"，见
+  //   `Index.ets` 的 ltArmReleasedAt 注释，那次是真机证伪链逼出来的）。
+  /** AppStorage 键：一镜到底转场是否进行中（由 LongTakeSession 维护） */
+  static readonly LT_FLAG_TRANSITIONING: string = 'ltTransitioning'
+  /** 点到书时若正在转场，推迟多久再 push（ms）——要盖过返回动画剩余时长 */
+  static readonly LT_CLICK_GUARD_MS: number = 280
   /**
    * 封面掀开角度（°），绕**左边缘/书脊**（centerX=0）的 y 轴旋转。
    * ✅ 方向已真机定案（2026-09-23 用户实测）：**负角 = 向外翻**（封面右缘朝读者掀来、
@@ -477,8 +538,18 @@ export default class UiMotion {
    * 与"封面先合上"配合后，整段是连续可读的一次动作。
    * 依据：本工程已用同名曲线（`TABS_ANIM_CURVE`，见本文件 :246），且用户对参考工程
    * `xiaowei` 的偏好就是它（`Index.ets` :420 注释）。
+   * ── 2026-10-03 修正（用户："关闭回落效果没有打开的时候好，你对比一下参数"）──────
+   * 旧值 `Curve.FastOutSlowIn` = CubicBezier(0.4,0,0.2,1)（官方枚举说明：**标准曲线**）
+   * ——起步就是快的；而进场主曲线是 `Curve.EaseInOut` = CubicBezier(0.42,0,0.58,1)
+   * （官方原文：「动画以**低速开始和结束**」）。
+   * ⇒ 同一个动作、两个起步手感：返回一开头被"拽"一下，观感不如进场。
+   * 现在返回与进场**同曲线**（EaseInOut），并且返回的翻折窗口取进场窗口的**时间镜像**
+   * `[LT_POP_DUR - LT_ENTER_DUR, LT_POP_DUR - LT_FLIP_DELAY]`、起手取 `[0, LT_LIFT_DUR]`
+   * 的镜像 ⇒ "返回 = 进场的倒放"不再只是口号。
+   * 证据：官方文档 documentId `API参考/ArkUI_方舟UI框架/ArkTS组件/公共定义/枚举说明/ts-appendix-enums`
+   * （EaseInOut 4 = CubicBezier(0.42,0,0.58,1)；FastOutSlowIn 5 = CubicBezier(0.4,0,0.2,1)）。
    */
-  static readonly LT_POP_SHRINK_CURVE: Curve = Curve.FastOutSlowIn
+  static readonly LT_POP_SHRINK_CURVE: Curve = Curve.EaseInOut
   /**
    * 封面 3D 翻折的**观看距离**（`rotate({ y:1, centerX:0, angle, perspective })`，单位 px）。
    *
@@ -495,6 +566,14 @@ export default class UiMotion {
    *   · 结论：这个参数只有"够近"和"不够近"的区别，宁近勿远。v3 架构下封面投影即使
    *     大幅越出书脸盒，越出部分压在书架快照/书体块上，都是合法画面，无暴露风险。
    * 调参：想再凶一点没法比 0 更近（0 即自算极值）；想收敛取负值（-1500 起步，-3000 已证太温）。
+   *
+   * ── 2026-10-02（官方库受控 fork）回归与定案：**写死数值必须大于封面宽px** ─────────
+   * fork 曾把本值写死成 `perspective: 1200`。SDK 明确 `perspective` **单位是 px**、
+   * 含义是"相机到 z=0 平面的距离"（`component/common.d.ts:4857-4879`），而封面自由边的
+   * 最大 z 位移 = 封面宽(px)：**全屏时 = 1320px > 1200px** ⇒ 翻折末段自由边穿过相机平面、
+   * 投影奇异（用户 2026-10-02 反馈"只能有一点效果…总是效果很差"的数学根因）。
+   * ⇒ 效果层统一读本值（当前 **0 = 系统自算**，即上面截图定案的那档）。
+   *   若要写死，必须 **≥ 3× 封面宽px**（本机 1320px ⇒ -4000 起步）。
    */
   static readonly LT_COVER_PERSPECTIVE: number = 0
   /**
