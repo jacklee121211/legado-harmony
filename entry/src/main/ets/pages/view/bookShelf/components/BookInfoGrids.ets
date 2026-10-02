@@ -3,6 +3,7 @@ import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import AppRouter, { RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
+import { ezCustomTransition } from '../../../../common/ezlt'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
 import booksDao from '../../../../database/dao/BooksDao'
 import CommonConstants from '../../../../common/constants/CommonConstants'
@@ -10,7 +11,6 @@ import FontConstants from '../../../../common/constants/FontConstants'
 import clickUtil from '../../../../common/utils/ClickUtils'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
-import { LongTakeFlightData } from '../../../../common/utils/LongTakeBook'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 
 @Component
@@ -59,6 +59,21 @@ export default struct BookInfoGrids{
    *     ⇒ 即使 `.animation()` 挂着也**一帧动画都不会产生**，等于"直接渲染"。
    *   · 返回 `>= 0`（波次进行中）⇒ 先停在初态，等够延迟再入场 ⇒ 错峰"陆续出现"。
    */
+  /**
+   * 一镜到底「转场进行中」闸：转场没收尾就先等，收尾后再推阅读页。
+   * 依据见 `onClick` 里那段注释（真机日志定位的"纯黑阅读器"）。
+   * `tries` 上限 8 ≈ 2.2s，防止异常情况下永远不跳。
+   */
+  private openReaderWhenIdle(rp: ReaderRouteParam, tries: number): void {
+    if (AppStorage.get<boolean>(UiMotion.LT_FLAG_TRANSITIONING) === true && tries < 8) {
+      setTimeout((): void => {
+        this.openReaderWhenIdle(rp, tries + 1)
+      }, UiMotion.LT_CLICK_GUARD_MS)
+      return
+    }
+    AppRouter.push(RouteName.READER, rp)
+  }
+
   private applyEntrance(): void {
     if (this.enterTimer !== -1) {
       clearTimeout(this.enterTimer)
@@ -222,22 +237,19 @@ export default struct BookInfoGrids{
         //   圆角取 10vp：宫格封面图本身无圆角，圆角是外层 Stack 的 borderRadius(10)。
         //   longtakeId 为空（搜索浮窗复用）⇒ 不参与一镜到底，走普通转场。
         const rp: ReaderRouteParam = { bookData: this.book };
-        // ⚠️ 双重冷却闸（与 BookInfos 同款）：ltArm 未释放 / arm released 后 400ms 内
-        // 点击 ⇒ 降级普通转场（危险窗口实测 54~84ms，框架层打断缺陷见 Index.ets 注释）
-        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== ''
-          && AppStorage.get<boolean>('ltArm') !== true
-          && Date.now() - (AppStorage.get<number>('ltArmReleasedAt') ?? 0) > 400) {
-          const ui = this.getUIContext()
-          const f = LongTakeFlightData.capture(ui, this.longtakeId,
-            ui.vp2px(10), this.book.coverUrl ?? '', this.book.bookName)
-          if (f !== null) {
-            rp.longTake = f
-            AppStorage.setOrCreate('ltArm', true)
+        // 一镜到底官方库（2026-10-02 迁移，与 BookInfos 同款；圆角 10 = 宫格封面圆角）
+        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+          const longTakeTransitionParam = ezCustomTransition.generateLongTakeParam(
+            this.getUIContext(), this.longtakeId, 10)
+          if (longTakeTransitionParam) {
+            rp.longTakeTransitionParam = longTakeTransitionParam
           }
         }
         // 点书进阅读器的同时通知宿主（搜索浮窗借机关掉自己，2026-09-24 需求第 4 项）
         this.onBookOpen()
-        AppRouter.push(RouteName.READER, rp)
+        // ── 「转场进行中」闸（2026-10-04，同 BookInfos）：转场收尾后再推路由，
+        //    避免新阅读页在旧页面的转场窗口内创建（会导致正文区纯黑）
+        this.openReaderWhenIdle(rp, 0)
       })
     })
     .gesture(

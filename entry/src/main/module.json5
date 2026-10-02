@@ -4,6 +4,9 @@
     "type": "entry",
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
+    // AbilityStage（2026-10-02 新建）：接收配置变更，一镜到底官方库
+    // ezCustomTransition.onConfigurationChanged() 依赖（见 entryability/MyAbilityStage.ets）
+    "srcEntry": "./ets/entryability/MyAbilityStage.ets",
     "requestPermissions":[
       {
         "name" : "ohos.permission.INTERNET",

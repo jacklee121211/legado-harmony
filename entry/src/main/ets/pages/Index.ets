@@ -1,4 +1,5 @@
 import { showMessage } from '../componets/common/promptShow'
+import { ezCustomTransition, LongTakeSession, LongTakeTransitionDelegate } from '../common/ezlt'
 import { hostContext } from '../common/utils/HostContextUtil'
 import ReadShow from '../componets/common/ReadShow'
 import { NavItem } from '../componets/dataList/type'
@@ -84,6 +85,15 @@ struct Main {
   //  中期方案：迁移官方库 @hmanimations/ezcustomtransition（打断/手势/生命周期已成熟）。）
   /** 本次 READER 是否在演一镜到底（delegate 依据路由参数最终裁决） */
   @State ltActive: boolean = false
+  /**
+   * Navigation 交互闸（2026-10-02 官方库迁移 Step 4）：一镜到底转场期间禁交互，
+   * 防返回打断转场（自研方案三轮卡死的根因）。由 customNavContentTransition
+   * 回调的 onTransitionStart/End 切换。skill: hmos-arkui-longtake-transition。
+   */
+  @State ltNavEnabled: boolean = true
+  /** 阅读器一镜到底会话（官方库迁移 2026-10-02）。@State：Delegate 的 longTakeSession
+   *  是 @ObjectLink，只接受父组件状态字段初始化 */
+  @State readerLtSession: LongTakeSession = new LongTakeSession()
   /** 飞行层动画值：缩放（锚点取内容 (0,0)） */
   @State ltScale: number = 1
   /**
@@ -563,6 +573,23 @@ struct Main {
     .id('main')
     }
     .hideTitleBar(true)
+    // ── 一镜到底官方库迁移（2026-10-02，@hmanimations/ezcustomtransition）────────
+    // skill: hmos-arkui-longtake-transition Step 4。转场回调交由官方库接管
+    //（打断/手势/生命周期由库内 session 状态机管理），并按官方要求在转场期间
+    // 禁用 Navigation 交互（防打断竞态——自研方案三轮卡死的根因）。
+    // 旧自研 delegate（ltDelegate/ltArm 飞行分支/overlay/backdrop）保留代码但不再臂活：
+    // 点击侧已改发 longTakeTransitionParam，不再置 ltArm ⇒ ltDelegate 永不触发。
+    .customNavContentTransition((from: NavContentInfo, to: NavContentInfo, operation: NavigationOperation) => {
+      return ezCustomTransition.customNavContentTransition(from, to, operation, {
+        onTransitionStart: (): void => {
+          this.ltNavEnabled = false
+        },
+        onTransitionEnd: (): void => {
+          this.ltNavEnabled = true
+        }
+      })
+    })
+    .enabled(this.ltNavEnabled)
     // ★ 书架 NavBar 可见性变化 ⇒ 记录书架层可见性（保留键位）。
     //   ⚠️ 2026-09-24 屏闪修复：这里**不能再调 `NightMode.sync()`**。
     //   真机日志（2026-09-23 日志2）实证：push 阅读器时 `NavBar Visible State Change
@@ -981,6 +1008,17 @@ struct Main {
    * 「入栈 / 返回」一起改成 `AppRouter.push()` / `AppRouter.pop()`
    * （**必须成对改**：走 pathStack 进来的页面若调 `router.back()`，会把整个 Index 弹掉、直接回桌面）。
    */
+  /**
+   * 阅读页内容（官方一镜到底库 contentBuilder 的实体，2026-10-02）。
+   * ⚠️ 必须是 @Builder 方法：Delegate 的 contentBuilder 回调箭头里只调它（`this.` 前缀），
+   * 组件实例化必须发生在 @Builder 上下文里——直接写进箭头闭包会被编译成普通函数
+   * 调用，运行即崩（见 READER 分支处的崩溃注释）。
+   */
+  @Builder
+  readerLtContent(rp: ReaderRouteParam) {
+    ReaderPage3({ initParam: rp })
+  }
+
   @Builder
   appRoutes(name: string, param: object) {
     if (name === RouteName.BOOK_DETAIL) {
@@ -1001,6 +1039,9 @@ struct Main {
       //   置位 ⇒ 建成「飞行分支」（挂 customTransition，演一镜到底）；
       //   未置位（详情页 / 快捷方式 / 书签回跳）⇒ 走 else 普通分支，EXPLODE 原样保留。
       // 几何模型见 `LongTakeBook.ets` 头注释；编排参数见 `UiMotion.LT_*` 令牌。
+      // ⚠️ 2026-10-02 官方库迁移后本飞行分支**已退役**：点击侧不再置 ltArm（改发
+      // longTakeTransitionParam，走 else 普通分支 + LongTakeTransitionDelegate）。
+      // 分支代码整块保留 = 回退路径（点击侧恢复置 ltArm 即回到自研方案）。
       if (this.ltArm) {
         // 五轮结构（2026-09-23）—— z 序从下到上：
         //   [纯黑兜底] → [书架定格快照] → [包络：[内容页=阅读器裁到书脸] + [封面] ]
@@ -1230,11 +1271,52 @@ struct Main {
           }, 80)
         })
       } else {
+        // ── 2026-10-02 官方库迁移：本分支同时服务两类入口 ────────────────────────
+        // · 书架点击（rp.longTakeTransitionParam 有值）⇒ LongTakeTransitionDelegate
+        //   包裹内容，一镜到底动效由官方库 session 状态机管理（打断/手势/生命周期内建）；
+        // · 详情页/快捷方式/书签回跳（无值）⇒ 原样 ReaderPage3 + EXPLODE，行为不变。
+        // NavDestination 背景按官方背景色规则交给 session 动态管理（best-practices
+        // 「背景色处理规则」），子组件实色由 ReaderPage3 自持。
         NavDestination() {
-          ReaderPage3({ initParam: param as ReaderRouteParam })
+          if ((param as ReaderRouteParam).longTakeTransitionParam !== undefined) {
+            LongTakeTransitionDelegate({
+              longTakeSession: this.readerLtSession,
+              // ⚠️ 箭头函数里只能调 @Builder 方法（官方示例 `this.ContentBuilder()` 同款）——
+              // 组件实例化直接写进箭头闭包会被编译成普通函数调用（结构体没 new），
+              // 真机必崩 TypeError "class constructor cannot called without 'new'"
+              //（2026-10-02 03:10 崩溃报告，Kill Reason: Js Error）。
+              contentBuilder: (): void => {
+                this.readerLtContent(param as ReaderRouteParam)
+              }
+            })
+          } else {
+            ReaderPage3({ initParam: param as ReaderRouteParam })
+          }
         }
         .hideTitleBar(true)
-        .systemTransition(UiMotion.pageTransition(UiMotion.T_READER))
+        // 背景恒透明（2026-10-02 三层书模型）：飞行/返回期间由 Delegate 的书体块+封面
+        // 自绘全部画面；落定后真阅读器自持底色 —— NavDestination 不设任何底色
+        .backgroundColor(Color.Transparent)
+        // Step 6：尺寸变化（旋转/分屏）时同步 session，动画计算基准才不基于旧尺寸
+        .onSizeChange((_old: SizeOptions, nv: SizeOptions) => {
+          if ((param as ReaderRouteParam).longTakeTransitionParam !== undefined) {
+            this.readerLtSession.setNewSize(nv)
+          }
+        })
+        // ★★ 2026-10-02 关键修复：一镜到底分支**必须关掉系统转场（NONE）** ★★
+        //   根因（用户 2026-10-02 反馈 2 条现象一次解释）：
+        //   ·「封面一开始半透明、放大到一半才不透明」= 系统 EXPLODE 的**整页淡入**在跑；
+        //   ·「返回屏幕闪一下、有个缩放但太快看不清」= 系统 EXPLODE 的**整页缩放淡出**在跑，
+        //     它比我们的 720ms 短得多，且结束得早（真机日志 `ReaderPage3 transition finish`
+        //     出现在 push 后 385ms / pop 后 586ms，早于我们自己的 enter/pop-end）。
+        //   ⇒ NavDestination 的 `systemTransition` 与 Navigation 的 `customNavContentTransition`
+        //     **会同时生效**，两层动画叠加 = 半透明 + 闪 + 太快。
+        //   SDK 依据：`NavigationSystemTransitionType.NONE` = "No system transition animation"
+        //   （`nav_destination.d.ts:122-131`，@since 14）。
+        //   注意：只对**一镜到底分支**关；详情页/快捷方式/书签回跳仍走 EXPLODE，零回归。
+        .systemTransition((param as ReaderRouteParam).longTakeTransitionParam !== undefined
+          ? NavigationSystemTransitionType.NONE
+          : UiMotion.pageTransition(UiMotion.T_READER))
         // ★ 配色还原·主还原点（普通分支同飞行分支，见上方 onWillDisappear 注释）：
         //   返回转场开始前还原 ⇒ EXPLODE 动画全程书架已是正确深浅色，落位帧零重涂。
         .onWillDisappear(() => {
@@ -1247,6 +1329,19 @@ struct Main {
           setTimeout((): void => {
             this.releaseReaderImmersive()
           }, 80)
+        })
+        // Step 2：解析书架点击带来的 LongTakeTransitionParam 并初始化 session
+        //（pop 回调 = 返回逻辑；contentSizeUsePercent = ReaderPage3 内容区为 100% 宽高）
+        .onReady((navDestContext: NavDestinationContext) => {
+          const rp: ReaderRouteParam = param as ReaderRouteParam
+          if (rp.longTakeTransitionParam !== undefined) {
+            this.readerLtSession.init(navDestContext, rp.longTakeTransitionParam, {
+              pop: (): void => {
+                this.pageStack.pop()
+              },
+              contentSizeUsePercent: true
+            })
+          }
         })
       }
     } else if (name === RouteName.NONE) {

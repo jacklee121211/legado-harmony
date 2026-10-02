@@ -4,6 +4,7 @@ import window from '@ohos.window';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AbilityConstant, Configuration, Want, common } from '@kit.AbilityKit';
 import display from '@ohos.display';
+import { ezCustomTransition } from '../common/ezlt';
 import DbUtil from '../common/utils/DbUtil';
 import DataBase from '../database'
 import { webview } from '@kit.ArkWeb';
@@ -148,6 +149,9 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('BOOK_IS_BOOK_GROUPS_REFRESHING', t)
     })
     WindowAbility.getInstance().setWindowStage(windowStage);
+    // 一镜到底官方库初始化（2026-10-02 迁移 @hmanimations/ezcustomtransition，
+    // skill: hmos-arkui-longtake-transition Step 2 —— 缺它转场 API 全部不可用）
+    ezCustomTransition.init(windowStage);
     this.initWindowProcess(windowStage);
     // 获取本地文件存储路径
     const pathDir = this.context.filesDir;

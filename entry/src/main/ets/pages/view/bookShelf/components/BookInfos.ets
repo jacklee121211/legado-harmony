@@ -4,12 +4,12 @@ import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
+import { ezCustomTransition } from '../../../../common/ezlt'
 import booksDao from '../../../../database/dao/BooksDao'
 import FontConstants from '../../../../common/constants/FontConstants'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import AppRouter, { RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
-import { LongTakeFlightData } from '../../../../common/utils/LongTakeBook'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 
 @Component
@@ -59,6 +59,21 @@ export default struct BookInfos {
    * 返回 `-1` ⇒ 同步置 true（首次 build 前就已是终态 ⇒ 零动画帧，等于直接渲染）；
    * 返回 `>= 0` ⇒ 先停在初态，等够延迟再入场。
    */
+  /**
+   * 一镜到底「转场进行中」闸：转场没收尾就先等，收尾后再推阅读页。
+   * 依据见 `onClick` 里那段注释（真机日志定位的"纯黑阅读器"）。
+   * `tries` 上限 8 ≈ 2.2s，防止异常情况下永远不跳。
+   */
+  private openReaderWhenIdle(rp: ReaderRouteParam, tries: number): void {
+    if (AppStorage.get<boolean>(UiMotion.LT_FLAG_TRANSITIONING) === true && tries < 8) {
+      setTimeout((): void => {
+        this.openReaderWhenIdle(rp, tries + 1)
+      }, UiMotion.LT_CLICK_GUARD_MS)
+      return
+    }
+    AppRouter.push(RouteName.READER, rp)
+  }
+
   private applyEntrance(): void {
     if (this.enterTimer !== -1) {
       clearTimeout(this.enterTimer)
@@ -232,24 +247,25 @@ export default struct BookInfos {
       //   任何一步失败（id 失效/量不到）都自然退回普通转场，不阻塞点书。
       // 参数类型必须显式声明（ArkTS `arkts-no-untyped-obj-literals` 禁止无类型字面量）。
       const rp: ReaderRouteParam = { bookData: this.book };
-      // ⚠️ 双重冷却闸（2026-10-01/02，修快速开合的错位与卡死）：
-      // ① ltArm 未释放（上一轮飞行含 80ms 清理尾窗）⇒ 退普通转场；
-      // ② arm released 后 400ms 内（真机日志实测危险点击全部落在释放后 54~84ms——
-      //    该窗口内点击会触发框架层缺陷：自定义转场被整体丢弃、NavDestination 残留
-      //    disabled ⇒ "两个书架页"+ 卡死，2026-10-02 02:37 日志实证）⇒ 同样降级。
-      // 代价：极速连点时偶发一次无动画；可回退：删掉 && AppStorage... 一个条件。
-      if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== ''
-        && AppStorage.get<boolean>('ltArm') !== true
-        && Date.now() - (AppStorage.get<number>('ltArmReleasedAt') ?? 0) > 400) {
-        const ui = this.getUIContext()
-        const f = LongTakeFlightData.capture(ui, this.longtakeId,
-          ui.vp2px(4), this.book.coverUrl ?? '', this.book.bookName)
-        if (f !== null) {
-          rp.longTake = f
-          AppStorage.setOrCreate('ltArm', true)
+      // 一镜到底官方库（2026-10-02 迁移 @hmanimations/ezcustomtransition，skill:
+      // hmos-arkui-longtake-transition Step 5）：点击时由 generateLongTakeParam
+      // 按封面组件 id 拍几何并生成转场参数，随路由带给阅读页；
+      // 失败（id 失效等）返回 undefined ⇒ 阅读页走普通分支，不阻塞点书。
+      // 打断/手势/生命周期由官方库 session 管理（自研 lt* 机制已退役）。
+      if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+        const longTakeTransitionParam = ezCustomTransition.generateLongTakeParam(
+          this.getUIContext(), this.longtakeId, 4)
+        if (longTakeTransitionParam) {
+          rp.longTakeTransitionParam = longTakeTransitionParam
         }
       }
-      AppRouter.push(RouteName.READER, rp)
+      // ── 「转场进行中」闸（2026-10-04 真机定位的"纯黑阅读器"防护）─────────────
+      // 现象：快速「打开→返回→立刻再打开」时，第二次打开的正文区全黑（顶/底栏都在）。
+      // 真机日志：命中那几次，新阅读页都是在**上一次返回动画还没跑完**时创建的，且该次
+      // 打开的阅读引擎渲染实例（EWP `CreatePage`）**从未创建** ⇒ XComponent 有 surface
+      // 却没人画 ⇒ 黑。故：转场进行中点书 ⇒ **等转场收尾后再推路由**。
+      // （上一代自研实现也有同款冷却闸，见 Index.ets 的 ltArmReleasedAt 注释与证据链。）
+      this.openReaderWhenIdle(rp, 0)
 
       // clickUtil.preventClick(()=>{
       //   router.pushUrl({
