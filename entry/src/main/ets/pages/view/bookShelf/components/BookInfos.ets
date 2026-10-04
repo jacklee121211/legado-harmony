@@ -1,4 +1,4 @@
-import { resolveCoverSource } from "../../../../common/utils/CoverSource"
+import { resolveCoverSource, coverCorners } from "../../../../common/utils/CoverSource"
 
 import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
@@ -200,9 +200,10 @@ export default struct BookInfos {
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
               // 视觉升级（2026-09-21）：给封面加圆角 + 柔和投影。
-              // 纯**增量**属性（没动原有尺寸/布局/手势）⇒ 零回归风险，且不涉及任何状态。
+              // 2026-10-04：圆角从均匀 4 改为 coverCorners(60) —— 与内置默认封面 SVG
+              // 的书脊式不对称圆角（90 宽画布上左 4 / 右 8）等比对齐，自定义封面不再直角。
               // `shadow` 是通用属性（CommonMethod），会跟随 `borderRadius` 的圆角轮廓。
-              .borderRadius(4)
+              .borderRadius(coverCorners(60))
               .shadow({ radius: 10, color: 'rgba(0, 0, 0, 0.20)', offsetX: 0, offsetY: 4 })
               .width(60)
               .height(80)

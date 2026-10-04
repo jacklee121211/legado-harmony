@@ -1,5 +1,5 @@
 import CommonConstants from '../../common/constants/CommonConstants'
-import { COVER_DEFAULT_FILES, defaultCoverIndex } from '../../common/utils/CoverSource'
+import { COVER_DEFAULT_FILES, defaultCoverIndex, coverCorners } from '../../common/utils/CoverSource'
 
 @Component
 export default struct BookOverlay {
@@ -57,6 +57,8 @@ export default struct BookOverlay {
         Image(this.coverSrc())
           .draggable(false)
           .alt($r('app.media.icon_book_default_cover_one'))
+          // 2026-10-04：补书脊式圆角（同内置封面 SVG，90 宽画布左 4 / 右 8 等比）。
+          .borderRadius(coverCorners(CommonConstants.NOVEL_IMG_WIDTH))
           .width(CommonConstants.NOVEL_IMG_WIDTH)
           .height(CommonConstants.NOVEL_IMG_HEIGHT)
       }

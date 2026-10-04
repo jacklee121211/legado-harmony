@@ -254,13 +254,19 @@ struct Main {
     if (action !== 'listen' && action !== 'read') {
       return;
     }
-    // ── 等启动就绪标记 ───────────────────────────────────────────────────
+    // ── 等启动就绪：冷启动真正的门槛是 Navigation 栈已 attach ────────────
     // 历史原因：欢迎页 `onPageHide()` 会 `router.clear()`，与本页 `onPageShow` 抢时序
     //   ⇒ 真机日志实测 `clear router stack` 紧跟 `pushUrl ReaderPage3`，阅读页成了栈里
     //     唯一页面 ⇒ **返回直接回桌面**。当时的修法是等 `startupStackCleared`。
-    // 2026-09-23：欢迎页已删除（用户要求去掉启动页），**不再有任何 `router.clear()`**，
-    //   该标记现在由本页 `aboutToAppear()` 直接置位 ⇒ 这段等待逻辑保留但不再回退重试。
-    if (attempt === 0 && !(AppStorage.get<boolean>('startupStackCleared') ?? false)) {
+    // 2026-09-23：欢迎页已删除（用户要求去掉启动页），`startupStackCleared` 改由本页
+    //   `aboutToAppear()` 直接置位 —— 它只代表"没有 router.clear() 抢栈"，
+    //   **不代表路由门面可用**。
+    // 2026-10-04 冷启动快捷方式日志实证：onPageShow 立即消费 → `AppRouter.push` 跑在
+    //   `Navigation.onAppear`（`attach`）之前（失败 toast 36.268 挂载 早于 首帧 36.324）
+    //   ⇒ `stack===null`，push 恒 false ⇒ 弹「页面栈尚未就绪」。
+    // ⇒ 门槛改为「标记 && AppRouter.isReady()」双条件，且**每次重试都重新检查**
+    //   （旧代码只在 attempt===0 查一次，重试链实际不轮询）。200ms×25 上限 5s。
+    if (!(AppStorage.get<boolean>('startupStackCleared') ?? false) || !AppRouter.isReady()) {
       if (attempt < 25) {
         setTimeout(() => {
           this.consumeQuickAction(attempt + 1);

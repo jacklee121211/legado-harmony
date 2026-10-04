@@ -12,6 +12,7 @@ import clickUtil from '../../../../common/utils/ClickUtils'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
+import { resolveCoverSource, coverCorners } from '../../../../common/utils/CoverSource'
 
 @Component
 /**
@@ -175,9 +176,13 @@ export default struct BookInfoGrids{
               .backgroundColor('rgba(0, 0, 0, 0.45)')
               .zIndex(1)
           }
-          Image(this.book.coverUrl)
+          // 2026-10-04：接入 resolveCoverSource（customCoverUrl > coverUrl，见 CoverSource.ets
+          // 头注释契约）—— 此前宫格只读 coverUrl，自定义封面在宫格形态**根本不显示**；
+          // 同时补上与内置封面 SVG 同曲率的书脊式圆角（90 宽画布左 4 / 右 8 等比）。
+          Image(resolveCoverSource(this.book.customCoverUrl ?? '') ?? this.book.coverUrl)
             .draggable(false)
             .alt($r('app.media.icon_book_default_cover_one'))
+            .borderRadius(coverCorners(100))
             .width(100)
             .height(120)
         }

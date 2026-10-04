@@ -13,7 +13,7 @@ import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
-import { resolveCoverSource } from '../../../common/utils/CoverSource'
+import { resolveCoverSource, coverCorners } from '../../../common/utils/CoverSource'
 
 /**
  * 文件夹
@@ -242,9 +242,11 @@ export default struct BookFolder {
                 }
                 // 2026-10-01：default:// 协议必须经 resolveCoverSource 转 $rawfile；
                 // 未设置封面（null）时落内置默认封面 c1（用户："没修改过分组的显示默认封面"）
+                // 2026-10-04：补书脊式圆角（同内置封面 SVG，90 宽画布左 4 / 右 8 等比）。
                 Image(resolveCoverSource(item.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
                   .draggable(false)
                   .alt($r('app.media.icon_book_default_cover_one'))
+                  .borderRadius(coverCorners(88))
                   .width(88)
                   .height(120)
               }.alignContent(Alignment.BottomStart)
