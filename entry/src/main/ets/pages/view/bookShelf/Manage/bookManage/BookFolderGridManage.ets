@@ -3,6 +3,7 @@ import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
+import UiMotion from '../../../../../common/utils/UiMotion'
 
 /**
  * 文件夹宫格_管理页
@@ -51,17 +52,24 @@ export default struct BookFolderGridManage {
         .zIndex(2)
 
 
-        Row() {
-          Image($r('app.media.occlusion1')).draggable(false)
+        // 2026-10-05：同款"书页叠层 + 底条"装饰统一受 UiMotion.SHELF_COVER_STACK 控制
+        if (UiMotion.SHELF_COVER_STACK) {
+          Row() {
+            Image($r('app.media.occlusion1')).draggable(false)
+          }
+          .zIndex(1).width(95).height(110)
+          Row() {
+            Image($r('app.media.occlusion2')).draggable(false)
+          }
+          .zIndex(0).width(100).height(100)
         }
-        .zIndex(1).width(95).height(110)
-        Row() {
-          Image($r('app.media.occlusion2')).draggable(false)
-        }
-        .zIndex(0).width(100).height(100)
       }
       .alignContent(Alignment.BottomStart)
-      Row().width(100).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
+      // 2026-10-05：色条**保留**（独立开关，见 UiMotion.SHELF_COVER_BASE_BAR 注释）；
+      // 宽度与封面同宽（88）⇒ 修掉原来 100 宽导致的左右各 6vp 溢出。
+      if (UiMotion.SHELF_COVER_BASE_BAR) {
+        Row().width(88).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
+      }
       Text(this.group.groupName)
           .fontSize(15)
           .fontWeight(700)

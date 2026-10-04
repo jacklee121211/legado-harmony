@@ -91,6 +91,56 @@ class DbUtil {
     });
   }
   /**
+   * **事务**执行多条 SQL：全部成功才 `commit`，任一失败 `rollBack`（2026-10-05，书名级联改名用）。
+   *
+   * SDK 依据：`relationalStore.RdbStore.beginTransaction(): void`
+   * （`@ohos.data.relationalStore.d.ts:5351`，@since 9），同接口 `commit()` / `rollBack()`。
+   * 为什么需要它：改名要同时改 4 张表（books / bookmarks / readRecord / book_history），
+   * 中途失败会留下"半改名"的脏数据（进度、书签按书名作键 ⇒ 直接失联）。
+   * ⚠️ 事务里只用 `executeSql`；不要把 `query`/`insert` 等回调式 API 混进来打断事务边界。
+   */
+  runInTransaction(sqls: string[]): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const store: relationalStore.RdbStore | undefined = this.rdbStore
+      if (store === undefined) {
+        reject('rdbStore is undefined')
+        return
+      }
+      try {
+        store.beginTransaction()
+      } catch (e) {
+        reject(e)
+        return
+      }
+      const runNext = (i: number): void => {
+        if (i >= sqls.length) {
+          try {
+            store.commit()
+            Logger.debug(`[${CommonConstants.RDB_TAG}]`, `事务提交成功，共 ${sqls.length} 条`)
+            resolve()
+          } catch (e) {
+            reject(e)
+          }
+          return
+        }
+        store.executeSql(sqls[i])
+          .then(() => {
+            runNext(i + 1)
+          })
+          .catch((reason: string) => {
+            Logger.error(`[${CommonConstants.RDB_TAG}]`, `事务第 ${i + 1} 条失败，回滚`, JSON.stringify(reason))
+            try {
+              store.rollBack()
+            } catch (e) {
+              // 回滚本身失败：只记录，仍抛原始错误
+            }
+            reject(reason)
+          })
+      }
+      runNext(0)
+    })
+  }
+  /**
    * 获取数据表的所有列名
    * @param tableName 表名
    * @returns string[]

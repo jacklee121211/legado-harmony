@@ -7,6 +7,8 @@ import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../common/model/Theme'
 import { bundleManager } from '@kit.AbilityKit'
+// 版本兜底常量与更新日志同源（都由 `scripts/sync-version.ps1` 从 git 提交备注生成）
+import { APP_VERSION_FALLBACK } from './VersionLogData'
 
 // ── 关于我们（2026-09-30 回填，用户需求清单）────────────────────────────────
 // 基座（legado-harmony）的 aboutUsPage 为空壳参考：本页按喵阅现状全部重写。
@@ -26,12 +28,15 @@ export default struct AboutPage {
     // bundleManager.getBundleInfoForSelfSync：SDK @kit.AbilityKit → @ohos.bundle.bundleManager
     // （@since 10）；BundleFlag.GET_BUNDLE_INFO_DEFAULT 即含 versionName/versionCode。
     // 同步接口在 aboutToAppear 一次性读取即可。
+    // "检查更新"行与页脚显示的都是本字段，而它的权威源是 `AppScope/app.json5`
+    // ⇒ 与更新日志、与生成器同源（2026-10-05 起由 commit-msg 钩子同步）。
     try {
       const info = bundleManager.getBundleInfoForSelfSync(
         bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT)
       this.versionName = `V${info.versionName}`
     } catch (err) {
-      this.versionName = 'V2.0.0'
+      // 兜底也读生成常量（原来是硬编码 'V2.0.0'，会与真实版本脱节）
+      this.versionName = APP_VERSION_FALLBACK
     }
   }
 

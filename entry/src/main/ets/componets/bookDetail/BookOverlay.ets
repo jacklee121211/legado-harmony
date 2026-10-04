@@ -1,5 +1,6 @@
 import CommonConstants from '../../common/constants/CommonConstants'
 import { COVER_DEFAULT_FILES, defaultCoverIndex, coverCorners } from '../../common/utils/CoverSource'
+import UiMotion from '../../common/utils/UiMotion'
 
 @Component
 export default struct BookOverlay {
@@ -7,6 +8,12 @@ export default struct BookOverlay {
   @Prop isTop:boolean
   @Prop isShow:boolean = false
   @Prop coverType:number = 0
+  /**
+   * 是否绘制"书页叠层"装饰（封面后面两层 `occlusion*`）。
+   * 默认 true = 跟随全局开关 `UiMotion.SHELF_COVER_STACK`（2026-10-05 起默认 false ⇒ 不画）；
+   * 封面样式弹窗预览显式传 false（那里要求永远干净，见 coverInfoImageShow）。
+   */
+  @Prop showStack: boolean = true
 
   /**
    * 封面源解析（2026-10-01 重写，修两处真机事故，日志见 2.md）：
@@ -64,7 +71,7 @@ export default struct BookOverlay {
       }
       .zIndex(2)
       .alignContent(Alignment.BottomStart)
-      if (this.coverType !== 2){
+      if (UiMotion.SHELF_COVER_STACK && this.showStack && this.coverType !== 2) {
         Row(){
           Image($r('app.media.occlusion1')).draggable(false)
         }
