@@ -20,6 +20,7 @@ import { common } from '@kit.AbilityKit';
 import { ShelfColors } from '../../../../../common/utils/NightMode'
 import { resolveCoverSource } from '../../../../../common/utils/CoverSource'
 import CoverStyleDialog from './CoverStyleDialog'
+import RenameBookDialog from './RenameBookDialog'
 import MarkToolButton from '../../../../../componets/common/MarkToolButton'
 
 @CustomDialog
@@ -39,6 +40,14 @@ export default struct BookInfoDialogs{
    * —— @Consume 字段本身已随死代码一并删除，此类崩溃不可能再发生。
    */
   reopen: (() => void) | null = null
+  /**
+   * 改名完成回调（2026-10-05）：**由创建者**重查本书 + 广播 `BOOK_IS_BOOK_REFRESHING`。
+   * 语义与 `reopen` 不同 —— 改名后**不恢复本弹窗**（对象已改名，本弹窗的 @Prop 快照作废；
+   * 规范 §4.2「确认后父弹窗不恢复」的同类：操作改变了对象 ⇒ 整条链关闭）。
+   */
+  onBookRenamed: ((newName: string) => void) | null = null
+  /** 「重命名」入口的 Q 弹缩放（规范 §1.2 三件套，每个按钮独立状态） */
+  @State renameScale: number = 1
   // ⚠️ 第 1 项（置顶）的 title 只是**兜底初值** —— build() 里会按 bookData.isTop 实时覆盖
   // （数组初始化器只在组件创建时执行一次，不能依赖它联动，依据见 build() 内注释）。
   // v3.20：图标 symbol 化（SDK 符号表核实）+ 新增「分享」（华为分享，单本直达对方喵阅）
@@ -86,6 +95,45 @@ export default struct BookInfoDialogs{
     this.refreshSelfBook()
     this.controller?.open()
   }
+
+  /**
+   * 打开「重命名」子弹窗（2026-10-05）。
+   * 规范要点：
+   *  · §4.4 地雷表「弹窗参数动态更新无效」⇒ **打开瞬间 new 一个新 controller**（不复用字段）；
+   *  · §2.2 options 配方（customStyle:false + cornerRadius:20 + systemMaterial + SPRING_FAST）；
+   *  · §4.1 子进父退：先 `openChildDialog`（父退 + 子进）；
+   *  · 取消/遮罩 ⇒ `childDialogClosed()` 恢复父弹窗（入规则）；
+   *  · 改名成功 ⇒ **不恢复父弹窗**（对象已改名，快照作废）+ 通知创建者刷新列表（§4.2 同类）。
+   */
+  private openRenameDialog(): void {
+    const renameDialog = new CustomDialogController({
+      builder: RenameBookDialog({
+        bookData: this.bookData,
+        cancel: (): void => {
+          this.childDialogClosed()
+        },
+        onRenamed: (newName: string): void => {
+          if (this.onBookRenamed) {
+            this.onBookRenamed(newName)
+          }
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '80%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        // 遮罩/返回键：入规则（子弹窗已自行 close）
+        this.childDialogClosed()
+      }
+    })
+    this.openChildDialog(renameDialog)
+  }
+
   cancel: () => void = () => {
   }
   @StorageLink('topRectHeight') topRectHeight: number = 0
@@ -123,9 +171,26 @@ export default struct BookInfoDialogs{
           Text(this.bookData.bookName).fontSize(16).fontWeight(500).fontColor($r('app.string.color_black_88'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.bookData.author).fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          // ── 「重命名」入口（2026-10-05 用户方案：作者行换成重命名入口，不再显示作者）──
+          // 规范 §1.2 手写三件套：SymbolGlyph + Haptics.tap() + runJellyClick（+ clickEffect）。
+          // 符号名取自 SDK 资源表 `openharmony/toolchains/id_defined.json`：
+          //   `{ "type": "symbol", "name": "square_and_pencil", "order": 2504 }`（同表还有 _fill）
+          //   —— 不猜名字，按表取值。
+          Row({ space: 4 }){
+            SymbolGlyph($r('sys.symbol.square_and_pencil'))
+              .fontSize(13)
+              .fontColor([$r('app.string.color_black_45')])
+            Text('重命名').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
+          }
+          .scale({ x: this.renameScale, y: this.renameScale })
+          .onClick((): void => {
+            Haptics.tap()
+            runJellyClick((v: number): void => {
+              this.renameScale = v
+            })
+            this.openRenameDialog()
+          })
+          .clickEffect(UiMotion.CLICK)
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)

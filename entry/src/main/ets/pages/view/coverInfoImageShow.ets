@@ -49,13 +49,13 @@ export default struct coverInfoImageShow {
         // 则分组显示默认封面"）。
         bookImage: this.pickDefault >= 0
           ? ('default://cover_defaults/c' + (this.pickDefault + 1) + '.svg')
-          : (bookImage !== '' ? bookImage : 'default://cover_defaults/c1.svg')
+          : (bookImage !== '' ? bookImage : 'default://cover_defaults/c1.svg'),
+        // 2026-10-05（用户："预览图有三层 + 底部白色矩形，太复杂了"）：
+        // 预览**永远**只显示一张封面（不再画"书页叠层"），与真实封面同尺寸同圆角。
+        showStack: false
       })
-      Row().width(86)
-        .height(20)
-        .backgroundColor(Color.White)
-        .borderRadius(2)
-        .shadow({ radius: 5, color: 'rgba(0, 0, 0, 0.10)' })
+      // 2026-10-05：删除原来的白色底条（`Row().width(86).height(20).backgroundColor(Color.White)`）
+      // —— 它就是用户看到的"底部白色矩形"，纯装饰、与预览无关。
       Row({
         space:12
       }){
@@ -117,20 +117,11 @@ export default struct coverInfoImageShow {
         .width(CommonConstants.NOVEL_IMG_WIDTH).height(CommonConstants.NOVEL_IMG_HEIGHT)
         .zIndex(2)
 
-        Row(){
-          Image($r('app.media.occlusion1')).draggable(false)
-        }
-        .zIndex(1)
-        .width(CommonConstants.NOVEL_IMG_WIDTH + 5).height(CommonConstants.NOVEL_IMG_HEIGHT - 5)
-
-        Row(){
-          Image($r('app.media.occlusion2')).draggable(false)
-        }.zIndex(0)
-        .width(CommonConstants.NOVEL_IMG_WIDTH + 10).height(CommonConstants.NOVEL_IMG_HEIGHT - 10)
+        // 2026-10-05（用户："有三层 + 底部白色矩形，太复杂了"）：与"默认样式"列同样处理 ——
+        // 删掉两层"书页叠层"（occlusion1/2），预览只留一张封面。
       }
       .align(Alignment.BottomStart)
-      Row().width(86).height(20).backgroundColor(Color.White).borderRadius(2)
-        .shadow({ radius: 5, color: 'rgba(0, 0, 0, 0.10)' })
+      // 2026-10-05：同样删除"自定义"列下方的白色底条（原来是 Row().width(86).height(20) 白块）
       Row({
         space:12
       }){

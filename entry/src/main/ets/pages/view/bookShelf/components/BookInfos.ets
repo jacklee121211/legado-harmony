@@ -26,6 +26,8 @@ export default struct BookInfos {
   @State delCache: boolean = false
   /** 书架书名是否显示文件拓展名（我的-设置；默认关=隐藏 .txt 等后缀） */
   @StorageLink('setExtName') showFileExt: boolean = false
+  /** 数据变更广播（规范 §5.1）：改名完成后自增 ⇒ 书架列表重查重建 */
+  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
 
   /** 书名显示：开关关闭时剥掉末尾拓展名（.txt/.epub 等，最多 5 位字母数字） */
   private bookDisplayName(): string {
@@ -111,6 +113,9 @@ export default struct BookInfos {
       // 真开真关（2026-10-01 用户方案）：子弹窗关闭后由创建者重查数据再 open ——
       // 弹窗全新实例=全新 @Prop 快照，天然刷新；同时根除 @Consume 重建崩溃（140112）。
       reopen: (): void => { this.reopenInfoDialog() },
+      // 改名完成（2026-10-05）：刷新列表项数据 + 广播列表重查；**不恢复**本弹窗
+      // （对象已改名 ⇒ 旧弹窗的 @Prop 快照作废，规范 §4.2 同类）
+      onBookRenamed: (newName: string): void => { this.onBookRenamed(newName) },
       cancel: () => {
         this.exitDialog()
       }
@@ -163,6 +168,26 @@ export default struct BookInfos {
       }
     }
     this.bookInfoDialog?.open()
+  }
+
+  /**
+   * 改名完成（2026-10-05，长按弹窗 →「重命名」）：
+   * ① 重查本书并**就地更新** `@ObjectLink book` 的字段（列表项本体，@Observed ⇒ 联动）；
+   * ② 广播 `BOOK_IS_BOOK_REFRESHING` 让整个书架列表重查重建。
+   * ⚠️ 只做 ① 不够：LazyForEach 按**键值**决定是否复用组件，键值必须含 `bookName`
+   *    （已并入，见 `BookContent.ets` 键值注释 + 规范 §5.3「改名/换封面不刷新」）。
+   * ⚠️ 改名后**不恢复**长按弹窗：对象已改名，旧弹窗的 @Prop 快照作废（规范 §4.2 同类）。
+   */
+  private async onBookRenamed(newName: string): Promise<void> {
+    const id = this.book.id
+    if (id !== undefined) {
+      const fresh = await booksDao.getBookByIds([id])
+      if (fresh.length > 0) {
+        this.book.bookName = fresh[0].bookName
+      }
+    }
+    this.isBookRefreshing++
+    console.info('BookRename', `renamed -> ${newName}, broadcast BOOK_IS_BOOK_REFRESHING`)
   }
 
   build() {

@@ -8,8 +8,8 @@
     //      否则安装会报签名/描述文件不匹配。且新包名是一个**全新应用**，旧应用数据不迁移。
     "bundleName": "com.jk.reader",
     "vendor": "example",
-    "versionCode": 200,
-    "versionName": "2.0.0",
+    "versionCode": 201,
+    "versionName": "2.0.1",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
   }

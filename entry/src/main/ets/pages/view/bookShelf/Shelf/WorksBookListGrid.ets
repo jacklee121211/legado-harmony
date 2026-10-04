@@ -3,6 +3,7 @@ import { Haptics } from '../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../common/model/Theme'
 import { WorksLists } from '../../../../database/entities/WorksLists'
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
+import UiMotion from '../../../../common/utils/UiMotion'
 
 @Component
 export default struct WorksBookListGrid {
@@ -63,25 +64,32 @@ export default struct WorksBookListGrid {
           }
           .zIndex(2)
           .alignContent(Alignment.BottomStart)
-        Row() {
-          Image($r('app.media.occlusion1'))
-            .draggable(false)
-        }
-        .zIndex(1)
-        .width(95)
-        .height(110)
+        // 2026-10-05：同款"书页叠层 + 底条"装饰统一受 UiMotion.SHELF_COVER_STACK 控制
+        if (UiMotion.SHELF_COVER_STACK) {
+          Row() {
+            Image($r('app.media.occlusion1'))
+              .draggable(false)
+          }
+          .zIndex(1)
+          .width(95)
+          .height(110)
 
-        Row() {
-          Image($r('app.media.occlusion2'))
-            .draggable(false)
+          Row() {
+            Image($r('app.media.occlusion2'))
+              .draggable(false)
+          }
+          .zIndex(0)
+          .width(100)
+          .height(100)
         }
-        .zIndex(0)
-        .width(100)
-        .height(100)
       }
       .align(Alignment.BottomStart)
 
-      Row().width(100).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
+      // 2026-10-05：色条**保留**（独立开关，见 UiMotion.SHELF_COVER_BASE_BAR 注释）；
+      // 宽度与封面同宽（88）⇒ 修掉原来 100 宽导致的左右各 6vp 溢出。
+      if (UiMotion.SHELF_COVER_BASE_BAR) {
+        Row().width(88).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
+      }
 
       Text(this.work.worksName)
           .fontSize(15)

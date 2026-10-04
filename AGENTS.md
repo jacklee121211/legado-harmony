@@ -60,7 +60,25 @@
 - 改完代码必须给出：改动文件、验证命令、**命令返回原文**；
 - 用户报告「好了/坏了」时，先看日志或截图，再说结论。
 
-## 6. 本工程已实测的坑（别再踩）
+## 6. 提交规范（2026-10-05 起强制，多 agent 共用）
+
+**提交备注的首行必须是版本号**，例如：
+
+```
+V2.0.2 封面圆角对齐 + 进场更顺
+1. 一镜到底起飞首帧圆角改为书架封面当前形状
+2. 去掉进场"起手回沉"，中段不再回沉
+```
+
+- `.githooks/commit-msg` 钩子会把它**同步**到两处并 `git add` 进同一笔提交：
+  `AppScope/app.json5`（versionName / versionCode = major*100+minor*10+patch）
+  与 `entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets`（更新日志数据）；
+- **新机器 / 新 agent 先跑一次**：`pwsh -File scripts/setup-git-hooks.ps1`
+  （它设置 `git config core.hooksPath .githooks` 并回填历史）；
+- 首行没有版本号的提交**不会进更新日志**（内部检查点可以这样），但仍建议带上版本号；
+- 更新日志页面（我的 → 关于我们 → 更新日志）**不要手改**，改提交备注即可。
+
+## 7. 本工程已实测的坑（别再踩）
 
 - **ReaderKit 内部是 web/CSS 排版引擎**；`fontName` / `fontPath` 只服务**自定义字体文件**，
   且**必须注册 `on('resourceRequest')`** 才会把字体交给引擎（只 `off` 不 `on` = 永远不生效）。

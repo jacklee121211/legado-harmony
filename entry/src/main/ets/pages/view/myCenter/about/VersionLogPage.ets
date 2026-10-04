@@ -1,38 +1,14 @@
 import { SetHead } from '../../../../componets/myset/SetHead'
 import UiMotion from '../../../../common/utils/UiMotion'
 import { ShelfColors } from '../../../../common/utils/NightMode'
-
-// ── 更新日志（2026-09-30 回填）──────────────────────────────────────────────
-// 内容由用户提供（与 git 提交记录一致）：V2.0.0 全功能版本 15 条。
-// 后续版本在此数组追加即可（新的版本对象放最前）。
-interface VersionEntry {
-  version: string
-  date: string
-  items: string[]
-}
-
-const LOGS: VersionEntry[] = [
-  {
-    version: 'V2.0.0 全功能版本', date: '',
-    items: [
-      'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
-      '完全精简的极致体验',
-      '极致的功耗优化',
-      '听书稳定性优化1',
-      '新增自定义背景系统',
-      '听书稳定性优化2',
-      '新增材质背景以及混合模块',
-      '优化自定义背景上线以及排布',
-      '增加本地TTS方案',
-      '阅读器-设置页个性化区块全面重做',
-      '震动反馈全面重做，UI风格化完善',
-      '上架前优化',
-      '修复垫片构建阻塞主线程导致的冻结与断流',
-      '增加付费模块',
-      '书籍进入动画重做',
-    ]
-  },
-]
+// ── 更新日志数据（2026-10-05 起**自动生成**）──────────────────────────────────
+// ⚠️ 内容不再手写：由 `scripts/sync-version.ps1` 从 **git 提交备注**生成
+//    （`.githooks/commit-msg` 钩子每次提交自动执行并 `git add` 进同一笔提交）。
+//    规范：提交首行必须以版本号开头（如 `V2.0.2 封面圆角对齐`），
+//    版本号与更新日志条目都从那里来；`AppScope/app.json5` 的
+//    versionName/versionCode 也由同一次生成同步（见 `VersionLogData.ets` 头注释）。
+//    同版本号的重复提交会合并条目，只保留最近 20 个版本。
+import { VERSION_LOGS, VersionEntry } from './VersionLogData'
 
 @Component
 export default struct VersionLogPage {
@@ -46,7 +22,7 @@ export default struct VersionLogPage {
         SetHead({ titleName: '更新日志' })
         Scroll() {
           Column({ space: 16 }) {
-            ForEach(LOGS, (entry: VersionEntry) => {
+            ForEach(VERSION_LOGS, (entry: VersionEntry) => {
               Column({ space: 10 }) {
                 Row({ space: 8 }) {
                   Text(entry.version)

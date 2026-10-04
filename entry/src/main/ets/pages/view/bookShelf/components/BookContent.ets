@@ -217,8 +217,12 @@ export default struct BookContent {
           //     广播 BOOK_IS_BOOK_REFRESHING ⇒ BookContent 重查数据库，但键值若不含封面
           //     字段，LazyForEach 对键值相同的项**复用旧组件、不重绑数据** ⇒ 封面停在旧值。
           //     与 CoverStyleDialog 的广播是同一条链的两半，缺一不可。
+          //   · bookName（2026-10-05 修"改名后列表还是旧名"）：改名是**级联改名**
+          //     （见 common/utils/BookRename.ets 的唯一清单），但 LazyForEach 不认数据变了，
+          //     只认键值变了 ⇒ 键值必须带上书名；规范 §5.3/§6 已把这条列为硬要求
+          //     （`docs/标准-弹窗与按钮统一规范.md:201,212`「改名/换封面不刷新」）。
           const flag: string = (item.isTop ? 'T' : 'F') + (item.durChapterTime ?? 0)
-            + (item.customCoverUrl ?? '')
+            + (item.customCoverUrl ?? '') + (item.bookName ?? '')
           return item.id !== undefined ? 'b' + item.id + flag
             : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl + flag
               : 'n' + item.bookName + '#' + index)

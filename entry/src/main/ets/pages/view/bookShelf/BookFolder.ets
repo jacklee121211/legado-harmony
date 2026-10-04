@@ -253,7 +253,9 @@ export default struct BookFolder {
             }
             .zIndex(2)
 
-            if (item.coverType !== 2) {
+            // 2026-10-05（用户："太复杂了，一起简化"）："书页叠层 + 底条"装饰统一受
+            // `UiMotion.SHELF_COVER_STACK` 控制（默认 false ⇒ 卡片只留一张封面）。
+            if (UiMotion.SHELF_COVER_STACK && item.coverType !== 2) {
               Row() {
                 Image($r('app.media.occlusion1')).draggable(false)
               }
@@ -269,7 +271,11 @@ export default struct BookFolder {
           .align(Alignment.BottomStart)
         }
 
-        Row().width(100).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
+        // 2026-10-05（用户："保留色条，色条有点溢出，优化一下"）：
+        // 宽度原来 100 > 封面 88，外层 Column 居中 ⇒ 左右各溢出 6vp；现在与封面同宽（88）。
+        if (UiMotion.SHELF_COVER_BASE_BAR) {
+          Row().width(88).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
+        }
       }
 
       Text(item.groupName)

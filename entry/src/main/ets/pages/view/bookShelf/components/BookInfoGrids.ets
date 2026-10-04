@@ -44,6 +44,8 @@ export default struct BookInfoGrids{
    *    （spec §2.2）—— 浮窗点书走普通转场。
    */
   @Prop longtakeId: string = ''
+  /** 数据变更广播（规范 §5.1）：改名完成后自增 ⇒ 书架列表重查重建 */
+  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   /** 是否已经入场（false = 停在动画初态：透明 + 略小 + 略靠下） */
   @State private entered: boolean = false
   /** 入场定时器句柄，卸载时要清掉，避免回调打到已销毁的组件上 */
@@ -289,6 +291,8 @@ export default struct BookInfoGrids{
       bookData:this.book,
       // 真开真关（2026-10-01 用户方案），与 BookInfos.ets 同款：子关闭→创建者重查→open
       reopen: (): void => { this.reopenInfoDialog() },
+      // 改名完成（2026-10-05，与 BookInfos 同款）：刷新本项 + 广播列表重查；不恢复本弹窗
+      onBookRenamed: (newName: string): void => { this.onBookRenamed(newName) },
       cancel: () => {
         this.exitDialog()
       }
@@ -328,5 +332,21 @@ export default struct BookInfoGrids{
       }
     }
     this.bookInfoDialog?.open()
+  }
+
+  /**
+   * 改名完成（2026-10-05，与 BookInfos 同款）：重查本书就地更新 + 广播 `BOOK_IS_BOOK_REFRESHING`
+   * （键值已含 bookName，见 BookContent 键值注释）；**不恢复**长按弹窗（快照作废）。
+   */
+  private async onBookRenamed(newName: string): Promise<void> {
+    const id = this.book.id
+    if (id !== undefined) {
+      const fresh = await booksDao.getBookByIds([id])
+      if (fresh.length > 0) {
+        this.book.bookName = fresh[0].bookName
+      }
+    }
+    this.isBookRefreshing++
+    console.info('BookRename', `renamed -> ${newName}, broadcast BOOK_IS_BOOK_REFRESHING`)
   }
 }
