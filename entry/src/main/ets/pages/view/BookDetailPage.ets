@@ -12,7 +12,7 @@ import { BookHistory } from '../../database/entities/BookHistory'
 import bookHistoryUtils from '../../common/utils/BookHistoryUtils'
 import booksUtil from '../../common/utils/booksUtils'
 import booksDao from '../../database/dao/BooksDao'
-import { resolveCoverSource } from '../../common/utils/CoverSource'
+import { resolveCoverSource, coverCorners } from '../../common/utils/CoverSource'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 import { bookParser } from '@kit.ReaderKit'
@@ -348,7 +348,8 @@ export default struct BookDetailPage {
           .alt($r('app.media.icon_book_default_cover_ten'))
           .width(CommonConstants.NOVEL_IMG_WIDTH)
           .height(CommonConstants.NOVEL_IMG_HEIGHT)
-          .borderRadius(5)
+          // 2026-10-04：均匀 5 改为书脊式圆角（同内置封面 SVG，90 宽画布左 4 / 右 8 等比）。
+          .borderRadius(coverCorners(CommonConstants.NOVEL_IMG_WIDTH))
           // 视觉升级（2026-09-21）：与书架封面统一加柔和投影。纯增量属性，不动布局。
           .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.22)', offsetX: 0, offsetY: 5 })
         Column({ space: 8 }) {

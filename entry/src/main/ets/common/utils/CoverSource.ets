@@ -30,6 +30,27 @@ export function isDefaultCover(v: string): boolean {
   return v.startsWith(DEFAULT_COVER_PREFIX)
 }
 
+/**
+ * 封面圆角几何（2026-10-04）：自定义/网络封面与内置默认封面**同曲率**。
+ *
+ * 参数来自 `cover_defaults/c1.svg` 主轮廓 path 实测（c2~c9 为同一模板，path 逐字节一致）：
+ * 画布 90×120，四角是**书脊式不对称圆角** —— 左上/左下 4、右上/右下 8
+ * （书脊在左侧 ⇒ 靠书脊一边收得急，这正是内置封面"像一本书"的来源）。
+ * 自定义封面按显示宽度等比换算（k = 宽/90），四个圆角与内置封面对齐后，
+ * 视觉上与 SVG 自带的轮廓严丝合缝；阴影（shadow）也跟随该轮廓。
+ *
+ * 用法：`Image(...).borderRadius(coverCorners(60))`（参数=该 Image 的显示宽度）。
+ */
+export function coverCorners(displayWidth: number): BorderRadiuses {
+  const k: number = displayWidth / 90
+  return {
+    topLeft: 4 * k,
+    topRight: 8 * k,
+    bottomRight: 8 * k,
+    bottomLeft: 4 * k
+  }
+}
+
 /** 内置默认封面 → 序号（1~9；非法/越界返回 -1） */
 export function defaultCoverIndex(custom: string): number {
   const digits: string = custom.substring(DEFAULT_COVER_PREFIX.length).replace(/[^1-9]/g, '')

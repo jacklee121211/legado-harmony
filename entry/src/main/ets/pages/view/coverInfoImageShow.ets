@@ -13,6 +13,7 @@
  *     ~1/3 宽的列里必然溢出 —— 9×26vp+间距 ≈ 282vp）。
  */
 import CommonConstants from '../../common/constants/CommonConstants'
+import { coverCorners } from '../../common/utils/CoverSource'
 import { Haptics } from '../../common/utils/Haptics'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
@@ -85,7 +86,12 @@ export default struct coverInfoImageShow {
           alignItems: ItemAlign.End,
         }){
           if (this.imageString) {
+            // 2026-10-04：预览图与真实封面同尺寸同曲率（书脊式圆角，同内置封面 SVG），
+            // 此前无尺寸无圆角，选图预览是一张直角大图，与实际显示效果不一致。
             Image(this.imageString).draggable(false)
+              .borderRadius(coverCorners(CommonConstants.NOVEL_IMG_WIDTH))
+              .width(CommonConstants.NOVEL_IMG_WIDTH)
+              .height(CommonConstants.NOVEL_IMG_HEIGHT)
           } else {
             // 2026-10-01（用户）：未选图时的灰黑蒙版改成「点击选择」浅色虚线占位，
             // 明示这是可点击的选图入口（原深色块像一张没加载出来的封面）。

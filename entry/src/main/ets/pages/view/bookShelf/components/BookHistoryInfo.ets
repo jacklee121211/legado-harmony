@@ -1,4 +1,4 @@
-import { resolveCoverSource } from "../../../../../common/utils/CoverSource"
+import { resolveCoverSource, coverCorners } from "../../../../common/utils/CoverSource"
 
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
@@ -54,9 +54,11 @@ export default struct BookHistoryInfo {
         space: 20
       }) {
         Stack() {
+          // 2026-10-04：补书脊式圆角（同内置封面 SVG，90 宽画布左 4 / 右 8 等比）。
           Image(resolveCoverSource(this.book.customCoverUrl ?? '') ?? (this.book.coverUrl ?? ''))
             .draggable(false)
             .alt($r('app.media.icon_book_default_cover_one'))
+            .borderRadius(coverCorners(60))
             .width(60)
             .height(80)
         }.alignContent(Alignment.BottomStart)
