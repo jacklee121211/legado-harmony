@@ -332,6 +332,17 @@ export default class UiMotion {
    */
   static readonly LT_BOOK_LOG: boolean = true
 
+  /**
+   * 进场「整本书飞行」用的曲线（2026-10-05 抽成令牌，方便 A/B）。
+   * 官方枚举值（documentId `…/公共定义/枚举说明/ts-appendix-enums`）：
+   *   · `EaseInOut`     = CubicBezier(0.42, 0, 0.58, 1)「以**低速开始和结束**」——当前值；
+   *   · `Sharp`         = CubicBezier(0.33, 0, 0.67, 1)  ——同为对称，但中段速度更平，
+   *                       若觉得"中段发飘/发涩"可先试它；
+   *   · `FastOutSlowIn` = CubicBezier(0.40, 0, 0.20, 1)  ——起步果断、尾段极缓（"起飞感"更强）。
+   * 三者都是"两端零速度"（b=0 且 d=1），所以都不会出现起步/落位的速度突跳。
+   */
+  static readonly LT_ENTER_CURVE: Curve = Curve.EaseInOut
+
   /** 进场总时长（ms）。v3.7：560→620（用户"加点时长"——更从容的一镜到底） */
   static readonly LT_ENTER_DUR: number = 620
   /**
@@ -373,6 +384,14 @@ export default class UiMotion {
   /** 拿起来时的封面影子半径 / 纵向偏移（vp）—— 离书架越远，影子越大越远 */
   static readonly LT_LIFT_SHADOW_RADIUS: number = 34
   static readonly LT_LIFT_SHADOW_OFFSET_Y: number = 22
+
+  /**
+   * 书架封面**当前四角圆角**的传递键（AppStorage，值为 `CoverSource.coverCorners(显示宽度)`
+   * 返回的 `BorderRadiuses`）。点击侧写、一镜到底 session 读 ⇒ 起飞首帧/落位帧的圆角
+   * 与书架封面逐位重合（2026-10-04 起书架封面改成"书脊式不对称圆角"：
+   * 画布 90 宽、左上/左下 4、右上/右下 8 等比 ⇒ 统一圆角会对不上）。
+   */
+  static readonly LT_COVER_CORNERS_KEY: string = 'ltCoverCorners'
   /**
    * 飞行封面位图的**底衬颜色**（不透明）。默认封面 SVG 是「白底 + 0.2~0.8 透明度的
    * 红色渐变」，组件截图后透明部分会漏出下面的内容页/书架 ⇒ 用户看到"封面是半透明的"。

@@ -102,8 +102,25 @@ export class LongTakeSession {
   /** 翻折透视深度（rotate.perspective，单位 px；0 = 系统自算，见类头 ②） */
   public coverPerspective: number = UiMotion.LT_COVER_PERSPECTIVE;
 
-  /** 封面圆角（vp）：从卡片圆角 → 0（**vp 直给**，封面盒已是绝对坐标） */
-  public coverRadius: number = 0;
+  /**
+   * 封面圆角：**四角独立**（vp，照抄书架封面当前的圆角形状），由点击侧通过
+   * `UiMotion.LT_COVER_CORNERS_KEY` 传入（`CoverSource.coverCorners(封面显示宽度)` 的结果）。
+   * 为什么要四角独立（2026-10-05，用户选方案 A）：书架封面在 2026-10-04 改成了
+   * **书脊式不对称圆角**（内置封面 SVG 实测：画布 90 宽，左上/左下 4、右上/右下 8，等比换算）
+   * ⇒ 统一圆角会让"起飞首帧"与书架封面**不再逐位重合**（用户口径：起点必须精确）。
+   * 缺省（拿不到）时退回单值 `coverRadius0`（官方原版语义：`cornerRadius` 一个数）。
+   */
+  public cornerTL: number = 0;
+  public cornerTR: number = 0;
+  public cornerBR: number = 0;
+  public cornerBL: number = 0;
+
+  /**
+   * 圆角**进度**：1 = 书架封面原样，0 = 直角（全屏阅读器）。
+   * 用一个进度而不是四个动画量 ⇒ 进/出/手势三处只需驱动同一个数，
+   * 四角形状永远保持与书架封面一致（只是整体收/放）。
+   */
+  public radiusProgress: number = 1;
 
   /** 书盒左上角（vp，绝对坐标）：封面槽位左上 → (0,0) */
   public bookX: number = 0;
@@ -208,6 +225,46 @@ export class LongTakeSession {
     }
   }
 
+  /**
+   * 取书架封面当前的**四角圆角**（点击侧在 `onClick` 里通过
+   * `UiMotion.LT_COVER_CORNERS_KEY` 写入 `CoverSource.coverCorners(显示宽度)` 的结果）。
+   * 取不到就退回单值 `coverRadius0`（等于官方原版的 `cornerRadius` 语义）。
+   */
+  private applyShelfCorners(): void {
+    const c: BorderRadiuses | undefined = AppStorage.get<BorderRadiuses>(UiMotion.LT_COVER_CORNERS_KEY);
+    if (c !== undefined) {
+      this.cornerTL = LongTakeSession.numOf(c.topLeft);
+      this.cornerTR = LongTakeSession.numOf(c.topRight);
+      this.cornerBR = LongTakeSession.numOf(c.bottomRight);
+      this.cornerBL = LongTakeSession.numOf(c.bottomLeft);
+      return;
+    }
+    this.cornerTL = this.coverRadius0;
+    this.cornerTR = this.coverRadius0;
+    this.cornerBR = this.coverRadius0;
+    this.cornerBL = this.coverRadius0;
+  }
+
+  /**
+   * `Length → number`。组件级 `BorderRadiuses` 的四角类型是 `Length`（SDK
+   * `component/units.d.ts:1011` `declare type BorderRadiuses = { topLeft?: Length … }`），
+   * 而 `CoverSource.coverCorners()` 实际给的是 number ⇒ 这里做一次显式收窄。
+   */
+  private static numOf(v: Length | undefined): number {
+    return typeof v === 'number' ? v : 0;
+  }
+
+  /** Delegate 渲染用：当前四角圆角 = 书架形状 × 圆角进度 */
+  public coverCornersNow(): BorderRadiuses {
+    const p: number = this.radiusProgress;
+    return {
+      topLeft: this.cornerTL * p,
+      topRight: this.cornerTR * p,
+      bottomRight: this.cornerBR * p,
+      bottomLeft: this.cornerBL * p
+    };
+  }
+
   /** 合上的书停在槽位（进场首帧 / 返回末帧）——与书架封面逐位重合 */
   private applyClosedAtSlot(): void {
     this.bookX = this.tx0;
@@ -216,7 +273,8 @@ export class LongTakeSession {
     this.bookH = this.cardHvp;
     this.bookScale = this.s0;
     this.coverAngle = 0;
-    this.coverRadius = this.coverRadius0;
+    this.applyShelfCorners();
+    this.radiusProgress = 1;
   }
 
   /** 整屏阅读（进场末帧 / 返回首帧）：封面侧立不可见，内容页铺满 */
@@ -227,7 +285,7 @@ export class LongTakeSession {
     this.bookH = this.winHvp;
     this.bookScale = 1;
     this.coverAngle = UiMotion.LT_FLIP_ANGLE;
-    this.coverRadius = 0;
+    this.radiusProgress = 0;
   }
 
   /**
@@ -272,7 +330,7 @@ export class LongTakeSession {
     // ② 整本书（盒）飞向全屏
     animateTo({
       duration: UiMotion.LT_ENTER_DUR,
-      curve: Curve.EaseInOut,
+      curve: UiMotion.LT_ENTER_CURVE,
       onFinish: () => {
         // ⚠️ 只有"当前这一条动画"才有权结束转场：被后来者顶掉的旧动画若也去
         // finishTransition()，框架会报 `not support to finish custom animation more than once`
@@ -293,7 +351,7 @@ export class LongTakeSession {
       this.bookW = this.winWvp;
       this.bookH = this.winHvp;
       this.bookScale = 1;
-      this.coverRadius = 0;
+      this.radiusProgress = 0;
     })
 
     // ③ 封面绕书脊（左缘）掀开
@@ -305,17 +363,13 @@ export class LongTakeSession {
       this.coverAngle = UiMotion.LT_FLIP_ANGLE
     })
 
-    // ④ 落定：末段把"起手"收回 —— **阅读态必须 lift=0**
-    //   （2026-10-04 用户："阅读器里顶部的四圆角组件比例都变了、右侧溢出了"：
-    //    进场结束后 lift 一直是 1 ⇒ 整层被 ×1.09 且上移 18vp，顶栏胶囊（width 90%）
-    //    因此右溢出屏幕 ~14vp。现在双保险：这里收回 + Delegate 里按"离地权重"缩放效果。）
-    animateTo({
-      delay: Math.max(0, UiMotion.LT_ENTER_DUR - UiMotion.LT_LIFT_DUR),
-      duration: UiMotion.LT_LIFT_DUR,
-      curve: Curve.FastOutSlowIn
-    }, () => {
-      this.lift = 0
-    })
+    // ④ 阅读态必须 liftEffect=0 —— 这一条**已经由 Delegate 的"离地权重"**
+    //   `liftEffect = lift × (1-bookScale)/(1-s0)` 保证（书铺满整窗 ⇒ 权重 0），
+    //   所以这里**不再**额外排一段"起手收回"：
+    //   旧写法在 [LT_ENTER_DUR-LT_LIFT_DUR, LT_ENTER_DUR] 把 lift 1→0 ⇒ 等于在书还在
+    //   长大的中后段又把它缩 9%/回沉 18vp，与主飞行**反相叠加**，
+    //   读感就是"中间发涩、有一次回沉"（用户 2026-10-05 反馈"中间不够丝滑"）。
+    //   去掉后：起手效果随书长大**单调衰减**（一条连续曲线），落定依旧干净、落点不变。
   }
 
   /**
@@ -330,6 +384,8 @@ export class LongTakeSession {
       this.cardItemInfo_px = newRectInfo;
       this.initGeometry();
     }
+    // 落位圆角也要取书架"当前"的形状（宫格/列表切换、封面宽度变化时都对得上）
+    this.applyShelfCorners();
   }
 
   /**
@@ -381,7 +437,8 @@ export class LongTakeSession {
       this.bookW = this.cardWvp;
       this.bookH = this.cardHvp;
       this.bookScale = this.s0;
-      this.coverRadius = this.coverRadius0;
+      // 落位圆角 = 书架封面当前形状（`preBackAnimation` 里已按 AppStorage 刷新过）
+      this.radiusProgress = 1;
     })
 
     // ② 封面翻回盖住页面：窗口 = 进场翻折窗口的时间镜像
@@ -417,7 +474,7 @@ export class LongTakeSession {
     this.bookH = this.winHvp + (this.cardHvp - this.winHvp) * p;
     this.bookScale = 1 - (1 - this.s0) * p;
     this.coverAngle = UiMotion.LT_FLIP_ANGLE * (1 - p);
-    this.coverRadius = this.coverRadius0 * p;
+    this.radiusProgress = p;
     this.lift = 1 - p;
   }
 

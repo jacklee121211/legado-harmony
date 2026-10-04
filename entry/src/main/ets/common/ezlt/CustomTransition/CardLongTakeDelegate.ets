@@ -172,7 +172,8 @@ export struct CardLongTakeDelegate {
         }
         .width(this.longTakeSession.bookW)
         .height(this.longTakeSession.bookH)
-        .borderRadius(this.longTakeSession.coverRadius)
+        // 四角独立：与书架封面当前形状一致（书脊式不对称），随 radiusProgress 收到 0
+        .borderRadius(this.longTakeSession.coverCornersNow())
         .clip(true)
 
         // ② 封面（同盒、书脊=左缘对齐、**与内容裁切盒平级**）：绕左缘 3D 翻折，投影可自由扑出盒外。
@@ -194,7 +195,8 @@ export struct CardLongTakeDelegate {
         }
         .width(this.longTakeSession.bookW)
         .height(this.longTakeSession.bookH)
-        .borderRadius(this.longTakeSession.coverRadius)
+        // 同①：四角独立圆角（首帧与书架封面逐位重合，落位同理）
+        .borderRadius(this.longTakeSession.coverCornersNow())
         // perspective=0（系统自算，见 LongTakeSession 类头 ②）：SDK 明确其单位为 px，
         // 写死小于封面宽的数值会让自由边穿过相机平面 ⇒ 投影奇异。
         .rotate({
@@ -220,16 +222,23 @@ export struct CardLongTakeDelegate {
         .enabled(false)
         .hitTestBehavior(HitTestMode.None)
       }
-      // ★ 书盒：四条边（x/y/w/h）各自单调插值 —— 飞行中的书恒包含被点击那本书的矩形。
-      //   ⛔ 这里**不 clip**（见 build 首行注释）；裁切交给 ① 的内容层裁切盒。
-      .width(this.longTakeSession.bookW)
-      .height(this.longTakeSession.bookH)
+      // ★ 书盒：只做**位移 + 起手缩放**（纯仿射）—— 尺寸**不参与动画**，
+      //   让"每帧要重排版"的节点从 3 个减到 2 个（内容裁切盒 + 封面）。
+      //   为什么可以不定尺寸：两个子节点都显式从 (0,0) 开始摆放，
+      //   本层用 `width/height('100%')` + `alignContent: TopStart` ⇒ 子节点仍落在
+      //   (bookX, bookY)，与"自己是 bookW×bookH 的盒子"**等价**（几何零变化）。
+      //   依据：官方《ArkUI术语》仿射属性条目「变更仿射属性不会触发测量布局，
+      //   性能开销低于布局属性变更」——把能挪的都挪到仿射侧。
+      //   ⛔ 本层**不 clip**（见 build 首行注释）；裁切交给 ① 的内容层裁切盒。
+      .width('100%')
+      .height('100%')
       .translate({
         x: this.longTakeSession.bookX,
         // "起手/收手"的额外抬升（vp，带离地权重）：书离开书架一点点，落位时收回 ⇒ 落点不变
         y: this.longTakeSession.bookY - UiMotion.LT_LIFT_Y * this.longTakeSession.liftEffect()
       })
-      // 起手的额外放大（围绕书盒左上角 ⇒ 只向右下长，仍然遮得住卡片）——同样带离地权重
+      // 起手的额外放大（锚点在书盒左上角，即本层 (0,0) ⇒ 子节点起点 ⇒ 只向右下长，
+      // 仍然遮得住卡片）——同样带离地权重
       .scale({
         x: 1 + (UiMotion.LT_LIFT_SCALE - 1) * this.longTakeSession.liftEffect(),
         y: 1 + (UiMotion.LT_LIFT_SCALE - 1) * this.longTakeSession.liftEffect(),

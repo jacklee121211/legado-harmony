@@ -244,6 +244,9 @@ export default struct BookInfoGrids{
         const rp: ReaderRouteParam = { bookData: this.book };
         // 一镜到底官方库（2026-10-02 迁移，与 BookInfos 同款；圆角 10 = 宫格封面圆角）
         if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+          // 2026-10-05（方案 A）：同 BookInfos —— 把封面当前四角圆角传给 session。
+          // 100 = 宫格封面的显示宽度（与下面 `.borderRadius(coverCorners(100))` 同源同值）。
+          AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(100))
           const longTakeTransitionParam = ezCustomTransition.generateLongTakeParam(
             this.getUIContext(), this.longtakeId, 10)
           if (longTakeTransitionParam) {
