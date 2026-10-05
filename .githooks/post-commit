@@ -1,0 +1,79 @@
+#!/bin/sh
+# ============================================================================
+# .githooks/post-commit —— 把「本次提交的备注」同步成「版本号 + 更新日志」
+#
+# 启用（每个 clone 只需一次）：pwsh -File scripts/setup-git-hooks.ps1
+#   （它执行 git config core.hooksPath .githooks —— 钩子随仓库走，所有 agent 都生效）
+#
+# 规范：**提交首行必须以版本号开头**，例如
+#   V2.0.2 封面圆角对齐 + 进场更顺
+#   1. 一镜到底起飞首帧圆角改为书架封面当前形状
+#   2. 去掉进场"起手回沉"
+#
+# ── 为什么是 post-commit + amend，而不是 commit-msg ──────────────────────────
+# 2026-10-05 隔离实验（临时仓库，逐个钩子试）实测结论：
+#   · `commit-msg` / `prepare-commit-msg` 里 `git add` 的文件 **不会**进本次提交
+#     （提交的树在消息钩子之前就定好了）⇒ 原 commit-msg 方案实测无效：
+#     V2.1.0 那笔提交里 app.json5 仍是 2.0.1、更新日志也还是旧的两条。
+#   · `pre-commit` 里 `git add` **能**进提交，但那时读不到本次消息
+#     （`.git/COMMIT_EDITMSG` 里还是上一条）⇒ 拿不到版本号。
+#   · `post-commit` 里生成 + `git add` + `git commit --amend --no-verify --no-edit`
+#     ⇒ 提交信息不变、产物并入本次提交 ✓（实测 2e17d7d → 797ed81，工作区干净）。
+#   递归安全：amend 会再触发一次 post-commit，第二次产物无差异 ⇒ 直接跳过，不会无限套娃。
+#
+# ⚠️ 副作用（已知并接受）：提交号会被改写（内容与提交信息都不变，只有 hash 与产物）。
+#    rebase / merge 中**不动**（见下面的守卫），避免改写合并提交。
+# ⚠️ 钩子**永不阻塞提交**：任何异常只打印告警，仍以 0 退出。
+# ============================================================================
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -z "$ROOT" ] && exit 0
+GITDIR="$(git rev-parse --git-dir 2>/dev/null)"
+
+# 防套娃：本钩子触发的 amend 会再进一次 post-commit，靠这个**标记文件**直接退出。
+# （`--no-verify` 管不到 post-commit；环境变量实测无效 —— git 给钩子的环境里没有它，
+#   所以用 .git 下的标记文件，确定性。）
+# 安全网：即使标记没写上，amend 后的第二次生成也没有差异 ⇒ `git diff --cached --quiet` 会跳过，不会无限套娃。
+GUARD="$GITDIR/EZLT_SYNC_RUNNING"
+[ -f "$GUARD" ] && exit 0
+
+# ── 守卫：rebase / merge 期间不改写提交 ─────────────────────────────────────
+[ -d "$GITDIR/rebase-merge" ] && exit 0
+[ -d "$GITDIR/rebase-apply" ] && exit 0
+git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && exit 0
+
+SCRIPT="$ROOT/scripts/sync-version.ps1"
+[ -f "$SCRIPT" ] || exit 0
+
+OLD_HASH="$(git rev-parse --short HEAD 2>/dev/null)"
+
+# 用 HEAD（= 刚提交的那条）生成：新版本号 + 只含当前版本的更新日志
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT" || \
+    { echo "[sync-version] ⚠️ 同步失败（不影响本次提交），请手动跑 scripts/sync-version.ps1"; exit 0; }
+elif command -v powershell >/dev/null 2>&1; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT" || \
+    { echo "[sync-version] ⚠️ 同步失败（不影响本次提交），请手动跑 scripts/sync-version.ps1"; exit 0; }
+else
+  echo "[sync-version] ⚠️ 找不到 pwsh/powershell，跳过版本与更新日志同步"
+  exit 0
+fi
+
+git -C "$ROOT" add -- 'AppScope/app.json5' \
+  'entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets' 2>/dev/null
+
+if git -C "$ROOT" diff --cached --quiet HEAD -- 'AppScope/app.json5' \
+     'entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets' 2>/dev/null; then
+  echo "[sync-version] 版本与更新日志已是最新，无需并入"
+else
+  # 标记文件让 amend 自身的 post-commit 立即返回（不重复生成、不再 amend）
+  : > "$GUARD"
+  SYNC_VERSION_RUNNING=1 git -C "$ROOT" commit --amend --no-verify --no-edit -q
+  RC=$?
+  rm -f "$GUARD"
+  if [ "$RC" -eq 0 ]; then
+    echo "[sync-version] 已把版本号 + 更新日志并入本次提交：$OLD_HASH -> $(git rev-parse --short HEAD)"
+  else
+    echo "[sync-version] ⚠️ 并入失败（提交本身已完成、内容与提交信息未变），可手动跑 scripts/sync-version.ps1"
+  fi
+fi
+exit 0

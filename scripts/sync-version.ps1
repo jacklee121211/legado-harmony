@@ -15,7 +15,10 @@
     · 同一版本号只保留**最新**一条提交，条目做并集 ⇒ 历史里 V2.0.0 的十几次重复
       提交不会把日志刷屏；
     · `versionCode = major*100 + minor*10 + patch`（2.0.0→200，与既有 200 衔接）；
-    · 更新日志只保留最近 N 个版本（默认 20，见 -MaxVersions）；
+    · **更新日志只展示「当前版本」一条，不保留历史**（2026-10-05 用户定：
+      "在更新日志中，不保留历史日志，只展示当前版本日志"）⇒ `-MaxVersions` 默认 **1**；
+      同一版本号的多次提交**合并条目**，所以一个版本内的多条改动不会丢。
+      哪天真要放历史，把 `-MaxVersions` 调大即可（`-Since` 仍然挡着上游历史）；
     · **上游历史不进更新日志**（2026-10-05 用户定："版本完全以 git commit 首行为标准，上游什么样不管了"）
       —— 上游仓库的 V2.0.5 等版本（2026-09-28 及更早）与我们的版本号序列无关，混在一起会让人看不懂。
       分界点见 `-Since`（默认 2026-10-01 = 本工程自研 V2.0.0 的首个提交日）。
@@ -27,7 +30,7 @@
 #>
 param(
   [string]$CommitMsgFile = '',
-  [int]$MaxVersions = 20,
+  [int]$MaxVersions = 1,
   [string]$Since = '2026-10-01'
 )
 
@@ -134,7 +137,7 @@ $newest = ($byVersion.Keys | Select-Object -First 1)
 [void]$sb.AppendLine("/** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */")
 [void]$sb.AppendLine("export const APP_VERSION_FALLBACK: string = 'V$(([regex]::Match($newest, '\d+\.\d+\.\d+')).Value)'")
 [void]$sb.AppendLine('')
-[void]$sb.AppendLine('/** 更新日志（新版本在前，最多 ' + $MaxVersions + ' 个版本） */')
+[void]$sb.AppendLine('/** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */')
 [void]$sb.AppendLine('export const VERSION_LOGS: VersionEntry[] = [')
 $n = 0
 foreach ($ver in $byVersion.Keys) {
