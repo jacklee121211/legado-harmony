@@ -15,9 +15,14 @@ import { Haptics } from '../../../common/utils/Haptics'
  * ── 关键取证 ──────────────────────────────────────────────────────────────
  * · `TextPicker`（`text_picker.d.ts`）：`range: string[]`（:120）、
  *   `selected?: number`（:167）、`onChange`（:737）⇒ 做 1-99 章节滚轮。
- * · `TimePicker`（`time_picker.d.ts`）：`TimePickerOptions{selected?: Date, format?}`
- *   （:124/:139/:152），`TimePickerFormat.HOUR_MINUTE`（:79，`@since 11`）
- *   ⇒ 做"时:分"滚轮。
+ *   MCP hover 原文（本工程实测，2026-10-06 复核）：
+ *     「(property) TextPickerOptions.selected?: number | number[] | undefined
+ *       Index of the selected item in the data list. The index is zero-based.
+ *       Default value: 0 … 3. Since API version 10, this parameter supports
+ *       two-way binding through $」
+ *   ⇒ 时/分两只滚轮同样用 `TextPicker`（**不是** `TimePicker`）。
+ *   ⚠️ `TimePicker`（时钟选择器）已于 2026-10-06 **整体弃用**：它是"选目标时刻"的
+ *      墙上时钟 API，与"再听多久"的计时语义不匹配（用户原话见下）。
  * · **材质**：走 `CustomDialogControllerOptions.systemMaterial`
  *   （`custom_dialog_controller.d.ts:681`，@since 26.0.0）+ `customStyle:false`，
  *   与长按书籍弹窗/加入书单弹窗同款 ⇒ 悬空四圆角 + 半透明沉浸光感。
@@ -66,28 +71,29 @@ export struct SleepTimerDialog {
   private chapterOptions: string[] = [];
   /** 选中的章节数；0 = 关 */
   @State selChapters: number = 0
-  /** 选中的时长（分钟）；0 = 关 */
-  @State selMinutes: number = 0
   /** 当前展示哪个选择器：0 = 章节，1 = 时间（按用户"顶部两个滑块"的设计做成可切换） */
   @State activePane: number = 0
 
-  /**
-   * 时间滚轮的**当前指向时刻**（时:分，闹钟式）。
-   *
-   * ⚠️ 2026-09-29 重写（审核问题③「调整时间错乱」）——旧实现把 `selected` 绑到
-   * `this.minutesToDate()`（= 用**剩余分钟数**反推一个墙上时刻）：
-   *   用户拨滚轮 → onChange 算出剩余分钟 → 状态变化触发重渲染 → `selected` 被
-   *   重新应用成"剩余分钟当时钟"的**另一个时刻** → 滚轮自己跳位 → 再 onChange…
-   *   （例：现在 23:00，拨到 09:00 ⇒ 剩余 600 分钟 ⇒ 滚轮被重设到 10:00 ⇒
-   *     剩余 660 ⇒ 又跳到 11:00 …… 一直往上跑。）
-   * SDK 依据（MCP hover `TimePickerOptions.selected` 原文）：
-   *   「Time of the selected item. **Default value: current system time.**
-   *     Since API version 10, this parameter supports two-way binding through $$」
-   * ⇒ `selected` 是**可随渲染重设**的参数，绝不能绑一个"随选择结果漂移"的表达式。
-   * 修法：滚轮位置只由 `pickedTime` 驱动，且它**只在 onChange（用户亲手拨动）时更新**，
-   * 更新的值就是用户刚选的值 ⇒ 重渲染后滚轮原地不动，反馈环消失。
-   */
-  @State pickedTime: Date = new Date()
+  // ── 时间 = **计时器**（2026-10-06 用户改版，方案 B）────────────────────────
+  // 用户原话："明显时间这个 api 是个时钟 api，我们需要的其实是个**计时 api**"。
+  // 旧实现用 `TimePicker`（时钟选择器）选**目标时刻**（闹钟式），再拿"目标 − 现在"
+  // 换算成分钟——对不想对钟点的用户完全反直觉 ⇒ 整个弃用。
+  // 新语义：**纯倒数时长**——"时 + 分"两只滚轮，拨多少就是"再听多久"，
+  // 右上角提示 = 时×60+分，**由滚轮实时推导**（单一数据源，绝无错位）。
+  // 引擎侧 `TtsEngine.setSleepTimer(0, minutes)` 本就是时长语义，零改动。
+  /** 时滚轮：0~23 */
+  private hourOptions: string[] = [];
+  /** 分滚轮：0~59 */
+  private minuteOptions: string[] = [];
+  /** 选中的"时"（0-23） */
+  @State selHours: number = 0
+  /** 选中的"分"（0-59） */
+  @State selMinutesPart: number = 0
+
+  /** 当前选中的总时长（分钟）= 时×60+分。**右上角提示与确定键的唯一数据源**。 */
+  private totalMinutes(): number {
+    return this.selHours * 60 + this.selMinutesPart;
+  }
 
   /**
    * 材质背板（调用方已通过 options 提供材质 ⇒ 传 true 让出背景）。
@@ -125,15 +131,25 @@ export struct SleepTimerDialog {
       arr.push(String(i));
     }
     this.chapterOptions = arr;
+    // 计时滚轮数据：时 0~23、分 0~59
+    const hs: string[] = [];
+    const ms: string[] = [];
+    for (let i = 0; i <= 23; i++) {
+      hs.push(String(i));
+    }
+    for (let i = 0; i <= 59; i++) {
+      ms.push(String(i));
+    }
+    this.hourOptions = hs;
+    this.minuteOptions = ms;
     this.selChapters = this.initChapters;
-    this.selMinutes = this.initMinutes;
-    // 时间滚轮初始指向（2026-09-29 重写）：
-    //  · 已设时长 ⇒ 指到"目标时刻"（现在 + 剩余分钟）—— 闹钟式语义下与剩余量自洽；
-    //    旧实现"剩余分钟当时钟"（300 分钟 ⇒ 显示 05:00）就是错乱的来源之一。
-    //  · 未设 ⇒ 系统当前时间（SDK 对 `selected` 的默认口径，见 pickedTime 注释）。
-    this.pickedTime = this.selMinutes > 0
-      ? new Date(Date.now() + this.selMinutes * 60000)
-      : new Date();
+    // 已设定时 ⇒ 把当初选的总分钟数**拆回"时/分"两轮**（例：300 ⇒ 时 5 分 0）；
+    // 未设 ⇒ 0 时 0 分（提示"未设定时"）。
+    // 钳制在滚轮量程内（0 时 0 分 ~ 23 时 59 分 = 1439 分钟）：`selected` 下标越界时
+    // TextPicker 的行为未见官方声明（未取证），因此不让它有机会拿到越界值。
+    const initMin = this.initMinutes > 0 ? Math.min(this.initMinutes, 23 * 60 + 59) : 0;
+    this.selHours = Math.floor(initMin / 60);
+    this.selMinutesPart = initMin % 60;
     // 材质不可用时的兜底色（夜里给深底，否则白底 + 白字）
     this.surface = new MaterialColumnModifier(
       this.colorMode == 0 ? '#1F1F1F' : Color.White, true);
@@ -144,63 +160,72 @@ export struct SleepTimerDialog {
     return this.selChapters <= 0 ? 0 : this.selChapters;
   }
 
-  /** 把目标时刻（时:分）换算成"距离现在还有多少分钟" —— **闹钟式语义** */
-  private computeRemainingMinutes(hour: number, minute: number): number {
-    const now = new Date();
-    const target = new Date();
-    target.setHours(hour, minute, 0, 0);
-    // 防击穿：目标时刻已过（或刚好现在）⇒ 视为**明天**的同一时刻
-    let diff = target.getTime() - now.getTime();
-    if (diff <= 0) {
-      diff += 24 * 60 * 60 * 1000;
-    }
-    // 兜底：任何异常都返回 0（调用方会把 0 当成"关"），绝不产生负数
-    const mins = Math.round(diff / 60000);
-    return mins > 0 ? mins : 0;
-  }
-
-  /** 从 Date 取"时"与"分"（越界时钳制到合法范围，防击穿） */
-  private safeHour(value: TimePickerResult): number {
-    const h = value.hour ?? 0;
-    return h >= 0 && h <= 23 ? h : 0;
-  }
-
-  private safeMinute(value: TimePickerResult): number {
-    const m = value.minute ?? 0;
-    return m >= 0 && m <= 59 ? m : 0;
-  }
-
-  /** 右上角提示：时间模式显示"剩余 N 分钟"（闹钟式），章节模式显示章数 */
+  /**
+   * 右上角提示 —— **必须与时间滚轮实时对齐**（2026-10-06 用户要求：
+   * 「方案B最好，但是**需要与右上角的时间对齐**」）。
+   *
+   * 时间模式：文案直接**镜像"时/分"两轮的读数**（拨 1 时 30 分 ⇒ "剩余 1 时 30 分"），
+   *   并附总分钟数 —— 后者是用户 2026-09-22 的原话要求（「右上角显示 300 分钟」）。
+   *   两个数字都由同一个 `totalMinutes()` 推导 ⇒ 结构上不可能出现"轮盘与提示不一致"。
+   * 章节模式：显示章数。
+   */
   private headerHint(): string {
     if (this.activePane === 1) {
-      return this.selMinutes > 0 ? `剩余 ${this.selMinutes} 分钟` : '未设定时';
+      const total = this.totalMinutes();
+      if (total <= 0) {
+        return '未设定时';
+      }
+      const h = Math.floor(total / 60);
+      const m = total % 60;
+      if (h <= 0) {
+        return `剩余 ${m} 分钟`;
+      }
+      if (m <= 0) {
+        return `剩余 ${h} 时（${total} 分钟）`;
+      }
+      return `剩余 ${h} 时 ${m} 分（${total} 分钟）`;
     }
     return this.selChapters > 0 ? `再读 ${this.selChapters} 章` : '未设定时';
   }
 
+  /** 右上角提示是否处于"蓝色高亮"（按**当前生效页签**取值，与 `headerHint()` 同源） */
+  private headerActive(): boolean {
+    return (this.activePane === 1 ? this.totalMinutes() : this.selChapters) > 0;
+  }
+
   build() {
     Column() {
-      // ── 标题 + 右上角「剩余分钟」（闹钟式语义）────────────────────────
-      // 用户要求：「**右上角显示 300 分钟**」（即目标时刻与现在的差值）。
+      // ── 标题 + 右上角「剩余时长」（**与时间滚轮同源**）──────────────────
+      // 「右上角显示 300 分钟」是 2026-09-22 用户原话；2026-10-06 改版后额外镜像
+      // 滚轮的"时/分"读数（例："剩余 1 时 30 分（90 分钟）"），二者同源 `totalMinutes()`。
       Row() {
         Text('睡眠定时').fontSize(16).fontWeight(600)
         Blank()
         Text(this.headerHint())
           .fontSize(12)
-          .fontColor(this.selMinutes > 0 || this.selChapters > 0
+          .fontColor(this.headerActive()
             ? 'rgba(0, 125, 255, 1.00)' : this.idleGray())
       }
       .width('100%')
       .padding({ bottom: 12 })
 
       // ── 顶部两选一：章节 / 时间（2026-09-22 用户要求**不能并行**）────────
-      // 用户原话：「睡眠定时章节和时间**不能并行，只能二选一**；
-      //   选择时间的 api 有点诡异，明明是目标时间的，被你搞成了奇怪的定时，
-      //   你可以直接像**闹钟**一样，设定目标时间，比如现在凌晨四点，设定上午9点，
-      //   就是五个小时，**右上角显示 300 分钟**，不就完了，
-      //   做好**防击穿逻辑**，避免出现负时间」。
-      // ⇒ `activePane` 即"当前生效的模式"（0=章节 / 1=时间），**同时只有一个生效**；
-      //   确认时把另一个置 0，保证二选一。
+      // ⚠️ 历史注记（**下面这段是 2026-09-29 的旧语义，2026-10-06 已废弃**，保留仅为留痕）：
+      //   用户当时原话「睡眠定时章节和时间**不能并行，只能二选一**；选择时间的 api 有点诡异，
+      //   明明是目标时间的，被你搞成了奇怪的定时，你可以直接像**闹钟**一样，设定目标时间……
+      //   **右上角显示 300 分钟**，不就完了，做好**防击穿逻辑**，避免出现负时间」。
+      //   ⇒ 那套"目标时刻 − 现在"的闹钟换算（`computeRemainingMinutes`/`pickedTime`）
+      //     已按 2026-10-06 用户新要求（「时间这个 api 是时钟 api，我们需要的是**计时 api**」）
+      //     整体删除，时间页签现在是**纯倒数时长**（见下方 `totalMinutes()` 与两轮 TextPicker）。
+      //   仍然成立的只有"二选一"本身：`activePane` 即"当前生效的模式"（0=章节 / 1=时间），
+      //     确认时把另一个置 0（`确定` 按钮按 `activePane` 只提交一个）。
+      // ⚠️ 2026-10-06（本次）：**切换页签不再清空另一侧的已选值**（旧写法：切到章节
+      //   `selMinutes = 0`、切到时间 `selChapters = 0`）。原因：
+      //     · "二选一"是由 `确定` 按 `activePane` 只提交一个来**保证**的，
+      //       与另一侧的状态是否为 0 无关（引擎 `TtsEngine.ets:1039-1041`：只认传进去的实参）；
+      //     · 旧写法会让"切过去看一眼再切回来"把刚拨好的值抹掉，
+      //       与本次要求「右上角跟滚轮对齐」直接冲突（提示要等于滚轮读数，就不能被暗中清零）。
+      //   副作用（预期内）：两个轮盘各自记住自己最后一次的读数；重开弹窗时由引擎回读覆盖。
       Row({ space: 12 }) {
         Text(this.activePane === 0 ? `章节 ${this.selChapters > 0 ? this.selChapters : '关'}` : '章节')
           .fontSize(14)
@@ -211,8 +236,8 @@ export struct SleepTimerDialog {
           .padding({ top: 8, bottom: 8 })
           .onClick(() => {
             Haptics.tap();
+            // 只切页签；时间滚轮的值保留（见上方 ⚠️ 说明）
             this.activePane = 0
-            this.selMinutes = 0
           })
         Text('时间')
           .fontSize(14)
@@ -223,8 +248,8 @@ export struct SleepTimerDialog {
           .padding({ top: 8, bottom: 8 })
           .onClick(() => {
             Haptics.tap();
+            // 只切页签；章节滚轮的值保留（见上方 ⚠️ 说明）
             this.activePane = 1
-            this.selChapters = 0
           })
       }
       .width('100%')
@@ -242,34 +267,31 @@ export struct SleepTimerDialog {
             Haptics.tick();
           })
       } else {
-        // 时间：**闹钟式** —— 选目标时刻（时:分），剩余分钟由差值算出并显示在右上角
-        // ⚠️ `selected` 只绑 `pickedTime`（稳定值，见其注释），绝不能绑随 selMinutes 漂移的表达式
-        TimePicker({
-          selected: this.pickedTime,
-          format: TimePickerFormat.HOUR_MINUTE
-        })
-          .width('100%')
-          .height(180)
-          // ★ 强制 24 小时制（2026-09-22 用户反馈修复）。
-          //   用户原话：「你这个带上**下午**，我需要的那种**只有时和分**」。
-          //   SDK 原文（`time_picker.d.ts:254` 的 `useMilitaryTime`）：
-          //     「Sets whether the time is displayed in 24-hour format.
-          //       **If this attribute is not specified, the system time format is used**
-          //       by default. - true: 24-hour format」
-          //   ⇒ 之前没设 ⇒ 跟随系统；用户手机是 12 小时制 ⇒ 出现"上午/下午"。
-          //   显式设为 true 即只显示"时:分"。
-          .useMilitaryTime(true)
-          .onChange((value: TimePickerResult) => {
-            const h = this.safeHour(value);
-            const m = this.safeMinute(value);
-            // ★ 滚轮位置回写**用户亲手选的时刻**（原地不动，不产生跳位反馈环）；
-            //   剩余分钟按闹钟式差值另算（早于现在的时刻 = 明天的这一时刻）。
-            const d = new Date();
-            d.setHours(h, m, 0, 0);
-            this.pickedTime = d;
-            this.selMinutes = this.computeRemainingMinutes(h, m);
-            Haptics.tick();
-          })
+        // 时间：**计时器**（2026-10-06 方案 B）——"时 + 分"两轮，拨多少 = 再听多久，
+        // 右上角提示 = 时×60+分（totalMinutes 单一数据源，实时对齐，绝无钟点换算）。
+        // 引擎侧 `TtsEngine.setSleepTimer(0, minutes)` 本就是累计时长语义，零改动。
+        Row({ space: 10 }) {
+          TextPicker({ range: this.hourOptions, selected: this.selHours })
+            .width(84)
+            .height(180)
+            .onChange((_value: string | string[], index: number | number[]) => {
+              const idx = typeof index === 'number' ? index : index[0];
+              this.selHours = idx >= 0 && idx <= 23 ? idx : 0;
+              Haptics.tick();
+            })
+          Text('时').fontSize(14).opacity(0.6)
+          TextPicker({ range: this.minuteOptions, selected: this.selMinutesPart })
+            .width(84)
+            .height(180)
+            .onChange((_value: string | string[], index: number | number[]) => {
+              const idx = typeof index === 'number' ? index : index[0];
+              this.selMinutesPart = idx >= 0 && idx <= 59 ? idx : 0;
+              Haptics.tick();
+            })
+          Text('分').fontSize(14).opacity(0.6)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
       }
 
       // ── 底部：取消 / 重置 / 确定 ─────────────────────────────────────
@@ -290,7 +312,9 @@ export struct SleepTimerDialog {
           .onClick(() => {
             Haptics.tap();
             this.selChapters = 0
-            this.selMinutes = 0
+            // 时间滚轮清零 = "时 0 / 分 0" ⇒ `totalMinutes()` 归零 ⇒ 右上角回到"未设定时"
+            this.selHours = 0
+            this.selMinutesPart = 0
             this.onReset()
             this.controller?.close()
           })
@@ -301,13 +325,14 @@ export struct SleepTimerDialog {
           .onClick(() => {
             // **二选一**（用户明确要求章节与时间不能并行）：
             // 按当前 `activePane` 只提交一个，另一个强制置 0。
-            // 另外 `selMinutes` 已在 `computeRemainingMinutes` 里做过防负值，
-            // 这里再兜一次（>0 才算，否则当"关"）。
+            // 时长 = `totalMinutes()`（= 时×60+分，与右上角提示**同一个来源**）；
+            // 0 即"关"（引擎侧 `TtsEngine.ets:1041` 把 0 当作不设时长），绝不产生负值。
             Haptics.tap();
             if (this.activePane === 0) {
               this.onConfirm(this.selChapters > 0 ? this.selChapters : 0, 0)
             } else {
-              this.onConfirm(0, this.selMinutes > 0 ? this.selMinutes : 0)
+              const mins = this.totalMinutes();
+              this.onConfirm(0, mins > 0 ? mins : 0)
             }
             this.controller?.close()
           })

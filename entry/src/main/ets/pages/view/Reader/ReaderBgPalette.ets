@@ -174,5 +174,32 @@ export struct ReaderBgPalette {
         this.onCommit();
       }
     })
+    // ── 手势仲裁（2026-10-06 用户反馈："按住调色盘拖动，整个设置页跟着滚"）──────────
+    // 根因：本组件取色靠 `.onTouch`，而 onTouch **不参与手势仲裁**；设置面板外层是
+    // `Scroll`（`ReaderSettingDialog`），其内置平移把拖动抢走 ⇒ 色盘动、sheet 跟着滚
+    // （真机日志：`PAN RACC, T: Scroll`）。
+    // 修复：绑一个 `PanGesture({ distance: 1 })` —— 官方手势仲裁规则
+    // （FAQ `faqs-arkui-827`：「当父组件和子组件使用 gesture 绑定同类型手势时，
+    // 子组件优先识别」）⇒ 1vp 即起手，抢在 Scroll 内置平移（默认 5vp 阈值）之前。
+    // 手势与 onTouch 并行取色（pickAt 同色幂等，双路无害）；抬手仍走 onTouch 的 onCommit。
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
+      .onActionStart((e: GestureEvent | undefined) => {
+        if (e === undefined) {
+          return;
+        }
+        const f = (e.fingerList !== undefined && e.fingerList.length > 0) ? e.fingerList[0] : undefined;
+        if (f !== undefined) {
+          this.pickAt(f.localX, f.localY);
+        }
+      })
+      .onActionUpdate((e: GestureEvent | undefined) => {
+        if (e === undefined) {
+          return;
+        }
+        const f = (e.fingerList !== undefined && e.fingerList.length > 0) ? e.fingerList[0] : undefined;
+        if (f !== undefined) {
+          this.pickAt(f.localX, f.localY);
+        }
+      }))
   }
 }
