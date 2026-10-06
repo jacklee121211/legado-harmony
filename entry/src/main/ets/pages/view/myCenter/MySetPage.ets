@@ -17,6 +17,8 @@ import { ThemeItem } from '../../../common/model/Theme'
 import UiMotion from '../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog'
+// ── 字号阶梯（2026-10-06 统一标准，见 FontConstants「语义阶梯」段；本页文字只取这四档）──
+import FontConstants from '../../../common/constants/FontConstants'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -161,11 +163,11 @@ export default struct MySetPage{
     new SetGroupList('震动反馈',this.hapticSetList)
   ]
 
-  // 定义分组设置头部
+  // 定义分组设置头部（**说明级** 12 号：小标题不跟条目抢视觉，见 FontConstants 语义阶梯）
   @Builder itemHead(text: string) {
     // 分组设置头部组件
     Text(text)
-      .fontSize(12)
+      .fontSize(FontConstants.CAPTION)
       .fontColor($r('app.color.text_tertiary'))
       .backgroundColor($r('app.color.page_bg_alt'))
       .width('100%')
@@ -246,8 +248,8 @@ export default struct MySetPage{
               .fontSize(18)
               .fontColor([this.theme.mainColor])
             Text('测试账号')
-              .fontSize(14)
-              .fontWeight(600)
+              .fontSize(FontConstants.ITEM)
+              .fontWeight(FontConstants.W_TITLE)
               .fontColor($r('app.color.text_primary'))
           }
           .justifyContent(FlexAlign.Center)
@@ -294,10 +296,13 @@ export default struct MySetPage{
                 ListItem(){
                   Column({ space: 4 }){
                     Row(){
-                      Text('震动强度').fontSize(16)
+                      // ⚠️ 2026-10-06 字号统一：本行标题曾写 16，比上面 SetListView 的行标题（14）
+                      //   大一号，与「震动反馈」上下相邻 ⇒ 明显不和谐（用户实测反馈）。
+                      //   现在取 `FontConstants.ITEM`，右侧当前值同 `SetListView.rightText` 取 12。
+                      Text('震动强度').fontSize(FontConstants.ITEM)
                       Blank()
                       Text(`${this.hapticStrength}`)
-                        .fontSize(13)
+                        .fontSize(FontConstants.CAPTION)
                         .fontColor($r('app.color.text_tertiary'))
                     }.width('100%')
                     Slider({
@@ -325,10 +330,10 @@ export default struct MySetPage{
                       })
 
                     Row(){
-                      Text('震感模式').fontSize(16)
+                      Text('震感模式').fontSize(FontConstants.ITEM)
                       Blank()
                       Text(`${Haptics.modeName()}`)
-                        .fontSize(13)
+                        .fontSize(FontConstants.CAPTION)
                         .fontColor($r('app.color.text_tertiary'))
                     }.width('100%')
                     Slider({
