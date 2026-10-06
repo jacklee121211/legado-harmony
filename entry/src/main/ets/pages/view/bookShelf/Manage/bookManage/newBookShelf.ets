@@ -13,11 +13,11 @@ import BooksDao from '../../../../../database/dao/BooksDao'
 import { Books } from '../../../../../database/entities/Books'
 import { WorksBookList } from '../../../../../database/entities/WorksBookList'
 import { WorksLists, WORK_BOOK_LIST_STATUS } from '../../../../../database/entities/WorksLists'
-import shareWorksBook from '../../../dialog/shareWorksBook'
 import NewAddShelfDialog from '../../components/dialog/NewAddShelfDialog'
 import ImmersiveMaterialUtil from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
+import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
 
 @Component
 export default struct newBookShelf{
@@ -211,7 +211,10 @@ export default struct newBookShelf{
               })
             Image($r('app.media.edit_share')).width(25).fillColor(ShelfColors.icon())
               .onClick(()=>{
-                Haptics.tap(); this.shareShelfBookDialog?.open()
+                // 2026-10-06：**只保留系统分享** ⇒ 自定义分享弹窗 `shareWorksBook` 已删除
+                // （它只是"生成书单图片 + 未接入 SDK 的第三方品牌按钮"）。
+                // 书单没有可分享的文件（系统分享需 utd + uri），与 `BookManagePage` 的分组分支同一处理。
+                Haptics.tap(); showMessage('书单暂不支持分享，请选择书籍')
               })
           }
           .visibility(this.workBookListStatus === 1?Visibility.Visible:Visibility.None)
@@ -362,8 +365,15 @@ export default struct newBookShelf{
           return
         }
         //默认取书籍的第一个封面为书单封面
+        // 2026-10-06：与单本封面同契约（`CoverSource.ets` 头注释 customCoverUrl > coverUrl）。
+        // 此前只读 `coverUrl` ⇒ 书架换过自定义封面的书建书单后，书单卡片还是默认封面
+        // （用户 2026-10-06「封面不与全局同步」同类）。这里存**原样协议字符串**
+        // （`default://…` / `datashare://…`），与分组封面 `BookGroups.coverUrl` 的存法一致；
+        // 渲染端（WorksBookListInfo→BookOverlay / WorksBookListGrid→resolveCoverSource）负责解析。
         if(this.addBooksList.length > 0){
-          this.workBookList.worksCoverUrl = this.addBooksList[0].coverUrl ?? ''
+          const first: Books = this.addBooksList[0]
+          const custom: string = first.customCoverUrl ?? ''
+          this.workBookList.worksCoverUrl = custom !== '' ? custom : (first.coverUrl ?? '')
         }
         await worksListsUtils.addWorksLists(this.workBookList)
         showMessage(this.workBookListStatus === 0?'创建书单成功':'修改书单成功')
@@ -388,9 +398,13 @@ export default struct newBookShelf{
             Text('置顶').fontColor(Color.White).fontWeight(300).fontSize(8).padding(3).borderRadius(5)
               .backgroundColor('rgba(0, 0, 0, 0.45)').zIndex(1)
           }
-          Image(book.coverUrl)
+          // 2026-10-06：书单候选书列表的封面也要与书架同源（customCoverUrl > coverUrl > alt）。
+          // 与 CoverStyleDialog 的写入端（写 `Books.customCoverUrl`）配对，缺一边就"不同步"。
+          // 圆角对齐书架列表项（`BookInfos.ets` 用 coverCorners(60)）。
+          Image(resolveCoverSource(book.customCoverUrl ?? '') ?? book.coverUrl)
             .draggable(false)
             .alt($r('app.media.icon_book_default_cover_one'))
+            .borderRadius(coverCorners(69))
             .width(69)
             .height(92)
         }.alignContent(Alignment.BottomStart)
@@ -488,17 +502,6 @@ export default struct newBookShelf{
       worksBookList:[]
     }
   }
-
-  shareShelfBookDialog: CustomDialogController | null = new CustomDialogController({
-    builder: shareWorksBook({
-      works:this.workBookList
-    }),
-    autoCancel: true,
-    width:'100%',
-    height:'100%',
-    alignment: DialogAlignment.Bottom,
-    customStyle:true
-  })
 }
 
 @Styles function fontStyles() {

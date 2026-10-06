@@ -2,10 +2,10 @@
   "modelVersion": "5.0.0",
   "name": "legado",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
+  "description": "喵阅 —— 专注本地阅读的 HarmonyOS 阅读器（GPL-3.0）",
   "main": "",
   "author": "",
-  "license": "",
+  "license": "GPL-3.0",
   "dependencies": {
     "@ohos/axios": "^2.2.0",
     "dayjs": "^1.11.7",

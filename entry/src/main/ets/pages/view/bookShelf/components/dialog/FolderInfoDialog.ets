@@ -9,6 +9,7 @@ import TitleContentDialog from '../../../../../componets/common/TitleContentDial
 import { buttonList } from '../../../../../componets/dataList/buttonList'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
+import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import AddToBookListDialog from './AddToBookListDialog'
 import coverInfoDialog from './coverInfoDialog'
@@ -44,6 +45,37 @@ export default struct FolderInfoDialog{
   ]
   @StorageLink('topRectHeight') topRectHeight: number = 0
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
+  /**
+   * 「共N本」的**真实值**（2026-10-06）。
+   *
+   * 原来是直接读 `this.itemData.bookIds?.length` —— 那是 `book_groups.bookIds` 这个陈旧
+   * 冗余列（只在「移动分组」时追加，导入/删除都不同步），真机 novel.db 实测自建分组名下
+   * 8 本书而该列是空串；再叠加 `DbUtil.parseResultSet` 把空串读成 undefined
+   * （`DbUtil.ets:333`）⇒ 恒显示"共0本"。
+   * 现在按 `books.bookGroup` 现算（WHERE 与点进去的列表同源），初值仍取 @Prop 的快照值
+   * 以免异步回来前闪一下 0。
+   */
+  @State realBookCount: number = this.itemData.bookIds?.length || 0
+  aboutToAppear(): void {
+    this.refreshBookCount()
+  }
+
+  /** 现算本分组书籍数（入口处 + 兜底重查后都要调） */
+  private async refreshBookCount(): Promise<void> {
+    const id: number | undefined = this.itemData.groupId
+    if (id === undefined) {
+      return
+    }
+    try {
+      const ids: string[] = await booksDao.queryBookIds({
+        type: this.itemData.groupType,
+        bookGroup: id
+      })
+      this.realBookCount = ids.length
+    } catch (e) {
+      console.log('FolderInfoDialog refreshBookCount, Error, ', JSON.stringify(e))
+    }
+  }
   cancel: () => void = () => {
 
   }
@@ -73,6 +105,7 @@ export default struct FolderInfoDialog{
       if (fresh) {
         this.itemData = fresh
         this.topTitle = fresh.isTop ? '取消置顶' : '置顶'
+        await this.refreshBookCount()
       }
     }
     this.controller?.open()
@@ -119,7 +152,7 @@ export default struct FolderInfoDialog{
       }){
         Column(){
           Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
-          Text(`共${this.itemData.bookIds?.length||0}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
+          Text(`共${this.realBookCount}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
         }
       }.padding(20)
       // ── 图标区（2026-10-01 间距统一，用户："两行图标之间…没有间距，看起来难受"）────

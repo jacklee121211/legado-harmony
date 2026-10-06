@@ -5,6 +5,7 @@ import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
+import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
 
 @Component
 /**
@@ -64,8 +65,13 @@ export default struct BookInfoGridManage{
               Text('置顶').fontColor(Color.White).fontWeight(300).fontSize(8).padding(3).borderRadius(5)
                 .backgroundColor('rgba(0, 0, 0, 0.45)').zIndex(1)
             }
-            Image(this.bookData.coverUrl)
+            // 2026-10-06：同 BookInfoManage —— 封面与书架同源（customCoverUrl > coverUrl > alt），
+            // 否则书架换过封面后管理页宫格仍显示默认封面（用户 2026-10-06 反馈）。
+            // 圆角对齐书架宫格（`BookInfoGrids.ets` 用 coverCorners(100)）。
+            Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
+              .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
+              .borderRadius(coverCorners(100))
               .width(100)
               .height(120)
           }.alignContent(Alignment.BottomStart)

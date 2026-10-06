@@ -4,6 +4,7 @@ import { ThemeItem } from '../../../../../common/model/Theme'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
+import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
 
 /**
  * 文件夹宫格_管理页
@@ -41,9 +42,16 @@ export default struct BookFolderGridManage {
               Text('置顶').fontColor(Color.White).fontWeight(300).fontSize(8).padding(3).borderRadius(5)
                 .backgroundColor('rgba(0, 0, 0, 0.45)').zIndex(1)
             }
-            Image(this.group.coverUrl)
+            // 2026-10-06：分组封面与书架文件夹视图**同一解析契约**（`CoverSource.ets` 头注释；
+            // 规范 `docs/标准-弹窗与按钮统一规范.md:200`「任何显示端不得手写 substring，
+            // 统一走 resolveCoverSource()」）。此前直接 `Image(this.group.coverUrl)` ⇒
+            // 用户挑的内置封面存成 `default://cover_defaults/cN.svg`，Image 认不出这个协议
+            // ⇒ 落到 alt 默认图（"书架的封面改变，管理中还是默认的封面"的分组版）；
+            // 未设封面（undefined）时与书架一致显示内置 c1。
+            Image(resolveCoverSource(this.group.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
+              .borderRadius(coverCorners(88))
               .width(88)
               .height(120)
           }.alignContent(Alignment.BottomStart)
