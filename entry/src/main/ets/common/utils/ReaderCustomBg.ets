@@ -99,9 +99,42 @@ export interface ReaderBgRecord {
 /**
  * 一条「保存方案」V2（2026-09-25 用户改版）：**背景色 + 字色** 成对。
  * `fontHex = ''` 表示字色未手动选过（应用时按背景亮度自动对比）。
+ *
+ * ⚠️ 2026-10-06 起被 **V3**（`SchemeV3`）取代：V2 只有颜色 ⇒ 材质/自定义材质表达不了、
+ *   方案一用材质必丢（页面侧 `applyScheme` 会清 `bgTexId/bgCustomId`）。本接口保留只为
+ *   **迁移读取**（`loadSchemesV3` 一次性把 V2 搬进 V3，旧键不删，回退容易）。
  */
 export interface BgSchemeEntry {
   bgHex: string;
+  fontHex: string;
+}
+
+/**
+ * 一条「保存方案」V3（2026-10-06 用户诉求原文：「无论是预设颜色、材质，自定义颜色、材质，
+ * 预设字体颜色、自定义字体颜色，**全能自由搭配，并且被保存成方案**」）。
+ *
+ * 结构 = **背景家族**（种类 + 取值 + 模糊档位）× **字色家族**（种类 + 取值）：
+ *   · 背景种类三选一：纯色 / 内置材质 / 自定义材质（互斥，与页面 `bgTexId/bgCustomId` 同语义）；
+ *   · 模糊属背景家族（`ReaderPage3` bgBlurOn 注释）⇒ 随方案一起存、一起还原；
+ *   · 字色两种：按背景自动对比 / 用户指定字色（`fontAuto` 的两种状态）。
+ * 归一化（`normalizeSchemeV3`）逐条校正，坏数据直接丢弃，绝不让半成品进 UI。
+ */
+export interface SchemeV3 {
+  /** 背景种类：0 = 纯色（用 `bgHex`）/ 1 = 内置材质（用 `texId`）/ 2 = 自定义材质（用 `customTexId`） */
+  bgKind: number;
+  /** `bgKind = 0` 时的背景色 `#RRGGBB`（其它种类为空串） */
+  bgHex: string;
+  /** `bgKind = 1` 时的内置材质编号（`texture_001` ⇒ 1） */
+  texId: number;
+  /** `bgKind = 2` 时的自定义材质 id（`ReaderTexture.CustomTex.id`） */
+  customTexId: string;
+  /** 背景模糊开关（随方案还原） */
+  blurOn: boolean;
+  /** 背景模糊强度（px，只取 `BG_BLUR_TIERS` 5 档，归一化时吸附） */
+  blurRadius: number;
+  /** 字色种类：0 = 按背景自动对比 / 1 = 指定字色（用 `fontHex`） */
+  fontKind: number;
+  /** `fontKind = 1` 时的字色 `#RRGGBB` */
   fontHex: string;
 }
 
@@ -718,6 +751,183 @@ export class ReaderCustomBg {
     if (kept.length !== list.length) {
       try {
         PreferencesUtil.putSync(ReaderCustomBg.KEY_SCHEMES_V2, JSON.stringify(kept));
+      } catch (e) {
+        // 落盘失败不阻断 UI
+      }
+    }
+  }
+
+  // ══ 「保存方案」V3（2026-10-06）：背景家族 × 字色家族，自由搭配 + 可存 ═════════
+  //
+  // ── 为什么升 V3（用户实测 + 读码结论）──────────────────────────────────────
+  //   · V2 的 `BgSchemeEntry` 只有 `bgHex/fontHex` ⇒ **材质表达不了**；而页面侧
+  //     `applyScheme` 又会 `bgTexId = 0; bgCustomId = ''` ⇒ 方案一用材质必丢；
+  //   · 「保存方案」按钮原先只在自定义颜色模式下出现 ⇒ 材质背景下**连入口都没有**。
+  //   ⇒ 用户诉求：「预设颜色、材质、自定义颜色、材质、预设字色、自定义字色，全能自由搭配、
+  //     并保存成方案。」
+  // ── 迁移 ──────────────────────────────────────────────────────────────────
+  //   新键 `ReaderBgSchemesV3`；首次读到 V3 为空且 V2 有数据 ⇒ 逐条搬过来
+  //   （`bgKind = 0` + 原 bgHex/fontHex + 模糊默认档）。**V2 键保留不删**（一键回退）。
+
+  static readonly KEY_SCHEMES_V3: string = 'ReaderBgSchemesV3';
+  /** 背景种类：0 纯色 / 1 内置材质 / 2 自定义材质 */
+  static readonly BG_KIND_COLOR: number = 0;
+  static readonly BG_KIND_TEX: number = 1;
+  static readonly BG_KIND_CUSTOM: number = 2;
+  /** 字色种类：0 按背景自动对比 / 1 指定字色 */
+  static readonly FONT_KIND_AUTO: number = 0;
+  static readonly FONT_KIND_HEX: number = 1;
+
+  /** 归一化一条 V3 方案；坏数据返回 `null`（不进 UI） */
+  private static normalizeSchemeV3(e: SchemeV3): SchemeV3 | null {
+    if (e === null || e === undefined) {
+      return null;
+    }
+    const fontRaw: string = typeof e.fontHex === 'string' ? e.fontHex : '';
+    const fontRgb: RgbTriple | null = fontRaw.length > 0 ? ReaderCustomBg.parseColor(fontRaw) : null;
+    const texId: number = (typeof e.texId === 'number' && isFinite(e.texId) && e.texId >= 1)
+      ? Math.floor(e.texId) : 0;
+    const customTexId: string = typeof e.customTexId === 'string' ? e.customTexId : '';
+    const kindRaw: number = ReaderCustomBg.num(e.bgKind, ReaderCustomBg.BG_KIND_COLOR);
+    const kind: number = (kindRaw === ReaderCustomBg.BG_KIND_TEX
+      || kindRaw === ReaderCustomBg.BG_KIND_CUSTOM) ? kindRaw : ReaderCustomBg.BG_KIND_COLOR;
+    let bgHex: string = typeof e.bgHex === 'string' ? e.bgHex : '';
+    if (kind === ReaderCustomBg.BG_KIND_TEX) {
+      if (texId <= 0) {
+        // 材质编号坏了 ⇒ 这条方案没法还原，丢弃（绝不给出一个空白块）
+        return null;
+      }
+    } else if (kind === ReaderCustomBg.BG_KIND_CUSTOM) {
+      if (customTexId.length === 0) {
+        return null;
+      }
+    } else {
+      const rgb: RgbTriple | null = ReaderCustomBg.parseColor(bgHex);
+      if (rgb === null) {
+        return null;
+      }
+      bgHex = ReaderCustomBg.hexOf(rgb);
+    }
+    return {
+      bgKind: kind,
+      bgHex: bgHex,
+      texId: texId,
+      customTexId: customTexId,
+      blurOn: e.blurOn === true,
+      blurRadius: ReaderCustomBg.snapBlurTier(
+        ReaderCustomBg.num(e.blurRadius, BG_BLUR_RADIUS_DEFAULT)),
+      fontKind: fontRgb === null ? ReaderCustomBg.FONT_KIND_AUTO : ReaderCustomBg.FONT_KIND_HEX,
+      fontHex: fontRgb === null ? '' : ReaderCustomBg.hexOf(fontRgb)
+    };
+  }
+
+  /** 方案去重键（公开：页面与「更多方案」弹窗据此判断"当前用的是哪条"）；同一套搭配不重复存 */
+  static schemeKeyV3(s: SchemeV3): string {
+    return s.bgKind + '|' + s.bgHex + '|' + s.texId + '|' + s.customTexId
+      + '|' + s.fontHex + '|' + (s.blurOn ? s.blurRadius : 0);
+  }
+
+  /** 已保存方案 V3（顺序 = 添加顺序）；首次读取自动从 V2 迁移 */
+  static loadSchemesV3(): SchemeV3[] {
+    const out: SchemeV3[] = [];
+    /**
+     * V3 键**是否存在**（含 `'[]'`）。
+     * ⚠️ 必须与"解析出几条"分开判：用户把方案**删光**后 V3 = `[]`，
+     *   若只看 `out.length === 0` 就又去迁 V2 ⇒ 删掉的旧方案会**复活**。
+     */
+    let keyExists: boolean = false;
+    try {
+      const raw = PreferencesUtil.getSync(ReaderCustomBg.KEY_SCHEMES_V3, '') as string;
+      if (typeof raw === 'string' && raw.length > 0) {
+        keyExists = true;
+        const parsed = JSON.parse(raw) as SchemeV3[];
+        if (Array.isArray(parsed)) {
+          for (const e of parsed) {
+            const one: SchemeV3 | null = ReaderCustomBg.normalizeSchemeV3(e);
+            if (one !== null) {
+              out.push(one);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // 读/解析失败 ⇒ 当空表处理；`keyExists` 保持 false，下面仍会尝试迁移
+      keyExists = false;
+    }
+    if (keyExists) {
+      return out;
+    }
+    // ── 一次性迁移 V2（背景色 + 字色）⇒ V3（bgKind = 0）───────────────────────
+    const v2: BgSchemeEntry[] = ReaderCustomBg.loadSchemes();
+    if (v2.length === 0) {
+      return out;
+    }
+    for (const e of v2) {
+      const one: SchemeV3 | null = ReaderCustomBg.normalizeSchemeV3({
+        bgKind: ReaderCustomBg.BG_KIND_COLOR,
+        bgHex: e.bgHex,
+        texId: 0,
+        customTexId: '',
+        blurOn: false,
+        blurRadius: BG_BLUR_RADIUS_DEFAULT,
+        fontKind: e.fontHex.length > 0 ? ReaderCustomBg.FONT_KIND_HEX : ReaderCustomBg.FONT_KIND_AUTO,
+        fontHex: e.fontHex
+      });
+      if (one !== null) {
+        out.push(one);
+      }
+    }
+    if (out.length > 0) {
+      try {
+        PreferencesUtil.putSync(ReaderCustomBg.KEY_SCHEMES_V3, JSON.stringify(out));
+      } catch (e) {
+        // 落盘失败不影响本次返回（下次再迁一次，结果一致）
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 追加一条 V3 方案（同一套搭配不重复存）。
+   * @returns `'ok'` 新增；`'dup'` 已存在 / 数据不可用；`'full'` 已达上限
+   */
+  static addSchemeV3(s: SchemeV3): string {
+    const one: SchemeV3 | null = ReaderCustomBg.normalizeSchemeV3(s);
+    if (one === null) {
+      return 'dup';
+    }
+    const list: SchemeV3[] = ReaderCustomBg.loadSchemesV3();
+    const key: string = ReaderCustomBg.schemeKeyV3(one);
+    for (const x of list) {
+      if (ReaderCustomBg.schemeKeyV3(x) === key) {
+        return 'dup';
+      }
+    }
+    if (list.length >= ReaderCustomBg.MAX_SCHEMES) {
+      return 'full';
+    }
+    list.push(one);
+    try {
+      PreferencesUtil.putSync(ReaderCustomBg.KEY_SCHEMES_V3, JSON.stringify(list));
+    } catch (e) {
+      // 落盘失败不阻断 UI
+    }
+    return 'ok';
+  }
+
+  /** 删除一条 V3 方案（整条匹配；不存在时幂等空操作） */
+  static deleteSchemeV3(s: SchemeV3): void {
+    const key: string = ReaderCustomBg.schemeKeyV3(s);
+    const list: SchemeV3[] = ReaderCustomBg.loadSchemesV3();
+    const kept: SchemeV3[] = [];
+    for (const x of list) {
+      if (ReaderCustomBg.schemeKeyV3(x) !== key) {
+        kept.push(x);
+      }
+    }
+    if (kept.length !== list.length) {
+      try {
+        PreferencesUtil.putSync(ReaderCustomBg.KEY_SCHEMES_V3, JSON.stringify(kept));
       } catch (e) {
         // 落盘失败不阻断 UI
       }

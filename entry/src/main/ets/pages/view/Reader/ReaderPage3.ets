@@ -36,7 +36,7 @@ import { TtsControlPanel } from '../../../components/tts/TtsControlPanel';
 // `ReaderCustomBg`：色彩数学 + 按书/全局持久化（文件头有"背景色是渲染还是图片"的取证）；
 // `ReaderBgPalette`：无极调色盘组件（纯 UI + 取色回调，不碰持久化）；
 // `HapticTick`：滑条/调色盘的线性震动（与听书面板同源的已验证实现）。
-import { ReaderCustomBg, ReaderBgRecord, BgSchemeEntry,
+import { ReaderCustomBg, ReaderBgRecord, SchemeV3,
   BG_BLUR_TIERS, BG_BLUR_RADIUS_DEFAULT } from '../../../common/utils/ReaderCustomBg';
 import { ReaderTexture, ComposeResult } from '../../../common/utils/ReaderTexture';
 import { ReaderTextureDialog } from './ReaderTextureDialog';
@@ -954,7 +954,8 @@ export default struct ReaderPage3 {
    * 用户「保存方案」存下来的颜色（`#RRGGBB`，**全软件共用**）。
    * 与 `themeList` 一起构成「背景」那一行；渲染顺序 = 4 个内置推荐色 + 这些。
    */
-  @State savedSchemes: BgSchemeEntry[] = []
+  /** 已保存方案（V3：背景家族 × 字色家族，见 `SchemeV3`；仅用于计数/回调后刷新） */
+  @State savedSchemes: SchemeV3[] = []
 
   // ══════════════════════════════════════════════════════════════════════════
   // 自定义背景色（2026-09-25 新增，用户设计）
@@ -971,8 +972,25 @@ export default struct ReaderPage3 {
   //   ⚠️ 与 `readerSetting` 一样是**按书**的 —— 这正是"每本书互不干扰"的来源
   //     （`ReaderSetting_<书名>`，本文件 `aboutToAppear` / `registerPageShow`）。
   // ══════════════════════════════════════════════════════════════════════════
-  /** 自定义背景色开关（true = 用自定义色；false = 用上面那排推荐色） */
+  /**
+   * 自定义背景色开关（true = **背景当前就是**自定义纯色）。
+   *
+   * ⚠️ 2026-10-06 语义拆分（用户实测："点击自定义颜色开关，开启后无论是什么背景，都会被
+   *   强制改成自定义颜色背景，此处不对，我们明明有逻辑，用户手动取色之后，点击保存才生效"）：
+   *   旧实现里本字段身兼两职 —— 既是"调色盘展开"，也是"背景=自定义色"，而开关一开就
+   *   `enterFreeMode() → applyCustomBg(true)` **立刻换背景** ⇒ 材质/推荐色当场让位。
+   *   现在拆成两个：
+   *     · `customBgOn`   = **已应用**（只有按「保存」或底栏"自由"模式才为 true，会落盘）
+   *     · `customEditOn` = **调色盘展开中**（纯 UI 态，不落盘、不碰引擎）
+   *   开关 `isOn` 与各调色盘区块的显隐都按"两者之一"判。
+   */
   @State customBgOn: boolean = false
+  /**
+   * 调色盘是否展开（**纯编辑态**：不持久化、不动背景）。
+   * 开开关只把它置 true ⇒ 用户可以随便试色，按「保存」才真正生效（`commitCustomColor`）。
+   * ⚠️ 它与"自由"模式（底栏三态按钮 → `enterFreeMode`）不是一回事：那个是**应用**语义。
+   */
+  @State customEditOn: boolean = false
   /** 自定义背景色的 R / G / B，各 0-255（与 RGB 滑块、调色盘、预览块同源） */
   @State customBgR: number = 255
   @State customBgG: number = 255
@@ -1056,8 +1074,14 @@ export default struct ReaderPage3 {
    *       'custom' 自定义颜色（保存按钮）
    */
   @State bgFocus: string = ''
-  /** 焦点落在已保存方案上时，记录那条方案的背景色（'scheme' 圈的匹配键） */
+  /** 焦点落在已保存方案上时，记那条方案的背景色（仅纯色方案用；'scheme' 圈的匹配键之一） */
   private schemeFocusBg: string = ''
+  /**
+   * 焦点落在已保存方案上时的**方案键**（`ReaderCustomBg.schemeKeyV3`）。
+   * V3 起方案可以是纯色/材质/自定义材质 ⇒ 光靠颜色 hex 认不出「用的是哪一条」
+   * （旧实现 `schemeFocusBg` 只对纯色方案成立）。弹窗按它给对应卡片画橙圈。
+   */
+  private schemeFocusKey: string = ''
 
   // ── 自定义字色（2026-09-25 新增）──────────────────────────────────────────
   // 用户原话：「缺少自定义文字颜色，都是系统的判定，也不对，应该和背景一样，
@@ -1427,7 +1451,9 @@ export default struct ReaderPage3 {
       })
       // ★ 点了推荐色 = 用户改选"默认背景" ⇒ 离开自定义颜色模式（色值一律保留）。
       //   ⚠️ 必须放在 animateTo 之后：闭包已把三个值改成刚点的推荐色，才能记成新回退点。
-      if (this.customBgOn) {
+      //   ⚠️ 2026-10-06：条件补上 `customEditOn` —— 只是"展开调色盘试色"时点推荐色，
+      //     同样要收起调色盘并把新底色记成回退点（否则之后关开关会还原成更旧的那套）。
+      if (this.customBgOn || this.customEditOn) {
         this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
       }
       this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
@@ -1530,6 +1556,8 @@ export default struct ReaderPage3 {
    */
   private setStandardMode(night: boolean): void {
     this.customBgOn = false
+    // 明确的白/黑选择 = 调色盘一并收起（`customEditOn` 是纯编辑态，见其注释）
+    this.customEditOn = false
     this.colorMode = night ? 0 : 1
     this.readerSetting.nightMode = night
     this.readerSetting.fontColor = night ? '#ffffff' : '#000000'
@@ -1577,22 +1605,34 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 应用一条已保存方案（背景+字色 成对，用户原话「点它 = 使用该方案」）。
-   * 方案属于**背景家族** ⇒ 应用时退出自定义颜色模式（customBgOn=false）。
-   * `fontHex === ''` = 字色按背景自动对比（并把 fontAuto 拨回自动）。
+   * 应用一条已保存方案 **V3**（背景家族 × 字色家族，用户原话「点它 = 使用该方案」）。
+   *
+   * 与 V2 的关键差别（2026-10-06 用户诉求："预设颜色、材质、自定义颜色、材质、预设字色、
+   * 自定义字色，全能自由搭配，并且被保存成方案"）：
+   *   · 背景按 `bgKind` 分别走 纯色 / 内置材质 / 自定义材质 三条**同源**管线 ——
+   *     旧实现无条件 `bgTexId = 0; bgCustomId = ''`，方案一用材质必丢；
+   *   · 模糊属背景家族 ⇒ 先摆好 `bgBlurOn/bgBlurRadius` 再下背景（否则会拿旧档位出图）；
+   *   · 字色按 `fontKind` 覆盖或拨回自动对比。
+   * 背景源不存在（材质文件被删）时**只提示、不动当前背景**，绝不静默换成别的样子。
    */
-  private applyScheme(e: BgSchemeEntry): void {
-    const rgb = ReaderCustomBg.parseColor(e.bgHex)
-    if (rgb === null) {
+  private applyScheme(e: SchemeV3): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
+    // 先验目标背景是否还在（自定义材质被删是最常见的失效）
+    if (e.bgKind === ReaderCustomBg.BG_KIND_TEX) {
+      if (ReaderTexture.byId(ctx, e.texId) === null) {
+        showMessage('这条方案的材质已不存在')
+        return
+      }
+    } else if (e.bgKind === ReaderCustomBg.BG_KIND_CUSTOM) {
+      if (ReaderTexture.customById(ctx, e.customTexId) === null) {
+        showMessage('这条方案的自定义材质已被删除')
+        return
+      }
+    } else if (ReaderCustomBg.parseColor(e.bgHex) === null) {
       return
     }
-    this.customBgOn = false
-    this.bgCustomId = ''
-    this.bgTexId = 0
-    this.customBgR = rgb.r
-    this.customBgG = rgb.g
-    this.customBgB = rgb.b
-    if (e.fontHex.length > 0) {
+    // ── 字色家族（先摆好：`applyComposedBg` 只在 fontAuto 时自动对比字色）──────────
+    if (e.fontKind === ReaderCustomBg.FONT_KIND_HEX) {
       const f = ReaderCustomBg.parseColor(e.fontHex)
       if (f !== null) {
         this.readerSetting.fontColor = ReaderCustomBg.hexOf(f)
@@ -1601,23 +1641,94 @@ export default struct ReaderPage3 {
     } else {
       this.fontAuto = true
     }
+    // ── 背景模糊（属背景家族，随方案一起还原）────────────────────────────────────
+    this.bgBlurOn = e.blurOn
+    this.bgBlurRadius = ReaderCustomBg.snapBlurTier(e.blurRadius)
+    // ── 背景家族 ────────────────────────────────────────────────────────────────
+    this.customBgOn = false
+    this.customEditOn = false
+    this.bgCustomId = ''
+    this.bgTexId = 0
     this.customBgTouched = true
-    // 焦点：点了方案 ⇒ 圈落到这一格
+    // 焦点：点了方案 ⇒ 「更多方案」按钮持圈，且对应卡片画橙圈（键与列表同源）
     this.bgFocus = 'scheme'
-    this.schemeFocusBg = ReaderCustomBg.hexOf(rgb)
+    this.schemeFocusKey = ReaderCustomBg.schemeKeyV3(e)
     Haptics.tap()
+    if (e.bgKind === ReaderCustomBg.BG_KIND_TEX) {
+      this.bgTexId = e.texId
+      this.applyTextureBg()
+      return
+    }
+    if (e.bgKind === ReaderCustomBg.BG_KIND_CUSTOM) {
+      this.bgCustomId = e.customTexId
+      this.applyTextureBg()
+      return
+    }
+    const rgb = ReaderCustomBg.parseColor(e.bgHex)
+    if (rgb === null) {
+      return
+    }
+    this.customBgR = rgb.r
+    this.customBgG = rgb.g
+    this.customBgB = rgb.b
+    this.schemeFocusBg = ReaderCustomBg.hexOf(rgb)
     this.applyCustomBg(true)
   }
 
-  /** 「保存方案」：问一句再存（存的是「背景色+字色」成对，见 ReaderCustomBg V2 说明） */
-  private saveSchemeHex: string = ''
+  /**
+   * 把"当前看到的样子"打包成一条 V3 方案（「保存方案」存的就是它）。
+   *
+   * 背景种类按**当前真正生效**的那个判（三者互斥，见 `pickTexture` / `pickCustom`）：
+   * `customBgOn`（自定义纯色）> `bgCustomId`（自定义材质）> `bgTexId`（内置材质）> 纯色。
+   * ⚠️ 材质在用时 `themeColor` 只是**整图均色近似**，绝不能拿它当背景色存（旧实现就是这么错的）。
+   */
+  private currentScheme(): SchemeV3 {
+    let bgKind: number = ReaderCustomBg.BG_KIND_COLOR
+    let bgHex: string = this.readerSetting.themeColor
+    let texId: number = 0
+    let customTexId: string = ''
+    if (this.customBgOn) {
+      bgKind = ReaderCustomBg.BG_KIND_COLOR
+    } else if (this.bgCustomId.length > 0) {
+      bgKind = ReaderCustomBg.BG_KIND_CUSTOM
+      customTexId = this.bgCustomId
+      bgHex = ''
+    } else if (this.bgTexId > 0) {
+      bgKind = ReaderCustomBg.BG_KIND_TEX
+      texId = this.bgTexId
+      bgHex = ''
+    }
+    return {
+      bgKind: bgKind,
+      bgHex: bgHex,
+      texId: texId,
+      customTexId: customTexId,
+      blurOn: this.bgBlurOn,
+      blurRadius: this.bgBlurRadius,
+      fontKind: this.fontAuto ? ReaderCustomBg.FONT_KIND_AUTO : ReaderCustomBg.FONT_KIND_HEX,
+      fontHex: this.fontAuto ? '' : this.readerSetting.fontColor
+    }
+  }
+
+  /** 「保存方案」：问一句再存（存的是**背景家族 + 字色家族**整条，见 ReaderCustomBg V3 说明） */
+  /**
+   * 本次待存的方案快照（打开确认弹窗时生成）——
+   * 保证"弹窗里预览什么，落盘的就是什么"，不受弹窗期间状态波动影响。
+   */
+  private pendingScheme: SchemeV3 | null = null
   private openSaveSchemeDialog(): void {
-    // 快照"当前正在用的样子"：材质在用时 themeColor 是均色近似，照样可存（存的是颜色）
-    this.saveSchemeHex = this.readerSetting.themeColor
+    // 快照"当前正在用的样子"：背景种类 + 模糊档位 + 字色（V3：不再拿材质均色冒充背景色）
+    const s: SchemeV3 = this.currentScheme()
+    this.pendingScheme = s
     const dlg = new CustomDialogController({
       builder: ReaderSaveSchemeDialog({
-        schemeHex: this.saveSchemeHex,
-        fontHex: this.fontAuto ? '' : this.readerSetting.fontColor,
+        bgKind: s.bgKind,
+        bgHex: s.bgHex,
+        texId: s.texId,
+        customTexId: s.customTexId,
+        blurOn: s.blurOn,
+        blurRadius: s.blurRadius,
+        fontHex: s.fontKind === ReaderCustomBg.FONT_KIND_HEX ? s.fontHex : '',
         onConfirm: (): void => {
           this.commitScheme()
           // ⚠️ 关闭权在页面侧（真机日志定位：弹窗内 controller?.close() 曾失灵，
@@ -1700,8 +1811,8 @@ export default struct ReaderPage3 {
     this.settingDialog.close()
     this.schemeDialog = new CustomDialogController({
       builder: ReaderSchemeDialog({
-        focusBgHex: this.bgFocus === 'scheme' ? this.schemeFocusBg : '',
-        onPick: (e: BgSchemeEntry): void => {
+        focusKey: this.bgFocus === 'scheme' ? this.schemeFocusKey : '',
+        onPick: (e: SchemeV3): void => {
           this.applyScheme(e)
         },
         onClose: (): void => {
@@ -1757,9 +1868,13 @@ export default struct ReaderPage3 {
     this.vipDialog.open()
   }
 
+  /** 「保存方案」确认后落盘（数据取 `openSaveSchemeDialog` 的快照，见 V3 说明） */
   private commitScheme(): void {
-    const r = ReaderCustomBg.addScheme(this.saveSchemeHex,
-      this.fontAuto ? '' : this.readerSetting.fontColor)
+    const s: SchemeV3 | null = this.pendingScheme
+    if (s === null) {
+      return
+    }
+    const r: string = ReaderCustomBg.addSchemeV3(s)
     if (r === 'ok') {
       this.refreshSavedSchemes()
       showMessage('方案已保存')
@@ -1770,15 +1885,15 @@ export default struct ReaderPage3 {
     }
   }
 
-  /** 删掉一个保存的方案（右上角小 X）。只删清单，**不动**当前正在用的颜色 */
-  private removeScheme(e: BgSchemeEntry): void {
-    ReaderCustomBg.deleteScheme(e)
+  /** 删掉一个保存的方案（右上角小 X）。只删清单，**不动**当前正在用的背景 */
+  private removeScheme(e: SchemeV3): void {
+    ReaderCustomBg.deleteSchemeV3(e)
     this.refreshSavedSchemes()
     showMessage('已删除')
   }
 
   private refreshSavedSchemes(): void {
-    this.savedSchemes = ReaderCustomBg.loadSchemes()
+    this.savedSchemes = ReaderCustomBg.loadSchemesV3()
   }
 
   /** 组装一条持久化记录 */
@@ -2067,6 +2182,8 @@ export default struct ReaderPage3 {
       // 材质与自定义颜色互斥（同一时间背景只能是一种）：退出自定义，材质顶上
       this.customBgOn = false
     }
+    // 点材质 = 明确选了背景 ⇒ 调色盘收起（纯编辑态）
+    this.customEditOn = false
     this.customBgTouched = true
     // 焦点：点了材质 ⇒ 圈落到这一格
     this.bgFocus = 'tex'
@@ -2088,6 +2205,8 @@ export default struct ReaderPage3 {
     if (this.customBgOn) {
       this.customBgOn = false
     }
+    // 点自定义材质 = 明确选了背景 ⇒ 调色盘收起（纯编辑态）
+    this.customEditOn = false
     this.customBgTouched = true
     this.bgFocus = 'tex'
     Haptics.tap()
@@ -2097,20 +2216,45 @@ export default struct ReaderPage3 {
   /**
    * 设置面板里那个「自定义颜色」开关。
    *
-   * 开关打开 ⇔ 进入自定义颜色模式（调色盘可见）；关上 ⇔ 回到标准日/夜，
-   * **或**恢复上次选的材质（材质属背景家族：`bgTexId > 0` 时关开关 = 材质顶回来）。
+   * ⚠️ 2026-10-06 修正（用户实测）：「点击自定义颜色开关，开启后无论是什么背景，都会被强制
+   *   改成自定义颜色背景，此处不对，我们明明有逻辑，**用户手动取色之后，点击保存才生效**」。
+   *   ⇒ 开开关**只展开调色盘**（`customEditOn = true`），背景一个字节都不动；
+   *     真正生效只走「保存」（`commitCustomColor` → `applyCustomBg(true)` → `customBgOn = true`）。
+   *   ⇒ 关开关 = 收起调色盘；若此前**已应用**过自定义色，再把背景原样还回去
+   *     （材质 / 自定义材质顶回来，否则恢复"进入编辑前"的推荐色快照）。
+   *   ⚠️ 唯一"开关一开即生效"的路径是底栏三态按钮的**自由模式**（`enterFreeMode`，
+   *     那是用户明确要的"自由"语义），与这里的编辑开关不是一回事。
    */
   private toggleCustomBg(on: boolean): void {
     this.customBgTouched = true
     if (on) {
-      this.customBgPrevTheme = this.readerSetting.themeColor
-      this.customBgPrevFont = this.readerSetting.fontColor
-      this.customBgPrevNight = this.readerSetting.nightMode
-      this.enterFreeMode()
+      this.customEditOn = true
+      if (!this.customBgOn) {
+        // 快照"进入编辑前"的背景：关掉时原样还回去（材质/推荐色都不丢）
+        this.customBgPrevTheme = this.readerSetting.themeColor
+        this.customBgPrevFont = this.readerSetting.fontColor
+        this.customBgPrevNight = this.readerSetting.nightMode
+      }
+      // 草稿起点 = 记录里存着的色值（第一次进则沿用当前主题色，见 `restoreCustomBg`）
+      const rec = this.storedCustomBg()
+      if (rec !== null) {
+        this.customBgR = rec.r
+        this.customBgG = rec.g
+        this.customBgB = rec.b
+      }
+      // ⚠️ 这里**不设 `bgFocus`**：圈 = 最后一次被明确确认的东西（见 `isPresetSelected`
+      //   注释），仅仅展开调色盘不算确认 —— 按「保存」才落圈。
+      return
+    }
+    this.customEditOn = false
+    if (!this.customBgOn) {
+      // 只是编辑态（从没保存过）⇒ 关掉无需还原任何东西：背景一直是原样
       return
     }
     this.customBgOn = false
-    if (this.bgTexId > 0) {
+    // ⚠️ 自定义材质（`bgCustomId`）也必须在这里顶回来 —— 旧写法只判 `bgTexId > 0`，
+    //   用自定义材质时会掉进 `restorePrevBackground()`（它把 `themeBgImg` 清空）⇒ 材质丢。
+    if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
       // 关掉自定义颜色 ⇒ 上次选的材质（背景家族）顶回来（"设置不丢"）
       this.bgFocus = 'tex'
       this.applyTextureBg()
@@ -2161,6 +2305,8 @@ export default struct ReaderPage3 {
    */
   private presetPickedWhileCustomBg(bgTheme: string, fontColor: string, night: boolean): void {
     this.customBgOn = false
+    // 点推荐色 = 明确选了背景 ⇒ 调色盘收起（纯编辑态）
+    this.customEditOn = false
     this.bgCustomId = ''
     this.bgTexId = 0
     this.customBgTouched = true
@@ -5533,8 +5679,16 @@ export default struct ReaderPage3 {
             .onChange((value: boolean) => {
               Haptics.tap();
               this.bgBlurOn = value
-              // 材质背景要换图（模糊版 ⇄ 原图）；纯色模糊 = 原样，无需动引擎
-              if (this.bgTexId > 0) {
+              // 材质背景要换图（模糊版 ⇄ 原图）；纯色模糊 = 原样，无需动引擎。
+              // ⚠️ 2026-10-06 修复（用户实测："用自定义材质时档位失效、关掉也无效"）：
+              //   条件必须**同时**判自定义材质（`bgCustomId`）—— 自定义材质走的是
+              //   `bgCustomId` + `bgTexId = 0`（见 `pickCustom`），旧写法只判 `bgTexId > 0`
+              //   ⇒ 用自定义材质时开关进不了 `applyTextureBg()`。
+              //   真机日志证据（`Downloads\2.md`）：预设材质依次生成并发布了
+              //   `blur/t1_1320x2848_r30|r18|r12|r6.jpg` 四张缓存图，而自定义材质只有
+              //   `blur/cu1791301678558_1320x2848_r6.jpg` 一张，之后再无任何
+              //   `LTBOOK publish page bg` ⇒ 档位/关开都没有重新下发。
+              if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
                 this.applyTextureBg()
               }
               this.saveCustomBg()
@@ -5555,7 +5709,9 @@ export default struct ReaderPage3 {
                 Haptics.tap();
                 this.bgBlurRadius = BG_BLUR_TIERS[index]
                 // 选档即换图（磁盘缓存命中零等待；未命中的档现场生成一次）
-                if (this.bgTexId > 0) {
+                // ⚠️ 同开关：必须同时判自定义材质（`bgCustomId`），否则用自定义材质时
+                //   选档不会重新下发（2026-10-06 用户实测修复，详见上面开关处注释）。
+                if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
                   this.applyTextureBg()
                 }
                 this.saveCustomBg()
@@ -5582,7 +5738,7 @@ export default struct ReaderPage3 {
             .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
           // ── 自定义颜色开关（进入/退出自定义颜色模式），紧贴标签（用户指定）────
           if (VipManager.isVip()) {
-            Toggle({ type: ToggleType.Switch, isOn: this.customBgOn })
+            Toggle({ type: ToggleType.Switch, isOn: this.customBgOn || this.customEditOn })
               .selectedColor('#007DFF')
               .onChange((value: boolean) => {
                 Haptics.tap();
@@ -5609,7 +5765,8 @@ export default struct ReaderPage3 {
               this.openVipDialog()
             })
           }
-          if (this.customBgOn) {
+          // 调色盘相关区块的显隐：**已应用**或**展开编辑中**都显示（见 customEditOn 注释）
+          if (this.customBgOn || this.customEditOn) {
             Blank()
             // ── "背景 / 文字"滑块：切调色盘的编辑目标（用户口中的"通过滑块切换"）────
             Text('背景')
@@ -5631,7 +5788,7 @@ export default struct ReaderPage3 {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        if (this.customBgOn) {
+        if (this.customBgOn || this.customEditOn) {
           Row({ space: 10 }) {
           // ── 预览块 = 当前编辑目标（背景/文字）的草稿色；「保存」确认后持橙圈 ──
           Column()
@@ -5669,7 +5826,7 @@ export default struct ReaderPage3 {
       }
       .width('100%')
 
-      if (this.customBgOn) {
+      if (this.customBgOn || this.customEditOn) {
         // 左：无极调色盘（横向色相 × 纵向明暗的连续色域，任意点都能取到确定颜色）
         // 右：R / G / B 三条 0-255 滑块（与字号/行距同款 Slider，带气泡 + 线性震动）
         // ⚠️ 2026-09-25 保存键方案：调色盘/滑条**只写草稿**（按 fontTarget 分流），
@@ -5865,6 +6022,9 @@ export default struct ReaderPage3 {
       // 用户原话：「全局同步不再隐藏，在自定义颜色没有开启的时候，与翻页按钮并存，
       //   此时…布局是居中对齐，如果开启自定义颜色，则按钮对齐保存方案按钮，三个按钮居中对齐」
       // ⇒ 一个居中 Flex：关 = [同步全局][翻页]；开 = [同步全局][翻页][保存方案]。
+      // ⚠️ 2026-10-06（V3）：**「保存方案」改为常显** —— 方案已能表达材质/自定义材质
+      //   （`SchemeV3`），而"材质背景 + 任意字色"这种搭配恰恰要在**没开自定义颜色**时保存；
+      //   旧条件（只在 customBgOn/customEditOn 时显示）等于把这条路堵死（用户实测反馈）。
       Flex({
         wrap: FlexWrap.Wrap,
         alignItems: ItemAlign.Center,
@@ -5886,23 +6046,21 @@ export default struct ReaderPage3 {
             this.syncCustomBgGlobal()
           })
         this.FlipModeButton()
-        if (this.customBgOn) {
-          Button('保存方案')
-            .fontSize(13)
-            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-            .backgroundColor(this.colorMode == 0
-              ? 'rgba(248, 249, 250, 0.16)'
-              : 'rgba(19, 19, 19, 0.06)')
-            .borderRadius(18)
-            .height(34)
-            .padding({ left: 12, right: 12 })
-            .margin({ right: 10, top: 4, bottom: 4 })
-            .clickEffect(UiMotion.CLICK)
-            .onClick(() => {
-              Haptics.tap();
-              this.openSaveSchemeDialog()
-            })
-        }
+        Button('保存方案')
+          .fontSize(13)
+          .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
+          .backgroundColor(this.colorMode == 0
+            ? 'rgba(248, 249, 250, 0.16)'
+            : 'rgba(19, 19, 19, 0.06)')
+          .borderRadius(18)
+          .height(34)
+          .padding({ left: 12, right: 12 })
+          .margin({ right: 10, top: 4, bottom: 4 })
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            Haptics.tap();
+            this.openSaveSchemeDialog()
+          })
       }
       .width('100%')
     }.padding({

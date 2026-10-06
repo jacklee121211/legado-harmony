@@ -758,13 +758,47 @@ export class WifiBookServer {
         if (cookie !== '' && webCredential.verifyToken(cookie) !== null) {
             return true;
         }
-        const dt: string = WifiBookServer.queryParam(req.target, 'dt');
-        if (dt !== '' && webCredential.verifyToken(dt) !== null) {
+        // ⚠️ `dt=` 必须**逐个都试**，不能只取第一个（2026-10-06 修复，见 anyValidDeviceToken）
+        if (WifiBookServer.anyValidDeviceToken(req)) {
             return true;
         }
         const hdr: string = req.headers['x-device-token'] ?? '';
         if (hdr !== '' && webCredential.verifyToken(hdr) !== null) {
             return true;
+        }
+        return false;
+    }
+
+    /**
+     * URL query 里的 `dt=<设备令牌>`：**任一命中即视为已配对**。
+     *
+     * ⚠️ 2026-10-06 用户实测修复（"手机端清除链接历史后，电脑端再输验证码永远验不上"）：
+     * 旧实现走 `queryParam(req.target,'dt')`，而该解析器**只返回第一处** ⇒ 浏览器地址栏 /
+     * 收藏夹里残留的**旧令牌**永远盖过刚配好的新令牌：
+     *   配对成功 ⇒ 页面跳到 `?dt=<旧>&dt=<新>` ⇒ 服务端只看到旧令牌 ⇒ 判未配对 ⇒ 又回到
+     *   输码页（每次输码服务端都真的 `device paired`，用户却永远进不去）。
+     * 现在把 URL 上**所有** dt 都验一遍，任一有效即放行 ⇒ 即使地址被拼成多个 dt 也能进；
+     * 配对页也已改为"替换"而不是"追加" dt（见 `pairPageBytes` 的 withDt），两道一起才彻底。
+     */
+    private static anyValidDeviceToken(req: ParsedHttp): boolean {
+        const q: number = req.target.indexOf('?');
+        if (q < 0) {
+            return false;
+        }
+        const segs: string[] = req.target.substring(q + 1).split('&');
+        for (let i = 0; i < segs.length; i++) {
+            let one: string = segs[i];
+            const hashI: number = one.indexOf('#');
+            if (hashI >= 0) {
+                one = one.substring(0, hashI);
+            }
+            const eq: number = one.indexOf('=');
+            if (eq > 0 && one.substring(0, eq) === 'dt') {
+                const v: string = one.substring(eq + 1).trim();
+                if (v !== '' && webCredential.verifyToken(v) !== null) {
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -2744,14 +2778,50 @@ var box=document.getElementById('code');
 var errEl=document.getElementById('err');
 function showErr(t){errEl.textContent=t;errEl.style.display='block'}
 function resetBtn(){var b=document.getElementById('go');b.textContent='配 对';b.disabled=false}
-function withDt(u,t){return u+(u.indexOf('?')>=0?'&':'?')+'dt='+t}
+function splitAuth(u){
+  /* 拆出 path / 保留参数 / hash，并**丢掉所有 dt 与 k**（旧令牌、一次性配对码都不留在地址里） */
+  var hashI=u.indexOf('#');
+  var hash=hashI>=0?u.substring(hashI):'';
+  var base=hashI>=0?u.substring(0,hashI):u;
+  var q=base.indexOf('?');
+  var path=q>=0?base.substring(0,q):base;
+  var keep=[];
+  if(q>=0){
+    var segs=base.substring(q+1).split('&');
+    for(var i=0;i<segs.length;i++){
+      if(segs[i]===''){continue}
+      var key=segs[i].split('=')[0];
+      if(key==='dt'||key==='k'){continue}
+      keep.push(segs[i]);
+    }
+  }
+  return {p:path,k:keep,h:hash};
+}
+/* ⚠️ 2026-10-06 修复（用户实测："手机端清除链接历史后，电脑端再输验证码永远验不上"）：
+   旧实现是**追加**（u+'&dt='+t），而服务端解析 query 时只认**第一个** dt ⇒ 地址栏里那条
+   已被清除的旧令牌永远排在新令牌前面 ⇒ 每次 POST /pair 服务端都真的配对成功（手机端日志
+   能看到 device paired），但页面每次都被判"未配对"而回到输码页 ⇒ 死循环。
+   现在改为**替换**：先把 dt/k 删干净，再放新令牌。 */
+function withDt(u,t){
+  var a=splitAuth(u);a.k.push('dt='+t);
+  return a.p+'?'+a.k.join('&')+a.h;
+}
+/* 地址栏里躺着失效令牌时把它清掉（否则用户复制/收藏走的都是这条毒 URL） */
+function stripAuth(u){
+  var a=splitAuth(u);
+  return a.k.length>0?(a.p+'?'+a.k.join('&')+a.h):(a.p+a.h);
+}
 function saveTok(t){try{localStorage.setItem('mr_dt',t);return true}catch(e){return false}}
 /* 自愈（2026-10-06 无 Cookie 化）：本机存过令牌 ⇒ 直接带 dt 进原地址，免重输码。
-   URL 里已有 dt 还落到本页 ⇒ 说明令牌已失效（手机端清除了设备）⇒ 不再跳，直接输码。 */
+   URL 里已有 dt 还落到本页 ⇒ 说明令牌已失效（手机端清除了设备）⇒ 不再跳，直接输码；
+   顺手把地址栏里的失效令牌抹掉（避免下一次 POST 成功后又拼出一条带旧 dt 的 URL）。 */
 (function(){
   var t='';try{t=localStorage.getItem('mr_dt')||''}catch(e){}
   if(t&&location.search.indexOf('dt=')<0){location.replace(withDt(location.href,t))}
-  else if(location.search.indexOf('dt=')>=0){showErr('原授权已失效（可能在手机端被清除）。请重新输入配对码。')}
+  else if(location.search.indexOf('dt=')>=0){
+    showErr('原授权已失效（可能在手机端被清除）。请重新输入配对码。');
+    try{history.replaceState(null,'',stripAuth(location.href))}catch(e){}
+  }
 })();
 function submit(){
   var v=box.value.replace(/[^0-9]/g,'');
