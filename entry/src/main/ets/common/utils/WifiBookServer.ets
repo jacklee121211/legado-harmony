@@ -2699,8 +2699,21 @@ b{color:#1a1a1a}
 code{background:#F0F1F5;border-radius:6px;padding:2px 6px;font-size:13px}
 .ok{color:#24B277;font-size:16px;font-weight:700;text-align:center;margin-bottom:8px}
 .bad{color:#EF4444;font-size:16px;font-weight:700;text-align:center;margin-bottom:8px}
-a.btn{display:block;text-align:center;margin-top:18px;background:#0A84FF;color:#fff;text-decoration:none;
-font-size:15px;font-weight:600;padding:13px;border-radius:12px;cursor:pointer;border:0;width:100%}
+/* ⚠️ 选择器只能写 .btn —— **不能写成 a.btn**（带元素限定）：
+   输码页的按钮是 <button class="btn" id="go">，带元素限定就匹配不到 ⇒ 按钮落回浏览器
+   原生外观（灰底灰边、默认字号、不占满宽度、字体不继承），夹在圆角 input.code 与
+   .tip 卡片中间显得"样式很不统一"（2026-10-06 用户反馈，浏览器 headless 实拍确认）。
+   尺寸口径与**上传页**的 .btn（本文件 :1096，height:46px / 12px 圆角 / #0A84FF）对齐，
+   让两个服务端渲染页看起来是同一个产品；
+   font-family:inherit / appearance:none 都是为 button 元素补的：按钮**不继承**父级字体，
+   且部分浏览器会画原生描边与内阴影。
+   ⚠️ 本段注释整体位于 ArkTS **模板字符串**内 ⇒ 里面禁止出现反引号（会提前终止模板串）。 */
+.btn{display:block;width:100%;height:46px;line-height:46px;text-align:center;margin-top:18px;padding:0;
+background:#0A84FF;color:#fff;text-decoration:none;font-size:16px;font-weight:600;border:0;
+border-radius:12px;cursor:pointer;font-family:inherit;-webkit-appearance:none;appearance:none}
+.btn:active{opacity:.85}
+/* 配对中…（JS 置 disabled）也要有明确反馈，否则用户以为没点上；灰底口径同上传页 */
+.btn:disabled{background:#C9CDD4;cursor:default}
 .tip{background:#F0F7FF;border-radius:10px;padding:12px 14px;font-size:13px;color:#3f6ea8;margin-top:14px}
 input.code{width:100%;font-size:26px;font-weight:800;letter-spacing:9px;text-align:center;
 padding:12px 4px;border:1.5px solid #d5d9e0;border-radius:12px;outline:none;color:#1a1a1a;
