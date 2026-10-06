@@ -25,6 +25,8 @@ const marks = []           // { time, chapterIndex, chapterName, bookText, conte
 let phonePos = null        // 手机端位置槽（模拟手机在别处读）
 let webSlotSeen = {}       // 仅用于日志观察
 let mockSeq = 0            // mock 的全局序号（模拟手机进程分配）
+const upSessions = new Map() // 分块上传会话：key = name|size → { sid, total, have:Set }
+let mockSid = 0
 
 function synthBook(chapters = 200, parasPerChapter = 12) {
   const out = []
@@ -62,6 +64,13 @@ async function body(req) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+/** 原始二进制体（分块上传用；不能当 utf8 解，否则块会被破坏） */
+async function bodyRaw(req) {
+  const chunks = []
+  for await (const c of req) chunks.push(c)
+  return Buffer.concat(chunks)
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const path = url.pathname
@@ -77,7 +86,7 @@ const server = createServer(async (req, res) => {
   if (path === '/books') {
     // 书库列表（书库页 + 阅读页书名都用它）
     const text = await bookText()
-    json(res, [{ id: 1, name: '本地调试样本（合成 200 章）', url: 'mock.txt', sizeKB: Math.round(Buffer.byteLength(text, 'utf8') / 1024) }])
+    json(res, [{ id: 1, name: '本地调试样本（合成 200 章）', isTxt: true, sizeKB: Math.round(Buffer.byteLength(text, 'utf8') / 1024) }])
     return
   }
   if (path === '/toc') {
@@ -121,6 +130,67 @@ const server = createServer(async (req, res) => {
     const i = marks.findIndex((m) => m.time === Number(b.time))
     if (i >= 0) marks.splice(i, 1)
     json(res, { ok: true, msg: 'removed' })
+    return
+  }
+  // ── 分块上传 mock（与生产 `UploadSession.ets` 同形；仅内存，重启即清）────────
+  // 用法：/up/init 拿 sid；/up/chunk?sid&i 落块（随机 15% 失败，用来验证断点续传）；
+  //       /up/done 汇总 → 这里只回成功（真机上才会真正入库）
+  if (path === '/up/init' && req.method === 'POST') {
+    const b = JSON.parse(await body(req))
+    // 与生产 UploadSession.ets / WifiBookServer.handleUpInit 同口径（扩展名 + 100 MB 上限）
+    const lower = String(b.name ?? '').toLowerCase()
+    if (!lower.endsWith('.txt') && !lower.endsWith('.epub')) {
+      json(res, { ok: false, msg: '只支持 txt / epub' }, 400)
+      return
+    }
+    if (Number(b.size ?? 0) > 100 * 1024 * 1024) {
+      json(res, { ok: false, msg: '超过单文件上限 100 MB' }, 413)
+      return
+    }
+    const key = `${b.name}|${b.size}`
+    let s = upSessions.get(key)
+    if (!s) {
+      s = { sid: 'mock' + (++mockSid), total: 0, have: new Set(), sizes: {} }
+      upSessions.set(key, s)
+    }
+    json(res, { ok: true, msg: '', sid: s.sid, chunk: 4 * 1024 * 1024, have: [...s.have] })
+    return
+  }
+  if (path === '/up/chunk' && req.method === 'POST') {
+    const sid = url.searchParams.get('sid')
+    const idx = Number(url.searchParams.get('i'))
+    let found = null
+    for (const s of upSessions.values()) if (s.sid === sid) found = s
+    if (!found) {
+      json(res, { ok: false, msg: 'session expired' }, 410)
+      return
+    }
+    const buf = Buffer.from(await bodyRaw(req))
+    if (Math.random() < 0.15) {
+      // 故意失败，便于在本地验证"断点续传"这条路径
+      json(res, { ok: false, msg: 'simulated failure' }, 500)
+      return
+    }
+    // 幂等：同一块重传以最新一份为准，不重复计数（与生产 UploadSession.putChunk 同口径）
+    const prevSize = found.sizes[idx] ?? 0
+    found.sizes[idx] = buf.length
+    found.have.add(idx)
+    found.total = found.total - prevSize + buf.length
+    json(res, { ok: true, msg: 'received', received: found.total })
+    return
+  }
+  if (path === '/up/done' && req.method === 'POST') {
+    const b = JSON.parse(await body(req))
+    // 与生产一致：收尾后丢弃会话（否则内存滞留），续传需要重新 init
+    for (const [k, s] of upSessions.entries()) {
+      if (s.sid === b.sid) upSessions.delete(k)
+    }
+    json(res, { ok: true, msg: '已导入 1 本' })
+    return
+  }
+  if (path === '/up/abort' && req.method === 'POST') {
+    await body(req)
+    json(res, { ok: true, msg: '已放弃' })
     return
   }
   if (path === '/sync' && req.method === 'GET') {

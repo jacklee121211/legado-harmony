@@ -279,7 +279,8 @@ export class Ui {
       btn.addEventListener('click', (e) => {
         e.stopPropagation()
         const t = Number(btn.dataset['del'] ?? '0')
-        void delMark(t).then(() => this.reloadMarks())
+        // 服务端要求声明"书签属于哪本书"才允许删（旧实现按 time 裸删，任意书都能删）
+        void delMark(this.r.id, t).then(() => this.reloadMarks())
       })
     })
   }

@@ -424,12 +424,14 @@ struct Main {
   // 底部导航（2026-10-01 用户改版）：**书架、主题、设置、我的** 四页签。
   // · 主题/设置原来是「我的」页顶部角落按钮（用户"很难点击"）⇒ 提级为 dock 页签，
   //   拇指热区直达；两页本来就是设置类页面，做成常驻页签（无返回语义、状态保持）恰好合适。
-  // · 图标：四页签**全部 symbol 化**（书架=book_1、主题=paintpalette、设置=gearshape、
+  // · 图标：四页签**全部 symbol 化**（书架=book、主题=paintpalette、设置=gearshape、
   //   我的=person，SDK 符号表逐一核实）—— 原媒体图标对（PNG）无暗色适配（fillColor
   //   对位图不生效），symbol 的 fontColor 深浅档天然自适应。
+  //   书架用 book（空心线条翻开的书）：与另三枚 outline 风格统一（book_1 是实心块面，
+  //   2026-10-06 用户反馈不搭；实心原版可随时改回 sys.symbol.book_1）。
   // · ⚠️ 索引连带：`onAnimationStart` 里"我的"刷新计数的条件 1 → 3（见下方）。
   nav: NavItem[] = [
-    new NavItem(0, '书架', $r('sys.symbol.book_1')),
+    new NavItem(0, '书架', $r('sys.symbol.book')),
     new NavItem(1, '主题', $r('sys.symbol.paintpalette')),
     new NavItem(2, '设置', $r('sys.symbol.gearshape')),
     new NavItem(3, '我的', $r('sys.symbol.person'))
