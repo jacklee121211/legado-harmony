@@ -4,7 +4,7 @@ import BookOverlay from '../../../componets/bookDetail/BookOverlay'
 import { showMessage } from '../../../componets/common/promptShow'
 import { folderList } from '../../../componets/dataList/folderList'
 import BookGroupsDao from '../../../database/dao/BookGroupsDao'
-import booksDao from '../../../database/dao/BooksDao'
+import bookGroupUtil from '../../../common/utils/bookGroupUtils'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import BookManageDialog from './components/dialog/BookManageDialog'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
@@ -27,6 +27,17 @@ export default struct BookFolder {
   @State changeNumber: number = 0
   @State isShowBookFolderInfoDialog: boolean = false
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+  /**
+   * 书籍数据变更（删书 / 移入移出分组 / 导入）→ **只重算"共N本"**（2026-10-06）。
+   *
+   * 为什么需要它：分组卡片上的"共N本"过去读 `book_groups.bookIds`（陈旧冗余列），
+   * 现已改为按 `books.bookGroup` 现算（见 `bookGroupUtil.fillRealBookIds`）；而
+   * 「删书 / 移动书籍」只广播 `BOOK_IS_BOOK_REFRESHING`（在分组 sheet 内删书就是这条路），
+   * 分组卡片若不监听就还停在旧数字 ⇒ 不算"实时"。
+   * 走 `refreshGroupCounts`（**不**走 `getGroupList`）：后者会 `replayEntrance()` 重播
+   * 整屏入场动画，删一本书就翻一次牌是噪音（同 `BookContent.animateOnNextLoad` 的取舍）。
+   */
+  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('refreshGroupCounts') BOOK_IS_BOOK_REFRESHING: number = 0
 
   // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────────
   /**
@@ -101,29 +112,41 @@ export default struct BookFolder {
    * 在文件夹视图里无家可归（「全部 / 未分组」两个页签能看到，文件夹视图看不到）。
    * ① 放行名为「未分组」的系统分组（按名字认，不按 groupId 认 —— 系统分组由
    *    `initGroupData` 按固定顺序插入，老库 groupId 可能漂移，名字才是稳定标识）；
-   * ② 它的 `bookIds` **库里恒空**（默认入架的书从不走 updateAddBookIds）⇒
-   *    这里按 `books.bookGroup === 未分组.groupId` **现算**，封面角标"共N本"才真实。
-   * 点进文件夹走 BookManageDialog，查询口径同样是 `bookGroup = groupId`，天然一致。
+   * ② 它的 `bookIds` 库里恒空（默认入架的书从不走 updateAddBookIds）。
+   *
+   * ⚠️ 2026-10-06 修「自建分组恒显示共0本」：当年只给「未分组」现算了 bookIds，
+   *    自建分组仍读 `book_groups.bookIds` 这个陈旧冗余列（真机实测为空串，且被
+   *    `DbUtil.parseResultSet` 读成 undefined）⇒ 一律显示"共0本"。
+   *    现在**所有**分组统一走 `bookGroupUtil.fillRealBookIds`（按 books.bookGroup 现算，
+   *    口径与点进分组后的列表查询同源）—— 点进文件夹走 BookManageDialog，查询口径
+   *    同样是 `bookGroup = groupId`，天然一致。
    */
   async getGroupList() {
     try {
-      const val = await BookGroupsDao.search({
-        type: this.currentIndex
-      })
-      const ungrouped = val.find((g: BookGroups) => g.isSystem && g.groupName === '未分组')
-      if (ungrouped && ungrouped.groupId !== undefined) {
-        try {
-          const books = await booksDao.search({ bookGroup: ungrouped.groupId })
-          ungrouped.bookIds = books.map((b) => String(b.id ?? ''))
-        } catch (e) {
-          console.log('BookFolder 未分组bookIds现算失败: ', JSON.stringify(e))
-        }
-      }
+      const val = await this.loadGroupList()
       this.replayEntrance(val.length)
       this.groupList = val
     } catch (e) {
       console.log('BookFolder getGroupList, Error, ', JSON.stringify(e))
     }
+  }
+
+  /** 只刷新卡片上的"共N本"（书数据变更）：重查 → 重算 → 整体赋值触发重绘；不复播入场波 */
+  async refreshGroupCounts() {
+    try {
+      this.groupList = await this.loadGroupList()
+    } catch (e) {
+      console.log('BookFolder refreshGroupCounts, Error, ', JSON.stringify(e))
+    }
+  }
+
+  /** 查分组 + 现算每个分组的真实书籍数（两条刷新路径共用） */
+  private async loadGroupList(): Promise<BookGroups[]> {
+    const val: BookGroups[] = await BookGroupsDao.search({
+      type: this.currentIndex
+    })
+    await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
+    return val
   }
 
   build() {
@@ -179,6 +202,27 @@ export default struct BookFolder {
           .translate({ y: this.isEntered(index) ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
           .animation(UiMotion.itemEnterParam())
         }
+      }, (item: BookGroups, index: number): string => {
+        // ── 键值必须并入**所有影响显示**的字段（2026-10-06）────────────────────
+        // 官方《ForEach：循环渲染》非首次渲染原文：「它会检查新生成的键值是否在上次渲染中
+        //   已经存在。如果键值不存在，则会创建一个新的组件；**如果键值存在，则不会创建新的
+        //   组件，而是直接渲染该键值所对应的组件**。」（documentId：
+        //   `开发指南/…/ForEach_循环渲染/arkts-rendering-control-foreach`）
+        // 本项目规范同步要求（`docs/标准-弹窗与按钮统一规范.md:212`）：「LazyForEach/ForEach
+        //   键值必须包含影响显示的字段：键值相同的项复用旧组件、不重绑数据 ⇒ 广播了也不重渲染」。
+        // 卡片上会变且影响显示的有：分组名 / 置顶角标 / 显示开关 / 封面（含 coverType 书页叠层）
+        //   / "共N本"。少任何一个，改完都停在旧画面（"共0本"就是这么来的）。
+        // ⚠️ 第三个参数**必须声明 index**（即使不用）：官方 FAQ `faqs-arkui-219` 原文
+        //   「如果keyGenerator未缺省，且包含index，无论itemGenerator中是否包含index，
+        //     生成的键值规则都由开发者自定义，框架不会拼接index」——itemGenerator 里用了
+        //     index（入场错峰），不声明的话框架会把 index 拼到键值尾部，等于键值里带下标。
+        return (item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+          + '|' + (item.groupName ?? '')
+          + '|' + (item.isTop ? 'T' : 'F')
+          + '|' + (item.show ? '1' : '0')
+          + '|' + (item.coverUrl ?? '')
+          + '|' + item.coverType
+          + '|' + (item.bookIds?.length ?? 0)
       })
     }
     .bindSheet($$this.isShowBookFolderInfoDialog, this.bookFolderInfoDialog(), {

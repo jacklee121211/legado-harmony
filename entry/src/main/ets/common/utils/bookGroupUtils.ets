@@ -111,6 +111,36 @@ class bookGroupUtils{
     // applyGroupCover）紧跟着广播刷新信号时，UPDATE 可能尚未提交，重查读到旧值。
     await BookGroupsDao.updatePartialGroup(data)
   }
+
+  /**
+   * 用 `books.bookGroup` **现算**每个分组下的书籍 id（覆盖 `book_groups.bookIds` 这个陈旧冗余列）。
+   *
+   * ── 为什么要现算（真机 DB + 源码双取证，2026-10-06）──────────────────────────
+   * · `book_groups.bookIds` 只在「移动分组」时追加（`BookGroupsDao.updateAddBookIds`），
+   *   导入 / 删除 / 建组都不同步。真机 novel.db 实测：`groupId=6`（自建分组"1"）名下
+   *   8 本书（`books.bookGroup=6`），而该列是**空串**；
+   * · `DbUtil.parseResultSet` 把空串读成 `undefined`（`DbUtil.ets:333`）⇒
+   *   `bookIds?.length || 0` 恒为 0 ⇒ 真机分组卡片显示"共0本"（未分组曾在 BookFolder
+   *   里单独现算，所以只有它是对的 —— 现在统一到这里，卡片与"点进去"的列表同源）。
+   * · 计数 WHERE 与分组内列表查询同源（`BooksDao.buildWhereClause`）⇒ 数字 == 列表条数。
+   *
+   * ⚠️ 只重写**内存对象**的 `bookIds`，不落库：`BookGroupsDao.getPartialColumn()` 不含
+   *    `bookIds`（换封面走 updatePartialGroup）⇒ 不会被写回数据库。
+   * ⚠️ 调用方必须是"要显示共N本"的地方；本方法按分组逐条查库（N 次），别放进高频路径。
+   */
+  async fillRealBookIds(groups: BookGroups[], type?: number): Promise<void> {
+    for (const group of groups) {
+      // 只算会被渲染的卡片：隐藏分组不显示；除「未分组」外的系统单元（分组/全部/本地/书单）
+      // 不是"装书的地方"（口径见 BookFolder.build / BookFolderManages.build 的过滤条件）。
+      if (group.groupId === undefined || !group.show) {
+        continue
+      }
+      if (group.isSystem && group.groupName !== '未分组') {
+        continue
+      }
+      group.bookIds = await BooksDao.queryBookIds({ type: type, bookGroup: group.groupId })
+    }
+  }
 }
 let bookGroupUtil = new bookGroupUtils();
 export default bookGroupUtil as bookGroupUtils;

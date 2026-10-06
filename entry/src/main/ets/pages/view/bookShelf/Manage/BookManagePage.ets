@@ -124,12 +124,14 @@ export default struct BookManagePage {
     })
   }
   //分组
-  getGroupList(){
-    BookGroupsDao.search({
-      type:this.currentIndex
-    }).then((val)=>{
-      this.bookGroups = val
+  // 2026-10-06：「共N本」按 books.bookGroup 现算（book_groups.bookIds 是陈旧冗余列，
+  // 真机实测自建分组恒显示"共0本"，证据见 bookGroupUtil.fillRealBookIds 注释）。
+  async getGroupList(){
+    const val: BookGroups[] = await BookGroupsDao.search({
+      type: this.currentIndex
     })
+    await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
+    this.bookGroups = val
   }
   /**
    * 注入路由参数（迁 Navigation 第 4 期）。

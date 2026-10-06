@@ -5,8 +5,8 @@ import InsideCircleIcon from '../../../componets/common/InsideCircleIcon'
 import { buttonList } from '../../../componets/dataList/buttonList'
 import { WorksLists } from '../../../database/entities/WorksLists'
 import newBookShelf from '../bookShelf/Manage/bookManage/newBookShelf'
-import shareWorksBook from './shareWorksBook'
 import { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
+import { showMessage } from '../../../componets/common/promptShow'
 
 @CustomDialog
 /**
@@ -54,7 +54,12 @@ export default struct worksBookInfoDialog{
                     this.isShowEditBook = true
                     break
                   case 2:
-                    this.shareShelfBookDialog?.open()
+                    // 2026-10-06：**只保留系统分享**。原「自定义分享弹窗」（`shareWorksBook`）已删除，
+                    // 原因：它其实是"生成书单图片 + 微信/QQ/朋友圈/QQ空间 占位按钮"，
+                    // 且那些第三方品牌图标未接入任何官方 SDK（商标风险）；其内部"系统分享"也只是提示。
+                    // 书单与分组一样**没有可分享的文件**（系统分享必须提供 utd + uri 的文件），
+                    // 所以这里与既有先例 `BookManagePage.manageShare()` 的分组分支保持同一处理。
+                    showMessage('书单暂不支持分享，请选择书籍')
                     break
                   case 3:
                     this.delDialog?.open()
@@ -114,18 +119,6 @@ export default struct worksBookInfoDialog{
     }
     .backgroundColor(ShelfColors.pageBg())
   }
-
-  //分享弹窗
-  shareShelfBookDialog: CustomDialogController | null = new CustomDialogController({
-    builder: shareWorksBook({
-      works:this.works
-    }),
-    autoCancel: true,
-    width:'100%',
-    height:'100%',
-    alignment: DialogAlignment.Bottom,
-    customStyle:true
-  })
 
   //删除确认弹出框
   @State delCache:boolean = false

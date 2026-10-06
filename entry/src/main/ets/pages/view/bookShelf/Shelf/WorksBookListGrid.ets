@@ -4,6 +4,7 @@ import { ThemeItem } from '../../../../common/model/Theme'
 import { WorksLists } from '../../../../database/entities/WorksLists'
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 import UiMotion from '../../../../common/utils/UiMotion'
+import { resolveCoverSource, coverCorners } from '../../../../common/utils/CoverSource'
 
 @Component
 export default struct WorksBookListGrid {
@@ -56,9 +57,17 @@ export default struct WorksBookListGrid {
                 .backgroundColor('rgba(0, 0, 0, 0.45)')
                 .zIndex(1)
             }
-            Image(this.work.worksCoverUrl)
+            // 2026-10-06：书单封面与书架/分组**同一解析契约**（`CoverSource.ets` 头注释；
+            // 规范 `docs/标准-弹窗与按钮统一规范.md:200`）。此前直接 `Image(worksCoverUrl)`：
+            //   · 新建书单会取首本书的封面（现按 customCoverUrl > coverUrl 存原样协议），
+            //     其中 `default://cover_defaults/cN.svg` 是内置封面协议 ⇒ Image 认不出 ⇒
+            //     落到 alt 默认图（"书单封面换不了/不同步"）；列表形态走 BookOverlay 是正常的
+            //     （BookOverlay 自己解析）—— 两种形态必须一致。
+            //   · 未设封面（空串）时与 BookOverlay/文件夹视图一致显示内置 c1。
+            Image(resolveCoverSource(this.work.worksCoverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
+              .borderRadius(coverCorners(88))
               .width(88)
               .height(120)
           }

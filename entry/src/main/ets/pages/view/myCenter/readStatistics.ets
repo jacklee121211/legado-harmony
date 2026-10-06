@@ -14,6 +14,7 @@ import UiMotion from '../../../common/utils/UiMotion';
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { RouteName, ReaderRouteParam, ReadStatisticsRouteParam } from '../../../common/router/AppRouter';
 import { ShelfColors } from '../../../common/utils/NightMode';
+import { resolveCoverSource } from '../../../common/utils/CoverSource';
 
 /**
  * 「读过 / 读完 / 书签」三个统计的二级菜单（**同一个模板，三套数据源**）。
@@ -469,7 +470,9 @@ export default struct readStatistics {
       const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((cur + 1) / total * 100))) : 0
       // 封面：直接交地址，空值由 `Image.alt` 兜底（与书架 `BookInfos.ets:62-64` 一致）。
       // 旧实现空值兜底用的是 `app.media.book_cover`，那是个样板图 ⇒ 真机上"缩略图不对"。
-      const cover: ResourceStr = b.coverUrl ?? ''
+      // 2026-10-06：并补上 `customCoverUrl` 优先级（`CoverSource.ets` 头注释的唯一契约），
+      // 否则书架换过封面的书在统计页仍是旧封面/默认封面（"封面不与全局同步"同类）。
+      const cover: ResourceStr = resolveCoverSource(b.customCoverUrl ?? '') ?? (b.coverUrl ?? '')
       out.push(new readBookList(b.bookName, cover, b.author ?? '',
         [0, 0], new Date(t === 0 ? (b.durChapterTime ?? 0) : (b.finishedTime ?? 0)), pct, 0))
     }

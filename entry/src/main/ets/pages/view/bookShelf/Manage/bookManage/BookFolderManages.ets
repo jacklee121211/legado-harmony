@@ -66,7 +66,7 @@ export default struct BookFolderManages {
                }
              })
            }
-         }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+         }, (item: BookGroups): string => groupCardKey(item))
        } else {
          GridRow({
            columns:3
@@ -84,10 +84,28 @@ export default struct BookFolderManages {
                  })
                }
              }
-           }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+           }, (item: BookGroups): string => groupCardKey(item))
          }
        }
      }.layoutWeight(1)
    }
  }
+}
+
+/**
+ * 分组卡片键值（2026-10-06）：**必须并入所有影响显示的字段**。
+ *
+ * 官方《ForEach：循环渲染》非首次渲染原文：「它会检查新生成的键值是否在上次渲染中已经存在。
+ * 如果键值不存在，则会创建一个新的组件；**如果键值存在，则不会创建新的组件，而是直接渲染
+ * 该键值所对应的组件**。」⇒ 只写 `'g'+groupId` 时，换封面 / 改名 / 置顶 / "共N本"变化
+ * 都不会重建卡片（本项目规范 `docs/标准-弹窗与按钮统一规范.md:201,212` 同款要求）。
+ */
+function groupCardKey(item: BookGroups): string {
+  return (item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+    + '|' + (item.groupName ?? '')
+    + '|' + (item.isTop ? 'T' : 'F')
+    + '|' + (item.show ? '1' : '0')
+    + '|' + (item.coverUrl ?? '')
+    + '|' + item.coverType
+    + '|' + (item.bookIds?.length ?? 0)
 }

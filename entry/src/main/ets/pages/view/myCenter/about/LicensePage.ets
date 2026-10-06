@@ -2,9 +2,15 @@ import { SetHead } from '../../../../componets/myset/SetHead'
 import UiMotion from '../../../../common/utils/UiMotion'
 import { ShelfColors } from '../../../../common/utils/NightMode'
 
-// ── 开源许可（2026-09-30 按项目实际情况重写）────────────────────────────────
-// 事实源：根/entry oh-package.json5 依赖 + 基座 LICENSE（GPL-3.0，Legado 衍生）。
-// 条目与实际使用一一对应；后续新增三方库时在此追加。
+// ── 开源许可（2026-10-06 按仓库元数据逐条复核）────────────────────────────
+// 事实源：各依赖 `oh_modules` 内 oh-package.json5 的 **license 字段原文**，不是凭印象：
+//   @ohos/axios 2.2.0        → "license": "MIT"
+//   dayjs 1.11.7             → "license": "MIT"
+//   @pura/harmony-utils 1.3.2→ "license":"Apache-2.0"   ⚠️ 旧版本页误写 MIT，已修
+//   @ohos/hypium 1.0.17      → "license":"Apache-2.0"
+//   @ohos/hamock 1.0.0       → Apache License, Version 2.0（LICENSE 文件原文）
+// ⚠️ Apache-2.0 与 GPL-3.0 兼容，但要求保留其 NOTICE/许可证文本 ⇒ 见仓库根
+//    `THIRD_PARTY_NOTICES.md`。后续新增三方库时，两处都要追加。
 interface LicenseEntry {
   name: string
   desc: string
@@ -30,7 +36,12 @@ const LICENSES: LicenseEntry[] = [
   {
     name: '@pura/harmony-utils',
     desc: 'HarmonyOS 工具集（PreferencesUtil、ScanUtil 等）',
-    license: 'MIT',
+    license: 'Apache-2.0',
+  },
+  {
+    name: '@ohos/hypium · @ohos/hamock',
+    desc: '单元测试框架（仅开发/测试期使用，不进发行包）',
+    license: 'Apache-2.0',
   },
   {
     name: 'HarmonyOS 系统服务',
@@ -42,12 +53,26 @@ const LICENSES: LicenseEntry[] = [
 /** 项目地址（README/仓库远端核实） */
 const PROJECT_URL: string = 'https://github.com/jacklee121211/legado-harmony'
 
-/** 版权与使用限制（2026-09-30 商业化保护声明，用户需求） */
+/**
+ * 版权与使用限制（2026-10-06 **按用户要求改写为完全开源**）。
+ *
+ * ⚠️ 改写原因（务必别再改回去）：旧版写的是
+ *   · 「付费模块、服务端配置、品牌与运营资产为**专有部分**，不属于开源授权范围」
+ *   · 「未经授权，不得…**用于商业用途**」
+ * 这两条与 GPL-3.0 冲突：
+ *   · GPL-3.0 前言原文 —— 许可「designed to make sure that you have the freedom …」
+ *     并明确允许「charge for them if you wish」；§4 允许「convey verbatim copies … for a price」
+ *     ⇒ **商业使用是 GPL 明文授予的权利**，加"不得商用"属于 §10 禁止的 further restrictions；
+ *   · 付费模块源码（IapManager/VipManager/VipDialog）本就在本仓库内、与 GPL 代码同编一个 HAP
+ *     ⇒ 对外称"专有"与事实不符。
+ * 现在的口径：**代码整体（含付费模块）一律 GPL-3.0，任何人可自由使用、修改、再分发、商用**；
+ * 只有「名称与图标」走商标主张 —— 那是商标法层面的事，不写成许可证附加条款。
+ */
 const RESTRICTIONS: string[] = [
-  '本应用基于 GPL-3.0 开源，欢迎用户自行修改、编译与学习交流；修改版同样须遵循 GPL-3.0 开源。',
-  '「喵阅」商店版的增值内容（付费模块、服务端配置、品牌与运营资产）为专有部分，不属于开源授权范围。',
-  '未经授权，不得将本应用或其修改版本以「喵阅」名义上架任何应用商店，或用于商业用途。',
-  '「喵阅」名称与品牌受保护；发现冒名上架，可通过应用市场侵权投诉渠道举报下架。',
+  '本项目依 GPL-3.0 开源，**代码整体**（含会员/付费相关实现）均在授权范围内：任何人可自由使用、修改、再分发，也可用于商业用途，无需另行取得授权。',
+  '本项目是基于上游开源项目持续修改而来，同样欢迎并鼓励继续 fork、魔改与再发布；再发布时保留 GPL-3.0 许可证与版权声明、并提供对应源码即可。',
+  '「喵阅」名称与应用图标为项目标识，仅用于区分来源；他人再发布修改版时请使用自己的名称与图标，避免与官方发行版混淆。',
+  '本项目按「现状」提供，不对可用性、稳定性与适用性作任何担保；因使用本软件产生的任何后果由使用者自行承担。',
 ]
 
 @Component

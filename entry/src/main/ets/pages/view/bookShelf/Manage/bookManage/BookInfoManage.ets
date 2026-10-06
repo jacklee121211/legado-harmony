@@ -4,6 +4,7 @@ import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
+import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
 
 @Component
 
@@ -46,9 +47,16 @@ export default struct BookInfoManage{
               Text('置顶').fontColor(Color.White).fontWeight(FontConstants.FONT_WEIGHT_400).fontSize(9).padding(3).borderRadius(5)
                 .backgroundColor('rgba(0, 0, 0, 0.45)').zIndex(1)
             }
-            Image(this.bookData.coverUrl)
+            // 2026-10-06：封面必须与书架**同源**（`CoverSource.ets` 头注释的契约：
+            // customCoverUrl > coverUrl > alt）。此前这里只读 `coverUrl` ⇒ 书架换过封面
+            // （写入 `Books.customCoverUrl`）后，管理页/批量管理页仍显示书源封面或默认封面
+            // ——"书架的封面改变，但是在管理中还是默认的封面"（用户 2026-10-06 反馈）。
+            // 圆角与书架列表项同曲率（`BookInfos.ets` 用 coverCorners(60)），否则自定义
+            // 图片封面在这里是直角、在书架是书脊式圆角。
+            Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
+              .borderRadius(coverCorners(60))
               .width(60)
               .height(80)
           }

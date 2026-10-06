@@ -4,7 +4,7 @@ import toolsUtils from '../../common/utils/ToolsUtils';
 import AppDatabaseUtil from '../AppDatabaseUtil';
 import { Books } from '../entities/Books';
 import { BooksTypeSearchParams } from '../types/BooksType';
-import { ColumnInfo } from '../types/ColumnInfo';
+import { ColumnInfo, ColumnType } from '../types/ColumnInfo';
 import { PreferencesUtil } from '@pura/harmony-utils';
 
 class BooksDao {
@@ -112,10 +112,76 @@ class BooksDao {
     }
   }
 
+  /**
+   * 列表 / 计数共用的 WHERE 子句（**唯一来源**，2026-10-06）。
+   *
+   * ⚠️ `searchPage`（分组内列表）与 `queryBookIds`（"共N本"计数）必须共用本方法：
+   *    两处口径一旦分叉，就会出现「卡片写共8本、点进去只有3本」。
+   * 分支语义逐字节保留原 `searchPage` 的实现，**不要改**：
+   *   · `type`          → `bookType = type`；
+   *   · `bookGroup = 4` → `bookGroup = 4 or isLocalBook = true`（本地组兼容存量 isLocalBook 书）；
+   *   · `bookGroup = 3` → `bookGroup = 3 or (bookGroup = 4 and isLocalBook = true)`
+   *       未分组（v3.21）：新导入书 bookGroup=3；存量导入书仍为 4（本地组）
+   *       ⇒ 用 isLocalBook 兜底把它们也列进"未分组"（用户口径：未归组即未分组）；
+   *   · `bookGroup = 2` → 不加分组条件（"全部"）。
+   */
+  private buildWhereClause(param?: BooksTypeSearchParams): string[] {
+    const searchKey: string = param?.searchKey ?? '';
+    const type = param?.type;
+    const bookGroup = param?.bookGroup;
+    const whereClause: string[] = [];
+
+    if (type !== undefined) {
+      whereClause.push(`bookType = ${type}`);
+    }
+    if (bookGroup !== undefined && bookGroup !== 2) {
+      if (bookGroup === 4) {
+        whereClause.push(`bookGroup = ${bookGroup} or isLocalBook = ${true}`);
+      } else if (bookGroup === 3) {
+        whereClause.push(`bookGroup = ${bookGroup} or (bookGroup = 4 and isLocalBook = ${true})`);
+      } else {
+        whereClause.push(`bookGroup = ${bookGroup}`);
+      }
+    }
+    if (searchKey) {
+      whereClause.push(`(
+                bookName LIKE '%${searchKey}%'
+                OR author LIKE '%${searchKey}%'
+                OR originName LIKE '%${searchKey}%'
+            )`);
+    }
+    return whereClause;
+  }
+
+  /**
+   * 取某个分组下的书籍 id（**只取 id**）——「共N本」这类计数展示专供。
+   *
+   * 为什么不能读 `book_groups.bookIds`（真机 + 源码双取证，2026-10-06）：
+   *   ① 那一列是历史冗余：只有「移动分组」会追加（`bookGroupUtils.updateAddBookIds`），
+   *      导入/删除都不同步；真机 novel.db 实测 `groupId=6`（自建分组"1"）名下有 8 本书
+   *      （`books.bookGroup=6`），而 `book_groups.bookIds` 是**空串**；
+   *   ② `DbUtil.parseResultSet` 把空串读成 `undefined`（`DbUtil.ets:333`
+   *      `obj[info.name] = val === '' ? undefined : val`）⇒ `bookIds?.length || 0` 恒为 0
+   *      ⇒ 真机界面就是"1 · 共0本"（未分组因为 BookFolder 里单独现算过才显示真实值）。
+   * 本方法 WHERE 与 `searchPage` 同源 ⇒ 「共N本」== 点进分组后列表的条数。
+   */
+  async queryBookIds(param?: BooksTypeSearchParams): Promise<string[]> {
+    try {
+      const whereClause: string[] = this.buildWhereClause(param);
+      let sql = `SELECT id FROM ${this.TABLE_NAME}`;
+      if (whereClause.length > 0) {
+        sql += ` WHERE ${whereClause.join(' AND ')}`;
+      }
+      const idColumn: ColumnInfo[] = [{ name: 'id', columnName: 'id', type: ColumnType.LONG }];
+      const rows: Books[] = await DbUtil.querySqlForList<Books>(sql, idColumn);
+      return rows.map((item: Books): string => String(item.id ?? ''));
+    } catch (err) {
+      console.log('queryBookIds, Error, ', JSON.stringify(err));
+      return [];
+    }
+  }
+
   async searchPage(param?: BooksTypeSearchParams, pageNumber: number = 1, pageSize: number = 21) {
-    let searchKey = param?.searchKey ?? '';
-    let type = param?.type;
-    let bookGroup = param?.bookGroup;
     let order = param?.order;
     let sort = 0;
     if (order !== undefined) {
@@ -125,29 +191,7 @@ class BooksDao {
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       let sql = `SELECT * FROM ${this.TABLE_NAME}`;
-      let whereClause: string[] = [];
-
-      if (type !== undefined) {
-        whereClause.push(`bookType = ${type}`);
-      }
-      if (bookGroup !== undefined && bookGroup !== 2) {
-        if (bookGroup === 4) {
-          whereClause.push(`bookGroup = ${bookGroup} or isLocalBook = ${true}`);
-        } else if (bookGroup === 3) {
-          // 未分组（v3.21）：新导入书 bookGroup=3；存量导入书仍为 4（本地组）
-          // ⇒ 用 isLocalBook 兜底把它们也列进"未分组"（用户口径：未归组即未分组）
-          whereClause.push(`bookGroup = ${bookGroup} or (bookGroup = 4 and isLocalBook = ${true})`);
-        } else {
-          whereClause.push(`bookGroup = ${bookGroup}`);
-        }
-      }
-      if (searchKey) {
-        whereClause.push(`(
-                bookName LIKE '%${searchKey}%'
-                OR author LIKE '%${searchKey}%'
-                OR originName LIKE '%${searchKey}%'
-            )`);
-      }
+      const whereClause: string[] = this.buildWhereClause(param);
 
       if (whereClause.length > 0) {
         sql += ` WHERE ${whereClause.join(' AND ')}`;
