@@ -70,9 +70,16 @@ V2.0.2 封面圆角对齐 + 进场更顺
 2. 去掉进场"起手回沉"，中段不再回沉
 ```
 
-- `.githooks/commit-msg` 钩子会把它**同步**到两处并 `git add` 进同一笔提交：
+- `.githooks/post-commit` 钩子会把它**同步**到两处并并入**同一笔提交**
+  （生成 → `git add` → `git commit --amend --no-verify --no-edit`；提交信息与内容不变，
+  只有 hash 与产物变化，命令输出会打印 `旧hash -> 新hash`；rebase/merge 期间不动）：
   `AppScope/app.json5`（versionName / versionCode = major*100+minor*10+patch）
-  与 `entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets`（更新日志数据）；
+  与 `entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets`（更新日志数据，
+  **只含当前版本一条**）；
+  ⚠️ 为什么不是 `commit-msg`：隔离实验实测「`commit-msg`/`prepare-commit-msg` 里 `git add`
+  的文件**不会**进本次提交」，而 `pre-commit` 读不到本次提交信息 ⇒ 只有 `post-commit` + amend 可行。
+  ⚠️ 生成器必须**按 UTF-8 读 git 输出**（走 `cmd /c ... > 文件` + 显式 UTF-8 读取）：
+  中文 Windows 上 PowerShell 默认按 GBK(936) 解外部命令输出 ⇒ 更新日志正文会乱码（已踩过）。
 - **新机器 / 新 agent 先跑一次**：`pwsh -File scripts/setup-git-hooks.ps1`
   （它设置 `git config core.hooksPath .githooks` 并回填历史）；
 - 首行没有版本号的提交**不会进更新日志**（内部检查点可以这样），但仍建议带上版本号；
@@ -89,3 +96,11 @@ V2.0.2 封面圆角对齐 + 进场更顺
 - `HitTestMode.None` 只让**自身**退出命中测试，**子节点照样吃触摸** → 覆盖层必须放对 z 序或逐节点设 None。
 - `readerSetting` 按书持久化：改默认值**必须同时迁移旧值**，否则老书不生效（实测：卸载重装才正常）。
 - 详细背景：`docs/edge-tts-highlight.md`、`docs/audit-2026-09-19.md`。
+- **`web/` 构建产物的占位符必须 `replaceAll` + 构建期断言**（2026-10-05 实测）：模板里任何一处
+  多余的 `/*STYLES*/`（例如说明性 HTML 注释里又写了一遍）都会让 `String.replace` 只替换第一处
+  ⇒ CSS/JS 被塞进注释、真正的 `<style>`/`<script>` 留空 ⇒ 页面**无样式无脚本**（表现为：工具栏
+  在文档流里、标题停在"加载中…"、0%），而构建日志的字节数一切正常。`build.mjs` 现在会在占位符
+  未替换时直接抛错。
+- **改文件别用 PowerShell 拼字符串**：`Set-Content -Value ($a + $b)` 会把换行全丢掉（实测把
+  1698 行的 `WifiBookServer.ets` 压成 1 行）。要么用编辑工具，要么 `-join "`r`n"` 显式拼接。
+  抢救办法：`entry/build/.../cache/.../esmodule/debug/**/*.ts` 是**带类型与注释的完整转译源码**。

@@ -36,15 +36,36 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# ── 编码硬化（2026-10-05 真事故：更新日志正文乱码）────────────────────────────
+# 现象：生成文件里的中文条目变成 `UI鍏ㄩ潰浼樺寲…`（典型"UTF-8 被按 GBK 解码"）。
+# 根因：`git log` 输出的是 **UTF-8**，而中文 Windows 上 PowerShell 解外部命令输出用的是
+#   `[Console]::OutputEncoding`（默认 **GBK/936**）⇒ 内存里就已经是乱码，再以 UTF-8 落盘 ⇒ 双层错。
+# 处理：① 把控制台与"发给外部命令"的编码都钉成 UTF-8；
+#       ② **关键**：git 的输出走 `cmd /c ...> 文件` 在操作系统层重定向（绕开 PowerShell 的解码），
+#          再用 `[System.IO.File]::ReadAllText(..., UTF8)` 显式按 UTF-8 读 ⇒ 与控制台代码页无关。
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+try { $OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+
 $root = (git rev-parse --show-toplevel).Trim()
 if (-not $root) { throw 'not a git repository' }
 $appJson   = Join-Path $root 'AppScope/app.json5'
 $dataFile  = Join-Path $root 'entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets'
 
 # ── 1. 取所有提交（新→旧）──────────────────────────────────────────────────
+# ⚠️ 编码：**必须**让 git 把原始 UTF-8 字节直接重定向到文件（cmd /c），再显式按 UTF-8 读。
+#    直接 `$raw = git ...` 会被 PowerShell 用控制台代码页（中文机 = GBK/936）解码 ⇒ 正文乱码。
 $SEP_FIELD = [char]0x1f
 $SEP_REC   = [char]0x1e
-$raw = git -C $root log --date=short --pretty=format:"%H$SEP_FIELD%ad$SEP_FIELD%s$SEP_FIELD%b$SEP_REC"
+$logFile = Join-Path ([System.IO.Path]::GetTempPath()) ("ezlt-gitlog-" + [guid]::NewGuid().ToString('N') + ".txt")
+$pretty = "%H$SEP_FIELD%ad$SEP_FIELD%s$SEP_FIELD%b$SEP_REC"
+# i18n.logOutputEncoding=UTF-8：明确要求 git 按 UTF-8 输出提交信息（不随仓库/locale 变）
+$cmdLine = 'git -C "' + $root + '" -c i18n.logOutputEncoding=UTF-8 log --date=short --pretty=format:"' + $pretty + '" > "' + $logFile + '" 2>nul'
+& cmd /c $cmdLine
+$raw = ''
+if (Test-Path $logFile) {
+  $raw = [System.IO.File]::ReadAllText($logFile, (New-Object System.Text.UTF8Encoding($false)))
+  Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+}
 $records = @()
 foreach ($chunk in ($raw -split $SEP_REC)) {
   $c = $chunk.Trim("`r", "`n", $SEP_REC)
@@ -56,7 +77,8 @@ foreach ($chunk in ($raw -split $SEP_REC)) {
 
 # 正在提交的那条排最前（若有）：它就是"最新版本"的来源
 if ($CommitMsgFile -ne '' -and (Test-Path $CommitMsgFile)) {
-  $msgText = Get-Content $CommitMsgFile -Raw
+  # 显式 UTF-8 读（git 写的 COMMIT_EDITMSG 是 UTF-8）
+  $msgText = [System.IO.File]::ReadAllText($CommitMsgFile, (New-Object System.Text.UTF8Encoding($false)))
   # 去掉 git 默认的注释行（以 # 开头）
   $lines = ($msgText -split "`r?`n") | Where-Object { $_ -notmatch '^\s*#' }
   $msgText = ($lines -join "`n").Trim()

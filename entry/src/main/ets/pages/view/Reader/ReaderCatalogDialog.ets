@@ -209,10 +209,12 @@ export struct ReaderCatalogDialog {
    */
   private cdlPercent(row: BookmarkRow): number {
     const total = this.totalChapterNum ?? 0
-    if (total <= 0) {
+    const idx = row.chapterIndex ?? 0
+    // 电脑端书签 chapterIndex = -1（网页章号≠手机目录下标，见审计 H3）⇒ 不显示百分比
+    if (total <= 0 || idx < 0) {
       return 0
     }
-    return Math.max(0, Math.min(100, Math.round(((row.chapterIndex ?? 0) + 1) / total * 100)))
+    return Math.max(0, Math.min(100, Math.round((idx + 1) / total * 100)))
   }
 
   /** 选中文字色（跟随日/夜模式） */

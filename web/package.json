@@ -1,0 +1,18 @@
+{
+  "name": "legado-web-reader",
+  "private": true,
+  "version": "3.0.0",
+  "type": "module",
+  "description": "喵阅 · 电脑阅读端（局域网 PC 阅读）。真前端工程：TS + esbuild + 原生 DOM，产物为单文件 HTML 进 rawfile。",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node dev/server.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.2",
+    "@types/node": "^22.7.0"
+  }
+}

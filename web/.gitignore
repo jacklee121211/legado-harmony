@@ -1,0 +1,4 @@
+# 依赖与产物（esbuild 二进制很大，且可由 npm i 还原）
+node_modules/
+dev/out/
+*.log
