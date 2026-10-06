@@ -38,6 +38,8 @@ import { Books } from '../../database/entities/Books'
 import { PreferencesUtil } from '@pura/harmony-utils'
 import { ReaderCustomBg } from './ReaderCustomBg'
 import { ReaderFontLib } from './ReaderFontLib'
+// 双端同步 v2 的键名统一在 SyncConfig 里定义（改名迁移 / 删书清理都必须覆盖它们）
+import { PHONE_POS_PREFIX, WEB_POS_PREFIX, WEB_SEEN_PREFIX } from './SyncConfig'
 
 /** 改名结果（给 UI 直接用的文案） */
 export class RenameBookResult {
@@ -55,9 +57,16 @@ class BookRename {
   static readonly NAME_KEYED_PREF_PREFIXES: string[] = [
     'BookCurrentData_',   // 阅读进度      ReaderPage3.ets:2388,2896
     'ReaderSetting_',     // 阅读器个性化  ReaderPage3.ets:2393,2822,2907,5659
-    'WebSync_',           // 网页同步进度  WifiBookServer.ets:1274,1294 / ReaderPage3.ets:2605,2621
-    'WebSyncSeen_',       // 同步去重时间戳 ReaderPage3.ets:2705,2720,2729,2736
-    ReaderCustomBg.KEY_PREFIX   // 每书自定义背景 ReaderCustomBg.ets:156,438（'ReaderBg_'）
+    'WebSync_',           // v1 网页同步锚（只读兼容，双端同步 v2 起不再写）
+    'WebSyncSeen_',       // v1 手机侧水位（只读兼容）
+    ReaderCustomBg.KEY_PREFIX,  // 每书自定义背景 ReaderCustomBg.ets:156,438（'ReaderBg_'）
+    // ── 双端同步 v2（2026-10-05）：各端独立的槽 + 手机侧水位 ──────────────────
+    PHONE_POS_PREFIX,     // 手机位置槽    SyncConfig.ets
+    WEB_POS_PREFIX,       // 网页位置槽（内含多台电脑各一条）
+    WEB_SEEN_PREFIX,      // 手机已消费水位
+    'BookToc_',           // 目录标题快照（M3 单源目录；值是 string[]，键后缀是书名）
+    'SyncLatest_',        // 中继站：最新写入的位置（值是 SyncPos）
+    'SyncSeq_'            // 中继站：全局序号计数器（值是 number）
   ]
 
   /**
@@ -173,15 +182,61 @@ class BookRename {
       return res
     }
 
-    // Preferences 键迁移 + 书名清单元素迁移（都无事务；失败只记录，
+    // Preferences 键迁移 + 书名清单元素迁移 + 值是书名的全局键（都无事务；失败只记录，
     // DB 已成功 ⇒ 不反向回滚，宁可留下"设置没跟过来"也不能让书处于半改名状态）
     this.migratePrefKeys(oldN, newN)
     this.migrateNameLists(oldN, newN)
+    this.migrateNameValues(oldN, newN)
 
     res.ok = true
     res.reason = 'ok'
     res.message = '已重命名'
     return res
+  }
+
+  /**
+   * **删除一本书时清理它的全部派生数据**（2026-10-05 用户定：删除=重置，不再继承，残留是冗余）。
+   *
+   * 覆盖范围 = 本文件类头那张清单的"按名存储"部分：
+   *   · 表：`bookmarks` / `readRecord` / `book_history`（`books` 行由 `BooksDao.deleteBook` 删）
+   *   · Preferences 键：`BookCurrentData_` / `ReaderSetting_` / `WebSync_` / `WebSyncSeen_` / `ReaderBg_`
+   *   · Preferences 书名清单：`ReaderBgOverrides` / `ReaderFontOverrides`（摘掉该名）
+   *   · Preferences 值即书名：`LastReadBookName`（命中才清，连 `LastReadBookUrl` 一起清）
+   * 不做：`ReaderTexture.KEY_CUSTOM_LIST`（纹理路径，与书无关）、`ReaderBgGlobal/Schemes`（全局）。
+   *
+   * ⚠️ 调用时机必须是**删行之后**（`booksUtils.delBooksById`）——否则同名重导会先继承旧数据。
+   * ⚠️ 与改名不同，这里**不需要事务**：删掉派生数据失败只是"没清干净"，不会让书处于半状态。
+   */
+  async purge(bookName: string): Promise<void> {
+    const n: string = (bookName ?? '').trim()
+    if (n === '') {
+      return
+    }
+    const esc = BookRename.esc
+    try {
+      await DbUtil.executeSql(`DELETE FROM bookmarks WHERE bookName = '${esc(n)}'`)
+      await DbUtil.executeSql(`DELETE FROM readRecord WHERE bookName = '${esc(n)}'`)
+      await DbUtil.executeSql(`DELETE FROM book_history WHERE bookName = '${esc(n)}'`)
+    } catch (err) {
+      console.error('BookRename.purge db failed: ' + JSON.stringify(err))
+    }
+    for (const prefix of BookRename.NAME_KEYED_PREF_PREFIXES) {
+      try {
+        PreferencesUtil.deleteSync(prefix + n)
+      } catch (err) {
+        console.error(`BookRename.purge pref failed at ${prefix}: ` + JSON.stringify(err))
+      }
+    }
+    this.removeFromNameLists(n)
+    try {
+      const last: string = PreferencesUtil.getSync('LastReadBookName', '') as string
+      if (typeof last === 'string' && last === n) {
+        PreferencesUtil.deleteSync('LastReadBookName')
+        PreferencesUtil.deleteSync('LastReadBookUrl')
+      }
+    } catch (err) {
+      console.error('BookRename.purge LastRead failed: ' + JSON.stringify(err))
+    }
   }
 
   /** 把 `BookCurrentData_/ReaderSetting_/WebSync_/WebSyncSeen_/ReaderBg_` 五类**键**从旧名迁到新名 */
@@ -200,6 +255,54 @@ class BookRename {
         PreferencesUtil.deleteSync(oldKey)
       } catch (err) {
         console.error(`BookRename.migratePrefKeys failed at ${prefix}: ` + JSON.stringify(err))
+      }
+    }
+  }
+
+  /**
+   * **值是书名**的全局 Preferences 键（不是"键后缀"，所以不在上面两个清单里）。
+   * 2026-10-05 双端同步审计时补漏：`ReaderPage3.registerPageShow()` 每次翻页写
+   * `LastReadBookName = 当前书名`（`ReaderPage3.ets:2904`），桌面快捷方式「快速阅读/
+   * 快速听书」经 `BooksDao.getLastReadBook()` 用 **name + url 双条件**回查
+   * （`BooksDao.ets:491-493`）⇒ 改名后 name 失配 ⇒ 快捷方式取不到书（返回 null 走兜底提示）。
+   */
+  static readonly NAME_VALUE_PREF_KEYS: string[] = [
+    'LastReadBookName'
+  ]
+
+  /** 值是书名的全局键：命中旧名就改写成新名 */
+  private migrateNameValues(oldName: string, newName: string): void {
+    for (const key of BookRename.NAME_VALUE_PREF_KEYS) {
+      try {
+        const v = PreferencesUtil.getSync(key, '') as string
+        if (typeof v === 'string' && v === oldName) {
+          PreferencesUtil.putSync(key, newName)
+        }
+      } catch (err) {
+        console.error(`BookRename.migrateNameValues failed at ${key}: ` + JSON.stringify(err))
+      }
+    }
+  }
+
+  /**
+   * 把某个书名从"书名清单"类存储里**摘掉**（删除书籍时用，与 `migrateNameLists` 配套）。
+   * 只写回发生变化的那张清单；解析失败/清单里没有都静默跳过。
+   */
+  private removeFromNameLists(name: string): void {
+    for (const key of BookRename.NAME_LIST_PREF_KEYS) {
+      try {
+        const raw: string = PreferencesUtil.getSync(key, '') as string
+        if (typeof raw !== 'string' || raw.length === 0) {
+          continue
+        }
+        const list: string[] = JSON.parse(raw) as string[]
+        if (!Array.isArray(list) || !list.includes(name)) {
+          continue
+        }
+        const next: string[] = list.filter((x: string): boolean => x !== name)
+        PreferencesUtil.putSync(key, JSON.stringify(next))
+      } catch (err) {
+        console.error(`BookRename.removeFromNameLists failed at ${key}: ` + JSON.stringify(err))
       }
     }
   }

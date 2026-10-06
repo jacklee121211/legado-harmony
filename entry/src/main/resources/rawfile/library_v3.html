@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>喵阅 · 书库</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,HarmonyOS Sans SC,PingFang SC,Microsoft YaHei,sans-serif;background:#f2f3f7;min-height:100vh;color:#1a1a1a}.wrap{max-width:600px;margin:0 auto;padding:28px 20px 48px}h1{font-size:22px;font-weight:700;letter-spacing:.5px}.sub{color:#8a8f99;font-size:13px;margin:6px 0 20px}.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px #0000000d;overflow:hidden}.lib{padding:6px 16px}.it{display:flex;align-items:center;gap:12px;padding:14px 4px;border-bottom:1px solid #F2F3F7}.it:last-child{border-bottom:0}.ico{width:40px;height:40px;border-radius:10px;background:#f0f7ff;color:#0a84ff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}.meta{flex:1;min-width:0}.nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sz{font-size:12px;color:#8a8f99;margin-top:2px}a.rd,a.dl{font-size:13px;font-weight:600;text-decoration:none;padding:7px 14px;border-radius:9px}a.rd{background:#0a84ff;color:#fff}a.dl{background:#f0f7ff;color:#0a84ff}.empty{padding:28px;text-align:center;color:#c2c6cf;font-size:13px}.empty a{color:#0a84ff}.nav{margin-top:18px;text-align:center;font-size:14px}.nav a{color:#0a84ff;text-decoration:none;font-weight:600}.ver{color:#c2c6cf}.drop{padding:34px 20px;text-align:center;border:1.5px dashed #d5d9e0;border-radius:14px;margin:16px;color:#8a8f99;font-size:14px;cursor:pointer;transition:.2s}.drop.on{border-color:#0a84ff;background:#f0f7ff;color:#0a84ff}.drop b{display:block;font-size:15px;color:#1a1a1a;margin-bottom:4px}.list{padding:0 16px}.bar{height:3px;background:#eef1f5;border-radius:2px;margin-top:6px;overflow:hidden}.bar i{display:block;height:100%;background:#0a84ff;border-radius:2px;width:0;transition:width .2s}.st{font-size:12px;font-weight:600;flex-shrink:0}.st.ok{color:#24b277}.st.err{color:#ef4444}.st.wait{color:#8a8f99}.x{width:26px;height:26px;border:0;background:#f2f3f7;border-radius:50%;color:#8a8f99;font-size:14px;cursor:pointer;flex-shrink:0}.foot{padding:16px}.btn{width:100%;height:46px;border:0;border-radius:12px;background:#0a84ff;color:#fff;font-size:16px;font-weight:600;cursor:pointer}.btn:disabled{background:#c9cdd4}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>书库</h1>
+  <p class="sub" id="sub">手机书架上的本地书</p>
+  <div class="card"><div class="lib" id="list"><div class="empty">加载中…</div></div></div>
+  <p class="nav"><a href="/">← 返回传书</a> · <span class="ver">喵阅 Web v3</span></p>
+</div>
+<script>"use strict";(()=>{function d(r){return r.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}async function p(){let r=document.getElementById("list"),t=document.getElementById("sub");if(r)try{let n=await(await fetch("/books")).json(),i=Array.isArray(n)?n.filter(o=>o&&o.url):[];if(t&&(t.textContent=`\u624B\u673A\u4E66\u67B6\u4E0A\u7684\u672C\u5730\u4E66\uFF08${i.length} \u672C\uFF09\u2014 txt \u53EF\u76F4\u63A5\u9605\u8BFB`),i.length===0){r.innerHTML='<div class="empty">\u4E66\u67B6\u8FD8\u6CA1\u6709\u672C\u5730\u4E66\u7C4D\uFF0C\u5148\u53BB <a href="/">\u4F20\u4E66</a></div>';return}r.innerHTML=i.map(o=>{let a=o.url.endsWith(".txt"),s=a?`<a class="rd" href="/read?id=${o.id}">\u9605\u8BFB</a><a class="dl" href="/download?id=${o.id}">\u4E0B\u8F7D</a>`:`<a class="dl" href="/download?id=${o.id}">\u4E0B\u8F7D epub</a>`;return`<div class="it"><div class="ico">${a?"TXT":"EPUB"}</div><div class="meta"><div class="nm">${d(o.name)}</div><div class="sz">${o.sizeKB} KB</div></div>${s}</div>`}).join("")}catch(e){r.innerHTML='<div class="empty">\u8BFB\u53D6\u4E66\u5E93\u5931\u8D25\uFF1A'+d(String(e))+"</div>"}}p();})();
+</script>
+</body>
+</html>

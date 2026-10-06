@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>喵阅 · 电脑阅读</title>
+<style>/*STYLES*/</style>
+</head>
+<body class="day">
+<div id="bar">
+  <a class="bk" href="/library">← 书库</a>
+  <b id="bookTitle">加载中…</b>
+  <button id="btnToc">目录</button>
+  <button id="btnFind">搜索</button>
+  <button id="btnMark">＋签</button>
+  <button id="btnFontDown">A-</button><button id="btnFontUp">A+</button>
+  <button id="btnLineHeight">行距</button><button id="btnTheme">背景</button>
+  <button id="btnMode">滚动</button>
+</div>
+<div id="syncbar">
+  <div id="synctxt"></div>
+  <div class="row">
+    <button id="btnJumpTop">跳到①</button>
+    <button id="btnJumpBot">跳到②</button>
+    <button class="ig" id="btnIgnore">忽略</button>
+  </div>
+</div>
+<div id="find"><input id="fq" placeholder="查找内容…"></div>
+<div id="scroll"><div class="inner" id="sinner"></div><div id="more" style="display:none">上滑加载更多…</div></div>
+<div id="stage"><div id="pages"></div><div id="spine"></div></div>
+<button id="exit" title="退出全屏">⤢</button>
+<div id="prog"><span id="tocTag">目录：…</span><span id="pct">0%</span><span id="modeTag"></span></div>
+<div id="mask"></div>
+<div id="toc">
+  <header><span>目录与书签</span><button id="btnTocClose">✕</button></header>
+  <input id="tq" placeholder="检索章节…">
+  <div class="tabs"><button id="tabChapters" class="on">目录</button><button id="tabBookmarks">书签</button></div>
+  <div class="lst" id="chapterList"></div>
+  <div class="lst" id="bookmarkList" style="display:none"></div>
+</div>
+<script>/*BUNDLE*/</script>
+</body>
+</html>

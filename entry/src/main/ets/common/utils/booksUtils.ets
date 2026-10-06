@@ -2,6 +2,7 @@ import BooksDao from '../../database/dao/BooksDao'
 import { Books, bookShelfImport, BOOK_SEARCH_TYPE } from '../../database/entities/Books'
 import bookGroupUtils from './bookGroupUtils'
 import toolsUtils from './ToolsUtils'
+import bookRename from './BookRename'
 
 class booksUtils{
   // ⚠️ 必须**逐个 await**（2026-09-29，审核问题②）：
@@ -90,6 +91,18 @@ class booksUtils{
   async delBooksById(id:number|number[]){
     let BookGroupId: Record<number, number> = {}
     let bookId:number[] = toolsUtils.numberArrays(id)
+    // ── 删前取书名（2026-10-05 修 H7，用户口径：「删除算是重置，不再继承」）──────────
+    // 以书名为键的存储（阅读进度 / 阅读器设置 / 自定义背景 / 字体覆盖 / 网页同步锚 /
+    // 书签 / 浏览历史）都挂在 `BookRename` 的清单里。必须在**删行之前**拿名字，
+    // 否则同名重导会继承旧进度与旧设置。
+    let names: string[] = []
+    try {
+      const rows: Books[] = await BooksDao.getBookByIds(bookId)
+      names = rows.map((b: Books): string => b.bookName ?? '')
+        .filter((n: string): boolean => n !== '')
+    } catch (e) {
+      console.log('delBooksById: read names failed, ', JSON.stringify(e))
+    }
     //根据书籍获取分组Id
     BookGroupId = await BooksDao.getBookIdsByGroupId(bookId)
     if (Object.values(BookGroupId).map(o=>o).length > 0) {
@@ -97,6 +110,10 @@ class booksUtils{
     }
 
     BooksDao.deleteBook(bookId)
+    // 删行之后清理派生数据（失败只记日志，不影响删除本身 —— 本方法无返回值语义）
+    for (const n of names) {
+      await bookRename.purge(n)
+    }
   }
 
   async getBookByIds(ids:number|number[]){

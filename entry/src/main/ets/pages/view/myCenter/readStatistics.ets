@@ -271,13 +271,14 @@ export default struct readStatistics {
     return c.length > 0 ? c : '（无记录）'
   }
 
-  /** 书签进度百分比：章下标 / 总章数 */
+  /** 书签进度百分比：章下标 / 总章数（电脑端书签 chapterIndex = -1，无手机端章号 ⇒ 0） */
   private markPercent(row: BookmarkRow): number {
     const total = this.totalChapMap.get(row.bookName ?? '') ?? 0
-    if (total <= 0) {
+    const idx = row.chapterIndex ?? 0
+    if (total <= 0 || idx < 0) {
       return 0
     }
-    return Math.max(0, Math.min(100, Math.round(((row.chapterIndex ?? 0) + 1) / total * 100)))
+    return Math.max(0, Math.min(100, Math.round((idx + 1) / total * 100)))
   }
 
   /**

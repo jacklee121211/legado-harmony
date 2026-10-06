@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>喵阅 · WiFi传书</title>
+<style>/*STYLES*/</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WiFi 传书</h1>
+  <p class="sub">选择书籍文件（.txt / .epub），上传后直接进入手机书架</p>
+  <div class="card">
+    <div class="drop" id="drop"><b>点击选择，或拖放文件到此处</b>支持多选 · txt / epub</div>
+    <input id="f" type="file" multiple accept=".txt,.epub" hidden>
+    <div class="list" id="list"></div>
+    <div class="empty" id="empty">还没有添加文件</div>
+    <div class="foot"><button class="btn" id="up" disabled>开始上传</button></div>
+  </div>
+  <p class="nav">想在电脑上阅读？<a href="/library">打开书库 →</a> · <span class="ver">喵阅 Web v3</span></p>
+</div>
+<script>/*BUNDLE*/</script>
+</body>
+</html>

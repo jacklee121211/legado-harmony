@@ -23,6 +23,8 @@ import BasicDataSource from '../../../common/LazyIDataSource/BasicDataSource';
 import BrightnessUtil from '../../../../common/utils/BrightnessUtil';
 import { TtsEngine, TtsState, TtsSegmentPos } from '../../../tts/TtsEngine';
 import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao';
+// 双端同步 v2（2026-10-05）：槽/水位/键名的唯一登记处（见 SyncConfig 头注释 + 设计文档）
+import syncConfig, { SyncPos, SYNC_V2_ENABLED, ratioToIndex, normEx, excerptKey } from '../../../common/utils/SyncConfig';
 import BooksDao from '../../../database/dao/BooksDao';
 import { TtsPrefs, loadTtsPrefs } from '../../../tts/TtsPrefs';
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil';
@@ -315,6 +317,12 @@ export default struct ReaderPage3 {
   private webSyncToastAt: number = 0
   /** 进度同步 v2.1：双锚写入节流时间戳（2.5s 内不重复取文本+写盘） */
   private webSyncLastWriteAt: number = 0
+  /**
+   * 进度同步 v1.1 的 emitter 监听回调句柄（2026-10-05，审计 P1-4）。
+   * 存下来是为了在 `aboutToDisappear` 用**带回调的** `emitter.off(20261001, cb)` 精确解绑
+   * ——只注册不解绑会让闭包连同整个阅读页实例一起驻留（每次开书漏一个）。
+   */
+  private webSyncListenerCb: ((event: emitter.EventData) => void) | null = null
   @StorageLink('windowWidth') windowWidth: number = 0;
   @StorageLink('windowHeight') windowHeight: number = 0;
   // ⚠️ 亮暗色重构（2026-09-23）：`colorMode` 从 `@StorageLink('colorMode')`（与系统深浅色
@@ -497,8 +505,11 @@ export default struct ReaderPage3 {
       this.getUIContext().getPromptAction().showToast({ message: '已移除书签' })
     } else {
       const chapterName = this.CatalogList.getData(idx)?.catalogName ?? ''
+      // 第 7 个参数 `true` = **同位置去重**（2026-10-05）：`isBookmarked` 是内存缓存
+      // （`bmProbeKey` 未变时直接返回、不查库，见 `syncBookmarkState`），缓存过期时
+      // 旧实现会重复插行；DAO 层兜底后同一页只会有一条书签。
       const ok = await BookmarksDao.add(name, this.bookData.author ?? '', idx, pos, chapterName,
-        await this.currentPageFirstLine())
+        await this.currentPageFirstLine(), true)
       this.isBookmarked = ok
       this.getUIContext().getPromptAction().showToast({ message: ok ? '已添加书签' : '添加失败' })
     }
@@ -2470,6 +2481,11 @@ export default struct ReaderPage3 {
       this.readerComponentController.setPageConfig(this.readerSetting);
       this.readerComponentController.startPlay(resourceIndex || 0, domPos);
       this.CatalogList.pushAllData(this.BookHandler?.getCatalogList() || []); //获取目录列表
+      // 单源目录（M3，2026-10-05）：把手机端目录**标题**发布成快照，供电脑端 `GET /toc` 用。
+      // 电脑端拿这份标题列表，在**与 /book 完全同一串解码文本**上按顺序定位 ⇒ 两端章号/百分比
+      // 首次真正对齐（旧实现各切各的，只能靠 12~20 字模糊匹配）。字符偏移由服务端算（见
+      // WifiBookServer.locateToc），因为只有服务端同时持有"目录标题"和"正在下发的正文串"。
+      this.publishBookToc();
       // 注：目录过滤数据源已随弹窗改造搬到 `ReaderCatalogDialog` 内部 ——
       //     它在每次打开时从 `CatalogList.getOriginDataArray()` 重新构建，这里不需要再同步。
       hilog.info(0x0000, 'testTag', 'catalog list length: ' + this.CatalogList.totalCount());
@@ -2500,8 +2516,19 @@ export default struct ReaderPage3 {
    */
   private registerWebSyncListener(): void {
     try {
+      // ⚠️ 2026-10-05（审计 P1-4）：`emitter.on` 是**进程级**全局监听（SDK
+      // `@ohos.events.emitter.d.ts:31-35`「global event subscription and publishing
+      // capabilities **within a process**」），原来**只注册不解绑** ⇒ 每次开书都多一个
+      // 监听，闭包持有整个阅读页实例（含 CatalogList / anchorNodeCache 整章节点文本）
+      // ⇒ 内存与句柄随开书次数累积。
+      // 现在把回调存进字段，`aboutToDisappear` 里用 **带回调的 off** 精确解绑
+      // （`off(eventId)` 那种重载会把**其他**还活着的阅读页监听一起摘掉，
+      //  签名见 `@ohos.events.emitter.d.ts:182 off(eventId: number, callback: Callback<EventData>)`）。
+      if (this.webSyncListenerCb !== null) {
+        return
+      }
       const ev: emitter.InnerEvent = { eventId: 20261001 }
-      emitter.on(ev, (event: emitter.EventData): void => {
+      const cb = (event: emitter.EventData): void => {
         try {
           if (this.disposed) {
             return
@@ -2515,6 +2542,16 @@ export default struct ReaderPage3 {
           if (name === '' || name !== (this.bookData?.bookName ?? '')) {
             return
           }
+          // v2：先过"值不值得提示"的判定（水位 + 同章阈值都在 SyncConfig 里）——
+          // 电脑只是同章内挪了不到一页 ⇒ 这里直接返回（顺带推进水位），不打扰阅读。
+          if (SYNC_V2_ENABLED) {
+            const ownTitle: string = this.bookData?.durChapterTitle ?? ''
+            const node: number = this.pageRange?.startNode ?? 0
+            const ownRatio: number = this.anchorNodeCount > 0 ? node / this.anchorNodeCount : -1
+            if (syncConfig.pendingWebPos(name, ownTitle, ownRatio) === null) {
+              return
+            }
+          }
           const now: number = Date.now()
           if (now - this.webSyncToastAt < 30000) {
             return
@@ -2526,10 +2563,25 @@ export default struct ReaderPage3 {
         } catch (e) {
           hilog.error(0x0000, 'testTag', `webSync listener failed: ${(e as Error).message}`)
         }
-      })
+      }
+      this.webSyncListenerCb = cb
+      emitter.on(ev, cb)
     } catch (err) {
       hilog.error(0x0000, 'testTag', `webSync listener setup failed: ${(err as Error).message}`)
     }
+  }
+
+  /** 解绑同步监听（`aboutToDisappear` 调用；必须用带回调的 off，见 registerWebSyncListener 注释） */
+  private unregisterWebSyncListener(): void {
+    if (this.webSyncListenerCb === null) {
+      return
+    }
+    try {
+      emitter.off(20261001, this.webSyncListenerCb)
+    } catch (err) {
+      hilog.error(0x0000, 'testTag', `webSync listener off failed: ${(err as Error).message}`)
+    }
+    this.webSyncListenerCb = null
   }
 
   /**
@@ -2546,6 +2598,11 @@ export default struct ReaderPage3 {
    */
   private anchorNodeCacheSpine: number = -1
   private anchorNodeCache: string[] | null = null
+  /**
+   * 本章块节点总数（双端同步 v2 用）：与 `pageRange.startNode` 一起算 **章内位置比例 posRatio**
+   * ⇒ 跨端定位时文本锚匹配不到，还能按比例落到大致同一位置（设计文档 §3 R4）。
+   */
+  private anchorNodeCount: number = 0
 
   private async webSyncAnchors(): Promise<string[]> {
     const r = this.pageRange
@@ -2566,6 +2623,11 @@ export default struct ReaderPage3 {
       if (nodes === null || nodes.length === 0) {
         return ['', '']
       }
+      // v2：记下本章节点总数（算 posRatio 用；两端都用"比例"而不是各自的索引）
+      this.anchorNodeCount = nodes.length
+      // 摘录长度 40，与网页端 `pageAnchors()`（`top.slice(0,40)`）对齐；
+      // v2 规定"规整化"口径两端一致 = 去**全部**空白（web 端 `normEx` 同款），
+      // 手机这里保留单空格仅用于**显示**，匹配时统一走 `SyncConfig.normEx`。
       const norm = (s: string): string => s.replace(new RegExp('\\s{1,}', 'g'), ' ').trim()
       const startNode: string = nodes[Math.min(r.startNode, nodes.length - 1)] ?? ''
       const endNode: string = nodes[Math.min(r.endNode, nodes.length - 1)] ?? ''
@@ -2578,10 +2640,51 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * pageShow 挂点：双锚写入 WebSync_<书名>（web 轮询据此提示跳转），失败静默。
+   * 发布目录标题快照（M3 单源目录，2026-10-05）。
+   *
+   * 目的：让电脑端与手机端**用同一份章节划分**（现在两端各切各的：手机 ReaderKit、
+   * 网页空行+标题正则 ⇒ 章号/百分比/书签位置全都对不上，只能靠文本模糊匹配）。
+   *
+   * 为什么只发布"标题"而字符偏移交给服务端算：详见 WifiBookServer.locateToc 注释 ——
+   * 只有在服务端才能在**正在下发的那一串解码文本**上定位，避免"两端口径不同 ⇒ 偏移全错"。
+   * 只在标题数组变化时写盘（开书高频，避免每次都写）。
+   */
+  private publishBookToc(): void {
+    try {
+      const name: string = this.bookData?.bookName ?? ''
+      if (name === '') {
+        return
+      }
+      const n: number = this.CatalogList.totalCount()
+      if (n <= 0) {
+        return
+      }
+      const titles: string[] = []
+      for (let i = 0; i < n; i++) {
+        titles.push(this.CatalogList.getData(i)?.catalogName ?? '')
+      }
+      const key: string = `BookToc_${name}`
+      const next: string = JSON.stringify(titles)
+      let prev = ''
+      try {
+        prev = PreferencesUtil.getSync(key, '') as string
+      } catch (e) {
+        prev = ''
+      }
+      if (prev !== next) {
+        PreferencesUtil.putSync(key, next)
+        hilog.info(0x0000, 'testTag', 'bookToc published: %{public}d titles', n)
+      }
+    } catch (e) {
+      hilog.error(0x0000, 'testTag', `publishBookToc failed: ${(e as Error).message}`)
+    }
+  }
+
+  /**
+   * pageShow 挂点：把手机当前位置写进**手机自己的位置槽**（v2 双端同步，见 SyncConfig）。
    * v3.21 两点加固：
    * ① **2.5s 节流**——pageShow 高频触发，旧实现每页都异步取文本+写盘（重且竞态）；
-   * ② **ts 单调**——payload.ts 取 max(now, 存量 ts)：即使竞态让旧请求后落盘，
+   * ② **ts 单调**——slot.ts 取 max(now, 存量 ts)：即使竞态让旧请求后落盘，
    *    也不会把时间戳拉回去（旧锚永远赢不了新锚的 seen 比对）。
    */
   private writeWebSyncAnchors(): void {
@@ -2599,26 +2702,56 @@ export default struct ReaderPage3 {
         if (name === '') {
           return
         }
-        // ts 单调：读存量取较大者（防异步竞态回写旧时间戳）
-        let ts: number = Date.now()
-        try {
-          const prevRaw = PreferencesUtil.getSync(`WebSync_${name}`, '') as string
-          if (prevRaw !== '' && prevRaw !== null) {
-            const prev = JSON.parse(prevRaw) as Record<string, number | string>
-            ts = Math.max(ts, Number(prev['ts'] ?? 0))
+        // ── 双端同步 v2（2026-10-05）：写**手机自己的槽**，不再与电脑共用键 ──────────
+        // v1 的 `WebSync_<书名>` 是"一槽两用"：手机写、电脑也写 ⇒ 谁后写谁赢、
+        // 对方的待消费提示被顶掉（审计 H1）。v2 各写各的槽：
+        //   `SyncPos_phone_<书名>`（本方法） / `SyncPos_web_<书名>`（服务端代网页写）
+        const chCount: number = this.CatalogList.totalCount()
+        const chIndex: number = this.bookData.durChapterIndex ?? 0
+        const nodeCount: number = this.anchorNodeCount
+        // ts 单调（v2 单写者也要）：`webSyncAnchors()` 是异步的，连续翻页时**旧请求可能后返回**，
+        // 若直接写 `Date.now()`，槽的 ts 会回退 ⇒ 网页侧的"已消费水位"（记的是较新的 ts）
+        // 会把随后真正的更新误判为"已消费"而不提示。
+        const prevTs: number = syncConfig.readPhonePos(name).ts
+        const pos: SyncPos = {
+          v: 2,
+          // 序号由 `syncConfig.writePhonePos` → `stamp()` 统一分配（手机进程全局单调）
+          seq: 0,
+          chTitle: this.bookData.durChapterTitle ?? '',
+          chIndex: chIndex,
+          chCount: chCount,
+          ratio: chCount > 0 ? chIndex / chCount : -1,
+          topEx: a[0],
+          botEx: a[1],
+          posRatio: nodeCount > 0 ? (this.pageRange?.startNode ?? 0) / nodeCount : -1,
+          ts: Math.max(Date.now(), prevTs),
+          writer: 'phone'
+        }
+        if (SYNC_V2_ENABLED) {
+          syncConfig.writePhonePos(name, pos)
+        } else {
+          // 回退路径（开关关闭）：保持 v1 行为不变，便于一键比较/回退
+          let ts: number = pos.ts
+          try {
+            const prevRaw = PreferencesUtil.getSync(`WebSync_${name}`, '') as string
+            if (prevRaw !== '' && prevRaw !== null) {
+              const prev = JSON.parse(prevRaw) as Record<string, number | string>
+              ts = Math.max(ts, Number(prev['ts'] ?? 0))
+            }
+          } catch (e) {
+            // 存量读不到就用 now
           }
-        } catch (e) {
-          // 存量读不到就用 now
+          const payload: Record<string, number | string> = {
+            'topEx': a[0],
+            'botEx': a[1],
+            'title': pos.chTitle,
+            'chapterIndex': chIndex,
+            'ts': ts,
+            'src': 'phone'
+          }
+          PreferencesUtil.putSync(`WebSync_${name}`, JSON.stringify(payload))
+          PreferencesUtil.putSync(`WebSyncSeen_${name}`, ts)
         }
-        const payload: Record<string, number | string> = {
-          'topEx': a[0],
-          'botEx': a[1],
-          'title': this.bookData.durChapterTitle ?? '',
-          'chapterIndex': this.bookData.durChapterIndex ?? 0,
-          'ts': ts,
-          'src': 'phone'
-        }
-        PreferencesUtil.putSync(`WebSync_${name}`, JSON.stringify(payload))
       } catch (e) {
         hilog.error(0x0000, 'testTag', `webSync anchor write failed: ${(e as Error).message}`)
       }
@@ -2626,60 +2759,122 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 摘录 → 引擎位置（node/char）：在目标章块节点文本中做规整化子串匹配，
-   * 命中后经 domPosFor 还原引擎 domPos ⇒ startPlay 精确落位（行级）。
-   * 章定位：数字优先（"第N章"），标题互含兜底。
+   * 按章节标题在目录里找**目录下标**（数字优先："第N章"；标题互含兜底）。
+   * 与 `anchorJump` 的章定位同口径，抽出来给两处共用。
+   *
+   * 用途：**电脑端书签/锚点**。网页端的 `chapterIndex` 是它自己按空行分段 + 标题正则
+   * 切出来的章下标（`WifiBookServer.ets:723-727`），与手机端目录下标是两套坐标系
+   * （审计 H3）⇒ 只能按标题匹配，不能当索引用。
+   *
+   * @returns 目录下标；找不到返回 -1
    */
-  private async anchorJump(excerpt: string, title: string): Promise<void> {
-    const key = excerpt.replace(new RegExp('\\s{1,}', 'g'), '').slice(0, 12)
-    if (key === '') {
-      return
+  private catalogIndexByTitle(title: string): number {
+    const t0: string = (title ?? '').trim()
+    if (t0 === '') {
+      return -1
     }
     const total: number = this.CatalogList.totalCount()
-    let spine = -1
-    const numM = title.match(/第(\d+)[章节回卷]/)
+    const numM = t0.match(/第(\d+)[章节回卷]/)
     const wantNum = numM !== null ? parseInt(numM[1]) : -1
+    if (wantNum >= 0) {
+      for (let i = 0; i < total; i++) {
+        const t: string = this.CatalogList.getData(i)?.catalogName ?? ''
+        if (t === '') {
+          continue
+        }
+        const tm = t.match(/第(\d+)[章节回卷]/)
+        if (tm !== null && parseInt(tm[1]) === wantNum) {
+          return i
+        }
+      }
+    }
+    // 标题互含兜底：网页传的 `chapterName` 是"该章首段正文前 30 字"（通常是标题行本身），
+    // 手机目录名是 ReaderKit 的 catalogName ⇒ 取前 8 字双向包含判断
+    const key: string = t0.slice(0, 8)
     for (let i = 0; i < total; i++) {
-      const item = this.CatalogList.getData(i)
-      const t: string = item?.catalogName ?? ''
+      const t: string = this.CatalogList.getData(i)?.catalogName ?? ''
       if (t === '') {
         continue
       }
-      if (wantNum >= 0) {
-        const tm = t.match(/第(\d+)[章节回卷]/)
-        if (tm !== null && parseInt(tm[1]) === wantNum) {
-          spine = i
-          break
-        }
+      if (t.indexOf(key) >= 0 || key.indexOf(t.slice(0, 8)) >= 0) {
+        return i
       }
     }
-    if (spine < 0) {
-      for (let i = 0; i < total; i++) {
-        const item = this.CatalogList.getData(i)
-        const t: string = item?.catalogName ?? ''
-        if (t !== '' && title.indexOf(t.slice(0, 8)) >= 0) {
-          spine = i
-          break
-        }
-      }
+    return -1
+  }
+
+  /**
+   * 摘录 → 引擎位置（node/char）：在目标章块节点文本中做规整化子串匹配，
+   * 命中后经 domPosFor 还原引擎 domPos ⇒ startPlay 精确落位（行级）。
+   * 章定位：数字优先（"第N章"），标题互含兜底。
+   *
+   * ⚠️ 2026-10-05 修（审计 H4）：这里原先把**目录下标**直接当 **spine 号**用
+   * （`spine = i` → `previewNodeTexts(spine)` / `startPlay(spine, …)`）。官方文档
+   * 原文（documentId `API参考/Reader_Kit_阅读服务/ArkTS_API/bookParser_书籍解析能力/reader-book-parser`）：
+   *   「CatalogItem 对应一个目录节点，而 SpineItem 对应一个内容资源文件，**两者并不总是一一对应的**」
+   * ⇒ epub/多级目录书会跳到错误的章。现改为与 `jumpToCatalogItem`（`:6301`）、
+   *   `jumpToBookmark`（`:6341`）同款的 `getResourceItemByCatalog(item).index` 换算。
+   */
+  private async anchorJump(excerpt: string, title: string, ratio: number = -1,
+    posRatio: number = -1): Promise<void> {
+    // 匹配键 12 → **20 字**（2026-10-05 收紧：键太短时重复句子会命中错处；显示仍用短摘录）
+    const key = excerptKey(excerpt, 20)
+    const total: number = this.CatalogList.totalCount()
+    // ① 章定位：标题匹配优先（数字优先 + 前 8 字互含）
+    let catalogIdx: number = this.catalogIndexByTitle(title)
+    // ② 章定位兜底：跨端比例（两端切分不同，索引不可用，比例可换算）
+    if (catalogIdx < 0 && ratio >= 0 && total > 0) {
+      catalogIdx = ratioToIndex(ratio, total)
     }
-    if (spine < 0) {
+    if (catalogIdx < 0) {
       this.getUIContext().getPromptAction().showToast({ message: '未能定位该进度' })
       return
     }
+    const catalogItem = this.CatalogList.getData(catalogIdx)
+    if (catalogItem === undefined || catalogItem === null) {
+      this.getUIContext().getPromptAction().showToast({ message: '未能定位该进度' })
+      return
+    }
+    // 目录下标 → spine 号（二者不总一一对应，必须换算）
+    const spine: number = this.getResourceItemByCatalog(catalogItem).index
     const nodes = await TtsEngine.previewNodeTexts(this.BookHandler ?? null, spine)
-    if (nodes === null) {
+    if (nodes === null || nodes.length === 0) {
       this.readerComponentController.startPlay(spine, `${spine}`)
       return
     }
-    for (let n = 0; n < nodes.length; n++) {
-      const normed = (nodes[n] ?? '').replace(new RegExp('\\s{1,}', 'g'), '')
-      const hit = normed.indexOf(key)
-      if (hit >= 0) {
-        // 规整化偏移 ≈ 原文偏移（差异仅为被压缩的空白，行级可接受）
-        this.readerComponentController.startPlay(spine, this.domPosFor(n, hit))
-        return
+    // ③ 章内定位：文本锚优先（行级最准）；**多个命中时取离"比例推算位置"最近的那个**
+    //    （2026-10-05 收紧：旧实现取首个命中，重复句子会落到本章靠前的位置）
+    const targetNode: number = posRatio >= 0 ? ratioToIndex(posRatio, nodes.length) : -1
+    let bestNode: number = -1
+    let bestChar: number = 0
+    let bestDist: number = -1
+    if (key !== '') {
+      for (let n = 0; n < nodes.length; n++) {
+        const normed = normEx(nodes[n] ?? '')
+        const hit = normed.indexOf(key)
+        if (hit < 0) {
+          continue
+        }
+        const dist: number = targetNode >= 0 ? Math.abs(n - targetNode) : 0
+        if (bestNode < 0 || dist < bestDist) {
+          bestNode = n
+          bestChar = hit
+          bestDist = dist
+          if (targetNode >= 0 && dist === 0) {
+            break
+          }
+        }
       }
+    }
+    if (bestNode >= 0) {
+      // 规整化偏移 ≈ 原文偏移（差异仅为被压缩的空白，行级可接受）
+      this.readerComponentController.startPlay(spine, this.domPosFor(bestNode, bestChar))
+      return
+    }
+    // ④ 章内兜底：跨端章内比例 → 块节点号
+    if (posRatio >= 0) {
+      this.readerComponentController.startPlay(spine, this.domPosFor(ratioToIndex(posRatio, nodes.length), 0))
+      return
     }
     this.readerComponentController.startPlay(spine, `${spine}`)
   }
@@ -2692,6 +2887,14 @@ export default struct ReaderPage3 {
       }
       setTimeout((): void => {
         try {
+          // ── v2 路径（2026-10-05，用户确认的结构化方案）────────────────────────
+          // 判据全部交给 `SyncConfig.pendingWebPos`：水位按 **webId** 分别记（多台电脑互不干扰）、
+          // 同章且位置差 < 一页则不打扰（只推进水位），手机自己的槽结构上不可能自弹。
+          if (SYNC_V2_ENABLED) {
+            this.checkWebSyncAnchorV2(name)
+            return
+          }
+          // ── v1 回退路径（开关关闭时保持原行为，便于一键比较/回退）────────────
           const raw = PreferencesUtil.getSync(`WebSync_${name}`, '') as string
           if (raw === '' || raw === null) {
             return
@@ -2702,6 +2905,14 @@ export default struct ReaderPage3 {
           // v3.20 双锚：web/手机同写的"页首行、页末行"摘录（行级定位键）
           const topEx: string = String(obj['topEx'] ?? '')
           const botEx: string = String(obj['botEx'] ?? '')
+          // ── 写者判定（2026-10-05 修"幽灵弹窗"，审计 H2/P0-1）────────────────
+          // `src` 由手机写锚点时写死为 'phone'（`:2619`），服务端写网页锚点时记为 'web'。
+          // 这里**必须先判写者**：手机自己刚写回去的锚点不该弹"电脑端阅读进度"。
+          // （`ts > seen` 那道水位只保证"没提示过"，它拦不住自写自读。）
+          const src: string = String(obj['src'] ?? '')
+          if (src === 'phone') {
+            return
+          }
           const seen = Number(PreferencesUtil.getSync(`WebSyncSeen_${name}`, 0) as number)
           if (ts <= seen || (topEx === '' && botEx === '' && title === '')) {
             return
@@ -2743,6 +2954,71 @@ export default struct ReaderPage3 {
     } catch (err) {
       hilog.error(0x0000, 'testTag', `webSync anchor setup failed: ${(err as Error).message}`)
     }
+  }
+
+  /**
+   * 双端同步 v2：开书时的"电脑端阅读进度"提示（设计文档 §3 R2/R3）。
+   * 判据与水位都在 `SyncConfig.pendingWebPos()`；这里只负责**展示**与**跳转**。
+   * 跳转优先级：① `topEx/botEx` 文本锚（`anchorJump` 内）→ ② `ratio` 定位章
+   * → ③ `posRatio` 定位章内位置（见 `anchorJump`）。
+   */
+  private checkWebSyncAnchorV2(name: string): void {
+    const ownTitle: string = this.bookData?.durChapterTitle ?? ''
+    const node: number = this.pageRange?.startNode ?? 0
+    const ownPosRatio: number = this.anchorNodeCount > 0 ? node / this.anchorNodeCount : -1
+    const pending = syncConfig.pendingWebPos(name, ownTitle, ownPosRatio)
+    if (pending === null || pending === undefined) {
+      return
+    }
+    const pos: SyncPos = pending.pos
+    const id: string = pending.id
+    const nl: string = String.fromCharCode(10)
+    /**
+     * 三按钮（2026-10-05 用户反馈"没有忽略按钮"）：
+     * 原来用 `AlertDialogParamWithButtons`（**只有** primary/secondary 两个按钮，SDK
+     * `alert_dialog.d.ts:965-1000`），忽略只能靠右上角 ✕/返回 ⇒ 用户根本看不到"忽略"。
+     * 改用 `AlertDialogParamWithOptions.buttons: Array<AlertDialogButtonOptions>`
+     * （SDK `alert_dialog.d.ts:1006` + `:1016`，`@since 10`）⇒ 三个并列按钮；
+     * 官方注释也写明"超过两个按钮建议用 auto 方向（自动竖向排布）"（`:1017-1021`），
+     * 故 `buttonDirection` 用默认 AUTO。
+     */
+    this.getUIContext().showAlertDialog({
+      title: '电脑端阅读进度',
+      message: `电脑读到：${pos.chTitle !== '' ? `「${pos.chTitle.slice(0, 16)}」` : ''}` +
+        `${pos.topEx !== '' ? `${nl}页首：${pos.topEx.slice(0, 18)}` : ''}` +
+        `${pos.botEx !== '' ? `${nl}页末：${pos.botEx.slice(0, 18)}` : ''}`,
+      buttons: [
+        {
+          value: '跳到页首',
+          action: (): void => {
+            syncConfig.setWatermark(name, id, pos.seq)
+            this.anchorJump(pos.topEx, pos.chTitle, pos.ratio, pos.posRatio)
+          }
+        },
+        {
+          value: '跳到页末',
+          action: (): void => {
+            syncConfig.setWatermark(name, id, pos.seq)
+            this.anchorJump(pos.botEx, pos.chTitle, pos.ratio, pos.posRatio)
+          }
+        },
+        {
+          value: '忽略',
+          action: (): void => {
+            // 忽略 = 消费这一版（水位推进到该 seq）。语义（用户确认）：
+            // "对方**再有新的**进展会再提示一次"，而不是永久静默 —— 否则手机永远不知道
+            // 电脑后来读到了 100 章，同步等于失效。
+            syncConfig.setWatermark(name, id, pos.seq)
+            hilog.info(0x0000, 'testTag', 'webSync ignored: seq=%{public}d', pos.seq)
+          }
+        }
+      ],
+      cancel: (): void => {
+        // 点弹窗外/返回键：同样按"忽略"处理（否则会出现"没选任何按钮但水位没推进"的悬空态，
+        // 下次进来又弹同一个）
+        syncConfig.setWatermark(name, id, pos.seq)
+      }
+    })
   }
 
   /**
@@ -2892,19 +3168,29 @@ export default struct ReaderPage3 {
       this.bookData.localBookDurChapterPos = data;
       this.bookData.durChapterTitle = this.CatalogList.getData(this.bookData.durChapterIndex)?.catalogName ?? this.bookData.durChapterTitle;
       this.bookData.totalChapterNum = this.CatalogList.totalCount();
-      // 保存书籍数据。
-      PreferencesUtil.putSync(`BookCurrentData_${this.bookData.bookName}`, this.bookData)
+      // ── 空书名守卫（2026-10-05，审计 H12）───────────────────────────────────
+      // 这几个键都以书名为后缀：书名为空时键会退化成 `BookCurrentData_`（无后缀），
+      // **多本空名书会共用同一份进度/设置**。`WebSync_` 那两处本来就有守卫，这里补齐。
+      // ⚠️ 只守**落盘**，不 return —— pageShow 后半段还有书签状态/目录号同步/读完判定，
+      //    跳过它们会让阅读器自身状态错乱（`writeWebSyncAnchors` 内部已有自己的空名守卫）。
+      const bkName: string = this.bookData.bookName ?? ''
+      if (bkName !== '') {
+        // 保存书籍数据。
+        PreferencesUtil.putSync(`BookCurrentData_${bkName}`, this.bookData)
+        // ★「最后阅读的书」标记 —— 桌面快捷方式「快速听书 / 快速阅读」据此定位目标书。
+        //   为什么不用数据库的 `durChapterTime`：**当前阅读页从不写该字段**
+        //   （本文件对 durChapterTime 的引用数为 0，只有旧阅读页 ReaderPage2 会写），
+        //   实测导致快捷方式永远取不到书。这里在每次翻页时顺手记两个键，读的时候回查 books 表。
+        //   同时记 name + url，避免同名不同源的书串台。
+        PreferencesUtil.putSync('LastReadBookName', bkName)
+        PreferencesUtil.putSync('LastReadBookUrl', this.bookData.bookUrl ?? '')
+        //  保存阅读器设置。
+        PreferencesUtil.putSync(`ReaderSetting_${bkName}`, this.readerSetting)
+      } else {
+        hilog.warn(0x0000, 'testTag', 'pageShow: bookName is empty, skip per-book persist')
+      }
       // ── 进度同步 v2（2026-10-01，用户设计）：页首/页末双锚写给 web 端 ──
       this.writeWebSyncAnchors();
-      // ★「最后阅读的书」标记 —— 桌面快捷方式「快速听书 / 快速阅读」据此定位目标书。
-      //   为什么不用数据库的 `durChapterTime`：**当前阅读页从不写该字段**
-      //   （本文件对 durChapterTime 的引用数为 0，只有旧阅读页 ReaderPage2 会写），
-      //   实测导致快捷方式永远取不到书。这里在每次翻页时顺手记两个键，读的时候回查 books 表。
-      //   同时记 name + url，避免同名不同源的书串台。
-      PreferencesUtil.putSync('LastReadBookName', this.bookData.bookName)
-      PreferencesUtil.putSync('LastReadBookUrl', this.bookData.bookUrl ?? '')
-      //  保存阅读器设置。
-      PreferencesUtil.putSync(`ReaderSetting_${this.bookData.bookName}`, this.readerSetting)
       // ReaderKit 页内容范围（唯一坐标来源）：startDomPos/endDomPos 是字符级的页内容映射
       const s = this.parseDomPos(data.startDomPos);
       const e = this.parseDomPos(data.endDomPos);
@@ -3158,6 +3444,10 @@ export default struct ReaderPage3 {
     // 必须在任何 `releaseBook()` 之前 —— 否则那条链可能在释放之后才继续执行，
     // 对着已释放的控制器调 `registerBookParser`，正是黑屏的成因。见 `disposed` 注释。
     this.disposed = true;
+    // 解绑进度同步的进程级监听（2026-10-05，审计 P1-4）：`emitter.on` 不解绑会让
+    // 闭包连同本实例（CatalogList / anchorNodeCache）一起驻留，开书次数越多漏得越多。
+    // 放在 `disposed = true` 之后：即使有事件在途，回调体也会先被 `disposed` 拦掉。
+    this.unregisterWebSyncListener();
     // ── 屏闪修复（2026-09-23）：Ability 配色还原**已迁出**本方法 ────────────────
     // 原来在这里（返回转场开始）就 `setReaderActive(false)+sync` ⇒ 退出动画中途
     // Ability 配色翻转，正在缩回的深色书面被系统级重涂闪成浅色（用户实测明显）。
@@ -6311,7 +6601,21 @@ export default struct ReaderPage3 {
    *    改造前就是这个语义 —— 早退时弹窗**不关**。
    */
   private jumpToBookmark(row: BookmarkRow): void {
-    const idx = row.chapterIndex ?? 0
+    let idx = row.chapterIndex ?? 0
+    let pos = row.chapterPos ?? 0
+    // ── 电脑端书签（chapterIndex/chapterPos = -1，坐标系未知，审计 H3/H6）──────────
+    // 网页端的章号是它自己的切分口径，原样当目录下标会**跳到错误的章**甚至越界
+    // （`:6313` 旧实现）；现在改按 `chapterName`（网页传的是该章首段正文）做标题匹配。
+    if (idx < 0) {
+      idx = this.catalogIndexByTitle(String(row.chapterName ?? ''))
+      pos = 0
+      if (idx < 0) {
+        this.getUIContext().getPromptAction().showToast({
+          message: '这条书签来自电脑端，手机端未能匹配到章节'
+        })
+        return
+      }
+    }
     const item = this.CatalogList.getData(idx)
     if (item === undefined || item === null) {
       this.getUIContext().getPromptAction().showToast({ message: '章节已不存在' })
@@ -6319,9 +6623,9 @@ export default struct ReaderPage3 {
     }
     const spine = this.getResourceItemByCatalog(item).index
     hilog.info(0x0000, 'testTag', 'bmJump(dialog): catalog=%{public}d → spine=%{public}d node=%{public}d',
-      idx, spine, row.chapterPos ?? 0)
+      idx, spine, pos)
     this.readerCatalogDialog?.close()
-    this.requestLocate(spine, row.chapterPos ?? 0, 0, false)
+    this.requestLocate(spine, pos, 0, false)
   }
 
   /**

@@ -1,0 +1,56 @@
+/* pages.css —— 书库页 / 传书页共用样式
+   从旧内嵌页（WifiBookServer.libraryPageBytes / uploadPageBytes）**原样搬迁**，视觉不变。
+   搬迁理由与阅读页相同：内嵌字符串里的代码没有 lint/类型/断点，且服务端被迫做字符串拼接。 */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #F2F3F7; min-height: 100vh; color: #1a1a1a;
+}
+.wrap { max-width: 600px; margin: 0 auto; padding: 28px 20px 48px; }
+h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+.sub { color: #8a8f99; font-size: 13px; margin: 6px 0 20px; }
+.card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.05); overflow: hidden; }
+.lib { padding: 6px 16px; }
+.it { display: flex; align-items: center; gap: 12px; padding: 14px 4px; border-bottom: 1px solid #F2F3F7; }
+.it:last-child { border-bottom: 0; }
+.ico {
+  width: 40px; height: 40px; border-radius: 10px; background: #F0F7FF; color: #0A84FF;
+  display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.meta { flex: 1; min-width: 0; }
+.nm { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sz { font-size: 12px; color: #8a8f99; margin-top: 2px; }
+a.rd, a.dl { font-size: 13px; font-weight: 600; text-decoration: none; padding: 7px 14px; border-radius: 9px; }
+a.rd { background: #0A84FF; color: #fff; }
+a.dl { background: #F0F7FF; color: #0A84FF; }
+.empty { padding: 28px; text-align: center; color: #c2c6cf; font-size: 13px; }
+.empty a { color: #0A84FF; }
+.nav { margin-top: 18px; text-align: center; font-size: 14px; }
+.nav a { color: #0A84FF; text-decoration: none; font-weight: 600; }
+.ver { color: #c2c6cf; }
+
+/* 传书页 */
+.drop {
+  padding: 34px 20px; text-align: center; border: 1.5px dashed #d5d9e0; border-radius: 14px;
+  margin: 16px; color: #8a8f99; font-size: 14px; cursor: pointer; transition: .2s;
+}
+.drop.on { border-color: #0A84FF; background: #F0F7FF; color: #0A84FF; }
+.drop b { display: block; font-size: 15px; color: #1a1a1a; margin-bottom: 4px; }
+.list { padding: 0 16px; }
+.bar { height: 3px; background: #EEF1F5; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: #0A84FF; border-radius: 2px; width: 0; transition: width .2s; }
+.st { font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.st.ok { color: #24B277; }
+.st.err { color: #EF4444; }
+.st.wait { color: #8a8f99; }
+.x {
+  width: 26px; height: 26px; border: 0; background: #F2F3F7; border-radius: 50%;
+  color: #8a8f99; font-size: 14px; cursor: pointer; flex-shrink: 0;
+}
+.foot { padding: 16px; }
+.btn {
+  width: 100%; height: 46px; border: 0; border-radius: 12px; background: #0A84FF; color: #fff;
+  font-size: 16px; font-weight: 600; cursor: pointer;
+}
+.btn:disabled { background: #C9CDD4; }
