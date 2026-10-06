@@ -104,3 +104,17 @@ V2.0.2 封面圆角对齐 + 进场更顺
 - **改文件别用 PowerShell 拼字符串**：`Set-Content -Value ($a + $b)` 会把换行全丢掉（实测把
   1698 行的 `WifiBookServer.ets` 压成 1 行）。要么用编辑工具，要么 `-join "`r`n"` 显式拼接。
   抢救办法：`entry/build/.../cache/.../esmodule/debug/**/*.ts` 是**带类型与注释的完整转译源码**。
+- **ArkTS 里"可选的函数形参"会把函数实参误判成 string**（2026-10-06 实测）：形如
+  `f(a: number, onDone?: (c: X) => void, s?: string)` 的签名，调用 `f(c, 1, body, undefined, cb)`
+  会被 `check` 报 `2345 Argument of type '() => void' is not assignable to parameter of type 'string'`
+  （指向 `cb`，位置与实参都对不上）。改成**必填形参 + 显式空实现**（`noop`）即恢复正常。
+  同类坑：`forEach` 闭包里给外层 `let x: T | null` 赋值，之后读 `x` 会被窄化成 `never`
+  （报 `2339 Property 'sid' does not exist on type 'never'`）⇒ 用 `for` 循环 + 显式判空。
+- **DevEco 开着时编辑工具可能偶发 `ReplaceFileW EIO (Win32 1175)`**（原子替换被占用）：
+  文件**不会**被损坏，直接重试同一次编辑即可（实测两次都成功）。
+- **Web 服务产物新鲜度闸门**（2026-10-06 新增）：`node scripts/check-web-artifacts.mjs` 比对
+  `web/src/*` 与 `rawfile/*_v3.html` 的 mtime，旧了就非零退出；`.githooks/pre-commit` 会在
+  提交含 `web/` 改动时自动 `node web/build.mjs` 并 `git add` 产物。**没挂 hvigor hook**：
+  工程内没有 `@ohos/hvigor`（`hvigorfile.ts` 是插件生成的一行），改构建入口风险高于收益。
+- **分块上传协议端到端自检**：`node web/dev/server.mjs` 起 mock，再 `node scripts/probe-chunk-upload.mjs`
+  （11 条断言，覆盖 init/落块/重试/**断点续传只补缺块**/done/100 MB 上限/扩展名白名单）。

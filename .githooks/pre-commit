@@ -1,0 +1,31 @@
+#!/bin/sh
+# ── pre-commit：自动重建 web 前端产物，避免 rawfile 里的 *_v3.html 与 web/src 脱同步 ──
+#
+# 背景：手机端 Web 服务直接下发 `entry/src/main/resources/rawfile/*_v3.html`，
+# 而它们由 `web/` 真前端工程构建产生。审计（2026-10-06，D2）发现**没有任何自动化**
+# 保证两者同步 —— 改了 web/src 忘了构建，用户看到的就是旧页面，且构建日志一切正常。
+#
+# 做法：提交前若 `web/` 有改动，自动 `node build.mjs` 并把产物 `git add` 进本次提交。
+# 任何一步失败都**只警告、不阻断提交**（构建失败不该让人无法提交代码）。
+set -u
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+
+[ -d web ] || exit 0
+[ -f web/build.mjs ] || exit 0
+[ -d web/node_modules ] || { echo "[pre-commit] 跳过 web 重建：web/node_modules 不存在（先 npm i）"; exit 0; }
+command -v node >/dev/null 2>&1 || { echo "[pre-commit] 跳过 web 重建：未找到 node"; exit 0; }
+
+if git diff --cached --name-only | grep -q '^web/'; then
+  echo "[pre-commit] 检测到 web/ 改动，重建 rawfile 产物…"
+  if (cd web && node build.mjs); then
+    git add entry/src/main/resources/rawfile/reader_v3.html \
+            entry/src/main/resources/rawfile/library_v3.html \
+            entry/src/main/resources/rawfile/upload_v3.html 2>/dev/null || true
+  else
+    echo "[pre-commit] ⚠️ web 构建失败，已跳过（请手动修复后重新提交）"
+  fi
+fi
+
+exit 0

@@ -10,35 +10,86 @@
  *   POST /sync            {id, webId, chTitle, chIndex, chCount, ratio, topEx, botEx, posRatio}
  */
 import { parseLegacyPos } from './protocol.ts'
+import { report } from './offline.ts'
 import type { MarkRow, SyncGetResponse, SyncPos, TocEntry } from './protocol.types.ts'
 
+/**
+ * 设备令牌（2026-10-06 无 Cookie 化改造）：配对成功后由配对页写入 localStorage，
+ * 之后**每个请求**都把 `dt=<token>` 附到 URL 上（服务端三通道凭证之一）。
+ * 真机实证部分浏览器不回传 Set-Cookie ⇒ Cookie 不再作为主通道。
+ * 注意：配对页（服务端渲染）与本项目读写同一个键 `mr_dt`。
+ */
+const DT_KEY = 'mr_dt'
+
+export function deviceToken(): string {
+  try {
+    return localStorage.getItem(DT_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** 给 URL 附加 `dt=<token>`（无令牌时原样返回） */
+export function authed(url: string): string {
+  const t = deviceToken()
+  if (t === '') return url
+  return url + (url.includes('?') ? '&' : '?') + 'dt=' + t
+}
+
 async function getText(url: string): Promise<string> {
-  const r = await fetch(url)
-  if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url)
+  let r: Response
+  try {
+    r = await fetch(authed(url))
+  } catch (e) {
+    report('offline')
+    throw e
+  }
+  if (r.status === 401 || r.status === 403) {
+    report('unauth')
+    throw new Error('尚未配对（HTTP ' + r.status + '）')
+  }
+  if (!r.ok) {
+    report('offline')
+    throw new Error('HTTP ' + r.status + ' ' + url)
+  }
+  report('ok')
   return await r.text()
 }
 
 async function getJson<T>(url: string): Promise<T | null> {
   try {
-    const r = await fetch(url)
+    const r = await fetch(authed(url))
+    if (r.status === 401 || r.status === 403) {
+      // 未配对（审计 P0-1 新增）：旧实现只会静默返回 null，用户完全不知道发生了什么
+      report('unauth')
+      return null
+    }
     if (!r.ok) return null
+    report('ok')
     return (await r.json()) as T
   } catch {
+    report('offline')
     return null
   }
 }
 
-async function postJson(url: string, body: unknown): Promise<{ ok: boolean; msg: string }> {
+async function postJson(url: string, body: unknown): Promise<{ ok: boolean; msg: string; status: number }> {
   try {
-    const r = await fetch(url, {
+    const r = await fetch(authed(url), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     })
+    if (r.status === 401 || r.status === 403) {
+      report('unauth')
+      return { ok: false, msg: '未配对', status: r.status }
+    }
     const j = (await r.json()) as { ok?: boolean; msg?: string }
-    return { ok: j?.ok === true, msg: String(j?.msg ?? '') }
+    report('ok')
+    return { ok: j?.ok === true, msg: String(j?.msg ?? ''), status: r.status }
   } catch {
-    return { ok: false, msg: 'network' }
+    report('offline')
+    return { ok: false, msg: 'network', status: 0 }
   }
 }
 
@@ -108,7 +159,7 @@ export async function addMark(payload: {
   chTitle: string
   posRatio: number
 }): Promise<{ ok: boolean; msg: string }> {
-  return await postJson('/marksadd', {
+  const r = await postJson('/marksadd', {
     id: payload.id,
     webKey: payload.webKey,
     chapterName: payload.chapterName,
@@ -116,10 +167,16 @@ export async function addMark(payload: {
     chTitle: payload.chTitle,
     posRatio: payload.posRatio
   })
+  return { ok: r.ok, msg: r.msg }
 }
 
-export async function delMark(time: number): Promise<void> {
-  await postJson('/marksdel', { time })
+/**
+ * 删除书签。
+ * ⚠️ 2026-10-06：服务端改为"必须声明这本书"才允许删（旧实现按 time 删、不校验书
+ * ⇒ 局域网里任何人可删任意书签）⇒ 这里必须带上 `id`。
+ */
+export async function delMark(id: number, time: number): Promise<void> {
+  await postJson('/marksdel?id=' + id, { time })
 }
 
 /** `/sync` 的读取结果：手机槽 + 中继站(最新写者) */

@@ -12,6 +12,9 @@ import { Books } from '../../database/entities/Books'
 import { PreferencesUtil, AppUtil } from '@pura/harmony-utils'
 import { emitter } from '@kit.BasicServicesKit'
 import syncConfig, { SyncPos, SYNC_V2_ENABLED, normEx } from './SyncConfig'
+import webCredential, { DevToken, DEVICE_COOKIE, PAIR_QUERY_KEY } from './WebCredential'
+import uploadSessions, { UploadInitResult, UploadSessionMeta, MAX_FILE_BYTES } from './UploadSession'
+import CommonConstants from '../../common/constants/CommonConstants'
 /**
  * wifi传书 / 电脑阅读 · 内置 HTTP 服务（2026-09-30 回填，端口 1122）。
  *
@@ -26,28 +29,49 @@ import syncConfig, { SyncPos, SYNC_V2_ENABLED, normEx } from './SyncConfig'
  *
  * ── 导入管线 ────────────────────────────────────────────────────────────
  * 上传字节写沙箱（filesDir/<文件名>）后走 `booksUtil.addBooks`（与
- * FileHandler.CopyFile 同款字段：isLocalBook=true, bookGroup=4）⇒ 直进书架。
+ * FileHandler.CopyFile 同款字段：isLocalBook=true, bookGroup=3）⇒ 直进书架。
  *
- * ── 会话级书目 ──────────────────────────────────────────────────────────
- * /books 列出**本服务会话内**导入/已知书目（零新增 DAO 面）；持久书目后续接 DB。
+ * ── v2（2026-10-06 全量审计后重写）三项安全/稳定性根治 ──────────────────
+ *  ① **配对鉴权**（`WebCredential.ets`）：手机端显示一次性 6 位配对码，电脑打开地址
+ *     后在**配对页输入弹窗**里输码即配对（POST /pair；2026-10-06 用户拍板，嫌带码链接
+ *     麻烦），`?k=` 整链自动配对仍保留（二维码用）；之后靠 HttpOnly Cookie 长期有效
+ *     （跨服务重启持久化）。防穷举是**全局滑动窗口**限流（连接层拿不到对端 IP，
+ *     按连接/IP 计数都拦不住换连接的脚本，见 `WebCredential` 头注释）。
+ *     可在手机端查看"已配对设备"并单个清除 / 全部清除 / 换口令。
+ *     旧实现 `0.0.0.0:1122` + **零校验** ⇒ 同局域网任何人可下载全部书、
+ *     按 time 删任意书签、传任意文件进书架。
+ *  ② **连接生命周期**：每个请求都有终态（响应后 `client.close()` + 超时兜底）。
+ *     SDK 原文（`@ohos.net.socket.d.ts:3324-3326`）：「This API does not close
+ *     existing connections. To close connections, call the close API of
+ *     TCPSocketConnection.」——旧实现从不关连接 ⇒ 句柄只增不减。
+ *  ③ **资源限额**：单请求体 100 MB、并发连接 16、单请求超时 60 s；
+ *     接收缓冲改为预分配 + 偏移写入（旧实现每个 TCP 分片整份复制 ⇒ O(n²)）。
  */
 const TAG: string = 'WifiBookServer';
+
+/**
+ * 模块级空回调（`respondRaw` 的 `onDone` 是必填形参 —— 可选函数形参在本工程 ArkTS 下
+ * 会让"函数实参"被误判为 string，实测 `check` 报 2345；改成必填 + 显式空实现即可）。
+ */
+function noopClose(_c: socket.TCPSocketConnection): void {
+}
+
+/** 超限被拒的连接：响应发完就关掉（不放进连接表，否则永远不释放） */
+function closeRejected(c: socket.TCPSocketConnection): void {
+    c.close()
+        .then((): void => {})
+        .catch((err: Error): void => console.error(`${TAG} reject close failed: ${err.message}`));
+}
 /**
  * 目录快照条目（`GET /toc` 的载荷）。
  * 字段名与网页端 `web/src/protocol.types.ts` 的 `TocEntry` **必须一致**（同一条契约）。
  */
-/** 服务器会话内已知书目（电脑阅读列表用） */
-interface ShelfEntry {
-    id: number;
-    name: string;
-    path: string;
-    size: number;
-}
-/** 电脑阅读·书库条目（实时查自书架 DB） */
+/** 电脑阅读·书库条目（实时查自书架 DB）。**刻意不下发沙箱绝对路径**（旧实现泄漏内部路径）。 */
 interface LibraryEntry {
     id: number;
     name: string;
-    url: string;
+    /** 是否 txt（前端据此决定给"阅读"还是只给"下载"）；不再下发真实路径 */
+    isTxt: boolean;
     sizeKB: number;
 }
 function bytesToUtf8(bytes: Uint8Array): string {
@@ -78,6 +102,16 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
     out.set(b, a.length);
     return out;
 }
+/** 单次上传的结果（区分失败原因，供网页精确提示 / 弹窗） */
+interface ImportResult {
+    ok: boolean;
+    /** 'ok' | 'dup'（同名） | 'ext'（扩展名不允许） | 'oversize' | 'io' */
+    reason: string;
+    msg: string;
+    /** 撞名时已存在书的 id（供"改名 / 拒绝"弹窗展示） */
+    existingId: number;
+}
+
 /**
  * 整数 IP → 点分十进制。
  * ⚠️ 换算口径以官方 FAQ 为准（faqs-connectivity-4 原文）：
@@ -97,48 +131,191 @@ interface ParsedHttp {
     body: Uint8Array;
     /** 本次请求消费的字节数（head + content-length），keep-alive 粘包消费用 */
     consumed: number;
+    /** 声明超体量上限而被提前拒绝（>0 时 dispatch 直接回 413，不再等 body） */
+    rejectedBodyBytes: number;
+    /**
+     * 对端真实 IP（取自 `SocketMessageInfo.remoteInfo.address`，SDK `@ohos.net.socket.d.ts`
+     * :4437/:4453，since 11）。**2026-10-06 贯通**：旧实现拿不到它 ⇒ 用 `c<连接id>` 顶着，
+     * 每条连接都不同 ⇒ "已配对设备"列表把同一台电脑登记成 N 条（用户实测）。空串 = 未知。
+     */
+    peerIp: string;
 }
 export class WifiBookServer {
+    // ── 回退开关（工程规范第 3 条：每个新机制都可一键关回旧行为）───────────────
+    /** 配对鉴权总开关。`false` = 旧行为（零校验，**仅用于排障**） */
+    private static readonly WEB_AUTH_ENABLED: boolean = true;
+    /** 资源限额总开关。`false` = 旧行为（不限制请求体/连接数/超时） */
+    private static readonly WEB_LIMITS_ENABLED: boolean = true;
+    /**
+     * 保活心跳（用户拍板 C2 方案 a：**有流量才刷新**，系统取消就如实停、不重申请）。
+     * `false` = 旧行为（只在启动时申请一次长时任务，从不更新进度）。
+     */
+    private static readonly WEB_KEEPALIVE_HEARTBEAT: boolean = true;
+
+    /** 单请求体上限（用户拍板 B1 = 100 MB；分块上传后单块远小于此值） */
+    private static readonly MAX_BODY_BYTES: number = 100 * 1024 * 1024;
+    /** 并发连接上限（用户拍板 B3 = 16；浏览器同域默认 6 并发 ⇒ 够 2~3 台设备） */
+    private static readonly MAX_CONNECTIONS: number = 32;
+    /**
+     * 单请求超时（用户拍板 B2 = 300 秒，**分档**落地；避免"普通接口卡住 5 分钟不报错"）：
+     *  · `TIMEOUT_INTERACTIVE` = 100 MB **以下**的请求（`/sync`、`/marks*`、`/toc`、页面/JSON）
+     *  · `TIMEOUT_TRANSFER`    = 请求体 ≥ `TIMEOUT_BULK_BYTES`（`/up/chunk` 的 4 MB 块、`/upload` 大文件）
+     *  · `TIMEOUT_SERVE`       = 服务器**要下发** ≥ `TIMEOUT_BULK_BYTES` 的正文（`/book`、`/download`）
+     *    —— 这一档在 `respondRaw` 里**重新计时**（那时才知道响应体多大），
+     *       否则慢速客户端读一本 100 MB 的书会在中途被 408 掐断。
+     */
+    private static readonly TIMEOUT_INTERACTIVE: number = 15 * 1000;
+    private static readonly TIMEOUT_TRANSFER: number = 300 * 1000;
+    private static readonly TIMEOUT_SERVE: number = 300 * 1000;
+    /** 分档阈值（1 MB）：超过它按"数据传输"档处理 */
+    private static readonly TIMEOUT_BULK_BYTES: number = 1024 * 1024;
+    /** 长时任务进度心跳间隔；官方口径「首次更新超过 10 分钟未更新即取消」⇒ 取 5 分钟留余量 */
+    private static readonly KEEPALIVE_HEARTBEAT_MS: number = 5 * 60 * 1000;
+    /** 每连接的"重新计时"句柄（`respondRaw` 下发大正文时要换更宽的档） */
+    private static timerByClient: Map<number, (ms: number) => void> = new Map<number, (ms: number) => void>();
+    /** 响应结束后延迟再真正 close 的时长：避开网络栈"延迟关 fd"与 OS fd 编号复用的竞态
+     *  （真机日志定案，见 `finish` 内注释）。期间 fd 仍占用 ⇒ 不会被新连接复用编号。 */
+    private static readonly CLOSE_DELAY_MS: number = 2000;
+    /**
+     * 每连接的**收尾**句柄（2026-10-06 真机复盘新增）。
+     * 旧时序：`dispatchAsync.then(finish)` 可能在 `client.send()` 尚未完成时就 `close()`
+     * ⇒ 响应还在路上连接被掐（间歇性"网络失败"）。现在 `respondRaw` 在 **send 落定之后**
+     * 调这里登记的 finish ⇒ 关连接永远发生在响应发出之后。finish 幂等，双保险无害。
+     */
+    private static finishByClient: Map<number, () => void> = new Map<number, () => void>();
+
     private static server: socket.TCPSocketServer | null = null;
     private static running: boolean = false;
     private static port: number = 1122;
-    private static shelf: ShelfEntry[] = [];
-    private static nextId: number = 1;
-    /** 状态订阅者（传书对话框刷新用） */
+    /** 绑定的地址（未鉴权时只给局域网 IP；配对后给出的完整地址带配对码） */
+    private static lastAddress: string = '';
+    /** 当前长时任务通知 id（0 = 无；进度心跳要用它） */
+    private static bgNotificationId: number = 0;
+    /** 最近一次后台心跳时刻（毫秒） */
+    private static lastHeartbeatAt: number = 0;
+    /** 系统是否已取消长时任务（取消后**不重申请**，如实告知用户 —— 合规口径） */
+    private static bgCancelled: boolean = false;
+    /** 长时任务取消监听是否已注册（防重复注册） */
+    private static bgCancelHookOn: boolean = false;
+    /**
+     * UIAbilityContext —— 由 `start()` 传入并持有。
+     * 用途：`saveAndImport` 在 **异步回调链**里需要 `filesDir`，而官方明确
+     * 「`getContext()` 在异步回调里可能回溯不到、返回 undefined」
+     * （SDK `ets/component/common.d.ts:1352-1353`，且 `@deprecated since 18`）
+     * ⇒ 这里保存**确定性**的 context，不再在异步链里取。
+     */
+    private static abilityContext: common.UIAbilityContext | null = null;
+    /** 在途连接表（key = clientId）—— `stop()` 时逐个 close，避免句柄泄漏 */
+    private static conns: Map<number, socket.TCPSocketConnection> = new Map<number, socket.TCPSocketConnection>();
     private static listeners: Array<() => void> = [];
+
     static isRunning(): boolean {
         return WifiBookServer.running;
     }
+
     static getPort(): number {
         return WifiBookServer.port;
     }
+
+    /** 历史设备数（手机端对话框显示"已配对 N 台"） */
+    static pairedDeviceCount(): number {
+        return webCredential.deviceCount();
+    }
+
+    /** 已配对设备列表（手机端"历史设备"管理用） */
+    static pairedDevices(): DevToken[] {
+        return webCredential.listDevices();
+    }
+
+    /** 移除一台已配对设备（立刻失效） */
+    static removeDevice(token: string): boolean {
+        return webCredential.removeDevice(token);
+    }
+
+    /** 清除全部已配对设备（所有电脑都要重新配对） */
+    static clearDevices(): void {
+        webCredential.clearDevices();
+        WifiBookServer.notify();
+    }
+
+    /** 换口令：作废旧码 + 全部设备，并立刻生成新配对码（用户要求的能力） */
+    static rotatePairingCode(): string {
+        const code: string = webCredential.rotatePairing();
+        WifiBookServer.notify();
+        return code;
+    }
+
+    /** 当前有效配对码（''=已过期，对话框提示"刷新"） */
+    static currentPairCode(): string {
+        return webCredential.currentPairCode();
+    }
+
+    /** 配对码剩余秒数（对话框倒计时） */
+    static pairCodeSecondsLeft(): number {
+        return webCredential.pairCodeSecondsLeft();
+    }
+
+    /** 配对码是否过期（过期时地址不能再用来配对） */
+    static pairCodeExpired(): boolean {
+        return webCredential.currentPairCode() === '';
+    }
+
+    /**
+     * 配对码"临期自动续新"（对话框每秒调用）：剩余 <60s 就换新码。
+     * ⚠️ 为什么必须有：旧实现过期后对话框仍显示旧 6 位数（`pairCode` 是 @State 快照，
+     * ticker 只更新倒计时）⇒ 用户照着"已死"的码输入必然失败（真机复盘：用户实测
+     * "输入就过期/刷新后还不行"的成因之一）。续新后屏幕上的码**永远有效 ≥60s**，
+     * 读码+输码绰绰有余。只换码、不清设备（区别于手动"换口令"rotatePairing）。
+     */
+    static ensureFreshPairCode(): void {
+        if (!WifiBookServer.WEB_AUTH_ENABLED || !WifiBookServer.running) {
+            return;
+        }
+        const left: number = webCredential.pairCodeSecondsLeft();
+        // ⚠️ 含 left===0（已过期）：旧守卫 `left > 0` 会让"过期态"永远卡住不再续，
+        // 对话框一直显示死码 ⇒ 用户照输必败（2026-10-06 真机"输码没反应"复盘修正）。
+        if (left < 60) {
+            webCredential.newPairCode();
+            console.info(`${TAG} pair code auto-renewed (was expiring in ${left}s)`);
+            WifiBookServer.notify();
+        }
+    }
+
+    /** 当前是否处于"纸面"运行但长时任务已被系统取消（对话框据此如实提示用户） */
+    static keepAliveCancelled(): boolean {
+        return WifiBookServer.bgCancelled;
+    }
+
     static address(): string {
-        if (!WifiBookServer.running) {
+        return WifiBookServer.lastAddress;
+    }
+
+    /**
+     * 带配对码的完整地址（显示/复制给用户的那个）。
+     * 配对码无效时返回空串 ⇒ 调用方提示用户"刷新配对码"。
+     */
+    static pairAddress(): string {
+        if (!WifiBookServer.running || WifiBookServer.lastAddress === '') {
             return '';
         }
-        try {
-            const ip: number = wifiManager.getIpInfo().ipAddress;
-            const dotted: string = ipNumberToDotted(ip);
-            return dotted.length > 0 ? `http://${dotted}:${WifiBookServer.port}` : '';
+        const code: string = webCredential.currentPairCode();
+        if (code === '' || !WifiBookServer.WEB_AUTH_ENABLED) {
+            return WifiBookServer.lastAddress;
         }
-        catch (err) {
-            console.error(`${TAG} getIpInfo failed: ${(err as Error).message}`);
-            return '';
-        }
+        return `${WifiBookServer.lastAddress}/?${PAIR_QUERY_KEY}=${code}`;
     }
-    /** 书目快照（对话框/页面渲染用） */
-    static shelfList(): ShelfEntry[] {
-        return WifiBookServer.shelf;
-    }
+
     static onChange(listener: () => void): void {
         WifiBookServer.listeners.push(listener);
     }
+
     static offChange(listener: () => void): void {
         const i = WifiBookServer.listeners.indexOf(listener);
         if (i >= 0) {
             WifiBookServer.listeners.splice(i, 1);
         }
     }
+
     private static notify(): void {
         WifiBookServer.listeners.forEach((fn: () => void) => fn());
     }
@@ -147,6 +324,14 @@ export class WifiBookServer {
             onResult?.(true, '');
             return;
         }
+        // 每次启动都刷新配对码（一次性；关掉服务即作废）
+        if (WifiBookServer.WEB_AUTH_ENABLED) {
+            webCredential.newPairCode();
+        }
+        WifiBookServer.abilityContext = context;
+        WifiBookServer.bgCancelled = false;
+        WifiBookServer.lastHeartbeatAt = 0;
+        WifiBookServer.bgNotificationId = 0;
         const server = socket.constructTCPSocketServerInstance();
         WifiBookServer.server = server;
         server.on('connect', (client: socket.TCPSocketConnection) => {
@@ -160,77 +345,352 @@ export class WifiBookServer {
             }
             else {
                 WifiBookServer.running = true;
-                console.info(`${TAG} listening on ${WifiBookServer.port}`);
+                WifiBookServer.lastAddress = WifiBookServer.computeAddress();
+                console.info(`${TAG} listening on ${WifiBookServer.port}, address=${WifiBookServer.lastAddress}`);
                 WifiBookServer.notify();
                 onResult?.(true, '');
-                // 锁屏后台保活：DATA_TRANSFER 长时任务（后台任务 Kit 官方 API）。
-                // 语义匹配：wifi传书 = 数据传输；官方约束"进度 10 分钟不更新会取消任务"
-                // 对传书场景天然满足。锁屏后 TCPServer 不再被挂起 ⇒ 电脑阅读不掉线。
-                const agentInfo: wantAgent.WantAgentInfo = {
-                    wants: [{ bundleName: context.abilityInfo.bundleName, abilityName: 'EntryAbility' }],
-                    actionType: wantAgent.OperationType.START_ABILITY,
-                    requestCode: 0
-                };
-                wantAgent.getWantAgent(agentInfo)
-                    .then((agent: object) => {
-                    backgroundTaskManager.startBackgroundRunning(context, backgroundTaskManager.BackgroundMode.DATA_TRANSFER, agent)
-                        .then((): void => console.info(`${TAG} background running ok`))
-                        .catch((e: BusinessError): void => console.error(`${TAG} bg start failed: ${e.code} ${e.message}`));
-                })
-                    .catch((e: BusinessError): void => console.error(`${TAG} wantAgent failed: ${e.message}`));
+                WifiBookServer.startBackgroundKeepAlive(context);
             }
         });
     }
+
+    /** 局域网地址（大端序，口径见 `ipNumberToDotted` 注释） */
+    private static computeAddress(): string {
+        try {
+            const ip: number = wifiManager.getIpInfo().ipAddress;
+            const dotted: string = ipNumberToDotted(ip);
+            return dotted.length > 0 ? `http://${dotted}:${WifiBookServer.port}` : '';
+        }
+        catch (err) {
+            console.error(`${TAG} getIpInfo failed: ${(err as Error).message}`);
+            return '';
+        }
+    }
+
+    // ── 锁屏保活（用户拍板方案 a：有流量才刷心跳；系统取消就如实停）─────────────
+    /**
+     * 申请 DATA_TRANSFER 长时任务并注册**取消监听**。
+     *
+     * 官方依据（原文）：
+     *  · 开发指南《长时任务(ArkTS)》：「在数据传输时，应用**需要更新进度**，如果进度长时间
+     *    （**首次更新超过 10 分钟**）未更新，数据传输的长时任务**会被取消**。更新进度的
+     *    通知类型必须为实况窗」——实况窗对普通应用为 Beta、需企业账号且场景准入
+     *    （《实况窗有哪些支持对接的场景》：「支持对接的场景主要有出行打车、即时配送、
+     *    运动锻炼、导航等」）⇒ 我们**申请不到实况窗**，因此只做「按需刷新」的心跳。
+     *  · 接入规范《Background_Tasks_Kit接入规范》：「应用不得通过后台任务恶意"保活"」
+     *    ⇒ 无流量时不空刷心跳（这正是方案 a 的由来）。
+     *
+     * 用 `string[]` 重载（SDK `:771`）而不是 `BackgroundMode` 枚举重载（`:734`），
+     * 因为只有前者**返回 `ContinuousTaskNotification`（含 notificationId）**，
+     * 没有 id 就无法更新进度/无法按 id 停止。
+     */
+    private static startBackgroundKeepAlive(context: common.UIAbilityContext): void {
+        WifiBookServer.registerBgCancelHook();
+        const agentInfo: wantAgent.WantAgentInfo = {
+            wants: [{ bundleName: context.abilityInfo.bundleName, abilityName: 'EntryAbility' }],
+            actionType: wantAgent.OperationType.START_ABILITY,
+            requestCode: 0
+        };
+        wantAgent.getWantAgent(agentInfo)
+            .then((agent: object) => {
+            backgroundTaskManager.startBackgroundRunning(context, ['dataTransfer'], agent)
+                .then((res: backgroundTaskManager.ContinuousTaskNotification): void => {
+                WifiBookServer.bgNotificationId = res.notificationId;
+                WifiBookServer.lastHeartbeatAt = new Date().getTime();
+                console.info(`${TAG} background running ok, notificationId=${res.notificationId}`);
+            })
+                .catch((e: BusinessError): void => {
+                    // 9800005 = 本应用已有长时任务在运行（如听书的 AUDIO_PLAYBACK）⇒ 应用
+                    // 本就被保活着，不算故障（真机日志 12:58 实证），降级为 info 防误判。
+                    if (e.code === 9800005) {
+                        console.info(`${TAG} bg start skipped: a continuous task already exists (app already kept alive)`);
+                        return;
+                    }
+                    console.error(`${TAG} bg start failed: ${e.code} ${e.message}`);
+                });
+        })
+            .catch((e: BusinessError): void => console.error(`${TAG} wantAgent failed: ${e.message}`));
+    }
+
+    /** 注册长时任务取消监听（幂等；@since 15，SDK `@ohos.resourceschedule.backgroundTaskManager.d.ts:1027`） */
+    private static registerBgCancelHook(): void {
+        if (WifiBookServer.bgCancelHookOn) {
+            return;
+        }
+        WifiBookServer.bgCancelHookOn = true;
+        try {
+            backgroundTaskManager.on('continuousTaskCancel',
+                (info: backgroundTaskManager.ContinuousTaskCancelInfo): void => {
+                    WifiBookServer.bgCancelled = true;
+                    WifiBookServer.bgNotificationId = 0;
+                    // 如实记录，不再自动重申请（合规：系统取消后不得立即再申请）
+                    console.error(`${TAG} continuous task cancelled: id=${info.id} reason=${info.reason}`);
+                    WifiBookServer.notify();
+                });
+        }
+        catch (err) {
+            console.error(`${TAG} register cancel hook failed: ${(err as Error).message}`);
+        }
+    }
+
+    /**
+     * 长时任务进度心跳（**有流量才刷**）。
+     * 每处理一个请求就调一次；距上次心跳不足 `KEEPALIVE_HEARTBEAT_MS` 时直接返回
+     * （既避免频繁调用系统接口，也保证"10 分钟未更新"的计时器被可靠的实时流量重置）。
+     *
+     * @param bytes 本次请求/响应的大致字节数（>0 才算"有流量"）
+     */
+    private static noteTraffic(bytes: number): void {
+        if (!WifiBookServer.WEB_KEEPALIVE_HEARTBEAT || !WifiBookServer.running) {
+            return;
+        }
+        if (bytes <= 0 || WifiBookServer.bgCancelled) {
+            return;
+        }
+        const now: number = new Date().getTime();
+        if (now - WifiBookServer.lastHeartbeatAt < WifiBookServer.KEEPALIVE_HEARTBEAT_MS) {
+            return;
+        }
+        const ctx: common.UIAbilityContext | null = WifiBookServer.abilityContext;
+        if (ctx === null) {
+            return;
+        }
+        WifiBookServer.lastHeartbeatAt = now;
+        backgroundTaskManager.updateBackgroundRunning(ctx, ['dataTransfer'])
+            .then((): void => console.info(`${TAG} keepalive heartbeat ok`))
+            .catch((e: BusinessError): void => {
+            console.error(`${TAG} keepalive heartbeat failed: ${e.code} ${e.message}`);
+        });
+    }
+
     static stop(context: common.UIAbilityContext, onResult?: (ok: boolean) => void): void {
-        if (WifiBookServer.server === null || !WifiBookServer.running) {
-            WifiBookServer.running = false;
-            WifiBookServer.notify();
+        if (WifiBookServer.server === null) {
+            WifiBookServer.finishStop();
             onResult?.(true);
             return;
         }
-        // 先撤长时任务再关端口（顺序保证锁屏期间关闭也生效）
-        backgroundTaskManager.stopBackgroundRunning(context)
-            .catch((e: BusinessError): void => console.error(`${TAG} bg stop failed: ${e.code} ${e.message}`));
-        WifiBookServer.server.close()
+        // ⚠️ 状态必须先落：`set` 与开关两处都按同步返回的 running 渲染，若等异步 close
+        //    完成再改，用户会看到"关了还是开"（真实体验问题）。
+        WifiBookServer.running = false;
+        WifiBookServer.notify();
+        webCredential.invalidatePairCode();
+        const id: number = WifiBookServer.bgNotificationId;
+        WifiBookServer.bgNotificationId = 0;
+        WifiBookServer.abilityContext = null;
+        try {
+            if (id > 0) {
+                // 按 id 停止（SDK `stopBackgroundRunning(context, continuousTaskId)`）
+                backgroundTaskManager.stopBackgroundRunning(context, id)
+                    .catch((e: BusinessError): void => console.error(`${TAG} bg stop(id) failed: ${e.code} ${e.message}`));
+            }
+            else {
+                backgroundTaskManager.stopBackgroundRunning(context)
+                    .catch((e: BusinessError): void => console.error(`${TAG} bg stop failed: ${e.code} ${e.message}`));
+            }
+        }
+        catch (err) {
+            console.error(`${TAG} bg stop threw: ${(err as Error).message}`);
+        }
+        // 关掉全部在途连接：SDK 原文明确 server.close() **不关**已有连接
+        // （`@ohos.net.socket.d.ts:3324-3326`「This API does not close existing connections.
+        //   To close connections, call the close API of TCPSocketConnection.」）
+        WifiBookServer.closeAllConnections();
+        const server: socket.TCPSocketServer = WifiBookServer.server;
+        server.close()
             .then((): void => {
-            WifiBookServer.running = false;
-            WifiBookServer.notify();
+            WifiBookServer.finishStop();
             onResult?.(true);
         })
             .catch((err: Error): void => {
-            WifiBookServer.running = false;
-            WifiBookServer.notify();
+            WifiBookServer.finishStop();
             onResult?.(false);
             console.error(`${TAG} close failed: ${err.message}`);
         });
     }
+
+    /** 停止后的统一收尾（幂等） */
+    private static finishStop(): void {
+        WifiBookServer.running = false;
+        WifiBookServer.server = null;
+        WifiBookServer.lastAddress = '';
+        WifiBookServer.notify();
+    }
+
+    /** 逐个关闭在途连接（句柄泄漏的根治点） */
+    private static closeAllConnections(): void {
+        WifiBookServer.conns.forEach((c: socket.TCPSocketConnection) => {
+            c.close()
+                .then((): void => {})
+                .catch((err: Error): void => console.error(`${TAG} conn close failed: ${err.message}`));
+        });
+        WifiBookServer.conns.clear();
+    }
     // ── 连接层 ────────────────────────────────────────────────────────────
+    /**
+     * 单个连接的生命周期。**v2（2026-10-06 审计 P0-2/P1-1）三项根治**：
+     *  ① 缓冲区改为 **`cbuf` + `clen` 预分配 + 偏移写入**：旧实现每收到一个 TCP 分片就
+     *     `concatBytes(buffer, chunk)`（整份复制）⇒ 传 100 MB 按 64 KB 分片要搬运约
+     *     Σn ≈ O(n²) 字节，全在请求回调里同步做（主线程）。现在只在容量不足时按
+     *     1.5 倍扩容，摊还 O(n)。
+     *  ② **每个请求都有终态**：定时器兜底 + 出错必回响应 + 处理完 `close()`
+     *     （SDK 原文：server.close 不关已有连接，必须自己关）。
+     *  ③ 连接数上限 + 单请求体上限 + 单请求超时（上限 32：连接在响应后延迟 2s 才真正
+     *     close —— 避开网络栈延迟关 fd 与 fd 编号复用的竞态，见 `finish` 注释 ——
+     *     故上限比旧值 16 翻倍留余量；请求体 100 MB；交互请求超时 15 s）。
+     */
     private static handleClient(client: socket.TCPSocketConnection): void {
-        let buffer: Uint8Array = new Uint8Array(0);
-        client.on('message', (info: socket.SocketMessageInfo) => {
-            buffer = concatBytes(buffer, new Uint8Array(info.message));
-            // 循环消费（keep-alive 下多个请求可能粘在一个 message 里）
-            for (;;) {
-                const parsed: ParsedHttp | null = WifiBookServer.tryParse(buffer);
-                if (parsed === null) {
-                    break;
+        if (WifiBookServer.WEB_LIMITS_ENABLED && WifiBookServer.conns.size >= WifiBookServer.MAX_CONNECTIONS) {
+            console.error(`${TAG} too many connections (${WifiBookServer.conns.size}), rejecting client ${client.clientId}`);
+            WifiBookServer.respondRaw(client, 503, 'text/plain; charset=utf-8',
+                WifiBookServer.textBytes('服务繁忙：连接数已达上限，请稍后重试'), closeRejected);
+            return;
+        }
+        WifiBookServer.conns.set(client.clientId, client);
+        let buf: Uint8Array = new Uint8Array(0);
+        let end: number = 0;
+        let closed: boolean = false;
+        let timeoutId: number = -1;
+        /** 对端真实 IP（首条 message 时从 remoteInfo 取；取不到留空，回退 `c<id>`） */
+        let peerIp: string = '';
+
+        const finish = (): void => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            if (timeoutId >= 0) {
+                clearTimeout(timeoutId);
+                timeoutId = -1;
+            }
+            WifiBookServer.timerByClient.delete(client.clientId);
+            WifiBookServer.finishByClient.delete(client.clientId);
+            WifiBookServer.conns.delete(client.clientId);
+            // ⚠️ **延迟 2s 再真正 close**（2026-10-12 真机日志定案）：send 的 Promise 结束
+            // ≠ 字节已落内核（日志：send 后 1ms close，网络栈打 "not close should close"
+            // 表示延迟关 fd），此时 OS 可能把同一 fd 编号立刻分给下一条 accept 的连接，
+            // 网络栈的延迟关 fd 就会把**新连接**关掉 ⇒ send EPIPE / Network is down ⇒
+            // 浏览器下一请求必挂（"配对成功但进不去"真凶）。延迟关闭期间 fd 仍被占用，
+            // OS 不会复用编号 ⇒ 竞态窗口消失。浏览器侧本就按 Connection: close 自行关闭。
+            setTimeout((): void => {
+                client.close()
+                    .then((): void => {})
+                    // ⚠️ 预期内的空操作：浏览器按 Connection: close 会先自行关闭，
+                    //    网络栈随之清理 ⇒ 我们延迟的 close 扑空（"not find clientId"）。
+                    //    **不是错误**（真机 13:10 日志逐条核对过），只记 info 防止误导排查。
+                    .catch((err: Error): void => console.info(`${TAG} conn close skipped (peer already gone): ${err.message}`));
+            }, WifiBookServer.CLOSE_DELAY_MS);
+        };
+        WifiBookServer.finishByClient.set(client.clientId, finish);
+        /** 按给定档位重新计时（`respondRaw` 下发大正文时会用更宽的档再调一次） */
+        const armWith = (ms: number): void => {
+            if (!WifiBookServer.WEB_LIMITS_ENABLED) {
+                return;
+            }
+            if (timeoutId >= 0) {
+                clearTimeout(timeoutId);
+            }
+            timeoutId = setTimeout((): void => {
+                // ⚠️ 空闲连接（一个字节都没来，典型 = 浏览器预连接）**静默关闭**，
+                //    绝不回 408：2026-10-06 真机复盘——浏览器连接池复用这条连接的瞬间，
+                //    恰好收到服务端硬塞的 408 ⇒ 被当成它自己请求的响应 ⇒ 前端报"网络失败"
+                //    （表现：配对成功后紧接着的下一个请求必挂）。有数据在途才按 408 处理。
+                if (end === 0) {
+                    console.info(`${TAG} idle preconnect closed silently, client ${client.clientId}`);
+                    finish();
+                    return;
                 }
-                buffer = buffer.slice(parsed.consumed);
-                WifiBookServer.dispatch(client, parsed);
-                if (buffer.length === 0) {
-                    break;
+                console.error(`${TAG} request timeout on client ${client.clientId}`);
+                WifiBookServer.respondRaw(client, 408, 'text/plain; charset=utf-8',
+                    WifiBookServer.textBytes('请求超时'), finish);
+            }, ms);
+        };
+        WifiBookServer.timerByClient.set(client.clientId, armWith);
+        const armTimeout = (): void => {
+            armWith(WifiBookServer.TIMEOUT_INTERACTIVE);
+        };
+
+        client.on('message', (info: socket.SocketMessageInfo) => {
+            try {
+                if (closed) {
+                    return;
+                }
+                // 对端真实 IP（SDK `SocketMessageInfo.remoteInfo.address`，since 11）：
+                // 同一条连接上所有请求共用，配对登记/设备去重/限流都以它为准
+                if (peerIp === '' && info.remoteInfo !== undefined) {
+                    peerIp = info.remoteInfo.address ?? '';
+                }
+                const chunk: Uint8Array = new Uint8Array(info.message);
+                if (chunk.length > 0) {
+                    if (end + chunk.length > buf.length) {
+                        let cap: number = buf.length === 0 ? Math.max(4096, chunk.length) : buf.length;
+                        while (cap < end + chunk.length) {
+                            cap = Math.floor(cap * 1.5) + 1024;
+                        }
+                        const nb: Uint8Array = new Uint8Array(cap);
+                        if (end > 0) {
+                            nb.set(buf.subarray(0, end), 0);
+                        }
+                        buf = nb;
+                    }
+                    buf.set(chunk, end);
+                    end += chunk.length;
+                }
+                armTimeout();
+                // 循环消费（pipelining / 粘包）
+                for (;;) {
+                    const parsed: ParsedHttp | null = WifiBookServer.tryParse(buf, end, peerIp);
+                    if (parsed === null) {
+                        break;
+                    }
+                    const rest: number = end - parsed.consumed;
+                    if (rest > 0) {
+                        buf.copyWithin(0, parsed.consumed, end);
+                    }
+                    end = rest;
+                    WifiBookServer.noteTraffic(parsed.consumed);
+                    // 分档（用户拍板 B2）：请求体 ≥ 1 MB（分块块 / 整文件 multipart）走
+                    // "数据传输"档 300 s；其余交互类请求 15 s（旧实现统一 60 s ⇒ 小接口
+                    // 卡住要等整整一分钟才有响应）。服务器**下发**的大正文在 `respondRaw`
+                    // 里会再换到 300 s（那时才知道响应体多大）。
+                    armWith(parsed.consumed >= WifiBookServer.TIMEOUT_BULK_BYTES
+                        ? WifiBookServer.TIMEOUT_TRANSFER
+                        : WifiBookServer.TIMEOUT_INTERACTIVE);
+                    WifiBookServer.dispatchAsync(client, parsed)
+                        .then((): void => finish())
+                        .catch((e: Error): void => {
+                        console.error(`${TAG} dispatch failed: ${e.message}`);
+                        WifiBookServer.respondRaw(client, 500, 'text/plain; charset=utf-8',
+                            WifiBookServer.textBytes('internal error'), finish);
+                    });
+                    // 我们的响应一律 `Connection: close` ⇒ 一个连接只服务一个请求
+                    return;
                 }
             }
+            catch (err) {
+                console.error(`${TAG} message handler error: ${(err as Error).message}`);
+                WifiBookServer.respondRaw(client, 400, 'text/plain; charset=utf-8',
+                    WifiBookServer.textBytes('bad request'), finish);
+            }
         });
+        armTimeout();
     }
-    /** 头部完整且 body 收满时解析请求；否则返回 null（继续等） */
-    private static tryParse(buffer: Uint8Array): ParsedHttp | null {
+
+    /**
+     * 头部完整且 body 收满时解析请求；否则返回 null（继续等）。
+     * @param len 有效字节数（`buf` 的容量可能大于它）
+     * @param peerIp 对端真实 IP（`SocketMessageInfo.remoteInfo.address`，透传进 ParsedHttp）
+     */
+    private static tryParse(buf: Uint8Array, len: number, peerIp: string): ParsedHttp | null {
+        const view: Uint8Array = buf.subarray(0, len);
         const sep: Uint8Array = new Uint8Array([0x0D, 0x0A, 0x0D, 0x0A]);
-        const headEnd: number = indexOfBytes(buffer, sep, 0);
+        const headEnd: number = indexOfBytes(view, sep, 0);
         if (headEnd < 0) {
+            if (WifiBookServer.WEB_LIMITS_ENABLED && len > 64 * 1024) {
+                console.error(`${TAG} request header too large: ${len} bytes`);
+            }
             return null;
         }
-        const headText: string = bytesToUtf8(buffer.slice(0, headEnd));
+        const headText: string = bytesToUtf8(view.slice(0, headEnd));
         const lines: string[] = headText.split('\r\n');
         const requestLine: string = lines[0] ?? '';
         const parts: string[] = requestLine.split(' ');
@@ -245,11 +705,26 @@ export class WifiBookServer {
             }
         }
         const contentLength: number = Number(headers['content-length'] ?? '0') || 0;
+        if (WifiBookServer.WEB_LIMITS_ENABLED
+            && (contentLength < 0 || contentLength > WifiBookServer.MAX_BODY_BYTES)) {
+            // 明确拒绝（旧实现会一直等这个 body ⇒ 内存无上限增长）
+            console.error(`${TAG} request body too large: ${contentLength} bytes`);
+            return {
+                method: (parts[0] ?? 'GET').toUpperCase(),
+                target: parts[1] ?? '/',
+                path: parts[1]?.split('?')[0] ?? '/',
+                headers: headers,
+                body: new Uint8Array(0),
+                consumed: headEnd + 4,
+                rejectedBodyBytes: contentLength,
+                peerIp: peerIp
+            };
+        }
         const bodyStart: number = headEnd + 4;
-        if (buffer.length < bodyStart + contentLength) {
+        if (len < bodyStart + contentLength) {
             return null;
         }
-        const body: Uint8Array = buffer.slice(bodyStart, bodyStart + contentLength);
+        const body: Uint8Array = view.slice(bodyStart, bodyStart + contentLength);
         const path: string = parts[1].split('?')[0] ?? '/';
         return {
             method: (parts[0] ?? 'GET').toUpperCase(),
@@ -257,36 +732,105 @@ export class WifiBookServer {
             path: path,
             headers: headers,
             body: body,
-            consumed: bodyStart + contentLength
+            consumed: bodyStart + contentLength,
+            rejectedBodyBytes: 0,
+            peerIp: peerIp
         };
     }
     // ── 分发 ──────────────────────────────────────────────────────────────
-    private static dispatch(client: socket.TCPSocketConnection, req: ParsedHttp): void {
-        // DB 查询是异步的 ⇒ 实际处理挪进 async（fire-and-forget，respond 自带错误兜底）
-        WifiBookServer.dispatchAsync(client, req);
+    /**
+     * 路由分发（`handleClient` 直接 await 它，保证"每个请求都有终态"）。
+     *
+     * v2 新增两道**前置闸门**（都在真正的路由之前）：
+     *  ① 超体量声明 ⇒ 立刻 413，不再等 body（旧实现会一直等到内存爆）
+     *  ② 配对鉴权 ⇒ 未配对设备只允许看到"配对页"，其余一律 401
+     */
+    /**
+     * 设备凭证**三通道**（2026-10-06 无 Cookie 化改造）——任一命中即视为已配对：
+     *  ① HttpOnly Cookie `mr_dev`（原有通道，保留兼容）
+     *  ② URL query `dt=<token>`（**主通道**）：配对成功的响应体直接带 token，页面存
+     *     localStorage 后附加到每个请求/导航。真机日志复盘：该用户的浏览器不回传
+     *     Set-Cookie ⇒ "配对成功却进不去"，Cookie 机制对用户不可见、不可控 ⇒ 弃为核心。
+     *  ③ 请求头 `X-Device-Token`（预留）
+     */
+    private static hasValidCredential(req: ParsedHttp): boolean {
+        const cookie: string = WifiBookServer.cookieValue(req, DEVICE_COOKIE);
+        if (cookie !== '' && webCredential.verifyToken(cookie) !== null) {
+            return true;
+        }
+        const dt: string = WifiBookServer.queryParam(req.target, 'dt');
+        if (dt !== '' && webCredential.verifyToken(dt) !== null) {
+            return true;
+        }
+        const hdr: string = req.headers['x-device-token'] ?? '';
+        if (hdr !== '' && webCredential.verifyToken(hdr) !== null) {
+            return true;
+        }
+        return false;
     }
+
     private static async dispatchAsync(client: socket.TCPSocketConnection, req: ParsedHttp): Promise<void> {
+        if (req.rejectedBodyBytes > 0) {
+            WifiBookServer.respond(client, 413, 'text/plain; charset=utf-8',
+                WifiBookServer.textBytes(`文件过大：上限 ${Math.floor(WifiBookServer.MAX_BODY_BYTES / 1024 / 1024)} MB`));
+            return;
+        }
+        // 防御纵深：即使 `WEB_LIMITS_ENABLED` 被关掉（回退排障），**这里仍拒绝**超大请求体。
+        // 旧实现没有任何一处限制 JSON 体（`/sync`、`/marksadd` 都能塞任意大）⇒ 内存不安全。
+        if (req.body.length > WifiBookServer.MAX_BODY_BYTES) {
+            console.error(`${TAG} body over hard cap: ${req.body.length}`);
+            WifiBookServer.respond(client, 413, 'text/plain; charset=utf-8',
+                WifiBookServer.textBytes('请求体过大'));
+            return;
+        }
+        // 配对状态查询（门禁之前放行）：三通道凭证任一命中即 paired
+        if (req.method === 'GET' && req.path === '/session') {
+            WifiBookServer.respondJsonCode(client, 200, true,
+                (WifiBookServer.WEB_AUTH_ENABLED && WifiBookServer.hasValidCredential(req)) ? 'paired' : 'unpaired', '');
+            return;
+        }
+        const paired: boolean = !WifiBookServer.WEB_AUTH_ENABLED || WifiBookServer.hasValidCredential(req);
+        if (!paired) {
+            // 未配对（2026-10-06 用户拍板"输码弹窗"模式）放行三类入口：
+            //   ① GET 页面壳（/、/library、/read）⇒ 一律渲染配对页（六位码输入框）；
+            //      配对成功后页面自行 reload 原地址 ⇒ 书签/历史记录直达，不再依赖带码链接；
+            //   ② POST /pair ⇒ 提交配对码换设备令牌（HttpOnly Cookie）；
+            //   ③ GET / 带 ?k= ⇒ 保留"整链自动配对"（二维码仍走这条路）。
+            // 其余数据接口一律 401。
+            if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html'
+                || req.path === '/library' || req.path.startsWith('/read'))) {
+                WifiBookServer.serveRoot(client, req);
+                return;
+            }
+            if (req.method === 'POST' && req.path === '/pair') {
+                WifiBookServer.handlePairPost(client, req);
+                return;
+            }
+            WifiBookServer.respond(client, 401, 'text/plain; charset=utf-8',
+                WifiBookServer.textBytes('未配对：请打开手机端显示的地址，输入 6 位配对码'));
+            return;
+        }
         try {
-            if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html')) {
-                const v3 = WifiBookServer.readV3PageBytes('upload_v3.html');
-                WifiBookServer.respond(client, 200, 'text/html; charset=utf-8',
-                    v3 !== null ? v3 : WifiBookServer.uploadPageBytes());
-            }
-            else if (req.method === 'GET' && req.path === '/library') {
-                // 电脑阅读·书库页：v3 是静态单文件（列表由页面自己 fetch /books）；失败回退旧内嵌页
-                const v3 = WifiBookServer.readV3PageBytes('library_v3.html');
-                if (v3 !== null) {
-                    WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', v3);
-                } else {
-                    // 电脑阅读·书库页：实时查书架全部本地书（searchPage bookGroup=4 = 本地 or isLocalBook）
-                    const entries: LibraryEntry[] = await WifiBookServer.libraryEntries();
-                    WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', WifiBookServer.libraryPageBytes(entries));
-                }
-            }
-            else if (req.method === 'GET' && req.path === '/books') {
+            // ⚠️ `/books` 必须排在 `startsWith('/book')` **之前**（2026-10-06 真机复盘）：
+            //    否则"书库列表"被当成本本书匹配 ⇒ queryId=-1 ⇒ 回纯文本 "book not found"
+            //    ⇒ 网页 JSON.parse 抛 "Unexpected token 'b'" ⇒ 电脑书库永远加载失败。
+            if (req.method === 'GET' && req.path === '/books') {
                 // JSON API（保留）：书目列表
                 const entries: LibraryEntry[] = await WifiBookServer.libraryEntries();
                 WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify(entries)));
+            }
+            else if (req.method === 'GET' && req.path.startsWith('/book')) {
+                await WifiBookServer.serveBookFile(client, WifiBookServer.queryId(req.target));
+            }
+            else if (req.method === 'GET' && req.path.startsWith('/download')) {
+                // v3.14：强制下载（书库页"下载"按钮走这里，浏览器弹保存而非内联打开）
+                await WifiBookServer.serveDownload(client, WifiBookServer.queryId(req.target));
+            }
+            else if (req.method === 'GET' && req.path === '/library') {
+                await WifiBookServer.serveLibraryPage(client);
+            }
+            else if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html')) {
+                WifiBookServer.serveUploadPage(client);
             }
             else if (req.method === 'GET' && req.path.startsWith('/read')) {
                 // 电脑阅读·阅读器页（⚠️ id 从 target 取——tryParse 的 path 已剥掉 query）
@@ -296,13 +840,6 @@ export class WifiBookServer {
                     return;
                 }
                 WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', WifiBookServer.readPageBytes(book.id ?? 0, book.bookName ?? '未命名'));
-            }
-            else if (req.method === 'GET' && req.path.startsWith('/download')) {
-                // v3.14：强制下载（书库页"下载"按钮走这里，浏览器弹保存而非内联打开）
-                await WifiBookServer.serveDownload(client, WifiBookServer.queryId(req.target));
-            }
-            else if (req.method === 'GET' && req.path.startsWith('/book')) {
-                await WifiBookServer.serveBookFile(client, WifiBookServer.queryId(req.target));
             }
             else if (req.method === 'GET' && req.path.startsWith('/toc')) {
                 // 单源目录（M3）：把手机端目录标题在**正在下发的同一串文本**上定位成字符区间
@@ -327,7 +864,19 @@ export class WifiBookServer {
                 WifiBookServer.handleSyncPost(client, req);
             }
             else if (req.method === 'POST' && req.path === '/upload') {
-                WifiBookServer.handleUpload(client, req);
+                await WifiBookServer.handleUpload(client, req);
+            }
+            else if (req.method === 'POST' && req.path === '/up/init') {
+                WifiBookServer.handleUpInit(client, req);
+            }
+            else if (req.method === 'POST' && req.path === '/up/chunk') {
+                WifiBookServer.handleUpChunk(client, req);
+            }
+            else if (req.method === 'POST' && req.path === '/up/done') {
+                await WifiBookServer.handleUpDone(client, req);
+            }
+            else if (req.method === 'POST' && req.path === '/up/abort') {
+                WifiBookServer.handleUpAbort(client, req);
             }
             else {
                 WifiBookServer.respond(client, 404, 'text/plain; charset=utf-8', WifiBookServer.textBytes('not found'));
@@ -335,7 +884,137 @@ export class WifiBookServer {
         }
         catch (err) {
             console.error(`${TAG} dispatch error: ${(err as Error).message}`);
+            // ⚠️ 出错也必须有响应：旧实现这里只打日志 ⇒ 浏览器干等（审计 P2）
+            WifiBookServer.respond(client, 500, 'text/plain; charset=utf-8', WifiBookServer.textBytes('internal error'));
         }
+    }
+
+    // ── 鉴权基础设施 ──────────────────────────────────────────────────────
+    /** 取某个 Cookie 的值（自写 HTTP 解析器，需要自己解析 Cookie 头） */
+    private static cookieValue(req: ParsedHttp, name: string): string {
+        const raw: string = req.headers['cookie'] ?? '';
+        if (raw === '') {
+            return '';
+        }
+        const parts: string[] = raw.split(';');
+        for (let i = 0; i < parts.length; i++) {
+            const one: string = parts[i].trim();
+            const eq: number = one.indexOf('=');
+            if (eq > 0 && one.substring(0, eq) === name) {
+                return one.substring(eq + 1).trim();
+            }
+        }
+        return '';
+    }
+
+    /** 取 URL query 参数（自写解析器；只解析第一处） */
+    private static queryParam(target: string, key: string): string {
+        const q: number = target.indexOf('?');
+        if (q < 0) {
+            return '';
+        }
+        const segs: string[] = target.substring(q + 1).split('&');
+        for (let i = 0; i < segs.length; i++) {
+            const eq: number = segs[i].indexOf('=');
+            if (eq > 0 && segs[i].substring(0, eq) === key) {
+                return segs[i].substring(eq + 1);
+            }
+        }
+        return '';
+    }
+
+    /**
+     * 限流/登记用的"来源"标识（**回退值**）。
+     * 2026-10-06 起对端真实 IP 已从 `SocketMessageInfo.remoteInfo.address` 贯通进
+     * `ParsedHttp.peerIp`（同一条连接所有请求共用），配对登记/设备去重都优先用它；
+     * 仅当 remoteInfo 取不到时才回退到 `c<连接id>`（每连接唯一 ⇒ 只用于限流兜底）。
+     */
+    private static clientIp(client: socket.TCPSocketConnection): string {
+        return `c${client.clientId}`;
+    }
+
+    /** 根路径/页面壳（未配对时）：带正确 `?k=` ⇒ 下发令牌并展示成功页；否则渲染输码配对页 */
+    private static serveRoot(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+        const code: string = WifiBookServer.queryParam(req.target, PAIR_QUERY_KEY);
+        if (WifiBookServer.WEB_AUTH_ENABLED && code !== '') {
+            // 对端真实 IP 优先（remoteInfo 贯通后必有）；取不到才回退 `c<连接id>`
+            const ip: string = req.peerIp !== '' ? req.peerIp : WifiBookServer.clientIp(client);
+            const ua: string = req.headers['user-agent'] ?? '';
+            if (webCredential.verifyPairCode(code, ip)) {
+                const token: string = webCredential.pairDevice(ip, ua);
+                console.info(`${TAG} device paired, total=${webCredential.deviceCount()}`);
+                WifiBookServer.notify();
+                // 令牌只经 Cookie 下发（HttpOnly ⇒ 页面脚本读不到，降低 XSS 影响）
+                WifiBookServer.respondRaw(client, 200, 'text/html; charset=utf-8',
+                    WifiBookServer.pairOkPageBytes(token), noopClose,
+                    `Set-Cookie: ${DEVICE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
+                return;
+            }
+            console.error(`${TAG} pair code rejected from ${ip}`);
+            WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', WifiBookServer.pairFailPageBytes());
+            return;
+        }
+        WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', WifiBookServer.pairPageBytes());
+    }
+
+    /**
+     * POST /pair —— 配对页弹窗提交 6 位配对码（2026-10-06 用户拍板：手输地址 + 页面输码，
+     * 不再强制"带码完整链接"）。成功 ⇒ `Set-Cookie` 下发设备令牌 + `{ok:true}`（页面自行
+     * reload 原地址，Cookie 随下一跳生效）；失败 ⇒ 200 + `{ok:false,msg}`（页面展示文案；
+     * 用 200 是为了让错误文案区分"码不对"与"尝试过多"，页面按 `ok` 字段裁决）。
+     * 与 `?k=` 自动配对共用同一套限流/核销/设备登记（`webCredential.verifyPairCode`）。
+     */
+    private static handlePairPost(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+        if (!WifiBookServer.WEB_AUTH_ENABLED) {
+            WifiBookServer.respondJsonCode(client, 200, false, '服务端未启用配对', '');
+            return;
+        }
+        let code: string = '';
+        try {
+            const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, string>;
+            code = String(body['code'] ?? '').trim();
+        }
+        catch (err) {
+            WifiBookServer.respondJsonCode(client, 200, false, '请求格式错误', '');
+            return;
+        }
+        const ip: string = req.peerIp !== '' ? req.peerIp : WifiBookServer.clientIp(client);
+        const ua: string = req.headers['user-agent'] ?? '';
+        if (webCredential.verifyPairCode(code, ip)) {
+            const token: string = webCredential.pairDevice(ip, ua);
+            console.info(`${TAG} device paired (dialog), ip=${ip}, total=${webCredential.deviceCount()}`);
+            WifiBookServer.notify();
+            // **无 Cookie 化（2026-10-06）**：令牌直接放进响应体（页面存 localStorage 并附到
+            // 每个请求）——Set-Cookie 仍下发作为兼容冗余，但不再依赖它（真机实证有浏览器
+            // 不回传 Cookie ⇒ "配对成功却进不去"）。
+            WifiBookServer.respondRaw(client, 200, 'application/json; charset=utf-8',
+                WifiBookServer.textBytes(JSON.stringify({ ok: true, msg: 'paired', token: token })), noopClose,
+                `Set-Cookie: ${DEVICE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
+            return;
+        }
+        console.error(`${TAG} pair code rejected from ${ip}`);
+        const msg: string = webCredential.isLocked(ip)
+            ? '尝试次数过多，请稍后再试，或在手机端点「刷新配对码」'
+            : '配对码不正确或已过期（码为一次性，手机端可刷新）';
+        WifiBookServer.respondJsonCode(client, 200, false, msg, '');
+    }
+
+    /** 传书页（v3 构建产物，失败回退旧内嵌页） */
+    private static serveUploadPage(client: socket.TCPSocketConnection): void {
+        const v3 = WifiBookServer.readV3PageBytes('upload_v3.html');
+        WifiBookServer.respond(client, 200, 'text/html; charset=utf-8',
+            v3 !== null ? v3 : WifiBookServer.uploadPageBytes());
+    }
+
+    /** 电脑阅读·书库页（v3 静态单文件，列表由页面自己 fetch /books；失败回退旧内嵌页） */
+    private static async serveLibraryPage(client: socket.TCPSocketConnection): Promise<void> {
+        const v3 = WifiBookServer.readV3PageBytes('library_v3.html');
+        if (v3 !== null) {
+            WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', v3);
+            return;
+        }
+        const entries: LibraryEntry[] = await WifiBookServer.libraryEntries();
+        WifiBookServer.respond(client, 200, 'text/html; charset=utf-8', WifiBookServer.libraryPageBytes(entries));
     }
     /** 从请求目标取 id（/read?id=N / /book?id=N） */
     private static queryId(target: string): number {
@@ -346,7 +1025,10 @@ export class WifiBookServer {
         const digits: string = target.replace(/[^0-9]/g, '');
         return Number(digits === '' ? '-1' : digits);
     }
-    /** 书架全部本地书（searchPage bookGroup=4 ⇒ 本地分组 or isLocalBook，pageSize 0 = 全量） */
+    /**
+     * 书架全部本地书（`searchPage bookGroup=4` ⇒ 本地分组 or `isLocalBook`，pageSize 0 = 全量）。
+     * **不下发沙箱绝对路径**（旧实现把 `bookUrl` 原样给网页 ⇒ 泄漏手机内部路径，审计 P2）。
+     */
     private static async libraryEntries(): Promise<LibraryEntry[]> {
         const books: Books[] = await booksDao.searchPage({ bookGroup: 4 }, 1, 0);
         const out: LibraryEntry[] = [];
@@ -355,7 +1037,7 @@ export class WifiBookServer {
                 out.push({
                     id: b.id ?? 0,
                     name: b.bookName ?? '未命名',
-                    url: b.bookUrl,
+                    isTxt: b.bookUrl.toLowerCase().endsWith('.txt'),
                     sizeKB: WifiBookServer.fileSizeKB(b.bookUrl)
                 });
             }
@@ -498,7 +1180,7 @@ btn.onclick=function(){
     private static libraryPageBytes(entries: LibraryEntry[]): Uint8Array {
         let rows: string = '';
         entries.forEach((e: LibraryEntry) => {
-            const isTxt: boolean = e.url.endsWith('.txt');
+            const isTxt: boolean = e.isTxt;
             // 书名 HTML 转义（防文件名里的 <> 破坏列表结构）
             const safeName: string = e.name.replace(/[&<>"]/g, (c: string): string => {
                 if (c === '&') {
@@ -826,7 +1508,7 @@ function renderMarks(){
       s.textContent='🔖 '+(m.chapterName||m.bookText||'书签');
       var x=document.createElement('button');x.className='del';x.textContent='✕';
       x.onclick=function(ev){ev.stopPropagation();
-        fetch('/marksdel',{method:'POST',headers:{'Content-Type':'application/json'},
+        fetch('/marksdel?id='+id,{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({time:m.time})}).then(function(){renderMarks()})};
       d.appendChild(s);d.appendChild(x);
       d.title=m.bookText||'';
@@ -1082,7 +1764,7 @@ function syncPoll(){
     // R3：同章且差得不多 ⇒ 同一处，只推进水位
     if(t!==''&&t===chTitle(curCh)&&pr>=0&&Math.abs(pr-curPosRatio())<0.1){setSeenPhoneTs(ts);return}
     var b=document.getElementById('syncbar');
-    document.getElementById('synctxt').innerHTML='手机进度：<br>① '+normEx(topEx)+'<br>② '+normEx(botEx);
+    document.getElementById('synctxt').innerHTML='手机进度：<br>① '+esc(normEx(topEx))+'<br>② '+esc(normEx(botEx));
     b.dataset.topEx=topEx;b.dataset.botEx=botEx;b.dataset.chTitle=t;
     var rr=Number(j.ratio);b.dataset.ratio=String(isFinite(rr)?rr:-1);
     b.dataset.posRatio=String(pr);b.dataset.ts=String(ts);
@@ -1183,6 +1865,11 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
      * `application/octet-stream` + `attachment` ⇒ 浏览器弹下载而非内联打开。
      * 在线阅读走 `/book?id=`（text/plain），两条路由语义分离。
      */
+    /**
+     * 强制下载（v3.14："web书架点下载直接进入内容了"）：无论 txt/epub 一律
+     * `application/octet-stream` + `attachment` ⇒ 浏览器弹下载而非内联打开。
+     * 在线阅读走 `/book?id=`（text/plain），两条路由语义分离。
+     */
     private static async serveDownload(client: socket.TCPSocketConnection, id: number): Promise<void> {
         const book: Books | null = await WifiBookServer.bookById(id);
         if (book === null || !book.bookUrl) {
@@ -1193,11 +1880,18 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             const file = fs.openSync(book.bookUrl, fs.OpenMode.READ_ONLY);
             const size: number = fs.statSync(book.bookUrl).size;
             const buffer: ArrayBuffer = new ArrayBuffer(size);
-            fs.readSync(file.fd, buffer);
-            fs.closeSync(file);
-            const ext: string = book.bookUrl.endsWith('.epub') ? 'epub' : 'txt';
-            const name: string = (book.bookName ?? 'book').replace(/["\\]/g, '');
-            WifiBookServer.respond(client, 200, 'application/octet-stream', new Uint8Array(buffer), `attachment; filename="${name}.${ext}"`);
+            try {
+                fs.readSync(file.fd, buffer);
+            }
+            finally {
+                fs.closeSync(file);
+            }
+            const ext: string = book.bookUrl.toLowerCase().endsWith('.epub') ? 'epub' : 'txt';
+            // `respondRaw` 内部统一做头部净化（旧实现只过滤 " 和 \，书名里的换行可注入响应头）
+            const name: string = WifiBookServer.safeFileName(book.bookName ?? 'book');
+            WifiBookServer.noteTraffic(size);
+            WifiBookServer.respond(client, 200, 'application/octet-stream', new Uint8Array(buffer),
+                `attachment; filename="${name}.${ext}"`);
         }
         catch (err) {
             WifiBookServer.respond(client, 500, 'text/plain; charset=utf-8', WifiBookServer.textBytes('read failed'));
@@ -1329,27 +2023,34 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
      * 跳转坐标：chapterName（标题）——web 侧按标题匹配正则章（章级精度，同进度 v1）。
      */
     private static async handleMarksGet(client: socket.TCPSocketConnection, id: number): Promise<void> {
-        const book: Books | null = await WifiBookServer.bookById(id);
-        if (book === null) {
-            WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: false })));
-            return;
-        }
-        const all = await bookmarksDao.list();
-        const mine: Array<Record<string, number | string>> = [];
-        all.forEach((m) => {
-            if (m.bookName === book.bookName) {
-                mine.push({
-                    'time': m.time,
-                    'chapterIndex': m.chapterIndex,
-                    'chapterName': m.chapterName,
-                    'bookText': m.bookText,
-                    // 2026-10-05：把行内容（网页书签的稳定身份 webKey）一并给网页，
-                    // `jumpMark` 据此精确落到原段（手机加的书签该列为空 ⇒ 走标题+bookText 锚匹配）。
-                    'content': m.content
-                });
+        try {
+            const book: Books | null = await WifiBookServer.bookById(id);
+            if (book === null) {
+                WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: false })));
+                return;
             }
-        });
-        WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: true, marks: mine })));
+            const all = await bookmarksDao.list();
+            const mine: Array<Record<string, number | string>> = [];
+            all.forEach((m) => {
+                if (m.bookName === book.bookName) {
+                    mine.push({
+                        'time': m.time,
+                        'chapterIndex': m.chapterIndex,
+                        'chapterName': m.chapterName,
+                        'bookText': m.bookText,
+                        // 2026-10-05：把行内容（网页书签的稳定身份 webKey）一并给网页，
+                        // `jumpMark` 据此精确落到原段（手机加的书签该列为空 ⇒ 走标题+bookText 锚匹配）。
+                        'content': m.content
+                    });
+                }
+            });
+            WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: true, marks: mine })));
+        }
+        catch (err) {
+            // 旧实现没有 catch ⇒ DAO 抛错时浏览器干等（审计 P2）
+            console.error(`${TAG} marks get failed: ${(err as Error).message}`);
+            WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: false, marks: [] })));
+        }
     }
     private static async handleMarksAdd(client: socket.TCPSocketConnection, req: ParsedHttp): Promise<void> {
         try {
@@ -1388,7 +2089,34 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
     private static async handleMarksDel(client: socket.TCPSocketConnection, req: ParsedHttp): Promise<void> {
         try {
             const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, number>;
-            const ok: boolean = await bookmarksDao.remove(Number(body['time'] ?? 0));
+            const time: number = Number(body['time'] ?? 0);
+            if (!(time > 0)) {
+                WifiBookServer.respondJson(client, false, 'bad params');
+                return;
+            }
+            // ── 越权删除的根治（2026-10-06 审计 P2）─────────────────────────────
+            // 旧实现直接 `bookmarksDao.remove(time)`，**按 time 删、不校验书**
+            // ⇒ 局域网里任何人可以按毫秒时间戳逐条删掉手机上任意一本书的书签。
+            // 现在：先按 time 反查该行，确认它属于请求里声明的那本书，才允许删。
+            const bid: number = WifiBookServer.queryId(req.target);
+            const book: Books | null = await WifiBookServer.bookById(bid);
+            if (book === null) {
+                WifiBookServer.respondJson(client, false, 'book not found');
+                return;
+            }
+            const all = await bookmarksDao.list();
+            let owned: boolean = false;
+            all.forEach((m) => {
+                if (m.time === time && m.bookName === book.bookName) {
+                    owned = true;
+                }
+            });
+            if (!owned) {
+                console.error(`${TAG} marksdel rejected: time=${time} not in book=${book.bookName}`);
+                WifiBookServer.respondJson(client, false, 'not found');
+                return;
+            }
+            const ok: boolean = await bookmarksDao.remove(time);
             WifiBookServer.respondJson(client, ok, ok ? 'removed' : 'not found');
         }
         catch (err) {
@@ -1402,8 +2130,9 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
      * （v1 一槽两用是 H1 根因）。返回字段同时给新旧两套字段名（`title`/`chTitle`），
      * 老网页 JS 也能读。v1 老键作为兜底（手机还没升到 v2 时）。
      */
-    private static handleSyncGet(client: socket.TCPSocketConnection, id: number): void {
-        booksDao.getBookByIds([id]).then((arr: Books[]): void => {
+    private static async handleSyncGet(client: socket.TCPSocketConnection, id: number): Promise<void> {
+        try {
+            const arr: Books[] = await booksDao.getBookByIds([id]);
             if (arr.length === 0) {
                 WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: false })));
                 return;
@@ -1432,7 +2161,12 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 latestWriter: latest === null ? '' : latest.writer,
                 latestSeq: latest === null ? 0 : latest.seq
             })));
-        });
+        }
+        catch (err) {
+            // ⚠️ 旧实现这条 then 链**没有 catch** ⇒ 数据库抛错时浏览器干等到超时（审计 P2）
+            console.error(`${TAG} sync get failed: ${(err as Error).message}`);
+            WifiBookServer.respond(client, 500, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: false })));
+        }
     }
     /**
      * 进度同步 POST：把**网页自己的位置**写进 `SyncPos_web_<书名>` 里属于它的那条
@@ -1441,67 +2175,77 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
      * v2 起不再需要冲突检测：各写各的槽，网页写它自己的那份永远不会顶掉手机的位置
      * （v1 的 `baseTs` 冲突判定因此废弃；字段仍然接收，老 JS 不受影响）。
      */
-    private static handleSyncPost(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+    private static async handleSyncPost(client: socket.TCPSocketConnection, req: ParsedHttp): Promise<void> {
         try {
             const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, number | string>;
             const bid = Number(body['id'] ?? -1);
-            const webId = String(body['webId'] ?? '') === '' ? 'v1' : String(body['webId']);
-            const title = String(body['chTitle'] ?? body['title'] ?? '');
-            const topEx = String(body['topEx'] ?? '');
-            const botEx = String(body['botEx'] ?? '');
+            // webId 收敛（审计 P2：旧实现接受任意长度/任意内容的 webId，且
+            // `SyncConfig.writeWebSlot` 会按它无限新增槽位 ⇒ 恶意刷写能把偏好存储撑爆）
+            let webId = String(body['webId'] ?? '');
+            if (webId === '') {
+                webId = 'v1';
+            }
+            webId = webId.replace(/[^A-Za-z0-9_-]/g, '').substring(0, 24);
+            if (webId === '') {
+                webId = 'v1';
+            }
+            const title = String(body['chTitle'] ?? body['title'] ?? '').substring(0, 200);
+            const topEx = String(body['topEx'] ?? '').substring(0, 200);
+            const botEx = String(body['botEx'] ?? '').substring(0, 200);
             if (bid < 0 || (title === '' && topEx === '' && botEx === '')) {
                 WifiBookServer.respondJson(client, false, 'bad params');
                 return;
             }
-            booksDao.getBookByIds([bid]).then((arr: Books[]): void => {
-                if (arr.length === 0) {
-                    WifiBookServer.respondJson(client, false, 'book not found');
-                    return;
-                }
-                const name: string = arr[0].bookName ?? '';
-                if (name === '') {
-                    WifiBookServer.respondJson(client, false, 'book not found');
-                    return;
-                }
-                const pos: SyncPos = {
-                    v: 2,
-                    // seq 由 `syncConfig.writeWebSlot` → `stamp()` 统一分配（手机进程是唯一共享点
-                    // ⇒ 全局单调、对两端时钟免疫）；这里给 0 当占位
-                    seq: 0,
-                    chTitle: title,
-                    // 网页自己的章序/总章数：仅供它自己用（手机端不读网页槽的 chIndex —— 两端切分不同）
-                    chIndex: Number(body['chIndex'] ?? -1),
-                    chCount: Number(body['chCount'] ?? 0),
-                    ratio: Number(body['ratio'] ?? -1),
-                    topEx: normEx(topEx),
-                    botEx: normEx(botEx),
-                    posRatio: Number(body['posRatio'] ?? -1),
-                    ts: Date.now(),
-                    writer: 'web:' + webId
+            const arr: Books[] = await booksDao.getBookByIds([bid]);
+            if (arr.length === 0) {
+                WifiBookServer.respondJson(client, false, 'book not found');
+                return;
+            }
+            const name: string = arr[0].bookName ?? '';
+            if (name === '') {
+                WifiBookServer.respondJson(client, false, 'book not found');
+                return;
+            }
+            const pos: SyncPos = {
+                v: 2,
+                // seq 由 `syncConfig.writeWebSlot` → `stamp()` 统一分配（手机进程是唯一共享点
+                // ⇒ 全局单调、对两端时钟免疫）；这里给 0 当占位
+                seq: 0,
+                chTitle: title,
+                // 网页自己的章序/总章数：仅供它自己用（手机端不读网页槽的 chIndex —— 两端切分不同）
+                chIndex: Number(body['chIndex'] ?? -1),
+                chCount: Number(body['chCount'] ?? 0),
+                ratio: Number(body['ratio'] ?? -1),
+                topEx: normEx(topEx),
+                botEx: normEx(botEx),
+                posRatio: Number(body['posRatio'] ?? -1),
+                ts: Date.now(),
+                writer: 'web:' + webId
+            };
+            if (SYNC_V2_ENABLED) {
+                syncConfig.writeWebSlot(name, webId, pos);
+            }
+            else {
+                // 回退路径：保持 v1 单槽行为
+                const payload: Record<string, number | string> = {
+                    'title': title,
+                    'topEx': topEx,
+                    'botEx': botEx,
+                    'ts': pos.ts,
+                    'src': 'web'
                 };
-                if (SYNC_V2_ENABLED) {
-                    syncConfig.writeWebSlot(name, webId, pos);
-                }
-                else {
-                    // 回退路径：保持 v1 单槽行为
-                    const payload: Record<string, number | string> = {
-                        'title': title,
-                        'topEx': topEx,
-                        'botEx': botEx,
-                        'ts': pos.ts,
-                        'src': 'web'
-                    };
-                    PreferencesUtil.putSync(`WebSync_${name}`, JSON.stringify(payload));
-                }
-                // 同进程事件：手机正开着这本书时即时知会（不打断；开书场景走锚点弹窗）
-                const data: emitter.EventData = {
-                    data: { 'name': name, 'title': title }
-                };
-                emitter.emit({ eventId: 20261001 }, data);
-                WifiBookServer.respondJson(client, true, 'synced');
-            });
+                PreferencesUtil.putSync(`WebSync_${name}`, JSON.stringify(payload));
+            }
+            // 同进程事件：手机正开着这本书时即时知会（不打断；开书场景走锚点弹窗）
+            const data: emitter.EventData = {
+                data: { 'name': name, 'title': title }
+            };
+            emitter.emit({ eventId: 20261001 }, data);
+            WifiBookServer.respondJson(client, true, 'synced');
         }
         catch (err) {
+            // ⚠️ 旧实现这条 then 链**没有 catch** ⇒ 数据库抛错时浏览器干等（审计 P2）
+            console.error(`${TAG} sync post failed: ${(err as Error).message}`);
             WifiBookServer.respondJson(client, false, 'bad json');
         }
     }
@@ -1512,17 +2256,18 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             return;
         }
         const entryPath: string = book.bookUrl;
-        const entryName: string = book.bookName ?? 'book';
+        const entryName: string = WifiBookServer.safeFileName(book.bookName ?? 'book');
         try {
             const bytes: Uint8Array = WifiBookServer.readBookBytes(entryPath);
-            const isTxt: boolean = entryPath.endsWith('.txt');
+            const isTxt: boolean = entryPath.toLowerCase().endsWith('.txt');
+            WifiBookServer.noteTraffic(bytes.length);
             WifiBookServer.respond(client, 200, isTxt ? 'text/plain; charset=utf-8' : 'application/octet-stream', bytes, isTxt ? undefined : `attachment; filename="${entryName}.epub"`);
         }
         catch (err) {
             WifiBookServer.respond(client, 500, 'text/plain; charset=utf-8', WifiBookServer.textBytes('read failed'));
         }
     }
-    private static handleUpload(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+    private static async handleUpload(client: socket.TCPSocketConnection, req: ParsedHttp): Promise<void> {
         const contentType: string = req.headers['content-type'] ?? '';
         const bIdx: number = contentType.indexOf('boundary=');
         if (bIdx < 0) {
@@ -1532,9 +2277,12 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
         const boundary: string = '--' + contentType.substring(bIdx + 9).trim().replace(/"/g, '');
         const boundBytes: Uint8Array = WifiBookServer.textBytes(boundary);
         // 结构：--b\r\n头\r\n\r\n内容\r\n--b\r\n…\r\n--b--\r\n
-        const crlf: Uint8Array = new Uint8Array([0x0D, 0x0A]);
         let imported: number = 0;
         let failed: number = 0;
+        let conflicts: number = 0;
+        let oversize: number = 0;
+        let firstConflictId: number = -1;
+        let errors: string[] = [];
         let cursor: number = indexOfBytes(req.body, boundBytes, 0);
         while (cursor >= 0) {
             const partStart: number = cursor + boundBytes.length;
@@ -1555,26 +2303,106 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 const nameMatch: RegExpMatchArray | null = segHead.match(/filename="([^"]*)"/);
                 const fileName: string = (nameMatch !== null && nameMatch[1] !== '') ? nameMatch[1] :
                     `导入书籍_${Date.now()}.txt`;
-                if (segBody.length > 0 && WifiBookServer.saveAndImport(fileName, segBody)) {
+                if (segBody.length === 0) {
+                    // 空段是 multipart 的收尾段，不算失败
+                    cursor = next;
+                    continue;
+                }
+                const r: ImportResult = await WifiBookServer.saveAndImport(fileName, segBody);
+                if (r.ok) {
                     imported++;
                 }
                 else {
                     failed++;
+                    if (r.reason === 'dup') {
+                        conflicts++;
+                        if (firstConflictId < 0) {
+                            firstConflictId = r.existingId;
+                        }
+                    }
+                    else if (r.reason === 'oversize') {
+                        oversize++;
+                    }
+                    if (r.msg !== '') {
+                        errors.push(r.msg);
+                    }
                 }
             }
             cursor = next;
         }
-        WifiBookServer.respondJson(client, imported > 0, imported > 0 ? `已导入 ${imported} 本${failed > 0 ? `，失败 ${failed} 本` : ''}` : '没有可导入的文件');
+        if (conflicts > 0 && imported === 0) {
+            // 全部撞名 ⇒ 让网页弹"改名 / 拒绝"（用户拍板 C1）
+            WifiBookServer.respondJsonCode(client, 409, false, '同名书籍已存在',
+                `,"existingId":${firstConflictId}`);
+            return;
+        }
+        if (oversize > 0 && imported === 0) {
+            WifiBookServer.respondJsonCode(client, 413, false, `超过单文件上限 ${Math.floor(WifiBookServer.MAX_BODY_BYTES / 1024 / 1024)} MB`, '');
+            return;
+        }
+        if (imported === 0) {
+            WifiBookServer.respondJsonCode(client, 400, false, errors.length > 0 ? errors[0] : '没有可导入的文件', '');
+            return;
+        }
+        const extra: string = failed > 0 ? `，失败 ${failed} 本` : '';
+        WifiBookServer.respondJsonCode(client, 200, true, `已导入 ${imported} 本${extra}`, '');
     }
-    /** 写沙箱 + 入库（与 FileHandler.CopyFile 同款字段），返回书目条目 */
-    private static saveAndImport(fileName: string, content: Uint8Array): boolean {
+
+    /**
+     * 写沙箱 + 入库。
+     *
+     * 相对旧实现修的四件事（审计 P1/P2）：
+     *  ① **扩展名白名单**：旧实现"网页只让选 txt/epub"只是表单 accept，服务端什么都不校验
+     *     ⇒ 局域网里可以塞任意文件进沙箱并直接进书架。现在只接受 `.txt` / `.epub`。
+     *  ② **同名检测**：旧实现按文件名 TRUNC 覆盖 ⇒ 旧书内容被悄悄替换、书架还多一条重复记录。
+     *     现在查 `BooksDao.isExistBooks`，撞名**不落盘**并回报冲突（供网页弹窗）。
+     *  ③ **`await` 入库**：`booksUtil.addBooks` 是 async，旧实现没 await ⇒ 网页显示"已入架"
+     *     而数据库里可能没有（假成功）。
+     *  ④ **context 走确定性取值**：不再在异步回调里调已废弃的 `getContext()`
+     *     （官方原文：异步回调里可能回溯不到、返回 undefined；`@deprecated since 18`）。
+     */
+    private static async saveAndImport(fileName: string, content: Uint8Array): Promise<ImportResult> {
         try {
-            const ctx = getContext() as common.Context;
-            const safeName: string = fileName.replace(/[\/\\:*?"<>|]/g, '_');
+            if (WifiBookServer.WEB_LIMITS_ENABLED && content.length > WifiBookServer.MAX_BODY_BYTES) {
+                return { ok: false, reason: 'oversize', msg: `${fileName} 超过上限`, existingId: -1 };
+            }
+            const safeName: string = WifiBookServer.safeFileName(fileName);
+            const lower: string = safeName.toLowerCase();
+            if (!lower.endsWith('.txt') && !lower.endsWith('.epub')) {
+                return { ok: false, reason: 'ext', msg: `${safeName} 不是 txt/epub`, existingId: -1 };
+            }
+            const ctx: common.UIAbilityContext | null = WifiBookServer.abilityContext;
+            if (ctx === null) {
+                return { ok: false, reason: 'io', msg: '服务未就绪', existingId: -1 };
+            }
+            // 同名检测（在**落盘之前**）：撞名一律不覆盖
+            const dup: Books[] = await booksDao.isExistBooks(undefined, safeName);
+            if (dup.length > 0) {
+                console.info(`${TAG} duplicate upload rejected: ${safeName}`);
+                return { ok: false, reason: 'dup', msg: `${safeName} 已存在`, existingId: dup[0].id ?? -1 };
+            }
             const dst: string = ctx.filesDir + '/' + safeName;
             const file = fs.openSync(dst, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
-            fs.writeSync(file.fd, content.slice().buffer as ArrayBuffer);
-            fs.closeSync(file);
+            try {
+                fs.writeSync(file.fd, content.slice().buffer as ArrayBuffer);
+            }
+            finally {
+                fs.closeSync(file);
+            }
+            return await WifiBookServer.registerImportedBook(safeName, dst, content.length);
+        }
+        catch (err) {
+            console.error(`${TAG} saveAndImport failed: ${(err as Error).message}`);
+            return { ok: false, reason: 'io', msg: (err as Error).message, existingId: -1 };
+        }
+    }
+
+    /**
+     * 只做"入库登记"（文件已在 `dst`）：分块上传的 `done` 与旧 multipart 上传**共用同一段字段**，
+     * 避免两条路径的字段漂移。
+     */
+    private static async registerImportedBook(safeName: string, dst: string, size: number): Promise<ImportResult> {
+        try {
             const book: Books = {
                 bookName: safeName,
                 bookUrl: dst,
@@ -1594,15 +2422,154 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 isJoin: true,
                 isLocalBook: true
             };
-            booksUtil.addBooks(book);
-            WifiBookServer.shelf.push({ id: WifiBookServer.nextId++, name: safeName, path: dst, size: content.length });
+            await booksUtil.addBooks(book);
+            // 传书入库后**广播书架刷新**（2026-10-06 用户反馈"传完要手下滑才刷新"）：
+            // `BOOK_IS_BOOK_REFRESHING` 是书架全组件的公共刷新信号（BookContent
+            // `@StorageLink+@Watch` ⇒ 重查数据库）。与 BookInfos 改名广播同款语义：自增。
+            const refreshTick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1;
+            AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, refreshTick);
             WifiBookServer.notify();
-            console.info(`${TAG} imported: ${safeName} (${content.length} bytes)`);
-            return true;
+            console.info(`${TAG} imported: ${safeName} (${size} bytes), shelfRefresh=${refreshTick}`);
+            return { ok: true, reason: 'ok', msg: '', existingId: -1 };
         }
         catch (err) {
-            console.error(`${TAG} saveAndImport failed: ${(err as Error).message}`);
-            return false;
+            console.error(`${TAG} registerImportedBook failed: ${(err as Error).message}`);
+            return { ok: false, reason: 'io', msg: (err as Error).message, existingId: -1 };
+        }
+    }
+
+    /**
+     * 文件名净化：去掉路径分隔符与 Windows 非法字符，并**去掉换行**。
+     * 旧实现只过滤 `[\/\\:*?"<>|]`，书名字符串里的 `\r\n` 会被原样拼进
+     * `Content-Disposition` 响应头（HTTP 响应头注入，审计 P1-5）⇒ 这里一并剥掉。
+     */
+    private static safeFileName(fileName: string): string {
+        let s: string = fileName.replace(/[\/\\:*?"<>|\r\n\t]/g, '_');
+        s = s.replace(/^\.+/, '');
+        if (s.length > 120) {
+            s = s.substring(s.length - 120);
+        }
+        return s === '' ? `导入书籍_${Date.now()}.txt` : s;
+    }
+
+    // ── 分块上传 / 断点续传（用户明确要求「WiFi 传书应具备断点续传能力」）──────────
+    /**
+     * 开始（或复用）上传会话。
+     * body: `{"name":"书名.txt","size":123456}`
+     * resp: `{"ok":true,"sid":"u...","chunk":4194304,"have":[0,1,3]}`
+     */
+    private static handleUpInit(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+        try {
+            const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, string | number>;
+            const name: string = WifiBookServer.safeFileName(String(body['name'] ?? ''));
+            const lower: string = name.toLowerCase();
+            if (!lower.endsWith('.txt') && !lower.endsWith('.epub')) {
+                WifiBookServer.respondJsonCode(client, 400, false, '只支持 txt / epub', '');
+                return;
+            }
+            const size: number = Number(body['size'] ?? 0);
+            const r: UploadInitResult = uploadSessions.init(name, isFinite(size) ? size : 0);
+            if (!r.ok) {
+                WifiBookServer.respondJsonCode(client, 413, false,
+                    `超过单文件上限 ${Math.floor(MAX_FILE_BYTES / 1024 / 1024)} MB`, '');
+                return;
+            }
+            const json: string = `{"ok":true,"msg":"","sid":"${r.sid}","chunk":${r.chunk},"have":${JSON.stringify(r.have)}}`;
+            WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(json));
+        }
+        catch (err) {
+            WifiBookServer.respondJsonCode(client, 400, false, 'bad json', '');
+        }
+    }
+
+    /**
+     * 收一块（**原始二进制体**，不是 multipart —— 自写解析器下这样最省内存也最不易出错）。
+     * `POST /up/chunk?sid=xxx&i=3`
+     */
+    private static handleUpChunk(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+        const sid: string = WifiBookServer.queryParam(req.target, 'sid');
+        const idx: number = Number(WifiBookServer.queryParam(req.target, 'i'));
+        if (sid === '' || !isFinite(idx) || idx < 0 || idx > 100000) {
+            WifiBookServer.respondJsonCode(client, 400, false, 'bad params', '');
+            return;
+        }
+        if (req.body.length === 0) {
+            WifiBookServer.respondJsonCode(client, 400, false, 'empty chunk', '');
+            return;
+        }
+        const received: number = uploadSessions.putChunk(sid, idx, req.body.slice());
+        if (received === -1) {
+            WifiBookServer.respondJsonCode(client, 410, false, 'session expired', '');
+            return;
+        }
+        if (received === -2) {
+            WifiBookServer.respondJsonCode(client, 413, false,
+                `超过单文件上限 ${Math.floor(MAX_FILE_BYTES / 1024 / 1024)} MB`, '');
+            return;
+        }
+        WifiBookServer.noteTraffic(req.body.length);
+        WifiBookServer.respondJsonCode(client, 200, true, `received ${received}`, `,"received":${received}`);
+    }
+
+    /**
+     * 收尾：拼装 → 同名检测 → 落盘 → 入库。
+     * body: `{"sid":"u...","name":"书名.txt"}`（name 仅作兜底，以 init 时登记的名字为准）
+     */
+    private static async handleUpDone(client: socket.TCPSocketConnection, req: ParsedHttp): Promise<void> {
+        try {
+            const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, string>;
+            const sid: string = String(body['sid'] ?? '');
+            const meta: UploadSessionMeta | null = uploadSessions.meta(sid);
+            if (meta === null) {
+                WifiBookServer.respondJsonCode(client, 410, false, 'session expired', '');
+                return;
+            }
+            const bytes: Uint8Array | null = uploadSessions.assemble(sid);
+            if (bytes === null || bytes.length === 0) {
+                WifiBookServer.respondJsonCode(client, 400, false, '上传不完整，请重试', '');
+                return;
+            }
+            const ctx: common.UIAbilityContext | null = WifiBookServer.abilityContext;
+            if (ctx === null) {
+                WifiBookServer.respondJsonCode(client, 400, false, '服务未就绪', '');
+                return;
+            }
+            // 同名检测先做（撞名时**不落盘**，交由网页弹"改名 / 拒绝"）
+            const dup: Books[] = await booksDao.isExistBooks(undefined, meta.name);
+            if (dup.length > 0) {
+                console.info(`${TAG} chunked upload conflict: ${meta.name}`);
+                WifiBookServer.respondJsonCode(client, 409, false, '同名书籍已存在', `,"existingId":${dup[0].id ?? -1}`);
+                return;
+            }
+            const dst: string = uploadSessions.flushToFile(sid, ctx.filesDir);
+            if (dst === '') {
+                WifiBookServer.respondJsonCode(client, 400, false, '上传不完整，请重试', '');
+                return;
+            }
+            const r: ImportResult = await WifiBookServer.registerImportedBook(meta.name, dst, bytes.length);
+            uploadSessions.drop(sid);
+            if (!r.ok) {
+                WifiBookServer.respondJsonCode(client, 400, false, r.msg, '');
+                return;
+            }
+            WifiBookServer.respondJsonCode(client, 200, true, `已导入 1 本`, '');
+        }
+        catch (err) {
+            console.error(`${TAG} up/done failed: ${(err as Error).message}`);
+            WifiBookServer.respondJsonCode(client, 400, false, 'bad json', '');
+        }
+    }
+
+    /** 放弃本次上传（撞名时用户选"拒绝"、或客户端主动取消） */
+    private static handleUpAbort(client: socket.TCPSocketConnection, req: ParsedHttp): void {
+        try {
+            const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, string>;
+            const sid: string = String(body['sid'] ?? '');
+            uploadSessions.drop(sid);
+            WifiBookServer.respondJsonCode(client, 200, true, '已放弃', '');
+        }
+        catch (err) {
+            WifiBookServer.respondJsonCode(client, 400, false, 'bad json', '');
         }
     }
     // ── HTTP 基础设施 ──────────────────────────────────────────────────────
@@ -1610,22 +2577,227 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
         const encoder = util.TextEncoder.create('utf-8');
         return encoder.encodeInto(text);
     }
-    private static respond(client: socket.TCPSocketConnection, status: number, contentType: string, body: Uint8Array, disposition?: string): void {
-        const statusText: string = status === 200 ? 'OK' : (status === 404 ? 'Not Found' : 'Error');
-        let head: string = `HTTP/1.1 ${status} ${statusText}\r\n` +
+    /** HTTP 头部值净化：剥掉 CR/LF 与引号（防响应头注入，审计 P1-5） */
+    private static headerSafe(v: string): string {
+        return v.replace(/[\r\n]/g, ' ').replace(/["\\]/g, '');
+    }
+
+    /** HTTP 状态短语（旧实现只有 OK/Not Found/Error ⇒ 413/408/401/409/503 全显示 Error） */
+    private static statusText(status: number): string {
+        if (status === 200) {
+            return 'OK';
+        }
+        if (status === 400) {
+            return 'Bad Request';
+        }
+        if (status === 401) {
+            return 'Unauthorized';
+        }
+        if (status === 404) {
+            return 'Not Found';
+        }
+        if (status === 408) {
+            return 'Request Timeout';
+        }
+        if (status === 409) {
+            return 'Conflict';
+        }
+        if (status === 413) {
+            return 'Payload Too Large';
+        }
+        if (status === 500) {
+            return 'Internal Server Error';
+        }
+        if (status === 503) {
+            return 'Service Unavailable';
+        }
+        return 'Error';
+    }
+
+    private static respond(client: socket.TCPSocketConnection, status: number, contentType: string,
+        body: Uint8Array, disposition?: string, setCookie?: string): void {
+        WifiBookServer.respondRaw(client, status, contentType, body, noopClose, setCookie, disposition);
+    }
+
+    /**
+     * 构造并发送响应（唯一出口）。
+     * @param onDone 响应真正发出（或发送失败）后的回调 —— 提前拒绝路径靠它 `client.close()`，
+     *               保证"每个请求都有终态"（旧实现从不关连接 ⇒ 句柄只增不减）。
+     */
+    private static respondRaw(client: socket.TCPSocketConnection, status: number, contentType: string,
+        body: Uint8Array, onDone: (c: socket.TCPSocketConnection) => void,
+        setCookie?: string, disposition?: string): void {
+        let head: string = `HTTP/1.1 ${status} ${WifiBookServer.statusText(status)}\r\n` +
             `Content-Type: ${contentType}\r\n` +
             `Content-Length: ${body.length}\r\n` +
+            `Cache-Control: no-store\r\n` +
             `Connection: close\r\n`;
-        if (disposition !== undefined) {
-            head += `Content-Disposition: ${disposition}\r\n`;
+        if (disposition !== undefined && disposition !== '') {
+            head += `Content-Disposition: ${WifiBookServer.headerSafe(disposition)}\r\n`;
+        }
+        if (setCookie !== undefined && setCookie !== '') {
+            head += `Set-Cookie: ${WifiBookServer.headerSafe(setCookie)}\r\n`;
         }
         head += '\r\n';
         const out: Uint8Array = concatBytes(WifiBookServer.textBytes(head), body);
-        client.send({ data: out.slice().buffer as ArrayBuffer }).catch((err: Error) => {
-            console.error(`${TAG} send failed: ${err.message}`);
-        });
+        // 下发大正文（书/下载）⇒ 换成"数据传输"档，否则慢速客户端读大书途中会被 408 掐断。
+        // 这是**唯一**在响应阶段重新计时的地方（此时才知道响应体多大）。
+        if (body.length >= WifiBookServer.TIMEOUT_BULK_BYTES) {
+            const rearArm: ((ms: number) => void) | undefined = WifiBookServer.timerByClient.get(client.clientId);
+            if (rearArm !== undefined) {
+                rearArm(WifiBookServer.TIMEOUT_SERVE);
+            }
+            WifiBookServer.noteTraffic(body.length);
+        }
+        client.send({ data: out.slice().buffer as ArrayBuffer })
+            .then((): void => {
+                onDone(client);
+                // 响应**发出之后**才允许关连接（finishByClient 由 handleClient 登记；
+                // 503 拒绝路径未登记 ⇒ 取不到就只跑 onDone）。finish 幂等，重复调用无害。
+                const fin: (() => void) | undefined = WifiBookServer.finishByClient.get(client.clientId);
+                if (fin !== undefined) {
+                    fin();
+                }
+            })
+            .catch((err: Error): void => {
+                console.error(`${TAG} send failed: ${err.message}`);
+                onDone(client);
+                const fin2: (() => void) | undefined = WifiBookServer.finishByClient.get(client.clientId);
+                if (fin2 !== undefined) {
+                    fin2();
+                }
+            });
     }
+
+    /**
+     * JSON 响应（`ok` + `msg`，可选附加 JSON 片段）。
+     * @param extraJson 追加进 JSON 对象的片段，形如 `,"existingId":12`（调用方保证合法）
+     */
+    private static respondJsonCode(client: socket.TCPSocketConnection, status: number, ok: boolean,
+        msg: string, extraJson: string): void {
+        const json: string = `{"ok":${ok ? 'true' : 'false'},"msg":${JSON.stringify(msg)}${extraJson}}`;
+        WifiBookServer.respond(client, status, 'application/json; charset=utf-8', WifiBookServer.textBytes(json));
+    }
+
     private static respondJson(client: socket.TCPSocketConnection, ok: boolean, msg: string): void {
-        WifiBookServer.respond(client, ok ? 200 : 400, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: ok, msg: msg })));
+        WifiBookServer.respondJsonCode(client, ok ? 200 : 400, ok, msg, '');
+    }
+
+    // ── 配对页（未配对设备的唯一入口）────────────────────────────────────────
+    private static pageShell(title: string, inner: string): string {
+        return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'HarmonyOS Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
+background:#F2F3F7;min-height:100vh;color:#1a1a1a;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:#fff;border-radius:18px;box-shadow:0 2px 16px rgba(0,0,0,.06);padding:30px 26px;max-width:460px;width:100%}
+h1{font-size:20px;font-weight:700;margin-bottom:10px}
+p{font-size:14px;line-height:1.75;color:#5b6068;margin:8px 0}
+b{color:#1a1a1a}
+code{background:#F0F1F5;border-radius:6px;padding:2px 6px;font-size:13px}
+.ok{color:#24B277;font-size:16px;font-weight:700;text-align:center;margin-bottom:8px}
+.bad{color:#EF4444;font-size:16px;font-weight:700;text-align:center;margin-bottom:8px}
+a.btn{display:block;text-align:center;margin-top:18px;background:#0A84FF;color:#fff;text-decoration:none;
+font-size:15px;font-weight:600;padding:13px;border-radius:12px;cursor:pointer;border:0;width:100%}
+.tip{background:#F0F7FF;border-radius:10px;padding:12px 14px;font-size:13px;color:#3f6ea8;margin-top:14px}
+input.code{width:100%;font-size:26px;font-weight:800;letter-spacing:9px;text-align:center;
+padding:12px 4px;border:1.5px solid #d5d9e0;border-radius:12px;outline:none;color:#1a1a1a;
+font-family:-apple-system,'HarmonyOS Sans SC','PingFang SC',sans-serif}
+input.code:focus{border-color:#0A84FF}
+.err{color:#EF4444;font-size:13px;text-align:center;margin-top:10px;display:none}
+</style></head><body><div class="card">${inner}</div></body></html>`;
+    }
+
+    /**
+     * 未配对页（2026-10-06 升级为"输码弹窗"模式，用户拍板）：手机端显示 6 位配对码，
+     * 电脑打开任意页面地址（/ 或 /library 或 /read）都会落到这里，输码即配对；
+     * 成功后 `location.reload()` 回到**原地址**（书签/历史直达，不依赖带码链接）。
+     * `?k=` 整链自动配对仍保留（二维码用），由 `serveRoot` 在本页之前拦截。
+     */
+    private static pairPageBytes(): Uint8Array {
+        const inner: string = `<h1>配对到手机</h1>
+<p>这台设备还没有被手机授权。请打开手机上的 <b>我的 → Web 服务 · WiFi 传书</b>，
+把显示的 <b>6 位配对码</b>输入到这里：</p>
+<input class="code" id="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+  maxlength="6" placeholder="······">
+<div class="err" id="err"></div>
+<button class="btn" id="go" type="button">配 对</button>
+<div class="tip">配对码 10 分钟内可重复使用（输错可重试、可配多台设备）；每台电脑只需配对一次。
+也可以直接用手机端弹出的二维码扫码自动配对。若提示网络错误，请先点亮手机屏幕再试。</div>
+<script>
+var box=document.getElementById('code');
+var errEl=document.getElementById('err');
+function showErr(t){errEl.textContent=t;errEl.style.display='block'}
+function resetBtn(){var b=document.getElementById('go');b.textContent='配 对';b.disabled=false}
+function withDt(u,t){return u+(u.indexOf('?')>=0?'&':'?')+'dt='+t}
+function saveTok(t){try{localStorage.setItem('mr_dt',t);return true}catch(e){return false}}
+/* 自愈（2026-10-06 无 Cookie 化）：本机存过令牌 ⇒ 直接带 dt 进原地址，免重输码。
+   URL 里已有 dt 还落到本页 ⇒ 说明令牌已失效（手机端清除了设备）⇒ 不再跳，直接输码。 */
+(function(){
+  var t='';try{t=localStorage.getItem('mr_dt')||''}catch(e){}
+  if(t&&location.search.indexOf('dt=')<0){location.replace(withDt(location.href,t))}
+  else if(location.search.indexOf('dt=')>=0){showErr('原授权已失效（可能在手机端被清除）。请重新输入配对码。')}
+})();
+function submit(){
+  var v=box.value.replace(/[^0-9]/g,'');
+  if(v.length!==6){showErr('请输入 6 位数字配对码');return}
+  var btn=document.getElementById('go');
+  btn.textContent='配对中…';btn.disabled=true;errEl.style.display='none';
+  var x=new XMLHttpRequest();
+  x.open('POST','/pair');
+  x.setRequestHeader('Content-Type','application/json');
+  x.onload=function(){
+    var j=null;
+    try{j=JSON.parse(x.responseText)}catch(e){}
+    if(j&&j.ok&&j.token){
+      /* 无 Cookie 化主通道：令牌存本机 + 带 dt 跳回原地址（跳转即已授权，确定性的）。 */
+      var saved=saveTok(j.token);
+      location.replace(withDt(location.href,j.token));
+      if(!saved){setTimeout(function(){resetBtn();showErr('已配对，但本机无法保存令牌（浏览器隐私模式？）。本次会话可直接使用，刷新后需重输。')},400)}
+      return;
+    }
+    resetBtn();
+    showErr((j&&j.msg)?j.msg:'配对失败，请重试');
+  };
+  x.onerror=function(){
+    resetBtn();
+    showErr('网络错误：手机可能已锁屏休眠——请点亮手机、保持「Web 服务」页打开，再点「配对」重试');
+  };
+  x.send(JSON.stringify({code:v}));
+}
+document.getElementById('go').onclick=submit;
+box.addEventListener('keydown',function(e){if(e.key==='Enter'){submit()}});
+box.focus();
+</script>`;
+        return WifiBookServer.textBytes(WifiBookServer.pageShell('喵阅 · 配对', inner));
+    }
+
+    /** 配对成功（?k= 自动配对路径）：页面内**保存令牌到 localStorage** 并带 dt 跳进传书页 */
+    private static pairOkPageBytes(token: string): Uint8Array {
+        const inner: string = `<div class="ok">✓ 配对成功</div>
+<p>这台电脑已被授权，下次直接打开手机显示的地址即可（无需再配对）。</p>
+<a class="btn" id="goBtn" href="/">进入 WiFi 传书</a>
+<p style="text-align:center;margin-top:12px"><a id="libBtn" href="/library" style="color:#0A84FF;font-size:14px">或打开书库阅读 →</a></p>
+<script>
+try{localStorage.setItem('mr_dt','${token}')}catch(e){}
+(function(){
+  var dt='dt=${token}';
+  var a=document.getElementById('goBtn');if(a){a.href='/?'+dt}
+  var b=document.getElementById('libBtn');if(b){b.href='/library?'+dt}
+})();
+</script>`;
+        return WifiBookServer.textBytes(WifiBookServer.pageShell('喵阅 · 配对成功', inner));
+    }
+
+    /** 配对失败（仅 `?k=` 自动配对路径会落到这里；输码弹窗路径的错误在页面内联提示） */
+    private static pairFailPageBytes(): Uint8Array {
+        const inner: string = `<div class="bad">配对码无效或已过期</div>
+<p>可能原因：配对码已被用过（一次性）、已超过 10 分钟，或尝试次数过多。</p>
+<div class="tip">请在手机上打开 <b>我的 → Web 服务 · WiFi 传书</b>，点<b>刷新配对码</b>后重试，
+或直接在电脑上重新打开地址，<b>手动输入 6 位配对码</b>。</div>
+<a class="btn" href="/">返回配对页</a>`;
+        return WifiBookServer.textBytes(WifiBookServer.pageShell('喵阅 · 配对失败', inner));
     }
 }

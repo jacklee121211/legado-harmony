@@ -14,12 +14,12 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V2.1.1'
+export const APP_VERSION_FALLBACK: string = 'V2.1.2'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.1.1',
+    version: 'V2.1.2',
     date: '2026-10-06',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
@@ -42,7 +42,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '接入华为shark kit，支持碰一碰，隔空传送，华为分享基座',
       '全面重构web传输以及电脑阅读的体验，增设手机PC双向进度及书签同步，实现手机后台稳定服务',
       '重构分组、书单逻辑，实现真实的更换封页',
-      'web服务重构，优化电脑阅读的同步逻辑',
+      'web服务重构，优化电脑阅读的同步逻辑，增加双向验证机制',
     ]
   },
 ]
