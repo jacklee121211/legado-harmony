@@ -300,7 +300,9 @@ export class Reader {
   turnPage(delta: number): void {
     if (this.paras.length === 0) return
     if (this.mode === 'scroll') {
-      this.el.sc.scrollBy({ top: delta * this.el.sc.clientHeight * 0.86, behavior: 'smooth' })
+      // 滚动模式统一走 `scrollStep`（**瞬时**，不再 `behavior:'smooth'`）；
+      // 滚轮本身已交回浏览器原生滚动，见 `ui.ts` 的 wheel 监听说明。
+      this.scrollStep(delta)
       return
     }
     const step = this.mode === 'page2' ? 2 : 1
@@ -504,13 +506,20 @@ export class Reader {
     return this.paragraphAt(offset)
   }
 
-  /** 滚动一屏的百分比（键盘/滚轮共用；分页模式则转成翻页） */
+  /**
+   * 滚动一屏的百分比（**只给键盘 ↑↓ 用**；分页模式则转成翻页）。
+   *
+   * ⚠️ 滚轮**不走这里**（2026-10-06 起）：滚动模式把 wheel 交回浏览器原生滚动，
+   * 原因见 `ui.ts` 里 wheel 监听处的实测数据（接管会把 720px/2s 压成 650px 且无惯性）。
+   * 这里也不用 `behavior:'smooth'`：用户已明确要求"不要动画"，直接落位。
+   */
   scrollStep(factor: number): void {
     if (this.mode !== 'scroll') {
       this.turnPage(factor > 0 ? 1 : -1)
       return
     }
-    this.el.sc.scrollBy({ top: factor * this.el.sc.clientHeight * 0.86, behavior: 'smooth' })
+    const el = this.el.sc
+    el.scrollTop = Math.max(0, el.scrollTop + factor * el.clientHeight * 0.86)
   }
 
   /** 供 UI 判断是否需要"上滑加载更多" */

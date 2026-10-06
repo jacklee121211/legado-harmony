@@ -21,7 +21,8 @@ function $(sel: string): HTMLElement {
 }
 
 const MODE_LABEL: Record<Mode, string> = { scroll: '滚动', page1: '单页', page2: '双页' }
-const MODE_NEXT: Record<Mode, Mode> = { scroll: 'page1', page1: 'page2', page2: 'scroll' }
+/** 循环顺序 = **双页 → 滚动 → 单页**（默认双页，所以"下一档"从双页开始；2026-10-06 用户要求） */
+const MODE_NEXT: Record<Mode, Mode> = { page2: 'scroll', scroll: 'page1', page1: 'page2' }
 
 export interface UiDeps {
   reader: Reader
@@ -102,15 +103,23 @@ export class Ui {
       }
     })
 
-    // ── 滚轮（PC 主要交互；旧实现没有 ⇒ 一次滚动跳过整章）──────────────────
+    /**
+     * ── 滚轮 ──────────────────────────────────────────────────────────────
+     * **滚动模式不再接管 wheel**（2026-10-06 用户反馈"滚轮不丝滑"后实测确认的原因）：
+     * 旧实现每一格滚轮都调 `scrollStep()` → `scrollBy({behavior:'smooth'})`，连滚 6 格会
+     * 同时起 6 个互相打断的平滑动画，且完全废掉浏览器原生惯性。
+     * 实测同一串滚轮（6 格 × 120px，25ms 间隔）：
+     *   · 接管：位移 268→432→650→650→650（**总 650px，200ms 就爬完然后不动**）
+     *   · 不接管（原生）：720→720→720（**总 720px，一次到位、有惯性**）
+     * 参考实现也都是这么做的：epub.js 的 continuous manager 不碰 wheel；
+     * foliate-js 全源码里 `wheel` 出现 0 次（都交给浏览器）。
+     * ⇒ 滚动模式直接把事件交给浏览器（`#scroll` 自身 `overflow-y:auto`）。
+     * 分页模式仍需要 wheel 来翻页（那里没有可滚动内容），保留并做节流。
+     */
     window.addEventListener(
       'wheel',
       (e: WheelEvent) => {
-        if (this.r.mode === 'scroll') {
-          if (e.target instanceof HTMLInputElement) return
-          this.r.scrollStep(e.deltaY > 0 ? 0.86 : -0.86)
-          return
-        }
+        if (this.r.mode === 'scroll') return // 交给原生滚动
         if (e.target instanceof HTMLInputElement) return
         const now = Date.now()
         if (now - this.lastTurnAt < 260) return
@@ -184,6 +193,12 @@ export class Ui {
   private applyModeLabel(): void {
     $('#btnMode').textContent = MODE_LABEL[this.r.mode]
     $('#tabChapters').classList.toggle('on', true)
+    // 模式名带上了"翻页"二字：单页/滚动**没有翻书动画**（单页是横滑），
+    // 用户报过"完全没有动画"其实就是站在单页模式上（实测 pageIdx 瞬间 0→1）。
+    $('#btnMode').title =
+      this.r.mode === 'page2' ? '当前：双页（翻书动画）。点击切换'
+        : this.r.mode === 'page1' ? '当前：单页（左右横滑，无翻书动画）。点击切换'
+          : '当前：滚动。点击切换'
   }
 
   private saveSettings(): void {
@@ -407,6 +422,17 @@ export class Ui {
     $('#btnJumpBot').style.display = 'none'
     $('#syncbar').classList.add('show')
     window.setTimeout(() => $('#syncbar').classList.remove('show'), 2200)
+  }
+
+  /**
+   * 把"模式按钮文字 + tooltip"刷成引擎当前值。
+   *
+   * 为什么必须有这个公开方法：`ui.bind()` 发生在 `reader.setMode()` **之前**
+   * ⇒ 启动时按钮停在 `MODE_LABEL` 的兜底值（实测：引擎 `mode=page2`，按钮却写着"滚动"）。
+   * 用户按按钮文字判断"我现在是什么版式"，一旦错位就会报"没有动画"这类假故障。
+   */
+  syncModeLabel(): void {
+    this.applyModeLabel()
   }
 
   dispose(): void {

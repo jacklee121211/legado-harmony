@@ -48,14 +48,20 @@ body.night a.bk { background: #2A2B30; color: #ccc; }
 #scroll p { margin: 0 0 1em; }
 #more { padding: 14px; text-align: center; color: #a5abb5; font-size: 13px; }
 
-/* 分页模式（CSS 多列 + translateX；位置锚是"段落下标"，见 paging.ts） */
+/* 分页模式（CSS 多列 + translateX；位置锚是"段落下标"，见 paging.ts）
+ * ⚠️ **不做任何翻页动画**（2026-10-06 用户明确要求："不要动画了，完全不要动画"）。
+ *    翻页 = 直接改 translateX 瞬时到位；`prefers-reduced-motion` 之类的动效分支也一并撤掉
+ *    （翻书那套 `#flipView` / `.cl-flip` / 3D 结构已整体删除，历史见 git log）。
+ *    所以这里**没有 transition**：`transition: transform .25s` 会造成"横滑"，也在被撤之列。
+ */
 #stage { position: fixed; top: 52px; bottom: 36px; left: 0; right: 0; display: none; overflow: hidden; }
 #stage.on { display: block; }
 #pages {
-  height: 100%; column-fill: auto; column-gap: var(--col-gap); padding: 0 34px;
-  transition: transform .25s ease; font-size: var(--page-font); line-height: var(--page-lh); text-indent: 2em;
+  height: 100%; column-fill: auto; column-gap: var(--col-gap); padding: 0 var(--page-pad, 34px);
+  font-size: var(--page-font); line-height: var(--page-lh); text-indent: 2em;
 }
 #pages p { margin: 0 0 1em; }
+/* 书脊阴影（双页时的中缝；静态装饰，不是动画） */
 #spine {
   display: none; position: absolute; top: 0; bottom: 0; left: 50%; width: 64px; transform: translateX(-50%);
   background: linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, .10) 42%, rgba(0, 0, 0, .16) 50%, rgba(0, 0, 0, .10) 58%, rgba(0, 0, 0, 0) 100%);
@@ -66,7 +72,6 @@ body.night a.bk { background: #2A2B30; color: #ccc; }
   box-shadow: inset 14px 0 22px -18px rgba(0, 0, 0, .28), inset -14px 0 22px -18px rgba(0, 0, 0, .28);
 }
 body.night #spine { background: linear-gradient(90deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, .5) 50%, rgba(0, 0, 0, 0)); }
-
 #exit {
   position: fixed; right: 16px; bottom: 52px; z-index: 30; display: none; border: 0; width: 42px; height: 42px;
   border-radius: 50%; background: rgba(20, 20, 22, .55); color: #fff; font-size: 17px; cursor: pointer;
