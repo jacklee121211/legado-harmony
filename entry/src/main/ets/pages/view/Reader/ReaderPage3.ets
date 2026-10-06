@@ -1180,20 +1180,27 @@ export default struct ReaderPage3 {
   /**
    * 点了某个**推荐字色**（2026-09-25 新增）：立即生效 + `fontAuto = false`
    * （手动选过字色 ⇒ 自动对比停手，尊重用户的选择）+ 落盘 + 圈落到这一格。
+   *
+   * ⚠️ 2026-10-06 修复"字体颜色无法变更"：旧写法把本方法整体包进 `animateTo` 闭包
+   *   （FontRow 的 onClick），而本方法内含 `setPageConfig`（触发 ReaderKit 重排）——
+   *   工程明文规则（`dispatchBarAction` 日/夜切换注释）："setPageConfig 留在闭包外面，
+   *   它触发 ReaderKit 重新排版，不该参与动画"。⇒ 现在拆成两段：会插值的 @State 改动
+   *   包进动画闭包；引擎下发（`setPageConfig`）与落盘在闭包外同步执行。
    */
   private applyFontColor(hex: string): void {
     const rgb = ReaderCustomBg.parseColor(hex)
     if (rgb === null) {
       return
     }
-    this.readerSetting.fontColor = ReaderCustomBg.hexOf(rgb)
-    this.fontAuto = false
-    this.customFontR = rgb.r
-    this.customFontG = rgb.g
-    this.customFontB = rgb.b
+    this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
+      this.readerSetting.fontColor = ReaderCustomBg.hexOf(rgb)
+      this.fontAuto = false
+      this.customFontR = rgb.r
+      this.customFontG = rgb.g
+      this.customFontB = rgb.b
+      this.bgFocus = 'font'
+    })
     this.customBgTouched = true
-    this.bgFocus = 'font'
-    Haptics.tap()
     this.readerComponentController.setPageConfig(this.readerSetting)
     this.saveCustomBg()
   }
@@ -1450,9 +1457,7 @@ export default struct ReaderPage3 {
             : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.35)' : 'rgba(0, 0, 0, 0.25)'))
           .onClick(() => {
             Haptics.tap();
-            this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
-              this.applyFontColor(c)
-            })
+            this.applyFontColor(c)
           })
           .clickEffect(UiMotion.CLICK)
       }, (c: string) => 'f-' + c)
