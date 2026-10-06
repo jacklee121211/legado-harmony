@@ -69,6 +69,9 @@ async function boot(): Promise<void> {
   const saved = store.offset()
   reader.setMode(settings.mode, false)
   reader.goToOffset(saved >= 0 ? saved : 0)
+  // ⚠️ 必须在 setMode **之后**再刷按钮文字：`ui.bind()` 早于 setMode，
+  //    否则按钮停在兜底值（实测引擎 mode=page2、按钮却显示"滚动"，会误导用户）。
+  ui.syncModeLabel()
 
   // 双端同步：5s 轮询手机位置（提示条）；位置驱动在引擎内（换章即刻推、同章 5s）
   const poll = (): void => {
@@ -80,6 +83,15 @@ async function boot(): Promise<void> {
 
   // 首帧可能因字体加载/列宽测量而未定 ⇒ 再锚定一次（只重排，不换位置）
   window.setTimeout(() => reader.reflow(), 120)
+
+  /**
+   * 调试/自检句柄：**仅在 `?probe=1` 时挂出**（正常阅读路径不创建、不暴露）。
+   * 用途：无头浏览器（`scripts/probe-web-flip.mjs`）能把"当前页号 / 列几何 / 翻页落位"
+   * 拿成**实际数字**，而不是靠肉眼看截图 ⇒ 几何类改动有可回归的硬证据。
+   */
+  if (new URLSearchParams(location.search).get('probe') === '1') {
+    ;(window as unknown as Record<string, unknown>)['__reader'] = reader
+  }
 
   document.title = (title !== '' ? title : '喵阅') + ' · 喵阅'
 }

@@ -22,6 +22,15 @@ export const LINE_HEIGHTS = [1.6, 1.9, 2.2] as const
 export const FONT_MIN = 13
 export const FONT_MAX = 34
 
+/**
+ * 默认版式 = **双页**（2026-10-06 起，用户要求："默认应该是双页，然后才是滚动、单页"）。
+ *
+ * ⚠️ 只改"**没有存过** mode 的书"的默认值：老用户已经存了 `scroll`/`page1` 的，
+ * `get('mode', ...)` 拿到的是他自己的值 ⇒ **不受影响**（不会把人的滚动模式偷偷改掉）。
+ * 一旦某本书里存过 'scroll'，它就一直是 'scroll'，这也是"按书持久化"的本意。
+ */
+export const DEFAULT_MODE: Mode = 'page2'
+
 export class Store {
   private readonly ns: string
 
@@ -50,12 +59,12 @@ export class Store {
     const f = parseInt(this.get('f', '19'), 10)
     const lhIdx = parseInt(this.get('lh', '1'), 10)
     const th = this.get('th', 'day') as Theme
-    const md = this.get('mode', 'scroll') as Mode
+    const md = this.get('mode', DEFAULT_MODE) as Mode
     return {
       fontSize: Number.isFinite(f) ? Math.max(FONT_MIN, Math.min(FONT_MAX, f)) : 19,
       lineHeight: LINE_HEIGHTS[lhIdx >= 0 && lhIdx < LINE_HEIGHTS.length ? lhIdx : 1]!,
       theme: th === 'sepia' || th === 'night' ? th : 'day',
-      mode: md === 'page1' || md === 'page2' ? md : 'scroll'
+      mode: md === 'scroll' || md === 'page1' || md === 'page2' ? md : DEFAULT_MODE
     }
   }
 
