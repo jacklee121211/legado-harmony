@@ -7,47 +7,57 @@
     // AbilityStage（2026-10-02 新建）：接收配置变更，一镜到底官方库
     // ezCustomTransition.onConfigurationChanged() 依赖（见 entryability/MyAbilityStage.ets）
     "srcEntry": "./ets/entryability/MyAbilityStage.ets",
-    "requestPermissions":[
+    "requestPermissions": [
       {
-        "name" : "ohos.permission.INTERNET",
+        "name": "ohos.permission.INTERNET",
         "usedScene": {
-          "when":"inuse"
+          "when": "inuse"
         }
       },
       {
-        "name" : "ohos.permission.KEEP_BACKGROUND_RUNNING",
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "usedScene": {
-          "when":"inuse"
+          "when": "inuse"
         }
       },
       {
-        // #3：听书面板「本章」滑块步进震动反馈
-        // SDK `@ohos.vibrator.d.ts:126` 的 startVibration 标注 `@permission ohos.permission.VIBRATE`
-        "name" : "ohos.permission.VIBRATE",
+        "name": "ohos.permission.VIBRATE",
         "usedScene": {
-          "when":"inuse"
+          "when": "inuse"
         }
       },
       {
-        // #3：全局震动方案的「勿扰模式自动停」——查询系统免打扰状态。
-        // `intelligentScene.isDoNotDisturbEnabled()`（`@ohos.intelligentScene.d.ts:41`，@since 23）
-        // 标注 `@permission ohos.permission.GET_DONOTDISTURB_STATE`；
-        // 官方权限列表（documentId permissions-for-all）：权限级别 normal、
-        // 授权方式 system_grant（安装即授）、起始版本 23。
-        "name" : "ohos.permission.GET_DONOTDISTURB_STATE",
+        "name": "ohos.permission.GET_DONOTDISTURB_STATE",
         "usedScene": {
-          "when":"inuse"
+          "when": "inuse"
         }
       },
       {
-        // wifi传书（2026-09-30 回填）：读取手机 IP 展示给 PC 访问。
-        // `wifiManager.getIpInfo()`（@ohos.wifiManager）标注
-        // `@permission ohos.permission.GET_WIFI_INFO`（normal / system_grant）。
-        "name" : "ohos.permission.GET_WIFI_INFO",
+        "name": "ohos.permission.GET_WIFI_INFO",
         "usedScene": {
-          "when":"inuse"
+          "when": "inuse"
         }
-      }
+      },
+      {
+        "name": "ohos.permission.PRIVACY_WINDOW",
+        "usedScene": {
+          "when": "inuse"
+        }
+      },
+      // ⚠️【受限权限·暂缓启用】DLP_GET_HIDE_STATUS（防窥第2层：窥视检测/系统蒙层）。
+      // 受限开放权限（ACL）：Profile 里没有该权限白名单时**安装即失败**
+      //（错误码 9568289 "grant request permissions failed"，2026-10-07 真机实测）。
+      // 等 AGC「申请受限权限」审批通过、重新出带 ACL 的 Profile 后，把下面这块
+      // 取消注释即可（运行时无需其它改动：AntiPeep.ets 对 201/801 已静默降级为仅第1层）。
+      // 参考实现：D:\Arkts\xiaowei（其 key/xiaoweiRelease.p7b 自带 ACL 所以能装）。
+      // {
+      //   "name": "ohos.permission.DLP_GET_HIDE_STATUS",
+      //   "reason": "$string:anti_peep_reason",
+      //   "usedScene": {
+      //     "abilities": ["EntryAbility"],
+      //     "when": "inuse"
+      //   }
+      // }
     ],
     "deviceTypes": [
       "phone",

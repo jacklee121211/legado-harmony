@@ -87,6 +87,21 @@ export default struct readStatistics {
   @State markChecked: number[] = []
   /** bookName → 总章数，用于算书签的进度百分比 */
   private totalChapMap: Map<string, number> = new Map()
+  /**
+   * 书架公共刷新信号（2026-10-07）：阅读器退出时广播（`ReaderPage3
+   * .flushReadProgressThenNotifyShelf`）⇒ 本页重拉数据。
+   *
+   * 为什么需要：本页可经书签跳进阅读器（`AppRouter.push(RouteName.READER)`），
+   * 返回时本 NavDestination **未销毁**（官方 FAQ `faqs-arkui-404`：出栈才销毁，
+   * 压栈不停留 ⇒ `aboutToAppear` 不会再跑），而阅读期间新增的书签、「读完」标记
+   * 都落了库 ⇒ 不订阅广播的话，返回后列表停在旧数据。
+   */
+  @StorageLink(CommonConstants.BOOK_IS_BOOK_REFRESHING) @Watch('onShelfBroadcast')
+  isBookRefreshing: number = 0
+
+  onShelfBroadcast(): void {
+    this.loadData()
+  }
 
   @Builder head() {
     Row() {

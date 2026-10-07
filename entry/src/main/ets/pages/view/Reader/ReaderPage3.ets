@@ -26,6 +26,7 @@ import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao';
 // 双端同步 v2（2026-10-05）：槽/水位/键名的唯一登记处（见 SyncConfig 头注释 + 设计文档）
 import syncConfig, { SyncPos, SYNC_V2_ENABLED, ratioToIndex, normEx, excerptKey } from '../../../common/utils/SyncConfig';
 import BooksDao from '../../../database/dao/BooksDao';
+import CommonConstants from '../../../common/constants/CommonConstants';
 import { TtsPrefs, loadTtsPrefs } from '../../../tts/TtsPrefs';
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
@@ -43,6 +44,10 @@ import { ReaderTextureDialog } from './ReaderTextureDialog';
 import { ReaderFontLib } from '../../../common/utils/ReaderFontLib';
 import { ReaderFontDialog } from './ReaderFontDialog';
 import { ReaderSchemeDialog } from './ReaderSchemeDialog';
+// ── 按键翻页（2026-10-07）：音量键/智控键翻页，开关在 设置-按键翻页 ──────────
+import { ReaderKeyTurn } from '../../../common/utils/ReaderKeyTurn';
+// ── 防窥保护（2026-10-07）：顶栏眼睛图标开关，方案见 utils/AntiPeep.ets ───────
+import { AntiPeep } from '../../../common/utils/AntiPeep';
 // ── 会员化（2026-09-28）：免费用户点锁定功能 → VIP 弹窗 ─────────────────────
 import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
@@ -50,6 +55,7 @@ import { ReaderBgPalette } from './ReaderBgPalette';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics';
+import MySetConstants from '../../../common/constants/MySetConstants';
 import { ListenUnlock } from '../../../common/utils/ListenUnlock';
 
 interface ParamsObj {
@@ -433,6 +439,44 @@ export default struct ReaderPage3 {
     }
   }
 
+  /**
+   * 阅读会话结束 ⇒ **先落库最终进度，再广播书架刷新**（2026-10-07）。
+   *
+   * ── 缺口 ────────────────────────────────────────────────────────────────
+   * 书架列表的唯一数据刷新通道是 AppStorage 键 `BOOK_IS_BOOK_REFRESHING`
+   * （`BookContent` `@StorageLink+@Watch` ⇒ 重查数据库，排序 SQL 为
+   * `isTop DESC, durChapterTime DESC`，见 `BooksDao.searchPage`）。本页写进度的
+   * `persistReadProgress()` 只落库、从不广播；而阅读页是 NavDestination，
+   * pop 回书架时宿主 `Index.onPageShow()` **不会触发**（Index.ets :331 注释已实证）
+   * ⇒ 「看完书回书架，刚读的书不置顶、'读到第X章'停在旧值」，要手动下拉刷新。
+   *
+   * ── 为什么必须 await 落库完成后再广播 ────────────────────────────────────
+   * `stampReadProgress` 是异步 UPDATE；先广播后落库的话，书架重查会读到**旧行**
+   * （与 `BooksDao.ets` 「网络导入竞态」注释同一坑：信号到了、行还没写进去 ⇒
+   * 界面不更新，要等下次）。所以这里 await 到 UPDATE 提交再自增广播键。
+   *
+   * ── 调用点 ──────────────────────────────────────────────────────────────
+   * `aboutToDisappear()`（pop 转场结束、组件销毁时触发，见 Index.ets LTBOOK
+   * 日志注记 onDisappear 晚于 transition finish）——此时书架刚可见，重查在落地后
+   * 一两帧内完成，与下拉刷新同量级开销。兜底语义：即使 5 秒节流吞掉了最后一次
+   * `persistReadProgress()`，退出前这里也会把最终进度补写进去。
+   */
+  private async flushReadProgressThenNotifyShelf(): Promise<void> {
+    try {
+      const id = this.bookData.id ?? 0
+      if (id > 0) {
+        // 无节流：aboutToDisappear 只走一次，把最后一次翻页后的进度补齐
+        await BooksDao.stampReadProgress(id, this.bookData.durChapterIndex ?? 0,
+          this.bookData.durChapterTitle ?? '', this.bookData.totalChapterNum ?? 0)
+      }
+    } catch (e) {
+      // 落库失败不得阻塞退出流程
+    }
+    // 广播语义与 WifiBookServer.registerImportedBook（传书入库后）一致：自增刷新键
+    const tick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1;
+    AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, tick);
+  }
+
   /** 待跳转的书签目标（-1 = 无）。来自 `readStatistics` 二级菜单点击书签时的 params。 */
   private bmJumpIndex: number = -1
   private bmJumpNode: number = -1
@@ -577,6 +621,10 @@ export default struct ReaderPage3 {
       onClosed: (): void => {
         // 语义等同改造前 sheet 的 `onDisappear`：任何关闭方式都回跳到当前朗读处
         this.backToTtsAnchor();
+      },
+      onOpenSleepTimer: (): void => {
+        // 定时入口迁入听书面板（2026-10-07 用户设计）：听书=父窗，定时弹窗=子窗
+        this.openSleepTimerDialog();
       }
     }),
     autoCancel: true,
@@ -745,8 +793,26 @@ export default struct ReaderPage3 {
   @State barScale: number[] = [1, 1, 1, 1]
   /** 顶栏书签图标的 Q弹缩放值（同上） */
   @State bookmarkScale: number = 1
-  /** 顶栏闹钟图标的 Q弹缩放值（同上） */
-  @State alarmScale: number = 1
+  /** 顶栏防窥眼睛图标的 Q弹缩放值（同上） */
+  @State antiPeepScale: number = 1
+  /**
+   * 防窥开关（2026-10-07）：AppStorage `antiPeepOn` 同名键驱动（顶栏眼睛图标用）。
+   * 真值落盘与两层防护全在 `AntiPeep`（utils/AntiPeep.ets）；默认关。
+   */
+  @StorageLink('antiPeepOn') antiPeepOn: boolean = false
+
+  // ── 阅读器信息窗（2026-10-07 用户设计）────────────────────────────────────
+  // 全屏阅读（菜单栏隐藏）时右上角显示 防窥眼睛 + 定时实时信息。用户拍板：
+  // ①非全屏不显示（顶栏已有三个图标）；②不可点击，"像和文字一样被渲染的内容"。
+  // 实现性质是 ArkUI 玻璃层：不参与仿真翻页卷纸（翻页动画进行中的零点几秒元素原地不动，
+  // 纸从其下方经过；无隧穿/丢内容——内容由状态驱动，任何一页都正确）。字色取
+  // `readerSetting.fontColor`（与正文同源，自动跟随材质均色/日夜）。
+  /** 设置-其他-「阅读器信息窗」开关（Preferences，进场读一次；开关只在设置页改） */
+  @State infoWinOn: boolean = false
+  /** 定时实时信息文案（时间型 = 秒级倒计时；章节型 = 剩余X章；两者可并存） */
+  @State infoTimerText: string = ''
+  /** 信息窗秒级刷新句柄（-1 = 未启动；仅信息窗开且定时在跑时启动，功耗门禁） */
+  private infoTicker: number = -1
   /**
    * 弹窗控制器。**每次打开时新建** —— 因为 SDK 明确
    * 「Custom dialog box parameters **do not support dynamic updates**」
@@ -812,9 +878,15 @@ export default struct ReaderPage3 {
   //   任一先到即停；两者都传 0 即取消定时。
   //   回读用 `getSleepChaptersReq()` / `getSleepMinutesReq()` / `getSleepStopMs()`。
 
-  /** 打开定时弹窗（每次新建控制器，把当前真实档位与剩余量传进去） */
-  openSleepTimerDialog(): void {
+  /**
+   * 打开定时弹窗（2026-10-07 迁入听书面板：**听书=父窗，定时=子窗**）。
+   * 父子协调与「更多材质/更多方案」同款：子进父退（先收听书面板），子关父回
+   * （`onClosed` 三条按钮路径 + 控制器 `cancel`（点遮罩/返回键）都会走 reopen，
+   * 两者在实际操作中互斥）。顺带 `refreshSleepStatus()` 把真实档位带给滚轮。
+   */
+  private openSleepTimerDialog(): void {
     this.refreshSleepStatus();
+    this.listenDialog.close();
     this.sleepDialog = new CustomDialogController({
       builder: SleepTimerDialog({
         initChapters: TtsEngine.getSleepChaptersReq(),
@@ -827,6 +899,9 @@ export default struct ReaderPage3 {
         },
         onReset: (): void => {
           this.applySleepTimer(0, 0);
+        },
+        onClosed: (): void => {
+          this.reopenListenDialog();
         }
       }),
       autoCancel: true,
@@ -838,8 +913,17 @@ export default struct ReaderPage3 {
       // 弹窗出入场：弹簧令牌（理由见 `listenDialog` 处的注释）
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        // 点遮罩 / 返回键收起 ⇒ 同样"子退父回"
+        this.reopenListenDialog();
+      }
     });
     this.sleepDialog?.open();
+  }
+
+  /** 子弹窗（定时）关闭后重新拉起父窗（听书面板） */
+  private reopenListenDialog(): void {
+    this.listenDialog.open()
   }
 
   /** 把选择结果写进引擎（真正实现"到点暂停"），并刷新文案 */
@@ -871,6 +955,8 @@ export default struct ReaderPage3 {
       parts.push(`${chapters} 章`);
     }
     if (minutes > 0) {
+      // sleepStopMs 是**绝对截止时刻**（墙钟，2026-10-07 起）：设定即定格 deadline，
+      // 暂停/看书都走表——旧实现存"累计播放档位"却按绝对时刻展示，恒显"剩 0 分钟"。
       const stopMs = TtsEngine.getSleepStopMs();
       if (stopMs > 0) {
         const leftMs = Math.max(0, stopMs - Date.now());
@@ -880,6 +966,8 @@ export default struct ReaderPage3 {
       }
     }
     this.sleepStatusText = parts.join(' · ');
+    // 信息窗秒级刷新的启停对账（定时设定/取消/到点都经这里）
+    this.syncInfoTicker();
   }
 
   /** 每秒刷新一次剩余量（仅在已设定时时才有意义） */
@@ -898,6 +986,48 @@ export default struct ReaderPage3 {
       this.sleepTicker = -1;
     }
   }
+
+  // ── 阅读器信息窗（2026-10-07）：定时实时信息（秒级）────────────────────────
+
+  /** 组装信息窗的定时文案：时间型 = **墙钟独立倒计时**（时分秒，暂停/看书都走秒）；
+   *  章节型 = 剩余X章；两者可并存。sleepStopMs 自 2026-10-07 起为绝对截止时刻。 */
+  private computeInfoTimerText(): string {
+    const parts: string[] = [];
+    const chapters = TtsEngine.getSleepChaptersReq();
+    if (chapters > 0) {
+      // 引擎口径：sleepStopChapter = 设定时所在章 + N（到该章号即停）⇒ 剩余 = 截止章号 - 当前章号
+      const left = Math.max(0, TtsEngine.getSleepStopChapter() - (this.bookData.durChapterIndex ?? 0));
+      parts.push(`剩${left}章`);
+    }
+    const minutes = TtsEngine.getSleepMinutesReq();
+    if (minutes > 0 && TtsEngine.getSleepStopMs() > 0) {
+      const leftS = Math.max(0, Math.round((TtsEngine.getSleepStopMs() - Date.now()) / 1000));
+      const h = Math.floor(leftS / 3600);
+      const m = Math.floor((leftS % 3600) / 60);
+      const s = leftS % 60;
+      const pad2 = (n: number): string => (n < 10 ? '0' + n : '' + n);
+      parts.push(`${pad2(h)}:${pad2(m)}:${pad2(s)}`);
+    }
+    return parts.join(' · ');
+  }
+
+  /** 信息窗秒级刷新的启停对账：仅"开关开 + 定时在跑"时才转（功耗门禁，均无需时清空文案） */
+  private syncInfoTicker(): void {
+    const need: boolean = this.infoWinOn && this.sleepTimerActive;
+    if (need && this.infoTicker === -1) {
+      this.infoTimerText = this.computeInfoTimerText();
+      this.infoTicker = setInterval((): void => {
+        this.infoTimerText = this.computeInfoTimerText();
+      }, 1000);
+    } else if (!need && this.infoTicker !== -1) {
+      clearInterval(this.infoTicker);
+      this.infoTicker = -1;
+      this.infoTimerText = '';
+    } else if (!need) {
+      this.infoTimerText = '';
+    }
+  }
+
   @State CatalogList: BasicDataSource<bookParser.CatalogItem> = new BasicDataSource<bookParser.CatalogItem>(); //章节数据
   readerComponentController: readerCore.ReaderComponentController = new readerCore.ReaderComponentController();
   //阅读器设置
@@ -1353,8 +1483,19 @@ export default struct ReaderPage3 {
   // 与原内联写法完全等价；`ReplaceSymbolEffect` 的触发绑定不受影响。
 
   /** 顶栏闹钟图标：设定了定时 = 实心 */
-  private alarmIcon(): Resource {
-    return this.sleepTimerActive ? $r('sys.symbol.alarm_fill') : $r('sys.symbol.alarm')
+  /**
+   * 顶栏防窥眼睛图标（2026-10-07 用户设计）：闭眼 = 防窥已开启，睁眼 = 未开启。
+   * 符号名 `eye` / `eye_slash` 在 SDK 符号表
+   * `…\sdk\default\openharmony\ets\build-tools\ets-loader\sysResource.js` 查得。
+   */
+  private antiPeepIcon(): Resource {
+    return this.antiPeepOn ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye')
+  }
+
+  /** 防窥开关（2026-10-07）：切两层防护（窗口隐私 + DLP 窥视蒙层，能力不足自动降级） */
+  private toggleAntiPeep(): void {
+    AntiPeep.setEnabled(!this.antiPeepOn)
+    showMessage(this.antiPeepOn ? '防窥已开启' : '防窥已关闭')
   }
 
   /** 顶栏书签图标：当前页有书签 = 实心 */
@@ -2624,6 +2765,20 @@ export default struct ReaderPage3 {
     this.restoreCustomBg();
     // 「保存方案」存下来的颜色清单（全局，一次读入；增删时再刷）
     this.refreshSavedSchemes();
+    // ── 按键翻页（2026-10-07）：阅读页存活期间才订阅（官方要求"确定响应时才激活"），
+    //    音量上=上一页、下=下一页；智控键仅支持的机型生效。退订在 aboutToDisappear。
+    ReaderKeyTurn.attachReader((isNext: boolean): void => {
+      try {
+        this.readerComponentController.flipPage(isNext)
+      } catch (e) {
+        // 引擎未就绪（开场转场中）时忽略本次按键
+      }
+    });
+    // ── 防窥保护（2026-10-07）：取窗口 + 恢复上次开关状态（眼睛图标随 AppStorage 同步）
+    AntiPeep.ensureInit(this.getUIContext().getHostContext() as common.UIAbilityContext);
+    // ── 阅读器信息窗（2026-10-07）：开关只在设置页改，进场读一次即可
+    this.infoWinOn = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean;
+    this.syncInfoTicker();
     // 标定值要在 readerSetting 载入之后再读（自动行高系数依赖字号/行距）
     this.loadCalib();
     this.startPlay(this.bookData.bookUrl ?? '', this.bookData.localBookDurChapterPos?.resourceIndex ?? 0,
@@ -3591,6 +3746,11 @@ export default struct ReaderPage3 {
     };
 
   aboutToDisappear(): void {
+    // ★ 退出阅读 ⇒ 最终进度落库 + 广播书架刷新（2026-10-07）：
+    //   书架只认 `BOOK_IS_BOOK_REFRESHING` 广播重查，而本页原先只写库不广播、
+    //   宿主 Index 的 onPageShow 又不因 NavDestination pop 触发 ⇒ 回书架不重排。
+    //   await 落库后再广播的原因见 flushReadProgressThenNotifyShelf 注释。
+    this.flushReadProgressThenNotifyShelf();
     // ★ 恢复系统状态栏 / 导航栏（2026-09-22 真机反馈修复：**退出阅读页后状态栏不回来**）
     //
     // ── 症状 ────────────────────────────────────────────────────────────────
@@ -3654,6 +3814,13 @@ export default struct ReaderPage3 {
     // 必须在任何 `releaseBook()` 之前 —— 否则那条链可能在释放之后才继续执行，
     // 对着已释放的控制器调 `registerBookParser`，正是黑屏的成因。见 `disposed` 注释。
     this.disposed = true;
+    // 按键翻页退订（2026-10-07）：退书立即交还系统音量键（官方要求"确定响应时才激活"）
+    ReaderKeyTurn.detachReader();
+    // 信息窗秒级刷新停止（2026-10-07）
+    if (this.infoTicker !== -1) {
+      clearInterval(this.infoTicker);
+      this.infoTicker = -1;
+    }
     // 解绑进度同步的进程级监听（2026-10-05，审计 P1-4）：`emitter.on` 不解绑会让
     // 闭包连同本实例（CatalogList / anchorNodeCache）一起驻留，开书次数越多漏得越多。
     // 放在 `disposed = true` 之后：即使有事件在途，回调体也会先被 `disposed` 拦掉。
@@ -5136,6 +5303,37 @@ export default struct ReaderPage3 {
           .hitTestBehavior(HitTestMode.None)
       }
 
+      // ── 阅读器信息窗（2026-10-07 用户设计）：仅全屏（菜单栏隐藏）且开关开启时显示 ──
+      // 右上角：定时实时信息（时间型=秒级倒计时 / 章节型=剩余X章，可并存）+ 防窥眼睛。
+      // 用户拍板：①非全屏不显示（顶栏已有三个图标）；②不可点击（"像和文字一样被渲染
+      //   的内容"）⇒ 整层与全部子节点逐个 HitTestMode.None（工程已知坑：None 只穿透
+      //   自身，子节点照样吃触摸）。字色随正文（readerSetting.fontColor 与正文同源）。
+      // 位置与顶栏图标同一视觉基线（topRectHeight+12，右 20）。
+      if (!this.isShowSetting && this.infoWinOn) {
+        Row({ space: 8 }) {
+          if (this.infoTimerText.length > 0) {
+            Text(this.infoTimerText)
+              .fontSize(13)
+              .fontColor(this.readerSetting.fontColor)
+              .opacity(0.9)
+              .hitTestBehavior(HitTestMode.None)
+          }
+          SymbolGlyph(this.antiPeepIcon())
+            .fontSize(16)
+            .fontColor([this.readerSetting.fontColor])
+            .opacity(0.9)
+            .hitTestBehavior(HitTestMode.None)
+        }
+        .justifyContent(FlexAlign.End)
+        // ⚠️ 必须显式撑满高度 + 顶部对齐：Stack 子元素默认垂直居中（2026-10-07 真机实测：
+        //   信息窗曾跑到屏幕右侧正中），撑满后内容钉在顶部。
+        .alignItems(VerticalAlign.Top)
+        .width('100%')
+        .height('100%')
+        .padding({ top: this.topRectHeight + 12, right: 20 })
+        .hitTestBehavior(HitTestMode.None)
+      }
+
       // 朗读迷你条：面板关闭时仍可见/可控（点文本回面板，点按钮暂停/续播）
       if (this.ttsState !== 'stopped') {
         this.TtsMiniBar()
@@ -5159,35 +5357,24 @@ export default struct ReaderPage3 {
                 .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                 .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
 
-              // ── 睡眠定时入口（2026-09-22 新增，用户设计；2026-09-25 换 SymbolGlyph）────
-              // 用户原话：「单独做个 symbol 式中图标，**放在书签左面**，
-              //   点击之后是双滚轮选择（章节 1-99 / 时和分），真的可以实现功能，
-              //   到点暂停…点击这个图标，出现一个光感弹窗…底部是取消、重置和确定」。
-              // 2026-09-25 用户要求：①和书签一样是 symbol 图标；②点击有动画；
-              //   ③设定定时后"变幻一下"（变实心）；④与书签大小一致。
-              // 符号名 `alarm` / `alarm_fill` 在 SDK 符号表
-              //   `…\Sdk\23\previewer\common\resources\entry\resources.txt` 查得
-              //   （本工程已用的 `bookmark`/`paintpalette` 同表核过，不猜名字）。
-              // 字号与书签同为 22（原来 Image 22×22 与 SymbolGlyph 22 观感不一致，
-              // 两者同为 SymbolGlyph fontSize 后视觉对齐）。
-              // 动效与书签同款：`symbolEffect(new ReplaceSymbolEffect(), trigger)`
-              //   （SDK `symbolglyph.d.ts:777`，@since 12；MCP hover 原文：
-              //   「Value that, when changed, initiates the animation…」）
-              //   —— 定时设定/取消 ⇒ `sleepTimerActive` 变 ⇒ trigger 变 ⇒ 播替换动画。
-              //   点击瞬间的 Q弹缩放由 `.scale()` + `runJellyClick` 驱动（2026-09-25 二次调优：
-              //   内置动效节奏定死太慢，见 UiMotion.runJellyClick 处的取证）。
-              SymbolGlyph(this.alarmIcon())
+              // ── 防窥入口（2026-10-07 用户设计）：顶栏依次 防窥/书签 ──────────────
+              // 睁眼 = 未开启，闭眼 = 已开启；点击切换两层防护（窗口隐私 + DLP 窥视蒙层，
+              // 方案见 utils/AntiPeep.ets）。规格与书签完全同款：SymbolGlyph 22、
+              // ReplaceSymbolEffect 形变动效、runJellyClick Q弹缩放。
+              // ⚠️ 定时入口已迁入听书面板顶栏（2026-10-07 用户设计：与听书功能同源，
+              //   面板=父窗、定时弹窗=子窗），顶栏不再保留闹钟图标。
+              SymbolGlyph(this.antiPeepIcon())
                 .fontSize(22)
                 .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
-                .symbolEffect(new ReplaceSymbolEffect(), this.sleepTimerActive ? 1 : 0)
-                .scale({ x: this.alarmScale, y: this.alarmScale })
+                .symbolEffect(new ReplaceSymbolEffect(), this.antiPeepOn ? 1 : 0)
+                .scale({ x: this.antiPeepScale, y: this.antiPeepScale })
                 .margin({ right: 12 })
                 .onClick(() => {
                   Haptics.tap();
                   runJellyClick((v: number) => {
-                    this.alarmScale = v
+                    this.antiPeepScale = v
                   })
-                  this.openSleepTimerDialog()
+                  this.toggleAntiPeep();
                 })
 
               // ── 书签入口（2026-09-21）──────────────────────────────────────

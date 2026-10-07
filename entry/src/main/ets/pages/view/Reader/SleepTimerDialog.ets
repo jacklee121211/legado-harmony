@@ -66,6 +66,12 @@ export struct SleepTimerDialog {
   onCancel: () => void = (): void => {}
   /** 重置（清空定时） */
   onReset: () => void = (): void => {}
+  /**
+   * 弹窗已关闭（确定/取消/重置三条按钮路径各自 close 前回调；点遮罩/返回键走
+   * 控制器 `cancel`，两者互斥）。2026-10-07 定时入口迁入听书面板 ⇒ 本弹窗成为
+   * 听书弹窗的**子窗口**，页面据此"子退父回"（重新拉起听书面板）。
+   */
+  onClosed: () => void = (): void => {}
 
   /** 章节滚轮：1~99（下标 0 对应"关"，即不按章节） */
   private chapterOptions: string[] = [];
@@ -303,6 +309,7 @@ export struct SleepTimerDialog {
           .onClick(() => {
             Haptics.tap();
             this.onCancel()
+            this.onClosed()
             this.controller?.close()
           })
         Button('重置')
@@ -316,6 +323,7 @@ export struct SleepTimerDialog {
             this.selHours = 0
             this.selMinutesPart = 0
             this.onReset()
+            this.onClosed()
             this.controller?.close()
           })
         Button('确定')
@@ -334,6 +342,7 @@ export struct SleepTimerDialog {
               const mins = this.totalMinutes();
               this.onConfirm(0, mins > 0 ? mins : 0)
             }
+            this.onClosed()
             this.controller?.close()
           })
       }

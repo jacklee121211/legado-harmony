@@ -92,6 +92,9 @@ export struct ReaderListenDialog {
   }
   onBackToReader: () => void = (): void => {
   }
+  /** 打开睡眠定时弹窗（2026-10-07：透传给面板顶栏定时按钮，页面做父子弹窗协调） */
+  onOpenSleepTimer: () => void = (): void => {
+  }
   /** 弹窗销毁（任何关闭方式）时回调 —— 语义等同改造前 sheet 的 `onDisappear` */
   onClosed: () => void = (): void => {
   }
@@ -208,6 +211,9 @@ export struct ReaderListenDialog {
           },
           onBackToReader: (): void => {
             this.onBackToReader()
+          },
+          onOpenSleepTimer: (): void => {
+            this.onOpenSleepTimer()
           }
         })
       }

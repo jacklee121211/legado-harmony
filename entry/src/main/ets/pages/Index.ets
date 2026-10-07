@@ -41,6 +41,7 @@ import PrivacyPage from './view/myCenter/about/PrivacyPage'
 import LicensePage from './view/myCenter/about/LicensePage'
 import { common } from '@kit.AbilityKit'
 import { NightMode, ShelfColors } from '../common/utils/NightMode'
+import CommonConstants from '../common/constants/CommonConstants'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../common/utils/Haptics'
 import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
@@ -343,6 +344,32 @@ struct Main {
 
     // T13/D-17：`getContext()`（@deprecated since 18）→ `UIContext.getHostContext()`（确定性取值）
     console.debug('res1', this.bottomRectHeight)
+    // ★ 回前台 ⇒ 补一次书架刷新（2026-10-07）：
+    //   `onPageShow` 对 @Entry 页面在"应用进入前台"时触发（官方 FAQ `faqs-arkui-1607`：
+    //   「onPageShow在router路由页面（即@Entry装饰的自定义组件）每次显示时触发一次，
+    //   包括路由跳转、应用进入前台等场景」），这是**冷启动之外**唯一能覆盖
+    //   "后台期间数据被别的进程改了"的钩子 —— 典型场景：分享接收页
+    //   （`ShareReceivePage`，运行在 ShareExtensionAbility **独立进程**，AppStorage
+    //   不互通，它的导入广播到不了主进程）导入完书籍，用户回到本应用 ⇒ 书架若不
+    //   重查就看不到新书。后台标记见 `onPageHide`。
+    if (this.backgroundedSinceLastShow) {
+      this.backgroundedSinceLastShow = false
+      const tick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1
+      AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, tick)
+    }
+  }
+
+  /**
+   * 是否经历过一次"应用退到后台"（书架回前台补刷的闸门，见 `onPageShow` 尾部）。
+   * 为什么需要闸门：冷启动的首次 `onPageShow` 也会触发，那时书架 `aboutToAppear`
+   * 本来就会首查，再广播一次是重复加载 —— 只在"真的从后台回来"时才补刷。
+   * @Entry 的 `onPageHide` 只在应用退后台时触发（NavDestination 压栈不会隐藏
+   * @Entry 页面，本文件 :331 注释已实证同机理），不会被子页面误触发。
+   */
+  private backgroundedSinceLastShow: boolean = false
+
+  onPageHide(): void {
+    this.backgroundedSinceLastShow = true
   }
 
   screenShot() {

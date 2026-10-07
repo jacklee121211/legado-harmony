@@ -99,6 +99,10 @@
     {
       "name": "clear_recently_used",
       "value": "清除最近使用"
+    },
+    {
+      "name": "anti_peep_reason",
+      "value": "防窥保护需要检测旁人窥视状态，以便在他人注视屏幕时隐藏您的阅读内容"
     }
   ]
 }

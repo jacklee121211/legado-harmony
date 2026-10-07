@@ -26,6 +26,7 @@ import { Haptics } from '../../common/utils/Haptics';
 // 材质：面板底色用 MaterialColumnModifier（"让出背景"，材质走弹窗 options）；
 // 面板内滑条**不设材质**（用户选 A：材质优先 —— 与"滑条光效"互斥，官方禁止材质嵌套）
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil';
+import UiMotion from '../../common/utils/UiMotion';
 
 /** 面板滑杆定义（避免 @Builder 传函数参数的严格模式问题） */
 interface SliderDef {
@@ -137,6 +138,11 @@ export struct TtsControlPanel {
   onSeekChapter: (delta: number) => void = (_delta: number): void => {};
   /** 回到当前朗读处的正文位置（文本显示器/完成按钮触发） */
   onBackToReader: () => void = (): void => {};
+  /**
+   * 打开睡眠定时弹窗（2026-10-07：定时入口迁入本面板顶栏，居中）。
+   * 页面侧做**父子弹窗协调**：本面板（父）暂收 → 定时弹窗（子）打开 → 子关父回。
+   */
+  onOpenSleepTimer: () => void = (): void => {};
   @State voiceSlot: number = 0;           // 0=旁白 1=对白 2=男生 3=女生
   @State showVoices: boolean = false;
   // ── 本地引擎音色枚举/下载（2026-09-25，SDK @since 19 的 listVoices/downloadVoice）──
@@ -251,7 +257,8 @@ export struct TtsControlPanel {
     const stopChap = TtsEngine.getSleepStopChapter();
     const parts: string[] = [];
     if (stopMs >= 0) {
-      const leftMs = Math.max(0, stopMs - TtsEngine.getPlayedMs());
+      // sleepStopMs 是**绝对截止时刻**（墙钟，2026-10-07 起），暂停也走表
+      const leftMs = Math.max(0, stopMs - Date.now());
       const m = Math.floor(leftMs / 60000);
       const s = Math.floor((leftMs % 60000) / 1000);
       parts.push(`剩余 ${m} 分 ${s} 秒`);
@@ -675,12 +682,25 @@ export struct TtsControlPanel {
 
   build() {
     Column({ space: 14 }) {
-      // 顶栏
+      // 顶栏（2026-10-07 用户设计：定时入口从阅读器顶栏迁入本面板，居中）
       Row() {
         Text('朗读')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.fg())
+        Blank()
+        // ── 睡眠定时入口（子窗口：点它拉起定时弹窗，本面板由页面暂收、子关父回）──
+        // 睁/实心 = 已设定时（口径：sleepChap>0 || sleepMin>0，与 syncSleepFromEngine 同源）
+        SymbolGlyph((this.sleepChap > 0 || this.sleepMin > 0)
+          ? $r('sys.symbol.alarm_fill') : $r('sys.symbol.alarm'))
+          .fontSize(20)
+          .fontColor([this.accent()])
+          .margin({ right: 2 })
+          .onClick(() => {
+            Haptics.tap();
+            this.onOpenSleepTimer()
+          })
+          .clickEffect(UiMotion.CLICK)
         Blank()
         Text('完成')
           .fontSize(16)

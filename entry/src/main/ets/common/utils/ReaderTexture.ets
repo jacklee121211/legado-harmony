@@ -70,7 +70,14 @@ export class ReaderTexture {
    * `getRawFileListSync('')` 失败（部分机型对空路径严格）时回落到**顺序探测**：
    * getRawFdSync 从 001 试到第一个断号为止（上限 300，防极端坏数据卡死）。
    */
+  /** rawfile 材质集版本：材质图内容按编号重排时递增 ⇒ 一次性清掉按编号落盘的合成/模糊缓存
+   *  （2026-10-07 用户要求 001↔004 内容互换 ⇒ 升到 2；否则旧缓存会顶着新编号继续显示） */
+  private static readonly TEX_SET_VER: number = 2;
+  private static readonly KEY_TEX_SET_VER: string = 'ReaderTexSetVer';
+  private static setVerChecked: boolean = false;
+
   static items(ctx: common.UIAbilityContext): TextureItem[] {
+    ReaderTexture.bustStaleTextureCacheOnce(ctx);
     if (ReaderTexture.itemsCache !== null) {
       return ReaderTexture.itemsCache;
     }
@@ -98,6 +105,67 @@ export class ReaderTexture {
     out.sort((a: TextureItem, b: TextureItem) => a.id - b.id);
     ReaderTexture.itemsCache = out;
     return out;
+  }
+
+  /** 一次性清道夫（进程内只跑一次）：材质集版本落后 ⇒ 清 cacheDir/readerbg（含 blur 子目录）。
+   *  ⚠️ 只动 **cacheDir**：用户导入的自定义背景**源图**在 filesDir/readerbg/custom，绝不波及。 */
+  private static bustStaleTextureCacheOnce(ctx: common.UIAbilityContext): void {
+    if (ReaderTexture.setVerChecked) {
+      return;
+    }
+    ReaderTexture.setVerChecked = true;
+    let stale: boolean = true;
+    try {
+      const ver: number = PreferencesUtil.getSync(ReaderTexture.KEY_TEX_SET_VER, 0) as number;
+      stale = ver < ReaderTexture.TEX_SET_VER;
+    } catch (e) {
+      // 读不到 ⇒ 按需清理
+    }
+    if (!stale) {
+      return;
+    }
+    try {
+      ReaderTexture.removeDirRecursive(ctx.cacheDir + '/readerbg');
+    } catch (e) {
+      // 清理失败不影响功能：最坏是首次仍显示旧合成图，下次进入再清
+    }
+    try {
+      PreferencesUtil.putSync(ReaderTexture.KEY_TEX_SET_VER, ReaderTexture.TEX_SET_VER);
+    } catch (e) {
+      // 落盘失败 ⇒ 下次进 reader 再清一次（幂等）
+    }
+  }
+
+  private static removeDirRecursive(dir: string): void {
+    let entries: string[] = [];
+    try {
+      entries = fs.listFileSync(dir);
+    } catch (e) {
+      return; // 目录不存在 = 没有旧缓存
+    }
+    for (const n of entries) {
+      const p: string = dir + '/' + n;
+      let isDir: boolean = false;
+      try {
+        isDir = fs.statSync(p).isDirectory();
+      } catch (e) {
+        continue;
+      }
+      if (isDir) {
+        ReaderTexture.removeDirRecursive(p);
+      } else {
+        try {
+          fs.unlinkSync(p);
+        } catch (e) {
+          // 单个文件删除失败不阻断
+        }
+      }
+    }
+    try {
+      fs.rmdirSync(dir);
+    } catch (e) {
+      // 目录删除失败不阻断
+    }
   }
 
   static byId(ctx: common.UIAbilityContext, id: number): TextureItem | null {
