@@ -11,6 +11,7 @@ import { avSession as avSessionKit } from '@kit.AVSessionKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { wantAgent, common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { image } from '@kit.ImageKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { bookParser } from '@kit.ReaderKit';
@@ -23,8 +24,12 @@ import { classifyDialogueGenders, SpeakerItem } from './TtsSpeaker';
 import { decodeMp3ToPcm, PcmDecodeResult } from './NativeDecoder';
 import { synthesizeLocalWav, LOCAL_TTS_SAMPLE_RATE } from './LocalTtsClient';
 import { ListenUnlock } from '../common/utils/ListenUnlock';
-import { computePausePoints, applyPauses, buildSentenceTimeline, lookupOrigMs } from './PauseSplicer';
+import { computePausePoints, applyPauses, buildSentenceTimeline, buildLyricTimeline, lookupOrigMs,
+  SentenceMark } from './PauseSplicer';
 import { PcmPlayer, INTERRUPT_REBUILD_WHEN_STUCK } from './PcmPlayer';
+import { loadAppIconCover } from './SessionCover';
+import { PreferencesUtil } from '@pura/harmony-utils';
+import MySetConstants from '../common/constants/MySetConstants';
 
 const DOMAIN = 0x0001;
 const TAG = 'TtsEngine';
@@ -35,7 +40,13 @@ const MAX_CHUNKS_PER_CHAPTER = 300;
 
 /**
  * ── T1-B 长时任务安全生命周期开关 ────────────────────────────────────────
- * **默认 false = 旧行为**（只用 `bgRunning` 做守卫）。后台/系统行为无法本地验证，
+ * **当前 = `true`（2026-10-08 开启）**。
+ *   开启原因（上架合规）：官方《Background Tasks Kit 接入规范》的**违规清单**逐字含
+ *   「应用执行完规定场景的业务后，**未及时取消长时任务**」，而旧路径的竞态会让"撤销"被跳过
+ *   ⇒ 残留一个长时任务（详见下方"旧实现的竞态"）。
+ *   ⚠️ 旧值 `false` 的语义与竞态分析**全部保留在下方**；**任何异常把 `false` 改回来即完全回退**。
+ *
+ * （以下为原注释，逐字保留）**默认 false = 旧行为**（只用 `bgRunning` 做守卫）。后台/系统行为无法本地验证，
  * 故新路径默认关闭；真机验证通过后再改为 true。任何异常改回 false 即完全回退。
  *
  * **旧实现的竞态（代码级可证）**：
@@ -60,11 +71,21 @@ const MAX_CHUNKS_PER_CHAPTER = 300;
  *  2. 正常长时间后台朗读**不受影响**（不得出现播放中被挂起）；
  *  3. 自然读完（全书/定时章节数/睡眠定时）后长时任务确实被取消。
  */
-const BG_TASK_SAFE_LIFECYCLE: boolean = false;
+const BG_TASK_SAFE_LIFECYCLE: boolean = true;
 
 /**
  * ── T1-C1 长时任务「通知可见性」开关 ────────────────────────────────────────
- * **默认 false = 旧行为**（`startBackgroundRunning(ctx, BackgroundMode.AUDIO_PLAYBACK, agent)`，
+ * **当前 = `true`（2026-10-08 开启）**。
+ *   开启原因（上架合规 + 可观测性）：只有拿到 `notificationId` / `continuousTaskId`，
+ *   才能在真机上判断"系统到底建没建长时任务通知"（旧重载拿不到，只能看系统的 `notification -1`）；
+ *   同时为将来用 `stopBackgroundRunning(ctx, continuousTaskId)`（@since 21）**按 ID 精确撤销**铺路。
+ *   ⚠️ **开启本开关的前提**：`startBackground()` 的新路径里必须保留
+ *   `TtsEngine.registerBgTaskListeners();` —— 新路径是 `return startBackgroundRunning(...)`，
+ *   **不会执行旧路径里的注册**，漏了就会丢 `continuousTaskSuspend`/`continuousTaskActive` 监听
+ *   （`TTS_NET_RESILIENCE` 依赖它在系统唤醒后**立即探活**）。该调用已于 2026-10-08 一并补上。
+ *   ⚠️ **任何异常把 `false` 改回来即完全回退**（旧重载行为逐字不变）。
+ *
+ * （以下为原注释，逐字保留）**默认 false = 旧行为**（`startBackgroundRunning(ctx, BackgroundMode.AUDIO_PLAYBACK, agent)`，
  * 返回 `Promise<void>`，**拿不到 notificationId**）。
  * 新路径改用返回 `ContinuousTaskNotification` 的重载，把 notificationId 打进日志。
  *
@@ -94,11 +115,22 @@ const BG_TASK_SAFE_LIFECYCLE: boolean = false;
  *  3. 若拿到正数且后台不再被杀，则根因确认为"通知未创建"。
  * 任何异常改回 false 即完全回退（旧重载，行为逐字不变）。
  */
-const BG_TASK_NOTIFICATION_AWARE: boolean = false;
+const BG_TASK_NOTIFICATION_AWARE: boolean = true;
 
 /**
  * ── T1-C2 长时任务「重复申请最小间隔」保护 ──────────────────────────────────
- * **默认 false = 旧行为**（立即申请，不做任何延时）。
+ * **当前 = `true`（2026-10-08 开启）**。
+ *   开启原因（上架合规）：官方《Background Tasks Kit 接入规范》的**违规清单**逐字含
+ *   「**用户主动停止（通过删除长时任务通知、删除AVSession通知等方式）并取消长时任务后，
+ *   立即再次申请长时任务。**」，而真机日志实测我们在停止后 **13.399 秒**就再次申请
+ *   （`日志.md` L11011 → L12401）—— 已撞上该条。处罚口径：「严重影响：立刻在违规场景
+ *   **禁止使用长时任务**」/「轻微影响：**7 个自然日内**完成整改并反馈」。
+ *   ⚠️ 旧值 `false` = 旧行为（立即申请，不做任何延时）。**任何异常把 `false` 改回来即完全回退**。
+ *   ⚠️ **已知代价（真机必验）**：距上次停止不足 `BG_TASK_MIN_RESTART_INTERVAL_MS` 时的重启会被
+ *   **延后**，该窗口内**没有长时任务保护** ⇒ 若在窗口内立刻退后台/锁屏，可能被系统冻结。
+ *   验证点见本块末尾第 2 条（"延时窗口内音频应正常播放（此时应用在前台，不依赖长时任务）"）。
+ *
+ * （以下为原注释，逐字保留）**默认 false = 旧行为**（立即申请，不做任何延时）。
  * 新路径：若距上次 `stopBackground()` 不足 `BG_TASK_MIN_RESTART_INTERVAL_MS`，
  * 则**延后**到间隔满足后再申请（而不是放弃申请——放弃会导致彻底没有后台保护）。
  *
@@ -115,9 +147,39 @@ const BG_TASK_NOTIFICATION_AWARE: boolean = false;
  *  3. 正常"停止后隔很久再播"不受影响（间隔已满足，立即申请）。
  * 任何异常改回 false 即完全回退。
  */
-const BG_TASK_RESTART_GUARD: boolean = false;
+const BG_TASK_RESTART_GUARD: boolean = true;
 /** 最小重复申请间隔（毫秒）。取值依据：真机观测到的违规间隔为 13.399 秒，故取 15 秒留余量。 */
 const BG_TASK_MIN_RESTART_INTERVAL_MS: number = 15000;
+
+/**
+ * ── 暂停释放长时任务（2026-10-08，用户拍板方案 b：折中）──────────────────────
+ *
+ * **行为**：用户**主动暂停**后，若一直没恢复，满 `PAUSE_BG_RELEASE_MS` 就**主动取消长时任务**
+ * （播放状态仍保持 `paused`、AVSession 播控卡片**不销毁**）；用户恢复播放时若发现任务已释放，
+ * 立即重新申请。`0` = **关闭（回到旧行为：暂停期间一直持有任务）**，一行即可回退。
+ *
+ * **官方依据**（`documentId 开发指南/Background_Tasks_Kit_后台任务开发服务/长时任务_ArkTS/continuous-task` 原文）：
+ *   「应用按需求申请长时任务，当应用无需在后台运行（任务结束）时，要**及时主动取消**长时任务，
+ *     否则应用退至后台会被系统挂起。**例如用户主动点击音乐暂停播放时，应用需及时取消对应的长时任务；
+ *     用户再次点击音乐播放时，需重新申请长时任务。**」
+ *   配合《Background Tasks Kit 接入规范》违规清单里的「未及时取消长时任务」/「恶意保活」两条。
+ *
+ * **为什么取 5 分钟而不是"暂停即取消"**（折中的理由）：
+ *  ① 用户"暂停几秒~几分钟再继续"是最常见动作 —— 这段内不动任务，手感与旧行为**完全一致**；
+ *  ② 5 分钟 ≫ `BG_TASK_MIN_RESTART_INTERVAL_MS`(15 s) ⇒ 恢复时**不会**撞 ③ 的"延后申请"，
+ *     不会出现"恢复后十几秒没有保活"的窗口；
+ *  ③ 只有"真的长时间不听了"才释放，既不长时间空占任务，也不影响正常使用。
+ *
+ * **只在用户主动暂停时武装**（`pause()`），**不**覆盖这些暂停路径（有意为之，代码里有各自注释）：
+ *  · `pausedByNetwork`（断网暂停）：**此时应用仍在写垫片音频**（`TTS_SILENCE_KEEPALIVE`），
+ *    释放任务反而会让垫片失去保活意义 ⇒ **绝不能释放**；
+ *  · 系统打断（来电/其他应用抢占，`onInterrupted`/`onStopped` 直接 `setState('paused')`）：
+ *    属系统行为，且系统会用 `SYSTEM_SUSPEND_AUDIO_PLAYBACK_NOT_RUNNING=6` 自行管控。
+ *
+ * **已知代价（真机必验，见 docs §8 的 V10）**：释放后应用在后台可能被系统冻结/回收，
+ * 此时用户从**锁屏/耳机**点播放，恢复是否及时 ⇒ 需真机确认。
+ */
+const PAUSE_BG_RELEASE_MS: number = 5 * 60 * 1000;
 
 /**
  * ── T2 网络韧性新路径（2026-09-24）：熄屏/后台听书「卡死不恢复」修复 ─────────
@@ -422,6 +484,138 @@ async function padYield(): Promise<void> {
  */
 const AVSESSION_FULL_CONTROL: boolean = false;
 
+/**
+ * ── 歌词前置留白（ms）：给每一句歌词预留 2s 提前量 ─────────────────────────
+ *
+ * 需求（用户口径 2026-10-08）：锁屏播放组件 / 下拉播控中心播放组件（横向滚动）与
+ * 下拉左滑后的完整歌词页（竖向滚动）三处的歌词"太跟随语音"，每句开头没有留白，
+ * 用户来不及看到句首几个字 ⇒ 每句前面加约 2s 留白，然后正常滚动。
+ *
+ * 机制（这三处是**同一份**歌词，改这一处三处同时生效）：
+ *  三处都是系统组件，只消费 `AVMetadata.lyric`（标准 LRC），应用侧没有自绘歌词页
+ *  （全工程搜索 `lyric` / `歌词` 仅命中本文件；`onSegment` 的唯一消费方是
+ *   ReaderPage3 的朗读浮条，非歌词）。系统把 LRC 时间标签与**播放位置**对齐来决定
+ *  当前高亮行，因此把标签整体提前 = 该行提前显示。
+ *
+ * 官方依据（原文）：
+ *  · SDK `@ohos.multimedia.avsession.d.ts:3097-3102`
+ *      `/** The lyric of the media, it should be in standard lyric format *\/` `lyric?: string;`
+ *  · SDK 同文件 `:3050` `duration?: number;`
+ *      「The duration of this media, **used to automatically calculate playback position**,
+ *        described by milliseconds.」⇒ 两次位置上报之间，系统自己按秒推进播放位置
+ *      （否则只靠换行推送，歌词行之间不会移动）。
+ *  · SDK 同文件 `:3544-3558` `PlaybackPosition`
+ *      `elapsedTime`「Elapsed time(position) of this media **set by the app**」
+ *      `updateTime`「Record the system time when elapsedTime is set」⇒ 位置是
+ *      「app 上报值 + 系统墙钟增量」，不会在两次上报之间跳变；因此**平移标签**就能
+ *      整体平移高亮时刻。
+ *  · 官方 FAQ（documentId `FAQ/音频和视频/音视频播控_AVSession/如何在播控中心显示歌词/
+ *    faqs-avsession-5`）：「歌词格式必须为标准的lyric格式，其他格式不支持。」
+ *
+ * 为什么**不改** `pushSessionPosition` 的上报值：position 同时是进度条/投播的
+ * 真实播放位置，把它整体加 2s 会让进度撒谎（官方 `:3050` 的语义是"位置"）。
+ * 只要标签平移，系统墙钟（真实位置）穿过标签阈值的时刻就整体提前 2s。
+ *
+ * 取值：正值 = 提前（留白）；`0` = 只回退"提前量"这一项。
+ *
+ * ⚠️ **取值规则（血泪教训，2026-10-08 三轮真机）**：这是**统一平移**，行内进度会一起
+ * 提前，所以留白**不能超过该行时长的 10~15%**。2s 用在 4~6s 的长句上还凑合（用户实测
+ * "竖向非常完美、横向完全跟不上"），用在切短后 2~3s 的小句上会直接串行。
+ * ⇒ 配合 `LRC_CLAUSE_SPLIT = true`（小句粒度）取 **400ms**：只够覆盖"换行动画 + 眼睛
+ * 反应"，行内位移约 15%，肉眼几乎不可辨。
+ * 若觉得竖向留白不够而加大它，横向会等比变差 —— 这是本组件物理上的取舍，不是参数没调好。
+ *
+ * ⚠️ 2026-10-08 真机结论（三轮，用于后续排障，别重复试）：
+ *  ① 留白 0 + 只推 LRC：横向滚动与语音严格同步，但**长句句首看不到**（滚动窗口跟着语音跑）。
+ *  ② 留白 2s + 只推 LRC：竖向列表"非常完美"，横向"完全跟不上"（行内进度一起前移 2s）。
+ *  ③ 加推 `singleLyricText`（横向专属）：横向**确实吃这个字段**，但它是**整句硬替换、
+ *     没有滚动过渡** ⇒ 用户实测"换句直接闪跳 + 进度不对齐"。⇒ 已默认关闭，
+ *     横向必须走 LRC 通道才有平滑滚动。
+ *
+ * 已知边界：块是**按段**切的（`SentenceSplitter.CHUNK_MAX_UNITS=800`），某块的 LRC
+ * 在该块起播时才追加推送（`playChunk` 内），所以**每段第一句**只能拿到 ≈0 的提前量。
+ */
+const LRC_LEAD_MS: number = 400;
+
+/**
+ * ── 歌词行按"小句"切分（句末标点 + 逗号类标点都断行）─────────────────────
+ *
+ * **默认 true**：这是"看不到句首几个字"的**根治手段**（原因与依据见
+ * `PauseSplicer.buildLyricTimeline` 注释）。行短到能整行显示 ⇒ 横向组件不再需要
+ * 跟着语音滚动 ⇒ 句首自然看得见，而且是"出现后停住、到下一小句再整体换掉"的
+ * 观感（正是用户要的"出现时停留一下，然后再滚动"），且**不存在叠加**
+ * （每行时间仍来自该小句真实朗读起点，绝对时间轴）。
+ *
+ * 回退：改 false ⇒ LRC 行回到句粒度（旧行为），只影响歌词，不影响朗读/浮条。
+ */
+const LRC_CLAUSE_SPLIT: boolean = true;
+
+/**
+ * LRC 标签最小间隔（ms）＝ `formatLrcTime` 的百分秒分辨率。
+ * 官方原文（documentId `API参考/AVSession_Kit_音视频播控服务/ArkTS_API/
+ * ohos_multimedia_avsession_媒体会话管理_/Interfaces_其他/arkts-apis-avsession-i`，
+ * `AVMetadata` 表 `lyric` 行）：
+ *   「说明：系统支持简单版的LRC格式（Simple LRC format）的歌词文本内容。当传入的歌词
+ *     内容不规范（例如：**出现重复的时间戳**等），将导致**解析失败**，并在系统中显示异常。」
+ * `LRC_LEAD_MS` 的 `max(0, …)` 夹取会让本章最前面一两句都变成 `[00:00.00]`（重复时间戳）
+ * ⇒ 这里强制严格递增。
+ */
+const LRC_TAG_MIN_GAP_MS: number = 10;
+
+/**
+ * ── 横向（单行）歌词开关：给"副标题区域"那一行单独走无时间戳通道 ─────────────
+ *
+ * 为什么需要它（真机反馈 2026-10-08）：把 LRC 标签整体提前 2s 后，**竖向列表页非常完美**，
+ * 但**横向组件完全对不上**。原因是两者的维度不同：
+ *  · 竖向列表只消费"当前是哪一行"这一个维度 ⇒ 提前量 = 留白，正好；
+ *  · 横向那一行还要算"这一行内的文本位置"（官方：播控中心"会自动按照进度，在副标题位置
+ *    刷新显示"）⇒ 提前量把**行内位置**也一起推前了 2s。
+ * 同一份 LRC 无法只提前其一 —— 所以横向改用 SDK 的另一个字段：
+ *
+ * `AVMetadata.singleLyricText`（`@since 17`）官方原文：
+ *   「单条媒体歌词内容。应用需将歌词内容拼接为一个字符串传入（**不包含时间戳**）。」
+ * 它没有时间轴 ⇒ 系统拿到的只是"现在要显示的这一句"，**不存在行内进度**，也就**不可能叠加**
+ * （每次推送都是一次绝对赋值，不参与任何时间轴运算）。出现后它就停在那里（长句由系统自己
+ * 决定是否滚动），到下一句再整体换掉 —— 正是"内容出现时停留一下，然后再换行"的效果。
+ *
+ * 官方还明确 `setAVMetadata` 是**按字段增量更新**的（同上文档 `AVMetadata` 表 `assetId` 行）：
+ *   「若该属性维持不变，且不设置其他媒体元数据信息，那么将不会更新对应的媒体元数据信息。」
+ * ⇒ 本函数只推 `{ assetId, singleLyricText }`，**不重推整章 LRC**，不会碰现在很好的竖向列表。
+ *
+ * 回退：`SINGLE_LINE_LYRIC = false` ⇒ 完全不调用 `setAVMetadata`，横向回到"只吃 LRC"的旧行为
+ * （逐字不变，除了 `LRC_LEAD_MS` 的提前量）。
+ *
+ * ⚠️ **2026-10-08 真机实测：这条路已否决，默认 false。**
+ * 横向组件确实吃 `singleLyricText`（推了之后立刻变了行为 ⇒ 字段被消费，本项**已证**），
+ * 但它的表现是**整句硬替换、没有横向滚动过渡**，用户实测原话：
+ *   「换句，直接闪跳，然后进度不对齐，总之不对……不符合人性化」
+ * ⇒ 横向组件只有走 LRC（有 tag + 位置 → 有滚动过渡）才是平滑的。
+ * 代码保留（不删）以便后续再验证或换用法，但**默认关闭**。
+ */
+const SINGLE_LINE_LYRIC: boolean = false;
+
+/**
+ * 横向单行歌词的**独立**提前量（ms）：该句在朗读开始前多少毫秒就把文字交给系统。
+ * 用户口径是"内容出现的时候停留一秒，然后滚动" ⇒ 1000。
+ * 与 `LRC_LEAD_MS` 互不影响：这个只影响"哪一句文字被摆上去"，不参与任何时间轴计算。
+ */
+const SINGLE_LINE_LEAD_MS: number = 1000;
+
+/**
+ * ── 播控中心 / 锁屏 / 实况窗封面 = **应用图标**（2026-10-08 用户口径）───────────
+ * 「我需要不是书的封面，我需要就是 app 图标，正好正方形，天生完美」
+ *
+ * 应用图标天生 1:1 ⇒ 直接满足官方对封面的比例要求（`基础播控` §媒体封面：「音乐类媒体
+ * 内容应提供比例为1:1的方形封面图片，建议分辨率为800px*800px……最小分辨率是300px*300px」）。
+ * 实况窗与播控中心同源（官方 FAQ `faqs-liveview-5`：「自动接入实况窗的系统服务包括……
+ * AVSession Kit（音视频播控服务）」）⇒ 设一次 `mediaImage`，三处一起有封面。
+ * 合成与依据详见 `tts/SessionCover.ets` 头注释。
+ *
+ * **一键回退**：`false` ⇒ 完全不调用 `setAVMetadata` 带封面，回到系统默认占位图
+ * （行为与本次改动前逐字一致）。设 `mediaImage` 属"系统行为不可本地验证"的改动，故留此开关。
+ */
+const SESSION_COVER_APP_ICON: boolean = true;
+
 export type TtsState = 'stopped' | 'playing' | 'paused';
 
 export interface TtsCallbacks {
@@ -565,7 +759,23 @@ export class TtsEngine {
    * 仅 `BG_TASK_RESTART_GUARD` 开启时被写入/读取。
    */
   private static bgRestartTimer: number = -1;
+  /**
+   * 暂停释放长时任务的定时器句柄（`-1` = 未武装）。仅 `PAUSE_BG_RELEASE_MS > 0` 时被写入。
+   * 武装点：`pause()`（**仅用户主动暂停**）；解除点：`resume()` / `stopInternal()`。
+   */
+  private static pauseBgTimer: number = -1;
+  /** 本次暂停是否**已经**因超时释放过长时任务（`true` ⇒ 恢复时需要重新申请）。 */
+  private static pauseBgReleased: boolean = false;
   private static avSession: avSessionKit.AVSession | null = null;
+  /**
+   * 本书封面（`AVMetadata.mediaImage`；`null` = 还没解出来或不可用）。
+   * 播控中心 / 锁屏 / 实况窗（灵动岛）**共用这一份**（实况窗由 AVSession 自动接入，
+   * 见 `SessionCover.ets` 头注释的官方原文）。解码完成前保持 null ⇒ 系统默认占位图。
+   *
+   * ⚠️ 换书时**直接覆盖**、不主动 `release()` 旧 PixelMap：`mediaImage` 交给系统后，
+   * 释放时机无法本地验证（系统侧可能仍持有），交给 GC 回收最安全；单张上限 800×800×4B≈2.5MB。
+   */
+  private static sessionCover: image.PixelMap | string | null = null;
   private static bookTitle: string = '';
   /** 当前章标题（`notifyChapter` 维护；AVSession 歌词/歌手栏共用） */
   private static curChapterTitle: string = '';
@@ -581,6 +791,11 @@ export class TtsEngine {
   private static chapterLrcLines: string[] = [];
   /** 已追加进 LRC 的块数（首播守卫：重播/回退不重复追加） */
   private static lrcAppendedChunks: number = 0;
+  /**
+   * 上一行 LRC 标签的毫秒值（`-1` = 本章还没有标签）。
+   * 只为保证标签**严格递增**（官方：重复时间戳会导致解析失败、显示异常），见 `LRC_TAG_MIN_GAP_MS`。
+   */
+  private static chapterLrcLastTagMs: number = -1;
   /** 本章时间轴基准：已首播块的实际拼接时长累计（ms）＝下一块首句的 LRC 绝对时间 */
   private static chapterElapsedBase: number = 0;
   /** 本章已首播块数（章时长估算用） */
@@ -940,6 +1155,11 @@ export class TtsEngine {
     TtsEngine.handler = handler;
     TtsEngine.prefs = prefs;
     TtsEngine.bookTitle = bookTitle;
+    // 播控中心/锁屏/实况窗的封面 = 应用图标（用户口径 2026-10-08，见 SESSION_COVER_APP_ICON）。
+    // 不 await：解码/合成失败或慢都不能拖住开播。
+    if (SESSION_COVER_APP_ICON) {
+      TtsEngine.applyAppIconCover(context);
+    }
     try {
       TtsEngine.spineCount = handler.getSpineList().length;
     } catch (e) {
@@ -982,6 +1202,9 @@ export class TtsEngine {
     if (TtsEngine.playingMidFile && TtsEngine.player !== null) {
       TtsEngine.player.pause();
     }
+    // ★ 2026-10-08：用户主动暂停 ⇒ 武装"暂停满 N 分钟释放长时任务"（见 `PAUSE_BG_RELEASE_MS` 注释）。
+    //   位置在最后：只有**确实进入暂停**（上面的 isPlaying 守卫已过）才武装。
+    TtsEngine.armPauseBgRelease();
   }
 
   /**
@@ -991,6 +1214,16 @@ export class TtsEngine {
    *   绝不续播旧位置的缓存（对齐"不同页面就在该页所在位置重新播放"的语义）。
    */
   static resume(): void {
+    // ★ 2026-10-08：**暂停释放的"回补"**（见 `PAUSE_BG_RELEASE_MS` 注释）。
+    //   ⚠️ 必须放在**最前面**：下面 `if (!TtsEngine.isPaused())` 分支里有 early return
+    //   （`:1190` 那类），放到后面会被跳过 ⇒ 表现为"恢复播放了、后台却不保活"。
+    //   释放发生在 ≥ PAUSE_BG_RELEASE_MS(5 min) 之前 ⇒ 远超 ③ 的 15 s 间隔，不会被延后申请。
+    TtsEngine.clearPauseBgRelease();
+    if (TtsEngine.pauseBgReleased) {
+      TtsEngine.pauseBgReleased = false;
+      hilog.info(DOMAIN, TAG, 'pause bg re-request: task was released during pause -> startBackground');
+      TtsEngine.startBackground();
+    }
     let forceRebuild: boolean = false;
     if (!TtsEngine.isPaused()) {
       // ---------- T1-D2 兜底：状态显示"在播"，但音频管线其实已死 ----------
@@ -1924,28 +2157,49 @@ export class TtsEngine {
         chunk.words[0]?.text ?? '', chunk.words[1]?.text ?? '', chunk.words[2]?.text ?? '');
     }
     const timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
+    // 歌词行时间线：默认**小句**粒度（见 LRC_CLAUSE_SPLIT），只服务 LRC 行；
+    // `timeline`（句级）仍然只服务播放进度/浮条，两者语义不许混用。
+    const lyricMarks: SentenceMark[] = LRC_CLAUSE_SPLIT
+      ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap)
+      : timeline;
     // ── 增量 LRC（播控中心歌词页，2026-09-24）────────────────────────────────
-    // 句级时间轴在块解码时才产生（buildSentenceTimeline）⇒ 按块增量追加：首播块把
-    // 整块逐句写成 `[mm:ss.xx]文本` 行（时间 = 本章时间轴绝对值），随 setAVMetadata
-    // 推给系统。重播/回退的块不重复追加（lrcAppendedChunks 首播守卫）。
+    // 时间轴在块解码时才产生 ⇒ 按块增量追加：首播块把整块逐行写成 `[mm:ss.xx]文本`
+    // 行（时间 = 本章时间轴绝对值），随 setAVMetadata 推给系统。
+    // 重播/回退的块不重复追加（lrcAppendedChunks 首播守卫）。
     const chunkStartMs = TtsEngine.chapterElapsedBase;
     TtsEngine.chapterTotalChunks = total;
     const isFirstPlay = index >= TtsEngine.lrcAppendedChunks;
     if (isFirstPlay) {
-      for (let m = 0; m < timeline.length; m++) {
-        if (timeline[m].text.length === 0) {
+      // 歌词前置留白（见 LRC_LEAD_MS 的取值规则）：标签整体提前 ⇒ 该行在朗读开始前
+      // 就显示出来。统一平移不改变标签的单调性与行间距。
+      let firstTag: string = '';
+      let lastTag: string = '';
+      let pushed: number = 0;
+      for (let m = 0; m < lyricMarks.length; m++) {
+        if (lyricMarks[m].text.length === 0) {
           continue;
         }
-        TtsEngine.chapterLrcLines.push(TtsEngine.formatLrcTime(chunkStartMs + timeline[m].startAdjMs)
-          + timeline[m].text);
+        const tag = TtsEngine.formatLrcTime(TtsEngine.lrcTagMs(chunkStartMs + lyricMarks[m].startAdjMs));
+        if (pushed === 0) {
+          firstTag = tag;
+        }
+        lastTag = tag;
+        pushed++;
+        TtsEngine.chapterLrcLines.push(tag + lyricMarks[m].text);
       }
       TtsEngine.lrcAppendedChunks = index + 1;
+      // 取证用（每块一行，与既有 `splice:` 同级噪声）：可直接核对提前量与切行粒度
+      hilog.info(DOMAIN, TAG,
+        'lrc: lead=%{public}d clause=%{public}s sents=%{public}d lines=%{public}d first=%{public}s last=%{public}s',
+        LRC_LEAD_MS, LRC_CLAUSE_SPLIT ? 'true' : 'false', timeline.length, pushed, firstTag, lastTag);
       TtsEngine.pushSessionLyric();
     }
     // 播放：句级文本 + 句内字符进度回传
     TtsEngine.playingMidFile = true;
     let lastMark = -1;
     let lastCharInSentence = -1;
+    // 横向单行歌词的已推句下标（-1 = 本块还没推过）；只影响 singleLyricText
+    let lastSingleLine = -1;
     await player.play(spliced.pcm, spliced.sampleRate, (ms: number): void => {
       for (let m = timeline.length - 1; m >= 0; m--) {
         if (ms >= timeline[m].startAdjMs) {
@@ -1980,6 +2234,19 @@ export class TtsEngine {
             }
           }
           break;
+        }
+      }
+      // 横向单行歌词（副标题区域）：**独立提前量**，与上面的 LRC 标签互不影响。
+      // 只推 singleLyricText（无时间戳）⇒ 系统没有行内进度可算，不会随时间轴叠加。
+      if (SINGLE_LINE_LYRIC) {
+        for (let q = timeline.length - 1; q >= 0; q--) {
+          if (ms + SINGLE_LINE_LEAD_MS >= timeline[q].startAdjMs) {
+            if (q !== lastSingleLine) {
+              lastSingleLine = q;
+              TtsEngine.pushSessionSingleLine(timeline[q].text);
+            }
+            break;
+          }
         }
       }
     });
@@ -2300,6 +2567,11 @@ export class TtsEngine {
   private static stopInternal(reason: string): void {
     TtsEngine.sessionGen++;
     TtsEngine.state = 'stopped';
+    // ★ 2026-10-08：停止 ⇒ "暂停释放"整条状态作废（定时器 + 已释放标记）。
+    //   放这里而不是 `stop()`：`start()` 里"重新开播前先停旧的"也走 `stopInternal`，
+    //   那条路径同样应该把暂停态清干净。
+    TtsEngine.clearPauseBgRelease();
+    TtsEngine.pauseBgReleased = false;
     TtsEngine.interruptedBySystem = false;
     TtsEngine.pausedByNetwork = false;
     TtsEngine.playingMidFile = false;
@@ -2345,6 +2617,7 @@ export class TtsEngine {
     TtsEngine.curSpineIndex = spineIndex;
     TtsEngine.chapterLrcLines = [];
     TtsEngine.lrcAppendedChunks = 0;
+    TtsEngine.chapterLrcLastTagMs = -1;
     TtsEngine.chapterElapsedBase = 0;
     TtsEngine.chapterPlayedCount = 0;
     TtsEngine.chapterTotalChunks = 0;
@@ -2418,6 +2691,40 @@ export class TtsEngine {
     }
   }
 
+  // ---------- 暂停释放长时任务（2026-10-08，方案 b；见 `PAUSE_BG_RELEASE_MS` 头注释）----------
+
+  /**
+   * 武装"暂停满 N 分钟就释放长时任务"的定时器（幂等：先清后装）。
+   * 只在 `pause()`（**用户主动暂停**）里调用；`PAUSE_BG_RELEASE_MS <= 0` ⇒ 直接返回（等于关闭）。
+   */
+  private static armPauseBgRelease(): void {
+    TtsEngine.clearPauseBgRelease();
+    if (PAUSE_BG_RELEASE_MS <= 0) {
+      return;
+    }
+    TtsEngine.pauseBgTimer = setTimeout((): void => {
+      TtsEngine.pauseBgTimer = -1;
+      // 双保险：到点时必须**仍在暂停**，且**不是**"断网暂停"——
+      // 断网暂停期间应用还在写垫片音频（`TTS_SILENCE_KEEPALIVE`），释放任务会让垫片失去保活意义。
+      if (!TtsEngine.isPaused() || TtsEngine.pausedByNetwork) {
+        return;
+      }
+      TtsEngine.pauseBgReleased = true;
+      hilog.info(DOMAIN, TAG, 'pause bg release: paused >= %{public}d ms -> stopBackground',
+        PAUSE_BG_RELEASE_MS);
+      // 走统一的撤销入口：① 保证"撤销一定生效"、③ 记录 `bgLastStopAt`（供下次申请算间隔）
+      TtsEngine.stopBackground();
+    }, PAUSE_BG_RELEASE_MS);
+  }
+
+  /** 解除武装（幂等）。由 `resume()` / `stopInternal()` 调用。 */
+  private static clearPauseBgRelease(): void {
+    if (TtsEngine.pauseBgTimer !== -1) {
+      clearTimeout(TtsEngine.pauseBgTimer);
+      TtsEngine.pauseBgTimer = -1;
+    }
+  }
+
   private static startBackground(): void {
     if (TtsEngine.bgRunning || TtsEngine.context === null) {
       return;
@@ -2468,6 +2775,13 @@ export class TtsEngine {
               hilog.info(DOMAIN, TAG, 'bg task started notificationId=%{public}d taskId=%{public}d',
                 info.notificationId, taskId);
               TtsEngine.bgRunning = true;
+              // ★ 2026-10-08 补齐（开启 `BG_TASK_NOTIFICATION_AWARE` 的**前置条件**）：
+              //   旧路径在自己下面 `registerBgTaskListeners()`，而本分支是
+              //   `return startBackgroundRunning(...)` —— **不会执行到旧路径那一行**。
+              //   漏掉它就会丢 `continuousTaskSuspend` / `continuousTaskActive` 监听，
+              //   而 `TTS_NET_RESILIENCE` 正依赖后者在**系统唤醒后立即探活**（`:2600-2602`）。
+              //   本函数幂等（`bgListenersRegistered` 守卫），与旧路径重复调用无害。
+              TtsEngine.registerBgTaskListeners();
             }).catch((e: BusinessError): void => {
               hilog.warn(DOMAIN, TAG, 'bg task err %{public}s', JSON.stringify(e));
             });
@@ -2546,17 +2860,47 @@ export class TtsEngine {
   }
 
   // ---------- AVSession（锁屏/通知栏控制） ----------
+  /**
+   * 当前 metadata 的 assetId（**唯一构造点**，勿在别处手拼）。
+   * 官方 API 表 `AVMetadata.assetId` 行原文：「该属性发生变化则**其他元数据属性都将被刷新**」
+   * ⇒ 增量补推（例如封面到位后补 `mediaImage`）必须带**同一个** assetId，否则会被当成新曲目
+   * 把歌词等一起刷新掉。
+   */
+  private static sessionAssetId(): string {
+    return 'legado_tts_' + TtsEngine.bookTitle + '_' + TtsEngine.curSpineIndex;
+  }
+
+  /**
+   * 解码/合成应用图标封面并在会话可用时补一次 metadata（fire-and-forget，失败静默）。
+   * 为什么是应用图标、为什么不用 `getDrawableDescriptor`（分层图标语义未声明）——
+   * 全部依据见 `SessionCover.ets` 头注释。
+   */
+  private static applyAppIconCover(ctx: common.UIAbilityContext): void {
+    loadAppIconCover(ctx).then((cover: image.PixelMap | null): void => {
+      if (cover === null) {
+        hilog.info(DOMAIN, TAG, 'cover: unavailable, keep system default');
+        return;
+      }
+      TtsEngine.sessionCover = cover;
+      // 会话还没建 ⇒ ensureSession() 的首次 metadata 会带上；已建 ⇒ 增量补推一次
+      // （本次调用点 metadata 里可能已有歌词，故走完整的 pushSessionLyric，避免丢字段）
+      if (TtsEngine.avSession !== null) {
+        TtsEngine.pushSessionLyric();
+      }
+    }).catch((e: BusinessError): void => {
+      hilog.warn(DOMAIN, TAG, 'cover: err %{public}s', e.message);
+    });
+  }
+
   private static async ensureSession(): Promise<void> {
     if (TtsEngine.avSession !== null || TtsEngine.context === null) {
       return;
     }
     try {
       const session = await avSessionKit.createAVSession(TtsEngine.context, 'legado_tts', 'audio');
-      await session.setAVMetadata({
-        assetId: 'legado_tts_' + TtsEngine.bookTitle,
-        title: TtsEngine.bookTitle.length > 0 ? TtsEngine.bookTitle : '朗读',
-        artist: '开源阅读 · 朗读'
-      });
+      // 首次 metadata：assetId 用**书级**（此刻还没有章号）；封面若已解好就一起带上
+      await session.setAVMetadata(TtsEngine.sessionMeta('legado_tts_' + TtsEngine.bookTitle,
+        '开源阅读 · 朗读', '', false));
       session.on('play', () => {
         TtsEngine.resume();
       });
@@ -2621,11 +2965,8 @@ export class TtsEngine {
       TtsEngine.curChapterTitle = chapter;
       // assetId 按章区分 ⇒ 换章时系统视为新曲目，歌词页整体重载（LRC 已在
       // notifyChapter 重置，随后由 playChunk 按块增量追加）
-      await TtsEngine.avSession.setAVMetadata({
-        assetId: 'legado_tts_' + TtsEngine.bookTitle + '_' + TtsEngine.curSpineIndex,
-        title: TtsEngine.bookTitle.length > 0 ? TtsEngine.bookTitle : '朗读',
-        artist: chapter.length > 0 ? chapter : '朗读中'
-      });
+      await TtsEngine.avSession.setAVMetadata(TtsEngine.sessionMeta(TtsEngine.sessionAssetId(),
+        chapter.length > 0 ? chapter : '朗读中', '', false));
     } catch (e) {
       // 忽略
     }
@@ -2655,25 +2996,84 @@ export class TtsEngine {
     // chapterDurationEst 注释）；首个块尚未播完时无估算依据，不带该字段
     // （duration:0 会让进度除零，比缺省更糟）。
     if (TtsEngine.chapterDurationEst > 0) {
-      TtsEngine.avSession.setAVMetadata({
-        assetId: 'legado_tts_' + TtsEngine.bookTitle + '_' + TtsEngine.curSpineIndex,
-        title: TtsEngine.bookTitle.length > 0 ? TtsEngine.bookTitle : '朗读',
-        artist: TtsEngine.curChapterTitle.length > 0 ? TtsEngine.curChapterTitle : '朗读中',
-        lyric: TtsEngine.chapterLrcLines.join('\n'),
-        duration: Math.floor(TtsEngine.chapterDurationEst)
-      }).catch((): void => {
+      TtsEngine.avSession.setAVMetadata(TtsEngine.sessionMeta(TtsEngine.sessionAssetId(),
+        TtsEngine.curChapterTitle.length > 0 ? TtsEngine.curChapterTitle : '朗读中',
+        TtsEngine.chapterLrcLines.join('\n'), true)).catch((): void => {
         // 忽略
       });
     } else {
-      TtsEngine.avSession.setAVMetadata({
-        assetId: 'legado_tts_' + TtsEngine.bookTitle + '_' + TtsEngine.curSpineIndex,
-        title: TtsEngine.bookTitle.length > 0 ? TtsEngine.bookTitle : '朗读',
-        artist: TtsEngine.curChapterTitle.length > 0 ? TtsEngine.curChapterTitle : '朗读中',
-        lyric: TtsEngine.chapterLrcLines.join('\n')
-      }).catch((): void => {
+      TtsEngine.avSession.setAVMetadata(TtsEngine.sessionMeta(TtsEngine.sessionAssetId(),
+        TtsEngine.curChapterTitle.length > 0 ? TtsEngine.curChapterTitle : '朗读中',
+        TtsEngine.chapterLrcLines.join('\n'), false)).catch((): void => {
         // 忽略
       });
     }
+  }
+
+  /**
+   * 组装一份 `AVMetadata`（**唯一构造点**：字段拼装只在这里，避免各处漏字段）。
+   *
+   * @param assetId      见 `sessionAssetId()`（增量补推必须用同一个，否则整份 metadata 被刷新）
+   * @param artist       歌手栏文案
+   * @param lyric        LRC 全文；空串 = **不带**该字段（保持系统里已有的歌词）
+   * @param withDuration 是否带上章时长估算（`chapterDurationEst` 为 0 时一律不带：
+   *                     `duration:0` 会让进度除零，比缺省更糟）
+   *
+   * 封面（`mediaImage`）**每次推送都会带上**（一旦解好）：官方 API 表对 string 形态注明
+   * 「仅支持网络路径」，且 `基础播控` §媒体封面 明确「**mediaImage设置PixelMap性能更优**」
+   * ⇒ 每次带上 PixelMap 是官方推荐做法，代价可忽略。
+   */
+  private static sessionMeta(assetId: string, artist: string, lyric: string,
+    withDuration: boolean): avSessionKit.AVMetadata {
+    const meta: avSessionKit.AVMetadata = {
+      assetId: assetId,
+      title: TtsEngine.sessionTitle(),
+      artist: artist
+    };
+    if (lyric.length > 0) {
+      meta.lyric = lyric;
+    }
+    if (withDuration && TtsEngine.chapterDurationEst > 0) {
+      meta.duration = Math.floor(TtsEngine.chapterDurationEst);
+    }
+    if (TtsEngine.sessionCover !== null) {
+      meta.mediaImage = TtsEngine.sessionCover;
+    }
+    return meta;
+  }
+
+  /**
+   * 听书会话在**系统界面**（锁屏 / 灵动岛·实况窗 / 下拉播控中心卡片）上显示的书名。
+   *
+   * 需求（用户口径 2026-10-08）：这三处与书架**同一套**显示规则 —— 设置里
+   * 「显示文件拓展名」（`MySetPage.ets:157`，Preferences 键 `MySetConstants.SET_EXT_NAME`，
+   * 默认 `false`）关着时，不要把 `.txt` 这类后缀带出来。
+   *
+   * ⚠️ 去后缀规则必须与书架**逐字一致**（`BookInfos.ets:34-37` 的
+   * `bookName.replace(/\.[a-zA-Z0-9]{1,5}$/, '')`），否则会出现"书架没有、锁屏却有"的
+   * 不一致；两处若将来要合并成一个公共 helper，需要同时改书架文件（跨辖区，先报备）。
+   *
+   * ⚠️ 只用于 `AVMetadata.title`。**不要**拿它改 `assetId`：assetId 是标识符，
+   * 不该随显示设置变化（官方 API 表 `assetId` 行：「该属性发生变化则其他元数据属性都将被刷新」）。
+   *
+   * 读设置失败时按"不显示后缀"处理（与默认值一致），且绝不影响朗读主链路。
+   */
+  private static sessionTitle(): string {
+    const raw: string = TtsEngine.bookTitle;
+    if (raw.length === 0) {
+      return '朗读';
+    }
+    let showExt: boolean = false;
+    try {
+      showExt = PreferencesUtil.getSync(MySetConstants.SET_EXT_NAME, false) as boolean;
+    } catch (e) {
+      showExt = false;
+    }
+    if (showExt) {
+      return raw;
+    }
+    const name: string = raw.replace(/\.[a-zA-Z0-9]{1,5}$/, '');
+    return name.length > 0 ? name : raw;
   }
 
   /**
@@ -2702,6 +3102,41 @@ export class TtsEngine {
     const s = totalSec % 60;
     const cs = Math.floor((ms % 1000) / 10);
     return `[${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}]`;
+  }
+
+  /**
+   * LRC 标签时刻 = 真实朗读起点 − `LRC_LEAD_MS`（前置留白）。
+   * 负值不是合法 LRC 时间、`formatLrcTime` 也会算错（负 totalSec 的 padStart 结果无意义）
+   * ⇒ 夹到 0；夹取可能让最前面一两句撞成同一时刻，而官方明文"重复时间戳 ⇒ 解析失败、
+   *   显示异常"（见 `LRC_TAG_MIN_GAP_MS`）⇒ 再强制比上一行至少大一个百分秒分辨率。
+   */
+  private static lrcTagMs(speechStartMs: number): number {
+    let t: number = speechStartMs - LRC_LEAD_MS;
+    if (t < 0) {
+      t = 0;
+    }
+    if (TtsEngine.chapterLrcLastTagMs >= 0 && t <= TtsEngine.chapterLrcLastTagMs) {
+      t = TtsEngine.chapterLrcLastTagMs + LRC_TAG_MIN_GAP_MS;
+    }
+    TtsEngine.chapterLrcLastTagMs = t;
+    return t;
+  }
+
+  /**
+   * 横向（单行）歌词：只推 `singleLyricText`（无时间戳），不重推整章 LRC。
+   * 依据与开关说明见 `SINGLE_LINE_LYRIC`。
+   */
+  private static pushSessionSingleLine(text: string): void {
+    if (TtsEngine.avSession === null || text.length === 0) {
+      return;
+    }
+    hilog.info(DOMAIN, TAG, 'lrc-line: %{public}s', text);
+    TtsEngine.avSession.setAVMetadata({
+      assetId: TtsEngine.sessionAssetId(),
+      singleLyricText: text
+    }).catch((): void => {
+      // 忽略
+    });
   }
 
   private static deactivateSession(): void {

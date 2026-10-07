@@ -14,13 +14,13 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V2.1.2'
+export const APP_VERSION_FALLBACK: string = 'V2.1.3'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.1.2',
-    date: '2026-10-07',
+    version: 'V2.1.3',
+    date: '2026-10-08',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -45,8 +45,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       'web服务重构，优化电脑阅读的同步逻辑，增加双向验证机制，优化三种翻页逻辑',
       '完善开源协议，全量开源',
       '新增音量翻页功能，接入鸿蒙原生防窥能力',
-      'web服务重构，优化电脑阅读的同步逻辑，增加双向验证机制，优化三种翻页逻辑。',
-      'web服务重构，优化电脑阅读的同步逻辑，增加双向验证机制',
+      '优化TTS的系统播放组件（锁屏、下拉栏）的歌词显示（电子书内容）的显示逻辑以及APP图标的适配',
     ]
   },
 ]

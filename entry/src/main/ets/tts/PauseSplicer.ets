@@ -353,6 +353,34 @@ export function lookupOrigMs(timeMap: TimeMapEntry[], adjMs: number): number {
  */
 export function buildSentenceTimeline(text: string, words: WordSpan[],
   timeMap: TimeMapEntry[]): SentenceMark[] {
+  return buildTimeline(text, words, timeMap, false);
+}
+
+/**
+ * 歌词行时间线（拼接后时间轴）：**按小句切** —— 句末标点与逗号类标点都断行。
+ *
+ * 唯一用途：生成推给系统歌词组件的 LRC 行（`TtsEngine.chapterLrcLines`）。
+ *
+ * 为什么必须切短（真机反馈 2026-10-08，用户原话"很难看到歌词的前面几个字"）：
+ *  横向组件（播控中心**副标题区域**，官方口径"播控中心会自动按照进度，在副标题位置
+ *  刷新显示"）一次只摆**一行**文字；行太长就必须横向滚动才看得全，而滚动是跟着朗读
+ *  进度走的 ⇒ 句首几个字在用户反应过来之前就已经滚出可视区。
+ *  切成一两个词的小句后，绝大多数行能**整行显示、根本不滚**，句首自然看得见。
+ *  竖向列表页同时受益：高亮推进更细（≈ 每 2~3 秒一次），更接近歌词的观感。
+ *
+ * ⚠️ 只给歌词用。**不要**拿它当播放进度用：朗读浮条 / `onSegment` 仍是句级语义。
+ */
+export function buildLyricTimeline(text: string, words: WordSpan[],
+  timeMap: TimeMapEntry[]): SentenceMark[] {
+  return buildTimeline(text, words, timeMap, true);
+}
+
+/**
+ * 时间线生成器（句级 / 小句级共用同一套词级对齐与时间映射，故时间精度同源）。
+ * @param splitOnClause true = 逗号类标点也断行（歌词用），false = 只在句末断行（播放用）
+ */
+function buildTimeline(text: string, words: WordSpan[], timeMap: TimeMapEntry[],
+  splitOnClause: boolean): SentenceMark[] {
   const marks: SentenceMark[] = [];
   const aligned = alignWords(text, words);
   if (text.length === 0) {
@@ -361,7 +389,8 @@ export function buildSentenceTimeline(text: string, words: WordSpan[],
   let start = 0;
   for (let i = 0; i <= text.length; i++) {
     const isEnd = i >= text.length;
-    const boundary = !isEnd && sentenceEndAt(text, i);
+    const boundary = !isEnd && (sentenceEndAt(text, i)
+      || (splitOnClause && COMMA_PUNCT_RE.test(text.charAt(i))));
     if (boundary) {
       // 越过句末标点与后随右引号
       let j = i + 1;
