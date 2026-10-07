@@ -137,6 +137,7 @@ export default struct MyCenter {
 
       Row({ space: 10 }) {
         // VIP 金标（2026-09-28 用户要求：已开通时放在设置按钮左侧旁边）
+        // 2026-10-07：点击 = 打开 VIP 权益弹窗（复用开通弹窗，vipOwned=true 时按钮呈"已开通"）
         if (this.vipOn) {
           Text('VIP')
             .fontSize(12)
@@ -145,6 +146,11 @@ export default struct MyCenter {
             .backgroundColor('#F5A623')
             .borderRadius(8)
             .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .onClick(() => {
+              Haptics.tap();
+              this.openVipDialog()
+            })
+            .clickEffect(UiMotion.CLICK)
         }
         // （2026-10-01 已删除顶部「主题 / 设置」两个 symbol 按钮：用户反馈顶部太难点击，
         //  两页提级为底部 dock 页签（书架、主题、设置、我的），见 Index.ets nav 注释。）

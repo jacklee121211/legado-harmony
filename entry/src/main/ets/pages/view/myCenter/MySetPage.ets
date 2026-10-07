@@ -19,6 +19,8 @@ import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog'
 // ── 字号阶梯（2026-10-06 统一标准，见 FontConstants「语义阶梯」段；本页文字只取这四档）──
 import FontConstants from '../../../common/constants/FontConstants'
+// ── 按键翻页（2026-10-07 新增）：音量键/智控键翻页开关，订阅调度见 utils/ReaderKeyTurn.ets ──
+import { ReaderKeyTurn, KEY_KEY_VOL_TURN, KEY_KEY_FP_TURN } from '../../../common/utils/ReaderKeyTurn'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -35,6 +37,8 @@ export default struct MySetPage{
   @StorageLink(MySetConstants.SET_TIP) setTip: boolean = true
   @StorageLink(MySetConstants.SET_HEAD) setHead: boolean = true
   @StorageLink(MySetConstants.SET_SEARCH) setSearch: boolean = true
+  /** 阅读器信息窗（2026-10-07）：全屏阅读时右上角防窥/定时实时信息，Preferences 持久化 */
+  @StorageLink(MySetConstants.SET_INFO_WIN) setInfoWin: boolean = false
 
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
@@ -77,6 +81,15 @@ export default struct MySetPage{
     this.calibDevOn = this.calibDevRead()
     // 书架拓展名开关初值（2026-09-27，默认关=隐藏后缀）
     this.setExtName = PreferencesUtil.getSync('setExtName', false) as boolean
+    // 按键翻页开关初值（2026-10-07，默认关；Preferences 持久化，订阅调度在 ReaderKeyTurn）
+    this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) as boolean
+    this.setKeyFpTurn = PreferencesUtil.getSync(KEY_KEY_FP_TURN, false) as boolean
+    this.keyTurnSetList[0].toggleStatus = this.setKeyVolTurn
+    this.keyTurnSetList[1].toggleStatus = this.setKeyFpTurn
+    ReaderKeyTurn.queryFpSupported()
+    // 阅读器信息窗开关初值（2026-10-07，默认关）
+    this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean
+    this.otherSetList[2].toggleStatus = this.setInfoWin
     if (ListenUnlock.isUnlocked()) {
       this.engineSetList = [
         new SetList(false, '使用 Edge TTS 引擎', this.edgeTtsOn, '',
@@ -147,11 +160,23 @@ export default struct MySetPage{
   @State otherSetList: SetList[]=[
     new SetList(false,'全程响应耳机按键',this.setHead,'','即使退出也响应耳机按键',MySetConstants.SET_HEAD),
     new SetList(false,'文字操作显示搜索',this.setSearch,'','长按文字在操作菜单中显示阅读搜索',MySetConstants.SET_SEARCH),
+    // 阅读器信息窗（2026-10-07 新增，默认关）：全屏阅读时右上角的防窥/定时实时信息
+    new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时右上角会出现防窥模式以及定时的实时信息',MySetConstants.SET_INFO_WIN),
   ]
 
   /** 震动反馈组（2026-09-25 新增）：开关项；强度滑块单独渲染（见 build 末尾的自绘卡片） */
   @State hapticSetList: SetList[]=[
     new SetList(false,'震动反馈',this.setHaptics,'','按键与滑动时的物理震动反馈',MySetConstants.SET_HAPTICS),
+  ]
+
+  // ── 按键翻页组（2026-10-07 新增，用户指定放在震动管理旁，默认关）──────────────
+  // 仅阅读页存活时订阅生效（官方要求"确定响应时才激活"，否则音量键失灵），
+  // 落盘 + 调度全部走 ReaderKeyTurn；智控键仅支持的机型生效（supportKeysSync 探测）。
+  @StorageLink(MySetConstants.SET_KEY_VOL) setKeyVolTurn: boolean = false
+  @StorageLink(MySetConstants.SET_KEY_FP) setKeyFpTurn: boolean = false
+  @State keyTurnSetList: SetList[]=[
+    new SetList(false,'音量键翻页',this.setKeyVolTurn,'','阅读页内音量上/下键翻页；翻页时临时接管音量调节，退出阅读页即恢复',MySetConstants.SET_KEY_VOL),
+    new SetList(false,'智控键翻页',this.setKeyFpTurn,'','指纹键上/下滑翻页；仅支持的机型生效，不支持时开关保留但不动作',MySetConstants.SET_KEY_FP),
   ]
 
   /** 听书引擎组（2026-09-25 新增）：仅解锁后在 aboutToAppear 里填充并追加到分组列表 */
@@ -160,7 +185,8 @@ export default struct MySetPage{
   @State setGroupList: SetGroupList[] = [
     new SetGroupList('书架',this.bookSetList),
     new SetGroupList('其他',this.otherSetList),
-    new SetGroupList('震动反馈',this.hapticSetList)
+    new SetGroupList('震动反馈',this.hapticSetList),
+    new SetGroupList('按键翻页',this.keyTurnSetList)
   ]
 
   // 定义分组设置头部（**说明级** 12 号：小标题不跟条目抢视觉，见 FontConstants 语义阶梯）
@@ -425,6 +451,13 @@ export default struct MySetPage{
         this.setSearch = !this.setSearch
         this.otherSetList[1].toggleStatus = this.setSearch;
         break;
+      case MySetConstants.SET_INFO_WIN:
+        // 阅读器信息窗（2026-10-07）：Preferences 持久化；阅读页进场时读一次，
+        // 开关只在设置页改 ⇒ 无需跨页广播。
+        this.setInfoWin = !this.setInfoWin
+        this.otherSetList[2].toggleStatus = this.setInfoWin;
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN, this.setInfoWin)
+        break;
       case MySetConstants.SET_HAPTICS:
         this.setHaptics = !this.setHaptics
         this.hapticSetList[0].toggleStatus = this.setHaptics;
@@ -439,6 +472,24 @@ export default struct MySetPage{
         const prefs = loadTtsPrefs()
         prefs.ttsEngine = this.edgeTtsOn ? 'edge' : 'local'
         saveTtsPrefs(prefs)
+        break;
+      case MySetConstants.SET_KEY_VOL:
+        // 音量键翻页（2026-10-07）：落盘 + 立即对账订阅（阅读页不在时 refresh 只记账不订阅）
+        this.setKeyVolTurn = !this.setKeyVolTurn
+        this.keyTurnSetList[0].toggleStatus = this.setKeyVolTurn
+        PreferencesUtil.putSync(KEY_KEY_VOL_TURN, this.setKeyVolTurn)
+        ReaderKeyTurn.refresh()
+        break;
+      case MySetConstants.SET_KEY_FP:
+        // 智控键翻页（2026-10-07）：同上；本机不支持时开关保留但不动作（官方要求
+        // 使用前 supportKeysSync 探测，KEYCODE_FINGERPRINT_SLIDE_* 非全机型按键）
+        this.setKeyFpTurn = !this.setKeyFpTurn
+        this.keyTurnSetList[1].toggleStatus = this.setKeyFpTurn
+        PreferencesUtil.putSync(KEY_KEY_FP_TURN, this.setKeyFpTurn)
+        if (this.setKeyFpTurn) {
+          ReaderKeyTurn.queryFpSupported()
+        }
+        ReaderKeyTurn.refresh()
         break;
       case MySetConstants.SET_EXT_NAME:
         // 书架书名拓展名（2026-09-27）：AppStorage（@StorageLink）即时驱动书架刷新，

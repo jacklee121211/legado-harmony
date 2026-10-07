@@ -97,7 +97,10 @@ export default struct BookDetailPage {
   @State catalogKeyword: string = '';
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
+  /**
+   * 书架公共刷新信号（自增广播）。本页订阅它做**返回重查**（见 onShelfBroadcast）。
+   */
+  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('onShelfBroadcast') isBookRefreshing: number = 0
 
   /**
    * 按 `catalogKeyword` 过滤目录；关键词为空时返回全量。
@@ -115,10 +118,21 @@ export default struct BookDetailPage {
     });
   }
 
-  onPageShow() {
-    this.isShow = true
-    // 2026-10-01：从阅读器/其它页返回时重查本书——换封面等修改要实时反映（用户反馈
-    // "书籍详情没有同步更新最新的封面"）。initBook 是进入页面瞬间的路由快照，会过期。
+  /**
+   * 书架/阅读器广播 `BOOK_IS_BOOK_REFRESHING` ⇒ 重查本书（2026-10-07）。
+   *
+   * ⚠️ 这里**不能**用 `onPageShow`：本页迁成 NavDestination 后已去掉 `@Entry`，
+   * 而 `onPageShow` 是 **`@Entry` 页面专属**生命周期 —— 非页面组件里"不会报错、
+   * 但也不会再触发"（官方 FAQ `faqs-arkui-59` 原文：「onPageShow和onPageHide仅作为
+   * 页面生命周期提供，@Entry修饰的自定义组件定义为页面」；本工程
+   * `readStatistics.ets` 迁 Navigation 第 4 期注释同款结论）。
+   * 2026-10-01 写在这里的"从阅读器返回时重查本书"因此一直是**死代码**（静默失效）。
+   *
+   * 现在的刷新时机：`ReaderPage3.aboutToDisappear` 在退出阅读、最终进度落库后
+   * 自增本键 ⇒ 压在本页下面的场景（详情页 → 阅读器 → 返回）本页随之重查，
+   * 「读到第X章」进度、封面等取到最新落库值（initBook 是路由快照，会过期）。
+   */
+  onShelfBroadcast(): void {
     this.refreshBook()
   }
 

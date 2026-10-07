@@ -89,4 +89,20 @@ export default class MySetConstants {
   static readonly SET_CALIB_DEV: string = 'setCalibDev';
   /** 书架书名是否显示文件拓展名（2026-09-27 新增，默认关=隐藏 .txt 等后缀） */
   static readonly SET_EXT_NAME: string = 'setExtName';
+
+  /**
+   * 按键翻页组（2026-10-07 新增，默认关；Preferences 同名键持久化，见 utils/ReaderKeyTurn.ets）。
+   * 音量键翻页订阅会拦截系统音量调节（官方 `inputConsumer.on('keyPressed')` 原文），
+   * 故仅在阅读页存活时生效，退书即恢复系统音量。
+   */
+  static readonly SET_KEY_VOL: string = 'setKeyVolTurn';
+  /** 智控键（侧边指纹键）上/下滑翻页；仅支持该按键的机型生效（KEYCODE_FINGERPRINT_SLIDE_*，@since 26） */
+  static readonly SET_KEY_FP: string = 'setKeyFpTurn';
+
+  /**
+   * 阅读器信息窗（2026-10-07 新增，默认关；Preferences 同名键持久化）。
+   * 开启后：全屏阅读（菜单栏隐藏）时右上角显示 防窥眼睛 + 定时实时信息（玻璃层，
+   * 不参与仿真翻页卷纸、不可点击——用户明确拍板），字色随正文。
+   */
+  static readonly SET_INFO_WIN: string = 'setReaderInfoWin';
 }

@@ -598,8 +598,23 @@ export class TtsEngine {
 
   // 睡眠定时（会话级，不持久化）
   private static sleepStopChapter: number = -1; // 播到该 spine 下标（不含）即停
-  private static sleepStopMs: number = -1;      // 累计播放达到即停
-  private static playedMs: number = 0;          // 仅播放期累计（暂停不计）
+  // ⚠️ 绝对截止时刻（墙钟，2026-10-07 用户拍板"独立倒计时"）：定时设定即定格 deadline，
+  // 与播放/暂停无关——暂停也走表，到点即停。旧实现存的是"累计播放档位"（暂停表停）。
+  private static sleepStopMs: number = -1;
+  private static playedMs: number = 0;          // 仅播放期累计（暂停不计；LRC/统计用）
+  /** 章节定时的锚点章（setSleepTimer 时的 chapterIndex）；run() 开播时发现与起点不符 ⇒ 重锚 */
+  private static sleepAnchorChapter: number = -1;
+
+  /** 定时到点后的**自清理**：残留的过期 deadline 会让下一次开播立即再停（墙钟语义特有） */
+  private static clearSleepTimer(): void {
+    TtsEngine.sleepStopChapter = -1;
+    TtsEngine.sleepStopMs = -1;
+    TtsEngine.sleepChaptersReq = 0;
+    TtsEngine.sleepMinutesReq = 0;
+    TtsEngine.sleepAnchorChapter = -1;
+    TtsEngine.playedMs = 0;
+    hilog.info(DOMAIN, TAG, 'sleep timer fired & cleared');
+  }
 
   static init(context: common.UIAbilityContext): void {
     TtsEngine.context = context;
@@ -1038,7 +1053,13 @@ export class TtsEngine {
    */
   static setSleepTimer(chapters: number, minutes: number): void {
     TtsEngine.sleepStopChapter = chapters > 0 ? TtsEngine.chapterIndex + chapters : -1;
-    TtsEngine.sleepStopMs = minutes > 0 ? minutes * 60 * 1000 : -1;
+    // 锚点章随锚记录：定时在**未播放**时设置的话 chapterIndex 是上一场次残留，
+    // run() 开播发现起点与锚点不符会按本次起点重锚（见 run() 开头）
+    TtsEngine.sleepAnchorChapter = chapters > 0 ? TtsEngine.chapterIndex : -1;
+    // 墙钟语义：定格**绝对截止时刻**（2026-10-07 用户要求"设置好就独立倒计时"，
+    // 暂停/看书都走表）。旧实现存"累计播放档位"（暂停表停，且与展示层"绝对时刻"
+    // 的假设矛盾——顶栏弹窗一直显示"剩 0 分钟"的根因）。
+    TtsEngine.sleepStopMs = minutes > 0 ? Date.now() + minutes * 60 * 1000 : -1;
     TtsEngine.playedMs = 0;
     // D3：记住原始档位，供面板回显（见 sleepChaptersReq 注释）
     TtsEngine.sleepChaptersReq = chapters;
@@ -1094,9 +1115,24 @@ export class TtsEngine {
       return;
     }
     TtsEngine.chapterIndex = spineIndex;
+    // 章节定时锚点校正：定时若在**未播放**时设置，锚点章是上一场次的残留；
+    // 本次开播起点与锚点不符 ⇒ 按"再读 N 章"以**本次开播章**重新锚定。
+    if (TtsEngine.sleepStopChapter >= 0 && TtsEngine.sleepChaptersReq > 0
+      && TtsEngine.sleepAnchorChapter !== spineIndex) {
+      TtsEngine.sleepStopChapter = spineIndex + TtsEngine.sleepChaptersReq;
+      TtsEngine.sleepAnchorChapter = spineIndex;
+      hilog.info(DOMAIN, TAG, 'sleep chapter re-anchor: stop=%{public}d',
+        TtsEngine.sleepStopChapter);
+    }
+    // 墙钟定时若在上一次会话已过期但未清理 ⇒ 本次开播立刻就停。防御性清理：
+    // 到点触发路径会自清理（见 clearSleepTimer），这里兜底处理"到点时根本没在播放"的情况。
+    if (TtsEngine.sleepStopMs >= 0 && Date.now() >= TtsEngine.sleepStopMs) {
+      TtsEngine.clearSleepTimer();
+    }
     while (TtsEngine.alive(gen)) {
       // 睡眠定时：到章节数边界即停
       if (TtsEngine.sleepStopChapter >= 0 && spineIndex >= TtsEngine.sleepStopChapter) {
+        TtsEngine.clearSleepTimer();
         TtsEngine.stopInternal('已读完定时设定的章节数');
         TtsEngine.stopBackground();
         TtsEngine.deactivateSession();
@@ -1196,8 +1232,10 @@ export class TtsEngine {
           await TtsEngine.sleep(150);
           continue;
         }
-        // 睡眠定时：累计播放时长到点即停
-        if (TtsEngine.sleepStopMs >= 0 && TtsEngine.playedMs >= TtsEngine.sleepStopMs) {
+        // 睡眠定时：墙钟到点即停（sleepStopMs 是绝对截止时刻，暂停也走表）
+        if (TtsEngine.sleepStopMs >= 0 && Date.now() >= TtsEngine.sleepStopMs) {
+          // ⚠️ 到点自清理：残留的过期 deadline 会让下一次开播立即再停
+          TtsEngine.clearSleepTimer();
           TtsEngine.stopInternal('睡眠定时结束，已自动停止');
           TtsEngine.stopBackground();
           TtsEngine.deactivateSession();
@@ -1853,11 +1891,14 @@ export class TtsEngine {
       }
     });
     TtsEngine.playingMidFile = false;
-    // 睡眠定时的播放时长累计（停顿已在 PCM 内）
-    TtsEngine.playedMs += spliced.pcm.length * 2 / spliced.sampleRate * 1000;
+    // 睡眠定时的播放时长累计（停顿已在 PCM 内）。
+    // ⚠️ pcm 是 Int16Array（16k 单声道，见 :1780 与 LocalTtsClient 注释）：时长 ms =
+    // 样本数 / 采样率 × 1000。旧写法多乘 2（把样本当字节）⇒ 播放时长**翻倍累计**，
+    // 30 分钟档约 15 分钟即停、倒计时 2 倍速跑（2026-10-07 定时有效性排查定位）。
+    TtsEngine.playedMs += spliced.pcm.length / spliced.sampleRate * 1000;
     // 本章时间轴：仅**首播**块累计（重播/回退不重复计），下一块首句的 LRC 绝对时间由此而来
     if (isFirstPlay) {
-      const durMs = spliced.pcm.length * 2 / spliced.sampleRate * 1000;
+      const durMs = spliced.pcm.length / spliced.sampleRate * 1000;
       TtsEngine.chapterElapsedBase += durMs;
       TtsEngine.chapterPlayedCount += 1;
       // 章时长估算（单调不减）：平均块时长 × 块总数，随播放逐步逼近真实值
