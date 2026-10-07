@@ -118,7 +118,11 @@ const SEG_TEXT_MAX_LINES: number = 2;
 
 @Component
 export struct TtsControlPanel {
-  @Link isShowListen: boolean;
+  // ★ D3 功耗门禁（2026-10-07）：`isShowListen` 变化时启停面板的 5s 刷新器。
+  //   面板是「建一次」的 @CustomDialog 内容（见 ReaderListenDialog 头注释），关闭弹窗时
+  //   `aboutToDisappear` **不一定触发** ⇒ 旧实现的 5s `setInterval` 会在面板关闭后继续跑
+  //   （每 5s 唤醒主线程 + 改 `@State`），与官方低功耗口径「减少唤醒次数」相悖。
+  @Link @Watch('onShowListenChanged') isShowListen: boolean;
   @Link prefs: TtsPrefs;
   @Prop ttsState: string = 'stopped';     // 'stopped' | 'playing' | 'paused'
   @Prop chapterTitle: string = '';
@@ -230,17 +234,36 @@ export struct TtsControlPanel {
     this.refreshSilentMode(); // #3：进入面板先探一次静音状态
     // D3：回读引擎里的真实定时状态（旧实现只显示本地 @State，重开面板必显示「关」）
     this.syncSleepFromEngine();
-    // 防重入：若上一次的刷新器还在（aboutToDisappear 未触发等情形），先清掉再起新的
-    if (this.sleepTicker !== -1) {
-      clearInterval(this.sleepTicker);
-      this.sleepTicker = -1;
+    // D3 功耗门禁：只有面板**正在显示**时才起 5s 刷新器（见 isShowListen 注释）
+    this.startSleepTicker();
+  }
+
+  aboutToDisappear(): void {
+    this.stopSleepTicker();
+  }
+
+  /** 面板显示/隐藏切换 ⇒ 启停 5s 刷新器（隐藏时不刷新，避免无效唤醒） */
+  private onShowListenChanged(): void {
+    if (this.isShowListen) {
+      this.syncSleepFromEngine(); // 补一次，避免显示的是几秒前的旧文案
+      this.startSleepTicker();
+    } else {
+      this.stopSleepTicker();
+    }
+  }
+
+  /** 起 5s 刷新器（幂等；面板隐藏时不起） */
+  private startSleepTicker(): void {
+    if (this.sleepTicker !== -1 || !this.isShowListen) {
+      return;
     }
     this.sleepTicker = setInterval((): void => {
       this.syncSleepFromEngine();
     }, 5000);
   }
 
-  aboutToDisappear(): void {
+  /** 停 5s 刷新器（幂等） */
+  private stopSleepTicker(): void {
     if (this.sleepTicker !== -1) {
       clearInterval(this.sleepTicker);
       this.sleepTicker = -1;

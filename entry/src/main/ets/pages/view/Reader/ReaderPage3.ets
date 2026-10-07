@@ -773,6 +773,16 @@ export default struct ReaderPage3 {
   /** 剩余量刷新定时器句柄（-1 = 未启动） */
   private sleepTicker: number = -1
   /**
+   * 应用是否在前台（`EntryAbility.onForeground/onBackground` 写入，2026-10-07 新增）。
+   *
+   * **用途：给两个 UI 刷新器做功耗门禁**。阅读页是 NavDestination，退后台/熄屏时组件**仍然存活**，
+   * 而 `sleepTicker`(5s) / `infoTicker`(1s) 都是 `setInterval` ⇒ 旧实现会在熄屏后台继续唤醒主线程
+   * 并改 `@State`（不可见重渲染）。官方低功耗口径要求「低功耗渲染器…**减少唤醒次数**」
+   * （documentId `开发指南/Audio_Kit_音频服务/音频播放/低功耗音频播放/power-saving-for-playback`），
+   * 故这两个刷新器只在**前台**跑；回前台时 `@Watch` 会立刻重启并补一次刷新。
+   */
+  @StorageLink('appForeground') @Watch('onAppForegroundChanged') appForeground: boolean = true
+  /**
    * 听书入口是否已解锁（2026-09-25 新增，暗号改名解锁方案）。
    * false ⇒ 底栏只有 目录 / 日夜 / 设置 三个按钮（用户需求）；解锁后永久开放。
    * 改变它的唯一入口是「我的 → 改名」命中暗号（`ListenUnlock.tryUnlock`），
@@ -970,9 +980,9 @@ export default struct ReaderPage3 {
     this.syncInfoTicker();
   }
 
-  /** 每秒刷新一次剩余量（仅在已设定时时才有意义） */
+  /** 每秒刷新一次剩余量（仅在已设定时时才有意义）——**仅前台**跑（功耗门禁，见 appForeground 注释） */
   private startSleepTicker(): void {
-    if (this.sleepTicker !== -1) {
+    if (this.sleepTicker !== -1 || !this.appForeground) {
       return;
     }
     this.sleepTicker = setInterval((): void => {
@@ -987,6 +997,20 @@ export default struct ReaderPage3 {
     }
   }
 
+  /**
+   * 前/后台切换（`appForeground` 变化）：后台停刷新器、回前台重启并补一次立即刷新。
+   * 两个刷新器都要过一遍 `syncInfoTicker()` —— 它的门禁里含 `appForeground`。
+   */
+  private onAppForegroundChanged(): void {
+    if (this.appForeground) {
+      this.refreshSleepStatus(); // 后台期间没刷，回前台先补一次真实剩余量
+      this.startSleepTicker();
+    } else {
+      this.stopSleepTicker();
+    }
+    this.syncInfoTicker();
+  }
+
   // ── 阅读器信息窗（2026-10-07）：定时实时信息（秒级）────────────────────────
 
   /** 组装信息窗的定时文案：时间型 = **墙钟独立倒计时**（时分秒，暂停/看书都走秒）；
@@ -995,8 +1019,12 @@ export default struct ReaderPage3 {
     const parts: string[] = [];
     const chapters = TtsEngine.getSleepChaptersReq();
     if (chapters > 0) {
-      // 引擎口径：sleepStopChapter = 设定时所在章 + N（到该章号即停）⇒ 剩余 = 截止章号 - 当前章号
-      const left = Math.max(0, TtsEngine.getSleepStopChapter() - (this.bookData.durChapterIndex ?? 0));
+      // D4 修正（2026-10-07）：剩余章数**必须与引擎判定同源**。
+      // 引擎在 `run()` 章界用「朗读的 spine」判定（`TtsEngine.ets` 的 `sleepStopChapter` 检查），
+      // 旧实现在这里用的是**阅读器的当前章** `bookData.durChapterIndex` ⇒ 用户一边听一边翻到
+      // 别的章看书时，信息窗的"剩X章"会与真实停止点漂开。面板侧早就是引擎口径
+      // （`TtsControlPanel.syncSleepFromEngine` 用 `TtsEngine.currentChapter()`），此处对齐。
+      const left = Math.max(0, TtsEngine.getSleepStopChapter() - TtsEngine.currentChapter());
       parts.push(`剩${left}章`);
     }
     const minutes = TtsEngine.getSleepMinutesReq();
@@ -1011,21 +1039,29 @@ export default struct ReaderPage3 {
     return parts.join(' · ');
   }
 
-  /** 信息窗秒级刷新的启停对账：仅"开关开 + 定时在跑"时才转（功耗门禁，均无需时清空文案） */
+  /**
+   * 信息窗秒级刷新的启停对账：仅"开关开 + 定时在跑 + **前台**"时才转
+   * （功耗门禁：熄屏后台 1s 唤醒一次是纯浪费；均无需时清空文案）。
+   */
   private syncInfoTicker(): void {
-    const need: boolean = this.infoWinOn && this.sleepTimerActive;
+    const need: boolean = this.infoWinOn && this.sleepTimerActive && this.appForeground;
     if (need && this.infoTicker === -1) {
       this.infoTimerText = this.computeInfoTimerText();
       this.infoTicker = setInterval((): void => {
         this.infoTimerText = this.computeInfoTimerText();
       }, 1000);
-    } else if (!need && this.infoTicker !== -1) {
+    } else if (!need) {
+      this.stopInfoTicker();
+    }
+  }
+
+  /** 停掉信息窗刷新器并清空文案（幂等） */
+  private stopInfoTicker(): void {
+    if (this.infoTicker !== -1) {
       clearInterval(this.infoTicker);
       this.infoTicker = -1;
-      this.infoTimerText = '';
-    } else if (!need) {
-      this.infoTimerText = '';
     }
+    this.infoTimerText = '';
   }
 
   @State CatalogList: BasicDataSource<bookParser.CatalogItem> = new BasicDataSource<bookParser.CatalogItem>(); //章节数据
@@ -3751,6 +3787,11 @@ export default struct ReaderPage3 {
     //   宿主 Index 的 onPageShow 又不因 NavDestination pop 触发 ⇒ 回书架不重排。
     //   await 落库后再广播的原因见 flushReadProgressThenNotifyShelf 注释。
     this.flushReadProgressThenNotifyShelf();
+    // ★ 页面销毁：两个 UI 刷新器必须显式停掉（2026-10-07）。
+    //   旧实现只在「退出听书」(`exitListening`) 里停 sleepTicker，而 `aboutToDisappear`
+    //   既没停 sleepTicker 也没停 infoTicker ⇒ 组件销毁后回调仍可能打到已销毁页面上。
+    this.stopSleepTicker();
+    this.stopInfoTicker();
     // ★ 恢复系统状态栏 / 导航栏（2026-09-22 真机反馈修复：**退出阅读页后状态栏不回来**）
     //
     // ── 症状 ────────────────────────────────────────────────────────────────
@@ -4149,7 +4190,7 @@ export default struct ReaderPage3 {
     }
   }
 
-  /** 悬浮条主按钮：已翻走 ⇒ 一下「从此页开始」；否则 暂停/续播 */
+  /** 悬浮条主按钮：已翻走 ⇒ 一下「从此页开始」；否则 暂停/续播/开播 */
   private miniBarPrimary(): void {
     if (this.followSuspended) {
       this.playFromCurrentPage();
@@ -4157,9 +4198,19 @@ export default struct ReaderPage3 {
     }
     if (this.ttsState === 'playing') {
       TtsEngine.pause();
-    } else {
-      TtsEngine.resume();
+      return;
     }
+    if (this.ttsState === 'paused') {
+      TtsEngine.resume();
+      return;
+    }
+    // ★ stopped 分支（2026-10-07 补）：旧实现写成 `else → TtsEngine.resume()`，而
+    //   `TtsEngine.resume()` 在**非 paused** 状态会直接 `return`（`TtsEngine.ets:988-1001`）
+    //   ⇒ 表现为"点了没反应"。这条路径原先就存在（全书读完 / 播控中心停止后再按悬浮条），
+    //   本轮的睡眠定时到点（暂停中被停）让它**更容易撞上**，故一并修掉。
+    //   语义与听书面板对齐：面板在 stopped 时走 `onStart`（`TtsControlPanel.ets:807-816`），
+    //   这里同样按"从阅读器当前页页首开始朗读"处理。
+    this.ttsStart();
   }
 
   /** 从阅读器当前页页首重新开始朗读（停掉旧流，重新合成播放） */

@@ -293,11 +293,19 @@ export default class EntryAbility extends UIAbility {
 
   onForeground() {
     // Ability has brought to foreground
+    // ★ 前台标志（2026-10-07）：给阅读页的「睡眠定时剩余量 / 信息窗」刷新器做**功耗门禁**。
+    //   背景：这两个刷新器是 5s / 1s 的 `setInterval`，而阅读页（NavDestination）在后台仍然存活，
+    //   旧实现只在「退出听书」时停 ⇒ 熄屏后台依旧每 5s/1s 唤醒主线程并改 `@State`（不可见重渲染），
+    //   与官方低功耗口径「低功耗渲染器建议一次性填满缓冲区，**以减少唤醒次数**」
+    //   （documentId `开发指南/Audio_Kit_音频服务/音频播放/低功耗音频播放/power-saving-for-playback`）相悖。
+    AppStorage.setOrCreate('appForeground', true);
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onForeground');
   }
 
   onBackground() {
     // Ability has back to background
+    // ★ 熄屏/后台 ⇒ 阅读页停掉定时刷新器（详见 onForeground 注释）
+    AppStorage.setOrCreate('appForeground', false);
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onBackground');
   }
 }

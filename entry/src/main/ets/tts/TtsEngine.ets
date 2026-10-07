@@ -604,16 +604,101 @@ export class TtsEngine {
   private static playedMs: number = 0;          // 仅播放期累计（暂停不计；LRC/统计用）
   /** 章节定时的锚点章（setSleepTimer 时的 chapterIndex）；run() 开播时发现与起点不符 ⇒ 重锚 */
   private static sleepAnchorChapter: number = -1;
+  /**
+   * D1（2026-10-07 修正）：为 `sleepStopMs` 单独挂的**一次性到期定时器**（`-1` = 未挂）。
+   *
+   * ── 为什么必须有它 ────────────────────────────────────────────────────────────
+   * 到点检查原先**只**存在于 `run()` 主循环里（章界 + 块界两处）。而暂停分支
+   * （`if (isPaused()) { await sleep(150); continue; }`）在它**前面** ⇒ **暂停期间永远走不到
+   * 到点检查**；语义写着"暂停也走表"，实现却不可达（用户暂停后到点不会停）。
+   *
+   * 现在做成**三重保障**：
+   *   ① 主循环到期检查**提到暂停分支之前**（暂停时每 150ms 轮询一次，本就在跑）；
+   *   ② 本条：为 deadline 挂**一个** `setTimeout`，应用醒着时**到期即停**，不必等主循环推进
+   *      （长合成窗口 / 网络退避里主循环会卡住数秒）；
+   *   ③ 章界检查照旧（章节型定时）。
+   *
+   * ── 成本 ─────────────────────────────────────────────────────────────────────
+   * 整个定时周期只多**一次**定时器唤醒——而"到点停止"本来就必须在这一点上醒一次，
+   * 所以不构成额外功耗（见 `docs/power-assessment-2026-09-21.md` 官方低功耗口径）。
+   * ⚠️ 熄屏挂起时（官方低功耗渲染器会休眠主处理器）本回调被系统延后到**下一次唤醒**，
+   *    故 `fireSleepTimer()` 会打 `lateMs` 供真机核对实际延迟。
+   */
+  private static sleepDeadlineTimer: number = -1;
 
-  /** 定时到点后的**自清理**：残留的过期 deadline 会让下一次开播立即再停（墙钟语义特有） */
-  private static clearSleepTimer(): void {
+  /**
+   * 定时到点后的**自清理**：残留的过期 deadline 会让下一次开播立即再停（墙钟语义特有）。
+   * @param reason 非空才打日志（`stopInternal` 里用空串静默清理，避免刷日志）
+   */
+  private static clearSleepTimer(reason: string): void {
+    // 只在"确实有定时"时打日志（否则每次手动停止都会留一条无意义的清理日志）
+    const had: boolean = TtsEngine.sleepStopChapter >= 0 || TtsEngine.sleepStopMs >= 0
+      || TtsEngine.sleepChaptersReq > 0 || TtsEngine.sleepMinutesReq > 0;
+    TtsEngine.clearSleepDeadline();
     TtsEngine.sleepStopChapter = -1;
     TtsEngine.sleepStopMs = -1;
     TtsEngine.sleepChaptersReq = 0;
     TtsEngine.sleepMinutesReq = 0;
     TtsEngine.sleepAnchorChapter = -1;
     TtsEngine.playedMs = 0;
-    hilog.info(DOMAIN, TAG, 'sleep timer fired & cleared');
+    if (had && reason.length > 0) {
+      hilog.info(DOMAIN, TAG, 'sleep timer cleared: %{public}s', reason);
+    }
+  }
+
+  /** 清掉"到点即停"的一次性定时器（幂等） */
+  private static clearSleepDeadline(): void {
+    if (TtsEngine.sleepDeadlineTimer !== -1) {
+      clearTimeout(TtsEngine.sleepDeadlineTimer);
+      TtsEngine.sleepDeadlineTimer = -1;
+    }
+  }
+
+  /**
+   * 挂/重挂"到点即停"的一次性定时器（见 `sleepDeadlineTimer` 注释）。
+   * 每次 `setSleepTimer` 都会先清后挂 ⇒ 改档位不会留下旧定时器。
+   */
+  private static armSleepDeadline(): void {
+    TtsEngine.clearSleepDeadline();
+    if (TtsEngine.sleepStopMs < 0) {
+      return;
+    }
+    const waitMs: number = Math.max(0, TtsEngine.sleepStopMs - Date.now());
+    TtsEngine.sleepDeadlineTimer = setTimeout((): void => {
+      TtsEngine.sleepDeadlineTimer = -1;
+      // 双保险：回调被系统延后到"已改档位/已取消"之后时，这里不能误停
+      if (TtsEngine.sleepStopMs >= 0 && Date.now() >= TtsEngine.sleepStopMs) {
+        TtsEngine.fireSleepTimer();
+      }
+    }, waitMs);
+  }
+
+  /**
+   * 睡眠定时到点：**唯一收口**（主循环检查 / 一次性定时器 / 章界检查都走这里），
+   * 顺序 = 清定时 → 停播 → 收长时任务 → 销毁播控会话。
+   * `lateMs` 用于真机核对"熄屏挂起下实际晚了多久"（官方口径：低功耗渲染器熄屏缓冲 ≤10000ms）。
+   */
+  private static fireSleepTimer(): void {
+    const lateMs: number = TtsEngine.sleepStopMs >= 0
+      ? Math.max(0, Date.now() - TtsEngine.sleepStopMs) : 0;
+    const playing: boolean = TtsEngine.isPlaying();
+    // ① 先消费掉定时器（一次性语义：不管当时在播/在暂停/早就没播，到点即清）
+    TtsEngine.clearSleepTimer('deadline reached');
+    hilog.info(DOMAIN, TAG, 'sleep timer fired: lateMs=%{public}d playing=%{public}s',
+      lateMs, String(playing));
+    // ② ★ 2026-10-07 用户口径：**暂停中到点只清定时，暂停链路原样不动**。
+    //    依据（"与暂停时的既有行为保持一致"）：`pause()` 自身也只做
+    //    `setState('paused') + player.pause()`，从不动长时任务 / 播控会话
+    //    （`stopBackground()` 的调用点只有 `stop()` / 章界 / 读完全书 / 本方法）。
+    //    好处：用户回来点播放仍是原来的**无缝续播**（`resume()` 在 `paused` 下走原路径），
+    //    与"我定了多久就是多久，大不了下次再定"一致。
+    //    ⚠️ 只有**正在播**时才做停止动作（停播 + 收长时任务 + 销毁播控会话）。
+    if (!playing) {
+      return;
+    }
+    TtsEngine.stopInternal('睡眠定时结束，已自动停止');
+    TtsEngine.stopBackground();
+    TtsEngine.deactivateSession();
   }
 
   static init(context: common.UIAbilityContext): void {
@@ -967,6 +1052,11 @@ export class TtsEngine {
   }
 
   static stop(reason: string): void {
+    // ★ 定时是**一次性**的会话级设置 ⇒ 用户主动停（退出听书 / 播控中心停止）即作废。
+    //   放这里而**不**放 `stopInternal`：后者还被"重新开播前先停旧的"（`start()` 里
+    //   `if (state !== 'stopped') stopInternal('')`）复用，若在那里清掉，
+    //   用户听到一半点「从本页开始」会把剩下 20 分钟的定时**静默丢掉**。
+    TtsEngine.clearSleepTimer('stopped by user');
     TtsEngine.stopInternal(reason);
     TtsEngine.stopBackground();
     TtsEngine.deactivateSession();
@@ -1064,6 +1154,9 @@ export class TtsEngine {
     // D3：记住原始档位，供面板回显（见 sleepChaptersReq 注释）
     TtsEngine.sleepChaptersReq = chapters;
     TtsEngine.sleepMinutesReq = minutes;
+    // D1/D2：为墙钟 deadline 挂"到点即停"的一次性定时器（见 sleepDeadlineTimer 注释）。
+    // `minutes <= 0` 时本方法内部会先清掉旧的定时器 ⇒ 改成"只按章"或"取消"都不会留下旧 deadline。
+    TtsEngine.armSleepDeadline();
     if (chapters > 0 || minutes > 0) {
       hilog.info(DOMAIN, TAG, 'sleep timer set: chapters=%{public}d minutes=%{public}d',
         chapters, minutes);
@@ -1127,12 +1220,12 @@ export class TtsEngine {
     // 墙钟定时若在上一次会话已过期但未清理 ⇒ 本次开播立刻就停。防御性清理：
     // 到点触发路径会自清理（见 clearSleepTimer），这里兜底处理"到点时根本没在播放"的情况。
     if (TtsEngine.sleepStopMs >= 0 && Date.now() >= TtsEngine.sleepStopMs) {
-      TtsEngine.clearSleepTimer();
+      TtsEngine.clearSleepTimer('deadline passed before start');
     }
     while (TtsEngine.alive(gen)) {
       // 睡眠定时：到章节数边界即停
       if (TtsEngine.sleepStopChapter >= 0 && spineIndex >= TtsEngine.sleepStopChapter) {
-        TtsEngine.clearSleepTimer();
+        TtsEngine.clearSleepTimer('chapter limit reached');
         TtsEngine.stopInternal('已读完定时设定的章节数');
         TtsEngine.stopBackground();
         TtsEngine.deactivateSession();
@@ -1205,6 +1298,15 @@ export class TtsEngine {
           }
           continue;
         }
+        // ---------- 睡眠定时：**墙钟到点即停** ----------
+        // ⚠️ D1 修正（2026-10-07）：本条**必须排在暂停分支之前**。
+        //    旧顺序是「先判暂停（sleep(150) + continue）再判到点」⇒ 暂停期间永远走不到这里，
+        //    语义写着"暂停也走表"、实现却不可达（用户暂停后到点不会停，恢复播放才停）。
+        //    放到前面后：暂停时每 150ms 轮询一次，本来就在跑，等于天然补上了这条路径。
+        if (TtsEngine.sleepStopMs >= 0 && Date.now() >= TtsEngine.sleepStopMs) {
+          TtsEngine.fireSleepTimer();
+          return;
+        }
         if (TtsEngine.isPaused()) {
           // ---------- T2 新路径：网络暂停自动探活 ----------
           // 熄屏挂起期间定时器冻结（官方低功耗口径），唤醒后本轮 sleep(150) 结束即会
@@ -1231,15 +1333,6 @@ export class TtsEngine {
           }
           await TtsEngine.sleep(150);
           continue;
-        }
-        // 睡眠定时：墙钟到点即停（sleepStopMs 是绝对截止时刻，暂停也走表）
-        if (TtsEngine.sleepStopMs >= 0 && Date.now() >= TtsEngine.sleepStopMs) {
-          // ⚠️ 到点自清理：残留的过期 deadline 会让下一次开播立即再停
-          TtsEngine.clearSleepTimer();
-          TtsEngine.stopInternal('睡眠定时结束，已自动停止');
-          TtsEngine.stopBackground();
-          TtsEngine.deactivateSession();
-          return;
         }
         TtsEngine.playingSegIndex = i;
         TtsEngine.playingSpine = spineIndex;
