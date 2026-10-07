@@ -1615,20 +1615,42 @@ export default struct ReaderPage3 {
    *   · 字色按 `fontKind` 覆盖或拨回自动对比。
    * 背景源不存在（材质文件被删）时**只提示、不动当前背景**，绝不静默换成别的样子。
    */
+  /** 方案链路诊断日志（2026-10-07 排查「唯一方案点选不生效」临时埋点，统一 SCHEME 前缀） */
+  private schemeLog(m: string): void {
+    hilog.info(0x0000, 'testTag', 'SCHEME %{public}s', m)
+  }
+
   private applyScheme(e: SchemeV3): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
+    // 诊断：stateEqual=true 时 applyComposedBg 的幂等守卫会静默跳过下发（用户看到"点了没反应"）
+    const curKey: string = ReaderCustomBg.schemeKeyV3(this.currentScheme())
+    this.schemeLog('apply in=' + JSON.stringify(e) + ' inKey=' + ReaderCustomBg.schemeKeyV3(e)
+      + ' curKey=' + curKey + ' stateEqual=' + (curKey === ReaderCustomBg.schemeKeyV3(e)))
+    // 方案与当前样子完全一致 ⇒ 引擎侧幂等守卫会跳过重排（防闪，见 applyComposedBg），
+    // 这里不重摆状态，只补"已生效"的回执 + 把橙圈落到该方案（2026-10-07 用户实测
+    // "无论如何选择方案A都没有实际应用"的根因：应用是成功的，只是零反馈）。
+    if (curKey === ReaderCustomBg.schemeKeyV3(e)) {
+      this.bgFocus = 'scheme'
+      this.schemeFocusKey = ReaderCustomBg.schemeKeyV3(e)
+      Haptics.tap()
+      showMessage('当前已是该方案')
+      return
+    }
     // 先验目标背景是否还在（自定义材质被删是最常见的失效）
     if (e.bgKind === ReaderCustomBg.BG_KIND_TEX) {
       if (ReaderTexture.byId(ctx, e.texId) === null) {
+        this.schemeLog('apply abort: tex missing texId=' + e.texId)
         showMessage('这条方案的材质已不存在')
         return
       }
     } else if (e.bgKind === ReaderCustomBg.BG_KIND_CUSTOM) {
       if (ReaderTexture.customById(ctx, e.customTexId) === null) {
+        this.schemeLog('apply abort: custom missing id=' + e.customTexId)
         showMessage('这条方案的自定义材质已被删除')
         return
       }
     } else if (ReaderCustomBg.parseColor(e.bgHex) === null) {
+      this.schemeLog('apply abort: bad bgHex=' + e.bgHex)
       return
     }
     // ── 字色家族（先摆好：`applyComposedBg` 只在 fontAuto 时自动对比字色）──────────
@@ -1656,11 +1678,13 @@ export default struct ReaderPage3 {
     Haptics.tap()
     if (e.bgKind === ReaderCustomBg.BG_KIND_TEX) {
       this.bgTexId = e.texId
+      this.schemeLog('apply branch TEX texId=' + e.texId + ' -> applyTextureBg')
       this.applyTextureBg()
       return
     }
     if (e.bgKind === ReaderCustomBg.BG_KIND_CUSTOM) {
       this.bgCustomId = e.customTexId
+      this.schemeLog('apply branch CUSTOM id=' + e.customTexId + ' -> applyTextureBg')
       this.applyTextureBg()
       return
     }
@@ -1672,6 +1696,7 @@ export default struct ReaderPage3 {
     this.customBgG = rgb.g
     this.customBgB = rgb.b
     this.schemeFocusBg = ReaderCustomBg.hexOf(rgb)
+    this.schemeLog('apply branch COLOR hex=' + ReaderCustomBg.hexOf(rgb) + ' -> applyCustomBg')
     this.applyCustomBg(true)
   }
 
@@ -1720,6 +1745,7 @@ export default struct ReaderPage3 {
     // 快照"当前正在用的样子"：背景种类 + 模糊档位 + 字色（V3：不再拿材质均色冒充背景色）
     const s: SchemeV3 = this.currentScheme()
     this.pendingScheme = s
+    this.schemeLog('saveDialog snapshot=' + JSON.stringify(s))
     const dlg = new CustomDialogController({
       builder: ReaderSaveSchemeDialog({
         bgKind: s.bgKind,
@@ -1809,6 +1835,8 @@ export default struct ReaderPage3 {
   /** 打开「更多方案」弹窗（全部已存方案，四列网格，见 ReaderSchemeDialog） */
   private openSchemeDialog(): void {
     this.settingDialog.close()
+    this.schemeLog('openDialog focus=' + this.bgFocus + ' key=' + this.schemeFocusKey
+      + ' list=' + JSON.stringify(ReaderCustomBg.loadSchemesV3()))
     this.schemeDialog = new CustomDialogController({
       builder: ReaderSchemeDialog({
         focusKey: this.bgFocus === 'scheme' ? this.schemeFocusKey : '',
@@ -1875,6 +1903,7 @@ export default struct ReaderPage3 {
       return
     }
     const r: string = ReaderCustomBg.addSchemeV3(s)
+    this.schemeLog('commit result=' + r + ' snapshot=' + JSON.stringify(s))
     if (r === 'ok') {
       this.refreshSavedSchemes()
       showMessage('方案已保存')
@@ -2082,10 +2111,13 @@ export default struct ReaderPage3 {
    */
   private applyTextureBg(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
+    this.schemeLog('applyTextureBg bgTexId=' + this.bgTexId + ' bgCustomId=' + this.bgCustomId
+      + ' customBgOn=' + this.customBgOn)
     // ── 自定义背景分支（2026-09-27）：来源=沙箱文件，合成/均色/模糊与材质同管线 ──
     if (this.bgCustomId.length > 0) {
       const src = ReaderTexture.customById(ctx, this.bgCustomId)
       if (src === null) {
+        this.schemeLog('applyTextureBg custom missing -> 回落纯色')
         // 源图已被删除 ⇒ 回落纯色，绝不让页面挂死
         this.bgCustomId = ''
         this.readerSetting.themeBgImg = ''
@@ -2143,10 +2175,15 @@ export default struct ReaderPage3 {
       }
     }
     // 幂等：最终图路径 + 配色全都没变 ⇒ 不再下发 setPageConfig（防闪）
+    this.schemeLog('composed in res=' + res.path + ' final=' + finalPath
+      + ' avg=' + ReaderCustomBg.hexOf(res.avg) + ' nextFont=' + nextFont + ' dark=' + dark
+      + ' | cur img=' + this.readerSetting.themeBgImg + ' color=' + this.readerSetting.themeColor
+      + ' font=' + this.readerSetting.fontColor + ' night=' + this.readerSetting.nightMode)
     if (finalPath.length > 0 && this.readerSetting.themeBgImg === finalPath
       && this.readerSetting.themeColor === avgHex
       && this.readerSetting.fontColor === nextFont
       && this.readerSetting.nightMode === dark) {
+      this.schemeLog('composed IDEMPOTENT-SKIP: 状态已等于目标（点方案时=该方案本已生效）')
       return
     }
     this.readerSetting.themeBgImg = finalPath
@@ -2356,6 +2393,25 @@ export default struct ReaderPage3 {
   }
 
   /**
+   * 进书恢复态若与某条已存方案**完全一致** ⇒ 焦点/橙圈落到「更多方案」按钮与该卡片
+   * （V3 设计原文："当前正在使用的方案画橙圈"）。此前恢复一律落 `bgFocus='tex'/'preset'`，
+   * 用户重新进书后打开「更多方案」看不到橙圈，会误以为方案没生效（2026-10-07 实测）。
+   * 必须在 `bgTexId/bgCustomId/fontAuto/blur` 都已从记录读回**之后**调用（键依赖这些字段）。
+   */
+  private markSchemeFocusIfMatched(): void {
+    const key: string = ReaderCustomBg.schemeKeyV3(this.currentScheme())
+    const list: SchemeV3[] = ReaderCustomBg.loadSchemesV3()
+    for (const x of list) {
+      if (ReaderCustomBg.schemeKeyV3(x) === key) {
+        this.bgFocus = 'scheme'
+        this.schemeFocusKey = key
+        this.schemeLog('restore matched scheme key=' + key)
+        return
+      }
+    }
+  }
+
+  /**
    * 进书时恢复自定义背景色（在 `readerSetting` 载入 + 迁移**之后**、`startPlay` **之前**调用）。
    *
    * 解析顺序（`ReaderCustomBg.resolve`）：**本书记录 → 全局记录 → 都没有则维持推荐色**。
@@ -2374,6 +2430,7 @@ export default struct ReaderPage3 {
       return
     }
     const rec = ReaderCustomBg.resolve(name)
+    this.schemeLog('restore rec=' + (rec === null ? 'null' : JSON.stringify(rec)))
     if (rec === null) {
       // 本书从没动过背景 ⇒ 维持推荐色，圈落到命中的推荐色
       this.bgFocus = 'preset'
@@ -2401,12 +2458,14 @@ export default struct ReaderPage3 {
     if (!rec.on) {
       if (rec.customTexId.length > 0) {
         this.bgFocus = 'tex'
+        this.markSchemeFocusIfMatched()
         this.applyTextureBg()
         return
       }
       if (rec.texId > 0) {
         // 记录是"本书选了材质"（背景家族）⇒ 照常恢复材质
         this.bgFocus = 'tex'
+        this.markSchemeFocusIfMatched()
         this.applyTextureBg()
         return
       }
