@@ -94,6 +94,41 @@ export interface ReaderBgRecord {
    * ⚠️ 旧记录没有该字段 ⇒ normalize 补 ''。
    */
   customTexId: string;
+  /**
+   * **当前生效的阅读模式**（2026-10-08 新增）：0 = 夜间 / 1 = 日间 / 2 = 自由。
+   *
+   * 用户口径（2026-10-08 原话）：「日间和夜间是固定的…如果用选择了推荐色或者材质，
+   * 那么就不算是真正的日间夜间了…**一旦更改了，就算自由**」。
+   * ⇒ 日/夜是**固定标准白/黑**；只要用户在背景家族（推荐色 / 内置材质 / 自定义材质 /
+   *   自定义纯色）或**字色**上动过手，模式就归档为**自由**，并由这条字段按书持久化
+   *   （旧实现把模式"派生"自 `on` 一个布尔量 ⇒ 材质/推荐色全被算成日/夜，切回自由时
+   *   拿到的是纯色，与用户看到的不一致）。
+   *
+   * ⚠️ 本字段**只描述"现在生效的是哪一套"**，与下面那批"自由那一套外观"字段**互不干扰**：
+   *   切到日/夜**不会**清空 `on/r/g/b/texId/customTexId` + `blurOn/blurRadius` +
+   *   `fontAuto/bgHex/fontHex`
+   *   ⇒ 按回「自由」时那一套原样回来（这就是用户要的"常态化持久化一致"）。
+   * ⚠️ 旧记录没有该字段 ⇒ normalize 补 `MODE_UNKNOWN(-1)`，由 `modeOf()` 按存量字段推断
+   *   （见其注释：已应用自定义/材质 ⇒ 自由；否则看存量主题色是不是标准白/黑）。
+   */
+  mode: number;
+  /**
+   * **「自由」那一套的背景纯色**（`#RRGGBB`；'' = 该套背景是材质，或旧记录未记录）。
+   *
+   * 为什么不能拿 `r/g/b` 顶替：`r/g/b` 是**调色盘草稿**（`customBgR/G/B`），用户点「推荐色」
+   *   时它不会跟着变 ⇒ 拿它当自由那套的背景色会把"选了推荐色"记成别的颜色。
+   * ⚠️ 旧记录没有该字段 ⇒ normalize 补 ''（页面此时回落到 `r/g/b`，与历史行为一致）。
+   */
+  bgHex: string;
+  /**
+   * **「自由」那一套的自定义字色**（`#RRGGBB`；'' = 未手动选过字色，走自动对比）。
+   *
+   * 为什么必须单独存：`readerSetting.fontColor` 是**屏幕现状**，切日/夜时会被写成
+   *   `#000000/#ffffff` 并随 `ReaderSetting_<书名>` 落盘（`ReaderPage3` pageShow）⇒
+   *   旧实现里用户调好的"粉字"切一次亮色就真丢了，回自由也拿不回来。
+   * ⚠️ 旧记录没有该字段 ⇒ normalize 补 ''（页面沿用 `readerSetting.fontColor`，行为不变）。
+   */
+  fontHex: string;
 }
 
 /**
@@ -205,6 +240,19 @@ export class ReaderCustomBg {
 
   static readonly WHITE: RgbTriple = { r: 255, g: 255, b: 255 };
   static readonly BLACK: RgbTriple = { r: 0, g: 0, b: 0 };
+
+  // ── 阅读三模式（`ReaderBgRecord.mode`，2026-10-08）──────────────────────────
+  /** 夜间（固定标准：`#202224` 底 + `#ffffff` 字） */
+  static readonly MODE_NIGHT: number = 0;
+  /** 日间（固定标准：`#FFFFFF` 底 + `#000000` 字） */
+  static readonly MODE_DAY: number = 1;
+  /** 自由（= 用户自己那套：推荐色 / 材质 / 自定义材质 / 自定义纯色 + 自定义字色） */
+  static readonly MODE_FREE: number = 2;
+  /** 旧记录没有 `mode` 字段 ⇒ 由 `modeOf()` 按存量字段推断 */
+  static readonly MODE_UNKNOWN: number = -1;
+
+  /** 日/夜这套**标准**底色（`#FFFFFF` 日间 / `#F8F9FA` 工程缺省日间 / `#202224` 夜间） */
+  private static readonly STANDARD_THEME_HEXES: string[] = ['#FFFFFF', '#F8F9FA', '#202224'];
 
   // ── 基础工具 ───────────────────────────────────────────────────────────────
 
@@ -492,8 +540,55 @@ export class ReaderCustomBg {
       blurRadius: ReaderCustomBg.snapBlurTier(
         ReaderCustomBg.num(rec.blurRadius, BG_BLUR_RADIUS_DEFAULT)),
       // 自定义背景（2026-09-27）：旧记录无此字段 ⇒ 空（不用自定义背景）
-      customTexId: typeof rec.customTexId === 'string' ? rec.customTexId : ''
+      customTexId: typeof rec.customTexId === 'string' ? rec.customTexId : '',
+      // 阅读模式（2026-10-08）：旧记录无此字段 ⇒ MODE_UNKNOWN(-1)，由 `modeOf()` 推断
+      mode: (typeof rec.mode === 'number' && isFinite(rec.mode)
+        && rec.mode >= ReaderCustomBg.MODE_NIGHT && rec.mode <= ReaderCustomBg.MODE_FREE)
+        ? Math.floor(rec.mode) : ReaderCustomBg.MODE_UNKNOWN,
+      // 「自由」那一套的背景纯色 / 自定义字色：旧记录无 ⇒ ''（页面沿用存量外观）
+      bgHex: typeof rec.bgHex === 'string' ? rec.bgHex : '',
+      fontHex: typeof rec.fontHex === 'string' ? rec.fontHex : ''
     };
+  }
+
+  /**
+   * 这个底色是不是**日/夜这套标准色**（`#FFFFFF` / `#F8F9FA` / `#202224`）。
+   *
+   * 用途只有一个：**旧记录的 mode 推断**（旧记录没有 `mode` 字段）。判定必须走
+   * `parseColor → hexOf` 归一化 —— 工程缺省日间底色在 `ReaderSetting` 里写的是
+   * `rgba(248, 249, 250, 1)`（`ReaderPage3.ets:1101`），字面量比不了。
+   */
+  static isStandardTheme(hex: string): boolean {
+    const rgb = ReaderCustomBg.parseColor(hex);
+    if (rgb === null) {
+      return false;
+    }
+    return ReaderCustomBg.STANDARD_THEME_HEXES.includes(ReaderCustomBg.hexOf(rgb));
+  }
+
+  /**
+   * 该记录**当前生效的模式**（0 夜 / 1 日 / 2 自由）。
+   *
+   * 新记录直接读 `rec.mode`；旧记录（`MODE_UNKNOWN`）按下述顺序推断：
+   *   ① 已应用自定义纯色（`on`）/ 有内置材质（`texId`）/ 有自定义材质（`customTexId`）
+   *      ⇒ **自由**（这些本来就是"非标准日/夜"的那一套）；
+   *   ② 否则看**存量主题色**：标准白/黑 ⇒ 日/夜；其余（例如 4 个推荐色）⇒ **自由**
+   *      —— 用户口径「选择了推荐色就不算真正的日间夜间」。
+   *
+   * @param nightMode 存量 `readerSetting.nightMode`（日/夜二选一时用它定哪一边）
+   * @param curTheme  存量 `readerSetting.themeColor`
+   */
+  static modeOf(rec: ReaderBgRecord, nightMode: boolean, curTheme: string): number {
+    if (rec.mode >= ReaderCustomBg.MODE_NIGHT && rec.mode <= ReaderCustomBg.MODE_FREE) {
+      return rec.mode;
+    }
+    if (rec.on || rec.texId > 0 || rec.customTexId.length > 0) {
+      return ReaderCustomBg.MODE_FREE;
+    }
+    if (ReaderCustomBg.isStandardTheme(curTheme)) {
+      return nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY;
+    }
+    return ReaderCustomBg.MODE_FREE;
   }
 
   /** 读一条记录；不存在 / 解析失败 / 字段损坏都返回 `null`（绝不把半成品交给渲染） */

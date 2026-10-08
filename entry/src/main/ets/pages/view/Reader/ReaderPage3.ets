@@ -1138,6 +1138,22 @@ export default struct ReaderPage3 {
   //   ⚠️ 与 `readerSetting` 一样是**按书**的 —— 这正是"每本书互不干扰"的来源
   //     （`ReaderSetting_<书名>`，本文件 `aboutToAppear` / `registerPageShow`）。
   // ══════════════════════════════════════════════════════════════════════════
+  // ── 阅读三模式（2026-10-08 重构）：夜间(0) / 日间(1) / **自由(2)** ──────────
+  // 用户口径（2026-10-08 原话）：「日间和夜间是固定的…如果用选择了推荐色或者材质，
+  //   那么就不算是真正的日间夜间了…**一旦更改了，就算自由**」；例子：「我选择材质背景
+  //   004 + 自定义一个粉色的文字…退出后下次切亮/暗，回到自由应该是 **004 + 粉字**」。
+  // ⇒ 三模式**不再从 `customBgOn` 派生**（那一个布尔量只是"背景 = 自定义纯色"，
+  //   材质/推荐色/自定义字色全被算成日/夜 ⇒ 切回"自由"拿到的是纯色，与看到的不一致），
+  //   改成 `themeMode` 显式记录 + 随 `ReaderBg_<书名>.mode` 按书持久化。
+  // ⚠️ 日/夜 = **固定标准**白/黑，切过去**不再清空**"自由那一套"（`on/r/g/b/texId/
+  //   customTexId/blur*/fontAuto` + `freeBgHex/freeFontHex`）⇒ 按回自由原样回来。
+  /** 0 = 夜间，1 = 日间，2 = 自由（与 `ReaderCustomBg.MODE_*` 同值；-1 只出现在旧记录里） */
+  @State themeMode: number = 1
+  /** 「自由」那一套的背景纯色（'' = 该套背景是材质，或还没记过 —— 见 `applyFreeColor` 回落） */
+  private freeBgHex: string = ''
+  /** 「自由」那一套的自定义字色（'' = 自动对比 / 沿用当前字色） */
+  private freeFontHex: string = ''
+
   /**
    * 自定义背景色开关（true = **背景当前就是**自定义纯色）。
    *
@@ -1348,6 +1364,13 @@ export default struct ReaderPage3 {
     if (this.fontTarget) {
       this.readerSetting.fontColor = this.customFontHex()
       this.fontAuto = false
+      // 手动选字色 = 用户改了自己的那一套 ⇒ 模式归自由 + 字色归档（2026-10-08）。
+      // `freeBgHex` 只在背景不是材质时跟随现状（材质时它必须是空串，见 applyFreeAppearance）。
+      this.themeMode = ReaderCustomBg.MODE_FREE
+      this.freeFontHex = this.customFontHex()
+      if (this.bgTexId <= 0 && this.bgCustomId.length === 0) {
+        this.freeBgHex = this.readerSetting.themeColor ?? ''
+      }
       this.readerComponentController.setPageConfig(this.readerSetting)
       this.customBgTouched = true
       this.saveCustomBg()
@@ -1362,6 +1385,9 @@ export default struct ReaderPage3 {
       this.customBgPrevNight = this.readerSetting.nightMode
       this.customBgOn = true
     }
+    // 保存自定义背景色 = 用户改了自己的那一套 ⇒ 模式归自由 + 背景纯色归档（2026-10-08）
+    this.themeMode = ReaderCustomBg.MODE_FREE
+    this.freeBgHex = this.customBgHex()
     this.bgFocus = 'custom'
     this.applyCustomBg(true)
     showMessage('背景色已应用')
@@ -1390,6 +1416,12 @@ export default struct ReaderPage3 {
       this.customFontB = rgb.b
       this.bgFocus = 'font'
     })
+    // 推荐字色 / 自定义字色 = 用户改了自己的那一套 ⇒ 模式归自由 + 字色归档（2026-10-08）
+    this.themeMode = ReaderCustomBg.MODE_FREE
+    this.freeFontHex = ReaderCustomBg.hexOf(rgb)
+    if (this.bgTexId <= 0 && this.bgCustomId.length === 0) {
+      this.freeBgHex = this.readerSetting.themeColor ?? ''
+    }
     this.customBgTouched = true
     this.readerComponentController.setPageConfig(this.readerSetting)
     this.saveCustomBg()
@@ -1431,6 +1463,19 @@ export default struct ReaderPage3 {
   /** 「自定义颜色」行此刻是否持焦（最后按了「保存」）——预览圆点亮橙圈用 */
   private isCustomBgFocused(): boolean {
     return this.bgFocus === 'custom'
+  }
+
+  /**
+   * 调色盘那一坨 UI（开关 isOn / 背景文字滑块 / 预览+保存 / 调色盘本体）此刻是否该亮。
+   *
+   * ⚠️ 2026-10-08：不能直接用 `customBgOn` —— 日/夜模式下它可能仍是"自由那一套 = 自定义
+   *   纯色"的存档标记（模式切换**刻意不清**它），直接读会让标准白底上也显示"自定义颜色已开"
+   *   并把调色盘摊开。判定：**编辑态一律显示**（`customEditOn`，用户刚点开开关），
+   *   已应用态只在**自由模式**下才算"开着"。
+   */
+  private customEditVisible(): boolean {
+    return this.customEditOn
+      || (this.themeMode === ReaderCustomBg.MODE_FREE && this.customBgOn)
   }
 
   /**
@@ -1626,13 +1671,11 @@ export default struct ReaderPage3 {
         this.readerSetting.themeColor = item.themeColor;
         this.readerSetting.themeBgImg = item.themeBgImg;
       })
-      // ★ 点了推荐色 = 用户改选"默认背景" ⇒ 离开自定义颜色模式（色值一律保留）。
+      // ★ 点了推荐色 = 用户改了自己的那一套 ⇒ **模式归自由** + 归档背景纯色/字色 + 落盘。
       //   ⚠️ 必须放在 animateTo 之后：闭包已把三个值改成刚点的推荐色，才能记成新回退点。
-      //   ⚠️ 2026-10-06：条件补上 `customEditOn` —— 只是"展开调色盘试色"时点推荐色，
-      //     同样要收起调色盘并把新底色记成回退点（否则之后关开关会还原成更旧的那套）。
-      if (this.customBgOn || this.customEditOn) {
-        this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
-      }
+      //   ⚠️ 2026-10-08：改为**无条件**调用（旧代码只在 `customBgOn || customEditOn` 时才调
+      //     ⇒ 日/夜下点推荐色模式不落盘，退出再进退回标准白/黑，与用户看到的不一致）。
+      this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
       this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
       this.readerComponentController.setPageConfig(this.readerSetting);
     })
@@ -1672,28 +1715,28 @@ export default struct ReaderPage3 {
 
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 阅读页三模式：日间(1) / 夜间(0) / **自由(2)**（2026-09-26 用户设计）
+  // 阅读页三模式：夜间(0) / 日间(1) / **自由(2)**
   //
-  // 用户原话：「增加一个模式，日间，夜间，**自由**，这样就更好了」。
-  // 起因：原来开着自定义背景时按日/夜会把自定义背景**让位**（上一轮定的规则），
-  //   用户反馈「如果点击日间或者夜间切换，就没了，这次设置就丢了」。
-  // ⇒ 现在把「用自定义色」提升成一个**与日夜平级的模式**，由底栏那个按钮三态循环：
-  //      日间 → 夜间 → 自由 → 日间 …
-  //   进「自由」= 用你调/存的那个颜色；离开「自由」= 回到标准白/黑，
-  //   但**你调好的色值一直留在记录里**（`ReaderBg_<书名>` 的 r/g/b 不因切模式而清空），
-  //   下次回到「自由」原样恢复 ⇒ 设置不再"丢"。
+  // 演化：2026-09-26 用户提出「增加一个模式，日间，夜间，自由」，当时模式是**派生**的
+  //   （`customBgOn ⇒ 自由；否则看 nightMode`）。2026-10-08 用户把口径说清：
+  //   「日间和夜间是固定的…如果用选择了推荐色或者材质，那么就不算是真正的日间夜间了…
+  //    **一旦更改了，就算自由**」，并给出验收例子「材质背景004 + 自定义粉色文字，
+  //    退出后切亮/暗，回到自由必须是 004 + 粉字」。
+  // ⇒ 派生口径**作废**（`customBgOn` 只表示"背景 = 自定义纯色"，材质/推荐色/自定义字色
+  //   全被算成日/夜），改为 `themeMode` 显式持久化（`ReaderBg_<书名>.mode`）。
   //
-  // 模式是**派生**的，不新增持久化字段：
-  //   customBgOn ⇒ 自由；否则看 `readerSetting.nightMode`（true = 夜间）。
-  //   这样与既有的按书持久化（`ReaderSetting_<书名>`）天然一致，也不会出现两套状态打架。
+  // 三条不变量（改这块代码必须同时满足）：
+  //   ① 日/夜 = **固定标准**（白/`#000000` 与 `#202224`/`#ffffff`），任何时候按到都是它；
+  //   ② 「自由」= **用户自己那一套**：背景家族（推荐色 / 内置材质 / 自定义材质 / 自定义
+  //      纯色）+ 字色家族（自定义字色）；排版三件套（字体文件/字号/行距）**不属于**
+  //      三模式，继续走 `ReaderFontLib` + `ReaderSetting_<书名>`（用户原话"除了字体以外"）；
+  //   ③ 进出日/夜**绝不清空**"自由那一套"（`on/r/g/b/texId/customTexId/blur*/fontAuto`
+  //      + `freeBgHex/freeFontHex`）—— 这是用户那句"再切回来设置就丢了"的根因所在。
   // ══════════════════════════════════════════════════════════════════════════
 
-  /** 0 = 夜间，1 = 日间，2 = 自由 */
+  /** 当前生效的模式（0 = 夜间，1 = 日间，2 = 自由）—— 唯一事实来源，随书记持久化 */
   private readerMode(): number {
-    if (this.customBgOn) {
-      return 2
-    }
-    return this.readerSetting.nightMode ? 0 : 1
+    return this.themeMode
   }
 
   /**
@@ -1724,15 +1767,16 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 切到标准日/夜（离开「自由」）。
+   * 只摆**标准日/夜的外观**（**不碰**记录里"自由那一套"）。
    *
-   * ⚠️ 关键：**只把 `on` 置 false，r/g/b 原样写回**（`customBgRecord()` 带的就是当前 rgb）
-   *   ⇒ 用户调好的颜色留在记录里，回到「自由」就能原样恢复。
-   *   这正是上一版"设置丢了"的根因：`toggleCustomBg(true)` 每次都从当前 `themeColor`
-   *   重新取 RGB，而这里已经把 `themeColor` 改成了标准白/黑。
+   * 与旧实现的差别就是这次修的 bug：旧 `setStandardMode()` 顺手把 `bgTexId = 0`、
+   *   `bgCustomId = ''` 清掉再落盘 ⇒ 记录里的"材质 004"被抹掉，回自由不可能还原
+   *   （用户实测口径：「切亮/暗，回到自由应该是 004 + 粉字」）。现在**只改屏幕现状**。
+   *
+   * @param push true = 立刻下发引擎（用户按底栏切模式）；false = 只摆内存字段，
+   *   由进书恢复用（`startPlay()` 里的 `setPageConfig` 会带着它下发第一帧）
    */
-  private setStandardMode(night: boolean): void {
-    this.customBgOn = false
+  private applyStandardAppearance(night: boolean, push: boolean): void {
     // 明确的白/黑选择 = 调色盘一并收起（`customEditOn` 是纯编辑态，见其注释）
     this.customEditOn = false
     this.colorMode = night ? 0 : 1
@@ -1740,36 +1784,111 @@ export default struct ReaderPage3 {
     this.readerSetting.fontColor = night ? '#ffffff' : '#000000'
     this.readerSetting.themeColor = night ? '#202224' : '#FFFFFF'
     this.readerSetting.themeBgImg = ''
-    // 回到标准白/黑 = 明确选了推荐色背景 ⇒ 材质标记清零（推荐色与材质同属背景家族，互斥）
-    this.bgCustomId = ''
-    this.bgTexId = 0
-    // 焦点（2026-09-25 用户设计）：关掉自定义 = 回到标准色 ⇒ 圈落到命中的推荐色上
+    // 焦点（2026-09-25 用户设计）：标准白/黑 ⇒ 圈落到命中的推荐色上
     this.bgFocus = 'preset'
+    if (!push) {
+      return
+    }
     NightMode.setReaderNight(night)
     this.syncAbilityColorMode()
     this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
+  }
+
+  /**
+   * 切到**标准日/夜**（离开「自由」）。
+   *
+   * ⚠️ 关键：只切模式 + 摆标准色，"自由那一套"**原样留在记录里**
+   *   （`customBgRecord()` 的 `on/r/g/b/texId/customTexId/bgHex/fontHex/blur*` 一个都不动）
+   *   ⇒ 按回「自由」原样恢复。旧实现边切边清 `bgTexId/bgCustomId`，并把
+   *   `readerSetting.fontColor` 写成黑/白随 pageShow 落盘 ⇒ 材质与自定义字色**真丢**
+   *   （2026-10-08 用户反馈的根因）。
+   */
+  private setStandardMode(night: boolean): void {
+    this.themeMode = night ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY
+    this.applyStandardAppearance(night, true)
     this.customBgTouched = true
     this.saveCustomBg()
   }
 
-  /** 切到「自定义颜色」模式：用记录里存着的（或当前看到的）颜色；材质让位（背景家族分离） */
+  /**
+   * 切到「自由」：用记录里存着的**那一整套**（背景家族 + 自定义字色）。
+   *
+   * ⚠️ 旧实现这里无条件走纯色（`applyCustomBg`）⇒ 记录里的材质 004 被顶掉，
+   *   用户看到的"自由"和上次调好的东西对不上（本次修复点之一）。
+   */
   private enterFreeMode(): void {
-    this.customBgOn = true
+    this.themeMode = ReaderCustomBg.MODE_FREE
     this.customBgTouched = true
-    // 优先用**记录里存着的**色值；没有记录（第一次进自由）才拿当前主题色当起点，
-    // 这样色盘是从"你现在看到的颜色"出发，不会一进来就跳成纯白。
-    // ⚠️ 2026-09-25 语义收窄：材质属**背景家族**，进自定义颜色 = 纯色渲染（themeBgImg=''）；
-    //   `bgTexId` **不清零**（记录里留着的材质，关掉自定义时若还在就原样恢复）。
+    // 调色盘草稿起点 = 记录里存着的色值（旧行为，保留）
     const rec = this.storedCustomBg()
     if (rec !== null) {
       this.customBgR = rec.r
       this.customBgG = rec.g
       this.customBgB = rec.b
     }
-    // 焦点：进入自定义颜色 ⇒ 圈落到「自定义颜色」行的预览块（保存键方案）
-    this.bgFocus = 'custom'
-    this.applyCustomBg(true)
+    // 第一次进自由（既没材质、也没记过背景纯色）⇒ 以"你现在看到的颜色"为起点，
+    // 不会一进来就跳成纯白（旧实现语义，保留）。
+    if (this.bgTexId <= 0 && this.bgCustomId.length === 0 && this.freeBgHex.length === 0) {
+      this.freeBgHex = this.readerSetting.themeColor ?? ''
+      this.customBgOn = true
+    }
+    // 焦点：材质 ⇒ 材质格；自定义纯色 ⇒ 调色盘预览块；其余（推荐色）⇒ 推荐色格
+    this.bgFocus = (this.bgTexId > 0 || this.bgCustomId.length > 0)
+      ? 'tex' : (this.customBgOn ? 'custom' : 'preset')
+    this.applyFreeAppearance(true)
+    this.saveCustomBg()
+  }
+
+  /**
+   * 把「自由那一套」摆回屏幕（背景家族三选一 + 自定义字色）。
+   *
+   * 背景家族互斥（见 `pickTexture` / `pickCustom`）：有材质走材质管线，否则纯色。
+   * @param push 语义同 `applyStandardAppearance` 的同名参数
+   */
+  private applyFreeAppearance(push: boolean): void {
+    if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
+      this.applyTextureBg()
+      return
+    }
+    this.applyFreeColor(push)
+  }
+
+  /**
+   * 「自由」里**背景 = 纯色**的生效路径（推荐色与自定义纯色共用这一条）。
+   *
+   * ⚠️ 刻意**不走** `applyCustomBg()`：那条读的是调色盘草稿 `customBgR/G/B`，且与
+   *   `customBgOn`（"这就是自定义纯色"这个 UI 标志）绑在一起；推荐色属于自由但**不是**
+   *   自定义纯色 ⇒ 会画错圈，也会把用户点的推荐色换成草稿色。
+   *   这里以 `freeBgHex` 为准，为空（旧记录 / 第一次进自由）才回落到草稿色 —— 与历史一致。
+   */
+  private applyFreeColor(push: boolean): void {
+    let rgb = ReaderCustomBg.parseColor(this.freeBgHex)
+    if (rgb === null) {
+      rgb = ReaderCustomBg.make(this.customBgR, this.customBgG, this.customBgB)
+    }
+    const dark: boolean = ReaderCustomBg.isDarkBg(rgb)
+    const flipped: boolean = (this.colorMode === 0) !== dark
+    this.readerSetting.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.readerSetting.themeBgImg = ''
+    if (this.fontAuto) {
+      this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
+    } else if (this.freeFontHex.length > 0) {
+      // 自定义字色：切日/夜时 `readerSetting.fontColor` 被写成黑/白（并随 pageShow 落盘），
+      // 真正的那个"粉字"存在 `freeFontHex` 里 ⇒ 回自由必须从这里拿回来。
+      this.readerSetting.fontColor = this.freeFontHex
+    }
+    this.readerSetting.nightMode = dark
+    this.colorMode = dark ? 0 : 1
+    if (!push) {
+      return
+    }
+    NightMode.setReaderNight(dark)
+    if (flipped) {
+      this.syncAbilityColorMode()
+    }
+    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+    this.readerComponentController.setPageConfig(this.readerSetting)
   }
 
   /** 取"本书记录 → 全局记录"里那条（与进书恢复用同一个解析顺序） */
@@ -1836,10 +1955,15 @@ export default struct ReaderPage3 {
       if (f !== null) {
         this.readerSetting.fontColor = ReaderCustomBg.hexOf(f)
         this.fontAuto = false
+        // 「自由那一套」的字色同步归档：切日/夜后回自由要靠它（2026-10-08）
+        this.freeFontHex = ReaderCustomBg.hexOf(f)
       }
     } else {
       this.fontAuto = true
+      this.freeFontHex = ''
     }
+    // 点方案 = 用自定义那一套 ⇒ 模式归「自由」（2026-10-08 用户口径：一改就算自由）
+    this.themeMode = ReaderCustomBg.MODE_FREE
     // ── 背景模糊（属背景家族，随方案一起还原）────────────────────────────────────
     this.bgBlurOn = e.blurOn
     this.bgBlurRadius = ReaderCustomBg.snapBlurTier(e.blurRadius)
@@ -1848,6 +1972,8 @@ export default struct ReaderPage3 {
     this.customEditOn = false
     this.bgCustomId = ''
     this.bgTexId = 0
+    // 自由那一套的背景纯色：材质类方案一律空串（材质优先，见 applyFreeAppearance）
+    this.freeBgHex = e.bgKind === ReaderCustomBg.BG_KIND_COLOR ? e.bgHex : ''
     this.customBgTouched = true
     // 焦点：点了方案 ⇒ 「更多方案」按钮持圈，且对应卡片画橙圈（键与列表同源）
     this.bgFocus = 'scheme'
@@ -1883,14 +2009,22 @@ export default struct ReaderPage3 {
    * 背景种类按**当前真正生效**的那个判（三者互斥，见 `pickTexture` / `pickCustom`）：
    * `customBgOn`（自定义纯色）> `bgCustomId`（自定义材质）> `bgTexId`（内置材质）> 纯色。
    * ⚠️ 材质在用时 `themeColor` 只是**整图均色近似**，绝不能拿它当背景色存（旧实现就是这么错的）。
+   * ⚠️ 2026-10-08：只有**自由模式**下才认"自由那一套"。在日/夜模式下 `bgTexId/bgCustomId`
+   *   **仍然留着自由那一套的材质**（刻意不清零，见 `setStandardMode`），若不加这道门，
+   *   在标准白底上按「保存方案」会存成"材质 + 黑字" —— 与屏幕看到的不符。
    */
   private currentScheme(): SchemeV3 {
     let bgKind: number = ReaderCustomBg.BG_KIND_COLOR
     let bgHex: string = this.readerSetting.themeColor
     let texId: number = 0
     let customTexId: string = ''
-    if (this.customBgOn) {
+    if (this.themeMode !== ReaderCustomBg.MODE_FREE) {
+      // 日/夜 = 固定标准色，屏幕现状就是 themeColor 那个纯色
       bgKind = ReaderCustomBg.BG_KIND_COLOR
+    } else if (this.customBgOn) {
+      bgKind = ReaderCustomBg.BG_KIND_COLOR
+      // 推荐色的背景色不在草稿里 ⇒ 优先用 `freeBgHex`（为空才回落屏幕现状）
+      bgHex = this.freeBgHex.length > 0 ? this.freeBgHex : this.readerSetting.themeColor
     } else if (this.bgCustomId.length > 0) {
       bgKind = ReaderCustomBg.BG_KIND_CUSTOM
       customTexId = this.bgCustomId
@@ -1899,7 +2033,12 @@ export default struct ReaderPage3 {
       bgKind = ReaderCustomBg.BG_KIND_TEX
       texId = this.bgTexId
       bgHex = ''
+    } else if (this.freeBgHex.length > 0) {
+      // 推荐色背景：既不是自定义纯色，也没材质 ⇒ 取自由那一套记下的纯色
+      bgHex = this.freeBgHex
     }
+    const freeFont: boolean = this.themeMode === ReaderCustomBg.MODE_FREE
+      && !this.fontAuto && this.freeFontHex.length > 0
     return {
       bgKind: bgKind,
       bgHex: bgHex,
@@ -1908,7 +2047,7 @@ export default struct ReaderPage3 {
       blurOn: this.bgBlurOn,
       blurRadius: this.bgBlurRadius,
       fontKind: this.fontAuto ? ReaderCustomBg.FONT_KIND_AUTO : ReaderCustomBg.FONT_KIND_HEX,
-      fontHex: this.fontAuto ? '' : this.readerSetting.fontColor
+      fontHex: this.fontAuto ? '' : (freeFont ? this.freeFontHex : this.readerSetting.fontColor)
     }
   }
 
@@ -2102,7 +2241,7 @@ export default struct ReaderPage3 {
     this.savedSchemes = ReaderCustomBg.loadSchemesV3()
   }
 
-  /** 组装一条持久化记录 */
+  /** 组装一条持久化记录（= 「自由那一套」完整外观 + **当前生效的模式**） */
   private customBgRecord(): ReaderBgRecord {
     return {
       on: this.customBgOn,
@@ -2116,7 +2255,12 @@ export default struct ReaderPage3 {
       fontAuto: this.fontAuto,
       blurOn: this.bgBlurOn,
       blurRadius: this.bgBlurRadius,
-      customTexId: this.bgCustomId
+      customTexId: this.bgCustomId,
+      // 三模式（2026-10-08）：模式 + 自由那一套的背景纯色/自定义字色。
+      // ⚠️ 这三项与"屏幕现状"无关：日/夜时也要写回**自由那一套**，否则回来是空的。
+      mode: this.themeMode,
+      bgHex: this.freeBgHex,
+      fontHex: this.freeFontHex
     }
   }
 
@@ -2333,9 +2477,11 @@ export default struct ReaderPage3 {
     const avgHex = ReaderCustomBg.hexOf(res.avg)
     const dark: boolean = ReaderCustomBg.isDarkBg(res.avg)
     const flipped: boolean = (this.colorMode === 0) !== dark
+    // 字色：自动对比优先；用户手动选过字色时用**自由那一套记下的**字色（`freeFontHex`），
+    // 它为空（旧记录 / 从没手选过）才沿用屏幕现状 `readerSetting.fontColor`（2026-10-08）。
     const nextFont = this.fontAuto
       ? ReaderCustomBg.contrastFont(res.avg)
-      : this.readerSetting.fontColor
+      : (this.freeFontHex.length > 0 ? this.freeFontHex : this.readerSetting.fontColor)
     // ── 背景模糊（2026-09-26）：把高斯模糊"洗进"图里再交给引擎 ──────────────
     // 真机实测引擎画布不透底（透明主题色 = 黑屏，见 bgBlurOn 注释），故在**给图
     // 之前**按当前档位模糊（分档磁盘缓存：命中零等待，未命中现场生成一次）。
@@ -2396,6 +2542,9 @@ export default struct ReaderPage3 {
       // 材质与自定义颜色互斥（同一时间背景只能是一种）：退出自定义，材质顶上
       this.customBgOn = false
     }
+    // 选材质 = 用户改了自己的那一套 ⇒ 模式归「自由」，且自由那一套的背景不再是纯色
+    this.themeMode = ReaderCustomBg.MODE_FREE
+    this.freeBgHex = ''
     // 点材质 = 明确选了背景 ⇒ 调色盘收起（纯编辑态）
     this.customEditOn = false
     this.customBgTouched = true
@@ -2419,6 +2568,9 @@ export default struct ReaderPage3 {
     if (this.customBgOn) {
       this.customBgOn = false
     }
+    // 选自定义材质 = 用户改了自己的那一套 ⇒ 模式归「自由」，背景不再是纯色
+    this.themeMode = ReaderCustomBg.MODE_FREE
+    this.freeBgHex = ''
     // 点自定义材质 = 明确选了背景 ⇒ 调色盘收起（纯编辑态）
     this.customEditOn = false
     this.customBgTouched = true
@@ -2443,8 +2595,11 @@ export default struct ReaderPage3 {
     this.customBgTouched = true
     if (on) {
       this.customEditOn = true
-      if (!this.customBgOn) {
-        // 快照"进入编辑前"的背景：关掉时原样还回去（材质/推荐色都不丢）
+      // 快照"进入编辑前"的背景：关掉时原样还回去（材质/推荐色都不丢）。
+      // ⚠️ 2026-10-08：日/夜模式下 `customBgOn` 可能仍留着"自由那一套 = 自定义纯色"的
+      //   标记（模式切换**刻意不清**它），所以这里必须**同时判模式** —— 否则在标准白底上
+      //   展开调色盘不会拍快照，之后关开关会还原成更早的一套（跨模式串味）。
+      if (this.themeMode !== ReaderCustomBg.MODE_FREE || !this.customBgOn) {
         this.customBgPrevTheme = this.readerSetting.themeColor
         this.customBgPrevFont = this.readerSetting.fontColor
         this.customBgPrevNight = this.readerSetting.nightMode
@@ -2461,8 +2616,11 @@ export default struct ReaderPage3 {
       return
     }
     this.customEditOn = false
-    if (!this.customBgOn) {
-      // 只是编辑态（从没保存过）⇒ 关掉无需还原任何东西：背景一直是原样
+    // ⚠️ 2026-10-08：只有在**自由模式且背景就是自定义纯色**时才有"还原"这回事。
+    //   日/夜模式下 `customBgOn` 只是自由那一套的存档标记，此刻屏幕上没有自定义纯色
+    //   ⇒ 关开关只收起调色盘，绝不动标准白/黑（否则一切亮色就被拽回自定义色）。
+    if (this.themeMode !== ReaderCustomBg.MODE_FREE || !this.customBgOn) {
+      // 只是编辑态（从没保存过）/ 当前是日/夜 ⇒ 关掉无需还原任何东西：背景一直是原样
       return
     }
     this.customBgOn = false
@@ -2502,11 +2660,24 @@ export default struct ReaderPage3 {
       ? ReaderCustomBg.contrastFont(rgb)
       : this.customBgPrevFont
     this.colorMode = this.customBgPrevNight ? 0 : 1
+    // 模式与"自由那一套"同步收口（2026-10-08）：开关关掉 = 屏幕回到 prev* 那一套
+    // ⇒ 模式/记录必须跟着走，否则按钮文案与下次进书会与眼睛看到的不一致
+    //   （恢复了标准白/黑却仍标着"自由"，或反过来）。标准白/黑 ⇒ 日/夜，其余 ⇒ 自由。
+    const hex: string = ReaderCustomBg.hexOf(rgb)
+    const std: boolean = ReaderCustomBg.isStandardTheme(hex)
+    this.themeMode = std
+      ? (ReaderCustomBg.isDarkBg(rgb) ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY)
+      : ReaderCustomBg.MODE_FREE
+    this.freeBgHex = std ? '' : hex
+    if (!this.fontAuto) {
+      // prev 那一套的字色（可能为空串 ⇒ `applyFreeColor` 会沿用屏幕现状，安全回落）
+      this.freeFontHex = this.customBgPrevFont
+    }
     NightMode.setReaderNight(this.customBgPrevNight)
     this.syncAbilityColorMode()
     // 焦点：恢复色恰好是最后一次应用的方案 ⇒ 圈落回「更多方案」按钮；否则落推荐色
     this.bgFocus = (this.schemeFocusBg.length > 0
-      && this.schemeFocusBg === ReaderCustomBg.hexOf(rgb)) ? 'scheme' : 'preset'
+      && this.schemeFocusBg === hex) ? 'scheme' : 'preset'
     this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
     this.customBgTouched = true
@@ -2514,11 +2685,21 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 用户点了某个**推荐色** ⇒ 离开自定义颜色模式，落到该推荐色。
+   * 用户点了某个**推荐色** ⇒ 落到该推荐色。
    * 材质标记清零（推荐色与材质同属背景家族，互斥）。
+   *
+   * ⚠️ 2026-10-08：点推荐色也是"用户改了自己的那一套" ⇒ **模式归自由**（用户原话
+   *   「选择了推荐色…就不算是真正的日间夜间了…一旦更改了，就算自由」），并把
+   *   背景纯色/字色一并归档到 `freeBgHex/freeFontHex`（切日/夜后回自由要靠它们）。
+   *   本方法现在由推荐色格**无条件**调用（旧实现只在 `customBgOn || customEditOn`
+   *   时才调 ⇒ 日间下点推荐色模式不落盘，退出再进就退回标准白/黑）。
    */
   private presetPickedWhileCustomBg(bgTheme: string, fontColor: string, night: boolean): void {
+    this.themeMode = ReaderCustomBg.MODE_FREE
     this.customBgOn = false
+    this.freeBgHex = bgTheme
+    // 推荐色自带配套字色（`themeList` 就是成对方案）⇒ 自由那一套的字色跟着它走
+    this.freeFontHex = fontColor
     // 点推荐色 = 明确选了背景 ⇒ 调色盘收起（纯编辑态）
     this.customEditOn = false
     this.bgCustomId = ''
@@ -2589,11 +2770,18 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 进书时恢复自定义背景色（在 `readerSetting` 载入 + 迁移**之后**、`startPlay` **之前**调用）。
+   * 进书时恢复外观（在 `readerSetting` 载入 + 迁移**之后**、`startPlay` **之前**调用）。
    *
+   * ── 2026-10-08 重构：**按 `mode` 还原**（原来是"派生模式 + 只认自定义纯色"）──────
    * 解析顺序（`ReaderCustomBg.resolve`）：**本书记录 → 全局记录 → 都没有则维持推荐色**。
-   * ⇒ 「不点同步全局则本书生效」：改这本书只会写 `ReaderBg_<本书>`；
-   *   「点了则全软件同步生效」：全局记录 + 清空所有本书覆盖（见 `syncGlobal`）。
+   * 记录拿到后：
+   *   ① 把「自由那一套」整条读回内存（**与当前处于哪个模式无关** —— 它就是"用户自定义的
+   *      那一套"，日/夜时也要留在内存里，否则按回自由就空了）；
+   *   ② `themeMode = ReaderCustomBg.modeOf(...)`（旧记录按存量字段推断并即刻归档）；
+   *   ③ 自由 ⇒ 摆用户那一套；日/夜 ⇒ 摆**固定标准**白/黑（那一套原样留着）。
+   * ⚠️ 这里一律 **push=false**：引擎还没 `startPlay`，第一帧由 `startPlay()` 里的
+   *   `setPageConfig(readerSetting)` 下发（与旧实现"只摆字段不下发"一致；材质那条路
+   *   例外 —— 它本来就要异步出图，见 `applyTextureBg`）。
    */
   private restoreCustomBg(): void {
     const cur = ReaderCustomBg.parseColor(this.readerSetting.themeColor)
@@ -2604,15 +2792,26 @@ export default struct ReaderPage3 {
     }
     const name: string = this.bookData.bookName
     if (name === undefined || name === null || name.length === 0) {
+      this.themeMode = this.readerSetting.nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY
       return
     }
     const rec = ReaderCustomBg.resolve(name)
     this.schemeLog('restore rec=' + (rec === null ? 'null' : JSON.stringify(rec)))
     if (rec === null) {
-      // 本书从没动过背景 ⇒ 维持推荐色，圈落到命中的推荐色
+      // 本书从没写过记录：模式按存量判断 —— 底色不是标准白/黑（例如用户点过推荐色，
+      // 那条路径旧实现**不落记录**）也算「自由」，与 2026-10-08 用户口径一致。
+      const std: boolean = ReaderCustomBg.isStandardTheme(this.readerSetting.themeColor)
+      this.themeMode = std
+        ? (this.readerSetting.nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY)
+        : ReaderCustomBg.MODE_FREE
+      if (this.themeMode === ReaderCustomBg.MODE_FREE) {
+        this.freeBgHex = this.readerSetting.themeColor ?? ''
+      }
+      // 圈落到命中的推荐色（维持推荐色的书）
       this.bgFocus = 'preset'
       return
     }
+    // ── ① 自由那一套整条读回（与模式无关）────────────────────────────────────
     this.customBgOn = rec.on
     this.customBgR = rec.r
     this.customBgG = rec.g
@@ -2626,42 +2825,36 @@ export default struct ReaderPage3 {
     this.fontAuto = rec.fontAuto
     // 背景模糊读回（2026-09-26）：开关 + 强度。旧记录没有这两个字段，
     // `normalize` 已按"默认关 + 默认强度"补齐（AGENTS.md：改默认值必须同时迁移旧值）。
-    // ⚠️ 必须在下面任何 `return` 之前赋值 —— 材质/推荐色分支提前返回时也要带上模糊状态
-    //   （模糊属于背景家族，与"自定义颜色是否开着"无关）。
     this.bgBlurOn = rec.blurOn
     this.bgBlurRadius = rec.blurRadius
     // 自定义背景读回（2026-09-27）：与材质同属背景家族（on=false 也渲染）
     this.bgCustomId = rec.customTexId
-    if (!rec.on) {
-      if (rec.customTexId.length > 0) {
+    // 自由那一套的背景纯色 / 自定义字色（2026-10-08）
+    this.freeBgHex = rec.bgHex
+    this.freeFontHex = rec.fontHex
+    // ── ② 模式（旧记录 mode=-1 ⇒ 按存量字段推断）──────────────────────────────
+    this.themeMode = ReaderCustomBg.modeOf(rec, this.readerSetting.nightMode,
+      this.readerSetting.themeColor)
+    // ── ③ 按模式摆外观 ───────────────────────────────────────────────────────
+    if (this.themeMode === ReaderCustomBg.MODE_FREE) {
+      // 旧记录（无 `bgHex`）的自由纯色：用**存量主题色**补齐，之后切日/夜再回来才不会
+      // 回落到可能已被改过的调色盘草稿（`customBgR/G/B`）。
+      if (this.freeBgHex.length === 0 && this.bgTexId <= 0 && this.bgCustomId.length === 0) {
+        this.freeBgHex = this.readerSetting.themeColor ?? ''
+      }
+      // 材质 ⇒ 材质格；自定义纯色 ⇒ 调色盘预览块；推荐色 ⇒ 推荐色格
+      if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
         this.bgFocus = 'tex'
         this.markSchemeFocusIfMatched()
-        this.applyTextureBg()
-        return
-      }
-      if (rec.texId > 0) {
-        // 记录是"本书选了材质"（背景家族）⇒ 照常恢复材质
-        this.bgFocus = 'tex'
+      } else {
+        this.bgFocus = this.customBgOn ? 'custom' : 'preset'
         this.markSchemeFocusIfMatched()
-        this.applyTextureBg()
-        return
       }
-      // 记录只是"本书显式选了推荐色" ⇒ 不能去动 `readerSetting`，
-      // 否则会把用户在推荐色那一行自己挑的颜色覆盖掉。焦点：圈落到命中的推荐色
-      this.bgFocus = 'preset'
+      this.applyFreeAppearance(false)
       return
     }
-    // 自定义颜色模式 ⇒ 圈落在「自定义颜色」行（保存键方案）
-    this.bgFocus = 'custom'
-    const rgb = ReaderCustomBg.make(rec.r, rec.g, rec.b)
-    this.readerSetting.themeColor = ReaderCustomBg.hexOf(rgb)
-    this.readerSetting.themeBgImg = ''
-    if (this.fontAuto) {
-      this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
-    }
-    this.readerSetting.nightMode = ReaderCustomBg.isDarkBg(rgb)
-    // `colorMode` 由 `aboutToAppear` 后面那句 `this.readerSetting.nightMode ? 0 : 1` 统一收口，
-    // 这里不重复写（避免两处口径）。
+    // 日/夜：**固定标准**白/黑（记录里自由那一套原样留着，按回自由就回来）
+    this.applyStandardAppearance(this.themeMode === ReaderCustomBg.MODE_NIGHT, false)
   }
 
   /**
@@ -5985,7 +6178,11 @@ export default struct ReaderPage3 {
               //   `blur/t1_1320x2848_r30|r18|r12|r6.jpg` 四张缓存图，而自定义材质只有
               //   `blur/cu1791301678558_1320x2848_r6.jpg` 一张，之后再无任何
               //   `LTBOOK publish page bg` ⇒ 档位/关开都没有重新下发。
-              if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
+              // ⚠️ 2026-10-08 再补一道：必须**同时**处于自由模式 —— 日/夜模式下
+              //   `bgTexId/bgCustomId` 仍存着"自由那一套的材质"（刻意不清，见 setStandardMode），
+              //   不判模式的话，在标准白底上调模糊会把材质图**顶到屏幕上**。
+              if (this.themeMode === ReaderCustomBg.MODE_FREE
+                && (this.bgTexId > 0 || this.bgCustomId.length > 0)) {
                 this.applyTextureBg()
               }
               this.saveCustomBg()
@@ -6006,9 +6203,10 @@ export default struct ReaderPage3 {
                 Haptics.tap();
                 this.bgBlurRadius = BG_BLUR_TIERS[index]
                 // 选档即换图（磁盘缓存命中零等待；未命中的档现场生成一次）
-                // ⚠️ 同开关：必须同时判自定义材质（`bgCustomId`），否则用自定义材质时
-                //   选档不会重新下发（2026-10-06 用户实测修复，详见上面开关处注释）。
-                if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
+                // ⚠️ 同开关：必须同时判自定义材质（`bgCustomId`）与**自由模式**
+                //   （2026-10-06 用户实测 + 2026-10-08 模式收口，详见上面开关处注释）。
+                if (this.themeMode === ReaderCustomBg.MODE_FREE
+                  && (this.bgTexId > 0 || this.bgCustomId.length > 0)) {
                   this.applyTextureBg()
                 }
                 this.saveCustomBg()
@@ -6035,7 +6233,7 @@ export default struct ReaderPage3 {
             .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
           // ── 自定义颜色开关（进入/退出自定义颜色模式），紧贴标签（用户指定）────
           if (VipManager.isVip()) {
-            Toggle({ type: ToggleType.Switch, isOn: this.customBgOn || this.customEditOn })
+            Toggle({ type: ToggleType.Switch, isOn: this.customEditVisible() })
               .selectedColor('#007DFF')
               .onChange((value: boolean) => {
                 Haptics.tap();
@@ -6063,7 +6261,7 @@ export default struct ReaderPage3 {
             })
           }
           // 调色盘相关区块的显隐：**已应用**或**展开编辑中**都显示（见 customEditOn 注释）
-          if (this.customBgOn || this.customEditOn) {
+          if (this.customEditVisible()) {
             Blank()
             // ── "背景 / 文字"滑块：切调色盘的编辑目标（用户口中的"通过滑块切换"）────
             Text('背景')
@@ -6085,7 +6283,7 @@ export default struct ReaderPage3 {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        if (this.customBgOn || this.customEditOn) {
+        if (this.customEditVisible()) {
           Row({ space: 10 }) {
           // ── 预览块 = 当前编辑目标（背景/文字）的草稿色；「保存」确认后持橙圈 ──
           Column()
@@ -6123,7 +6321,7 @@ export default struct ReaderPage3 {
       }
       .width('100%')
 
-      if (this.customBgOn || this.customEditOn) {
+      if (this.customEditVisible()) {
         // 左：无极调色盘（横向色相 × 纵向明暗的连续色域，任意点都能取到确定颜色）
         // 右：R / G / B 三条 0-255 滑块（与字号/行距同款 Slider，带气泡 + 线性震动）
         // ⚠️ 2026-09-25 保存键方案：调色盘/滑条**只写草稿**（按 fontTarget 分流），
@@ -6613,11 +6811,13 @@ export default struct ReaderPage3 {
       // 听书面板（@CustomDialog，见 `openListenDialog()`）
       this.openListenDialog()
     } else if (index === 2) {
-      // ── 三模式循环：日间 → 夜间 → 自由 → 日间（2026-09-26 用户要求加「自由」）────
+      // ── 三模式循环：日间 → 夜间 → 自由 → 日间（2026-09-26 加上「自由」）──────────
       // 起因（用户原话）：「我们设置一个背景色之后…如果点击日间或者夜间切换，就没了，
       //   这次设置就丢了」；解决方案是用户提的：「增加一个模式，日间，夜间，**自由**」。
-      // ⇒ 切到日/夜时**只把模式切走**，你调好的色值留在 `ReaderBg_<书名>` 里
-      //   （`setStandardMode()` 写的是 `{on:false}` + **当前 rgb**），按到「自由」原样回来。
+      // ⚠️ 2026-10-08 语义收口：切日/夜**只切模式 + 摆标准白/黑**，"自由那一套"（`on/r/g/b/
+      //   texId/customTexId/bgHex/fontHex/blur*`）在记录里**一个字节都不动**
+      //   （旧实现顺手清 `bgTexId/bgCustomId` 并把字色写成黑/白落盘 ⇒ 材质与自定义字色真丢），
+      //   按回「自由」由 `enterFreeMode()` → `applyFreeAppearance()` 原样摆回来。
       //
       // 过渡动效依据（保留改造前的取证）：`animateTo(value: AnimateParam, event: () => void)`
       //   （`…\ets\api\@ohos.arkui.UIContext.d.ts:4703`，`@since 10`）官方 @param 原文：
@@ -6626,10 +6826,11 @@ export default struct ReaderPage3 {
       // 本页大量 `.fontColor(this.colorMode == 0 ? … : …)` / `.fillColor(…)` 都由 `colorMode` 派生，
       // 包进闭包后**颜色会插值过渡**。
       // `setPageConfig` 留在闭包外面（它触发 ReaderKit 重新排版，不该参与动画）——
-      // 由 `setStandardMode()` / `applyCustomBg()` 各自负责调用。
+      // 由 `setStandardMode()` / `applyFreeColor()` 各自负责调用。
       const next = this.nextReaderMode()
       if (next === 2) {
-        // 自由：用记录里存着的颜色（首次没记录就以当前主题色为起点）。
+        // 自由：把**用户那一套**（背景家族 + 自定义字色）摆回来（首次没记录就以当前
+        // 看到的颜色为起点）。
         // ⚠️ 这一支**刻意不包 `animateTo`**：`enterFreeMode()` 里会 `setPageConfig`
         //   （ReaderKit 重排版）与 `syncAbilityColorMode()`（`ctx.setColorMode()`
         //   一次**系统级重涂**）。把系统级重涂放进动画闭包里正是本工程反复记过的
@@ -6648,8 +6849,8 @@ export default struct ReaderPage3 {
           this.readerSetting.fontColor = next === 0 ? '#ffffff' : '#000000'
           this.readerSetting.themeColor = next === 0 ? '#202224' : '#FFFFFF'
         })
-        // 收口：落盘（`{on:false}` + **当前 rgb**，色值不丢）、
-        // Ability 配色、`setPageConfig` 都在这里，且都在动画闭包之外。
+        // 收口：模式落盘（`mode` = 0/1，自由那一套原样保留）、Ability 配色、
+        // `setPageConfig` 都在这里，且都在动画闭包之外。
         this.setStandardMode(next === 0)
       }
     } else {
