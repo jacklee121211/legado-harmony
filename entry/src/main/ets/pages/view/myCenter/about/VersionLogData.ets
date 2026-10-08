@@ -14,12 +14,12 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V2.1.3'
+export const APP_VERSION_FALLBACK: string = 'V2.1.4'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.1.3',
+    version: 'V2.1.4',
     date: '2026-10-09',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
@@ -49,7 +49,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '优化日间夜间自由三种阅读模式逻辑，更加简洁直观',
       '全面实现系统级防窥，并支持禁止截屏',
       '新增下划增加/删除书签手势',
-      '新增音量翻页功能，接入鸿蒙原生防窥能力',
+      '重构dock栏，新增听书圆形按钮',
     ]
   },
 ]

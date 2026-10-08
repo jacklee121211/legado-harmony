@@ -1,4 +1,4 @@
-# 听书日志捕获：流式抓文本，**不限时长**（替代 deveco log 的 4MB 窗口）
+﻿# 听书日志捕获：流式抓文本，**不限时长**（替代 deveco log 的 4MB 窗口）
 #
 # 为什么要这个：
 #   · `deveco log` / DevEco Log 窗口有 4MB 上限 —— 实测长测只留最后 ~10 分钟
@@ -60,11 +60,29 @@ if (-not $Out) {
 #   XCollie    —— 卡顿/冻结（C02D06）
 #   AppDfr     —— AppFreeze（C01310）
 #   AudioLogUtils —— 音频服务静音分类（C02B82，判断垫片是否被判 slient）
-# 注：-x 表示"读完缓冲区就退出"，这里**不加** -x，使用阻塞读（持续跟随）
+# ⚠️⚠️ 实测硬限制：`hilog -T` 的 tag **最多 10 个**，超了整个命令直接失败，
+#   只回一行 `Max tag count is 10 [CODE: -42]`，**文件会是 0 字节**。
+#   （2026-10-09 踩过：我一次写到 15 个，抓取全程 0 行，白跑一轮。）
+# ⇒ 这里固定 ≤10 个。要换组合请改下面这一行，**并且数一下别超 10**。
+#
+# 默认组合（阅读器 / 书架听书 dock 排查用）：
+#   testTag            阅读器全部行为打点（locate / imm: / LTBOOK / reader: / pageShow）
+#   TtsEngine          听书引擎状态机（chapter / splice / bg task）
+#   listen             书架听书启动器（start from spine=…）
+#   JSAPP              前端 console.info（LISTENDOCK 迷你栏折叠展开）
+#   bookparser         ReaderKit 解析器（Open book / getContent / release）
+#   ReadPageComponent  阅读组件（registerBookParser / startPlay 被拒 / pageShow）
+#   ReaderKitManager   releaseBook 生命周期
+#   WindowAbility      freezeTopRect / restoreTopRect（一镜到底几何依赖的避让值）
+#   NightMode          配色切换时序
+#   XCollie            卡顿 / 冻结
+# 音频类（PcmPlayer / EdgeTts / ttsdec / AppDfr / AudioLogUtils）没位置了，
+# 需要时替换掉上面几个不用的（一次仍不许超 10）。
+$readerTags = 'testTag,TtsEngine,listen,JSAPP,bookparser,ReadPageComponent,ReaderKitManager,WindowAbility,NightMode,XCollie'
 $hilogArgs = if ($Full) {
   'hilog'
 } else {
-  'hilog -T TtsEngine,PcmPlayer,EdgeTts,ttsdec,XCollie,AppDfr,AudioLogUtils'
+  "hilog -T $readerTags"
 }
 
 Write-Host "hdc    : $hdc"

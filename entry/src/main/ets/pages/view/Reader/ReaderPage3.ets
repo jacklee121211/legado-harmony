@@ -57,6 +57,7 @@ import { HapticTick } from '../../../common/utils/HapticTick';
 import { Haptics } from '../../../common/utils/Haptics';
 import MySetConstants from '../../../common/constants/MySetConstants';
 import { ListenUnlock } from '../../../common/utils/ListenUnlock';
+import { ListenSession } from '../../../tts/ListenSession';
 
 interface ParamsObj {
   bookData: Books,
@@ -821,6 +822,12 @@ export default struct ReaderPage3 {
   /** 最近一次朗读位置（退出沉浸/停止时用来把阅读器同步过去） */
   private lastAudioPos: TtsSegmentPos | null = null
   private wasImmersive: boolean = false
+  /**
+   * 进书时听书已在播 ⇒ 等**第一次 pageShow**再跑「定位到朗读处」。
+   * 为什么不能当场跑：`aboutToAppear` 时 ReaderKit 还在 `startPlay()`，`pageRange` 为 null，
+   * 定位必然失败（真机日志：`locate: startPlay 未落位，转翻页搜索 (none)`）。
+   */
+  private pendingTtsRestoreFollow: boolean = false
   /** updateHighlight 重入保护（防止 requestLocate 的同步回调形成递归 → 爆栈闪退） */
   private inHighlight: boolean = false
   /** 遮罩色块（测量优先；无测量时回落到模型单块） */
@@ -3181,7 +3188,15 @@ export default struct ReaderPage3 {
     }
     this.registerScreenDensityChange();
     this.registerListener();
-    this.registerTtsCallbacks();
+    // ⚠️⚠️ `registerTtsCallbacks()` **不能放在这里**（2026-10-09 定位到的真 bug）。
+    //   它内部有"进书时回拉听书状态"的逻辑，判据是 `listeningThisBook()`，
+    //   而那个判据要读 `this.bookData`；可 `this.bookData` 直到下面
+    //   `this.bookData = temp.bookData` 才从 `initParam` 拆出来
+    //   ⇒ 在**此处**调用时 `bookData` 还是声明处的默认 `new Books()`（全空）
+    //   ⇒ 真机诊断原文（`LTID` 打点）：
+    //     `active=true ... myId=-1 myUrl= myTitle= | listenId=112 listenTitle=极品家丁.txt`
+    //     会话侧全有值、本页侧全空 ⇒ 判据恒 false ⇒ **正在听的那本也进不了沉浸听读**。
+    //   ⇒ 已移到 `bookData` 赋值之后再调用（见下方）。
     // 诊断（临时）：打印平台认定的系统字体清单 —— 用于确定"系统字体"的准确族名，
     // 避免继续靠模糊匹配（此前 '系统字体' 被匹配成了 Condensed 窄体）。
     try {
@@ -3206,6 +3221,10 @@ export default struct ReaderPage3 {
     const temp: ReaderRouteParam = this.initParam
     this.bookData = temp.bookData
     this.bookData = PreferencesUtil.getSync(`BookCurrentData_${this.bookData.bookName}`, this.bookData) as Books
+    // ★ 必须**在 bookData 就绪之后**才注册（详见上面那段注释）：
+    //   `registerTtsCallbacks()` 末尾会判断"在听的是不是本页这本"并把听书状态回拉，
+    //   早于本行调用会因为 `bookData` 为空而恒判 false。
+    this.registerTtsCallbacks();
     // 书签回跳目标（见 ParamsObj.bmChapterIndex 注释）；缺省 -1 = 不跳转。
     // 真正的跳转要等 ReaderKit 就绪并产生第一次 pageShow（见 tryBookmarkJump）。
     this.bmJumpIndex = temp.bmChapterIndex ?? -1
@@ -4071,6 +4090,29 @@ export default struct ReaderPage3 {
         || (Date.now() - this.lastNavMs < 2500);
       this.updateHighlight();
       this.onPageShowLocate(range);
+      // ★★ 2026-10-09：进书时若听书已在播，**在第一次 pageShow 之后**把阅读器定位到朗读处 ★★
+      //
+      // 为什么要等 pageShow 而不是在 `registerTtsCallbacks()` 里直接做：
+      //   `aboutToAppear` 那一刻 ReaderKit 的 `startPlay()` 还没跑完、`pageRange` 还是 null，
+      //   此时发定位请求必然"未落位"（真机日志原文：
+      //     `locate: startPlay ok spine=174 pos=11=0#0;@;0`
+      //     `locate: startPlay 未落位，转翻页搜索 (none)`）。
+      //   而 pageShow 是 ReaderKit 自己"排版完成"的信号 ⇒ 只有这时定位才有效。
+      //
+      // 为什么必须做：只把 `ttsState/immReady` 拉回来，**底下的 ReaderKit 页并没有翻到朗读处**
+      //   ⇒ ① 高亮落在错误的页上（用户反馈"进度高亮还是慢"）；
+      //      ② 退出听书后沉浸层撤掉，露出的是一张没排版好的底页 ⇒ **黑屏**。
+      //   这里复用阅读器**自己的**跟随链路 `autoFollowTts()`（走 `requestLocate`），
+      //   不再自造第二套定位。
+      if (this.pendingTtsRestoreFollow) {
+        this.pendingTtsRestoreFollow = false;
+        this.immSegSerial++;
+        this.syncImmersivePage();
+        this.autoFollowTts();
+        hilog.info(0x0000, 'testTag',
+          'tts restore-follow on first pageShow: spine=%{public}d immPage=%{public}d',
+          TtsEngine.currentChapter(), this.immPageIdx);
+      }
       if (!requested && TtsEngine.getState() === 'playing' && !this.followSuspended) {
         const seg = TtsEngine.currentSegment();
         if (seg !== null && seg.spineIndex === range.spine
@@ -4304,6 +4346,17 @@ export default struct ReaderPage3 {
     if (this.BookHandler) {
       this.readerComponentController.off('pageShow');
       this.readerComponentController.off('resourceRequest');
+      // ⚠️ 2026-10-09 二次定案：**必须无条件释放**，不要"听书进行中就跳过"。
+      //
+      // 我上一版为了保住 TtsEngine 的解析器，在这里加过 `if (TtsEngine.getState() === 'stopped')`。
+      // 真机结果（用户 2026-10-09 第三轮）：「进入任何书籍都是黑屏」——
+      //   不释放会让**下一本书注册不上** `registerBookParser`，
+      //   此后永远不再产生 `pageShow`（本文件 `startPlay()` 的注释里记着同一个机理）。
+      //   当轮日志：9 次 `aboutToDisappear: 听书进行中 ⇒ 跳过 releaseBook` 之后书就全黑了。
+      //
+      // ⇒ 解析器失效的问题改由 **TtsEngine 侧自愈**解决（`reopenOwnHandler()`：
+      //   `getSpineItemContent` 失败就按记录的 bookPath 重开一份再重试一次）。
+      //   这样两边都不牺牲：书能正常换，听书也不断。
       this.readerComponentController.releaseBook();
     } else {
       hilog.info(0x0000, 'testTag',
@@ -4313,8 +4366,36 @@ export default struct ReaderPage3 {
       clearTimeout(this.locateTimer);
       this.locateTimer = -1;
     }
-    // 离开阅读页时结束朗读（避免回调引用已销毁页面；后台收听留待后续版本）
-    TtsEngine.stop('');
+    // 离开阅读页时结束朗读 —— 2026-10-09 起**默认改为继续播**（书架听书 dock 需求）。
+    //
+    // 旧实现（本行原文）：
+    //   「离开阅读页时结束朗读（避免回调引用已销毁页面；后台收听留待后续版本）」
+    //   `TtsEngine.stop('');`
+    // 「避免回调引用已销毁页面」这个理由现在由两条显式解绑解决，不必再靠停播：
+    //   ① `clearReaderPositionProvider()` —— 那个闭包捕获了本页实例；
+    //   ② `setCallbacks(ListenSession.headless())` —— 换成不引用任何页面的实现。
+    // 解析器侧：本页的 `releaseBook()` 释放的是**阅读组件当前的书**
+    //   （SDK `@hms.core.readerservice.readerComponent.d.ets:280` 原文 "release current book."），
+    //   而 TtsEngine 现在用自己的 handler（`startStandalone` / `ListenLauncher`），
+    //   两者互不影响 —— 这是用户 2026-10-09 拍板的"乙"方案。
+    //
+    // 一键回退：`ListenSession.KEEP_PLAYING_ON_LEAVE_READER = false` ⇒ 回到上面旧行为。
+    if (ListenSession.KEEP_PLAYING_ON_LEAVE_READER) {
+      TtsEngine.clearReaderPositionProvider();
+      // 仍在播才换 headless 回调；已停了就别覆盖（避免把"已停止"又镜像成 active）
+      if (TtsEngine.getState() !== 'stopped') {
+        TtsEngine.setCallbacks(ListenSession.headless());
+        // ★ 2026-10-09：返回书架时把听书 dock **强制复位成圆形**。
+        //   真机截图 + 日志实证的错位：HDS 的迷你栏几何在页面 pop 后回到了折叠态，
+        //   而我们的 `listenExpanded` 还停在 true ⇒ 展开容器里画着圆形内容、
+        //   书名条还挂着（用户截图里那个"空了一大块的道具"）。
+        //   `Index` 侧对 `listenExpanded` 挂了 @Watch，会据此调
+        //   `applyMiniBarStyle(COLLAPSE)` 把 HDS 也钉到折叠态。
+        ListenSession.setExpanded(false);
+      }
+    } else {
+      TtsEngine.stop('');
+    }
   }
 
   // ---------- 朗读（TTS）接线 ----------
@@ -4334,8 +4415,16 @@ export default struct ReaderPage3 {
       };
       return pos;
     });
-    TtsEngine.setCallbacks({
+    TtsEngine.setCallbacks(ListenSession.wrap({
       onState: (s: TtsState): void => {
+        // ★ 只认"在听的是本页这本"的状态（2026-10-09）。
+        //   否则在听《神墓》时打开《鬼墓》，《神墓》的状态变化会把《鬼墓》也带进听书 UI。
+        //   ⚠️ 为什么停止路径不会被这条守卫挡掉：`ListenSession.wrap()` 是**先**调本回调、
+        //      后调 `mirrorState()`；所以 `'stopped'` 到达时 `bookUrl` 还在，判定依旧成立，
+        //      `ttsState` 能正常置回 `'stopped'`，随后 `end()` 才清空 url。
+        if (!this.listeningThisBook()) {
+          return;
+        }
         this.ttsState = s;
         if (s === 'stopped') {
           this.ttsSegText = '';
@@ -4384,7 +4473,61 @@ export default struct ReaderPage3 {
       onToast: (msg: string): void => {
         this.getUIContext().getPromptAction().showToast({ message: msg });
       }
-    });
+    }));
+
+    // ★ 2026-10-09「天然同步」补点：进入本页时引擎**可能已经在播**
+    //   （用户在书架点了圆形听书 → 走本页的快速听书链路；或从本页返回书架后仍在播、
+    //    现在又点开这本书）。此时必须把页面状态从引擎**拉一次**。
+    //
+    // 为什么必须显式拉：`ttsState` 的初值是 `'stopped'`（本文件 `@State ttsState`），
+    //   而它只在引擎的 `onState` 回调里被写。播放中状态**没有变化** ⇒ 不会重新回调
+    //   ⇒ 不拉的话页面会停在 `'stopped'`：沉浸听读不出现、迷你条不出现、
+    //   书架与阅读器显示的就不是同一个状态（正是用户要的"一模一样"反例）。
+    const curState: TtsState = TtsEngine.getState();
+    // ★★ 无条件诊断（2026-10-09）：进书时把"谁在听"和"我是谁"一次打全 ★★
+    //   之前每次都要靠猜，这次一行定死。字段含义：
+    //     engine= 引擎状态 / active= 会话是否登记 / myId,listenId= 书 id 比对
+    //     myUrl,listenUrl= bookUrl 比对 / myTitle,listenTitle= 书名比对
+    //   判据顺序：id → url → 书名（见 `listeningThisBook()`）。
+    hilog.info(0x0000, 'testTag',
+      'LTID engine=%{public}s active=%{public}s match=%{public}s | myId=%{public}d listenId=%{public}d | myUrl=%{public}s listenUrl=%{public}s | myTitle=%{public}s listenTitle=%{public}s',
+      curState, String(ListenSession.isActive()), String(this.listeningThisBook()),
+      this.bookData.id ?? -1, ListenSession.bookId(),
+      this.bookData.bookUrl ?? '', ListenSession.bookUrl(),
+      this.bookData.bookName, ListenSession.bookTitle());
+    // ⚠️ 同样必须叠加"在听的是不是本页这本"：在听 A 时打开 B，
+    //   B 不能把 A 的听书状态当成自己的（否则 B 会渲染 A 的沉浸听读，退出时黑屏）。
+    if (curState !== 'stopped' && this.listeningThisBook()) {
+      this.ttsState = curState;
+      this.ttsSpineIndex = TtsEngine.currentChapter();
+      this.ttsChapterTitle = TtsEngine.getChapterTitle();
+      this.immPageIdx = -1;
+      this.immPagesKey = '';
+      this.immReady = TtsEngine.currentNodeTexts() !== null;
+      this.syncCatalogIndex(this.ttsSpineIndex);
+      const curSeg = TtsEngine.currentSegment();
+      if (curSeg !== null) {
+        this.lastAudioPos = curSeg;
+      }
+      this.updateHighlight();
+      // ★★ 2026-10-09 用户反馈修复：进书**立刻把与朗读位置对应的那一页渲染出来** ★★
+      //   症状原文：「点击圆形播放之后，点击对应书籍，进去是空白的，直到下一句播放，
+      //   整个页面才加载出来」。
+      //   根因：沉浸听读的内容由 `immPages[immPageIdx]` 决定（见 `build()` 的沉浸层），
+      //   而这两样只在 `onSegment` 回调里被推进：
+      //       this.immSegSerial++;        ← 自增才触发沉浸层重绘（`key` 里带它，见 build）
+      //       this.syncImmersivePage();   ← 算页并设 immPageIdx
+      //   ⇒ 只回拉数据、不跑这两步，首帧就是空页，要等**下一句**播完才补齐。
+      //   这里补跑同样的两步（幂等，重复调用无副作用），空白窗口从"一整句"缩到 0。
+      this.immSegSerial++;
+      this.syncImmersivePage();
+      // 底下的 ReaderKit 页还需要翻到朗读处 —— 但必须等第一次 pageShow（那时排版才完成），
+      // 这里只置旗标，真正的定位在 pageShow 回调里跑（见那里的注释）。
+      this.pendingTtsRestoreFollow = true;
+      hilog.info(0x0000, 'testTag',
+        'tts state restored on enter: state=%{public}s spine=%{public}d immPage=%{public}d',
+        curState, this.ttsSpineIndex, this.immPageIdx);
+    }
   }
 
   // ---------- 沉浸听读：**章节固定分页** ----------
@@ -5097,7 +5240,11 @@ export default struct ReaderPage3 {
     this.ttsSpineIndex = spineIndex;
     this.lastFollowNode = startNode;
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    TtsEngine.start(context, this.BookHandler, spineIndex, this.ttsPrefs,
+    // 2026-10-09：改走 `startStandalone`（TtsEngine **自开**解析器），理由见该方法注释
+    //   —— 本页 `aboutToDisappear` 的 `releaseBook()` 不再影响听书续播。
+    // 一键回退：改回 `TtsEngine.start(context, this.BookHandler, …)`（旧签名原样保留）。
+    ListenSession.begin(this.bookData.bookName, this.bookData.bookUrl ?? '', this.bookData.id ?? -1);
+    TtsEngine.startStandalone(context, this.bookData.bookUrl ?? '', spineIndex, this.ttsPrefs,
       this.bookData.bookName, startNode, startChar)
       .catch((e: Object) => {
         hilog.error(0x0000, 'testTag', 'tts start failed: %{public}s', JSON.stringify(e));
@@ -5832,7 +5979,9 @@ export default struct ReaderPage3 {
       }
 
       // 朗读迷你条：面板关闭时仍可见/可控（点文本回面板，点按钮暂停/续播）
-      if (this.ttsState !== 'stopped') {
+      // ⚠️ 叠加 `listeningThisBook()`：在听《神墓》时打开《鬼墓》，
+      //   《鬼墓》必须是**纯普通阅读模式**，不该出现别人的朗读浮条（用户 2026-10-09 要求）。
+      if (this.ttsState !== 'stopped' && this.listeningThisBook()) {
         this.TtsMiniBar()
       }
 
@@ -7217,12 +7366,55 @@ export default struct ReaderPage3 {
 
   // ---------- 沉浸听读（可选模式）：自绘章节窗口 + 句内高亮在文字内部 ----------
   /**
+   * **在听的是不是手里这本书**（2026-10-09 新增，用户 bug 修复）。
+   *
+   * 真机 bug 原文：「我在听神墓，但是我点击鬼墓，显示的效果还是神墓…
+   *   然后在鬼墓中点击关闭听书，直接黑屏」。
+   * 根因：`TtsEngine` / 沉浸层是**全局**的，与"当前打开哪本书"无关
+   *   ⇒ 任何一本书只要引擎在播就进沉浸听读，渲染的还是**另一本**的正文。
+   *
+   * 判据：`ListenSession.bookUrl()`（开播时落的 bookUrl）与本页的 `bookData.bookUrl` 相等。
+   * `bookUrl` 为空时一律判 false（绝不用"空 == 空"误判成同一本）。
+   */
+  private listeningThisBook(): boolean {
+    if (!ListenSession.isActive()) {
+      return false;
+    }
+    // ① 首选：**书 id**（数据库主键数字，不受路径归一化/空白影响）
+    const myId: number = this.bookData.id ?? -1;
+    if (myId >= 0 && ListenSession.bookId() === myId) {
+      return true;
+    }
+    const listeningUrl: string = ListenSession.bookUrl();
+    const myUrl: string = this.bookData.bookUrl ?? '';
+    // ② 次选：bookUrl 精确比对（trim）
+    if (listeningUrl.length > 0 && myUrl.length > 0
+      && listeningUrl.trim() === myUrl.trim()) {
+      return true;
+    }
+    // ③ 兜底：按书名比（听 A 打开 A → 沉浸；听 A 打开 B → 普通，语义仍成立）
+    const listeningTitle: string = ListenSession.bookTitle();
+    const myTitle: string = this.bookData.bookName;
+    const byName: boolean = listeningTitle.length > 0 && listeningTitle === myTitle;
+    if (byName) {
+      // 诊断：记住是哪一级命中的，真机上据此判断判据是否退化
+      hilog.warn(0x0000, 'testTag',
+        'listeningThisBook by NAME (id=%{public}d/%{public}d url=%{public}s/%{public}s title=%{public}s)',
+        myId, ListenSession.bookId(), listeningUrl, myUrl, myTitle);
+    }
+    return byName;
+  }
+
+  /**
    * 沉浸听读**不跟 ReaderKit 的"页"走，而是跟章节走**：
    * 以当前朗读段为锚点连续渲染一串段落（窗口），朗读往前走窗口跟着走。
    * 这样①底部永远有字填满、②高亮永不丢失、③根本不需要翻页。
+   *
+   * ⚠️ 必须叠加 `listeningThisBook()`：否则在听 A 时打开 B，B 会被渲染成 A 的沉浸听读。
    */
   private immersiveActive(): boolean {
-    return this.ttsPrefs.immersiveListen && this.ttsState !== 'stopped' && this.immReady;
+    return this.ttsPrefs.immersiveListen && this.ttsState !== 'stopped' && this.immReady
+      && this.listeningThisBook();
   }
 
   private immNodeText(nodeIdx: number): string {

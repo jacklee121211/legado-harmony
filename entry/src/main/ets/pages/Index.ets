@@ -42,6 +42,26 @@ import LicensePage from './view/myCenter/about/LicensePage'
 import { common } from '@kit.AbilityKit'
 import { NightMode, ShelfColors } from '../common/utils/NightMode'
 import CommonConstants from '../common/constants/CommonConstants'
+// ── 底部页签迁 HDS（2026-10-09）────────────────────────────────────────────────
+// 官方最佳实践原文（documentId `最佳实践/沉浸光感/bpta-spatiality-immersive`）：
+//   「应用需要将传统的Navigation、Tabs等组件替换为HDS系列组件」
+//   「HDS底部页签（HdsTabs）：通过设置 HdsTabsFloatingStyle 的 systemMaterialEffect
+//     参数，可为底部页签设置沉浸光感视效。」
+// 而且**只有 HdsTabs 有 MiniBar**（书架听书 dock 的官方载体）：原生 `Tabs` 的
+// `FloatingTabBarStyle` 只有 7 个字段、无 miniBar —— SDK 原文
+// `openharmony\ets\component\tabs.d.ts:824-896`。
+import {
+  HdsBarStyle,
+  HdsTabs,
+  HdsTabsBarChangeMode,
+  HdsTabsController,
+  HdsTabsFloatingStyle,
+  hdsMaterial
+} from '@kit.UIDesignKit'
+import { ListenDock, ListenTitleBar } from '../components/tts/ListenDock'
+import { ListenSession } from '../tts/ListenSession'
+import { ListenLauncher } from '../tts/ListenLauncher'
+import { ListenUnlock } from '../common/utils/ListenUnlock'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../common/utils/Haptics'
 import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
@@ -65,7 +85,25 @@ struct Main {
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
   @State ShowBar: boolean = true
-  tabController: TabsController = new TabsController()
+  // 2026-10-09 迁 HdsTabs：控制器类型同步换成 HdsTabsController
+  // （SDK `@hms.hds.hdsBaseComponent.d.ets:5805`：`class HdsTabsController extends TabsController`，
+  //  所以 `changeIndex()` 等 TabsController 的能力全部保留）
+  tabController: HdsTabsController = new HdsTabsController()
+  /**
+   * 听书入口是否可见：解锁 + 未展开听书面板时。
+   * 与 `ReaderPage3:3140` 同源 —— `@StorageLink` 初值是 false，
+   * 必须主动从 Preferences 拉一次，否则已解锁用户冷启动后看不到入口。
+   */
+  @StorageLink('listenEntryUnlocked') listenUnlocked: boolean = false
+  /** 听书 dock 是否展开（HDS MiniBar 的 EXPAND 态） */
+  @StorageLink('listenExpanded') @Watch('onListenExpandedChanged') listenExpanded: boolean = false
+  /** HDS 最近一次回报的迷你栏样式（`onBarStyleChange` 里更新；只作闸门，不驱动 UI） */
+  private lastHdsMiniBar: HdsBarStyle = HdsBarStyle.COLLAPSE
+  /** hdsFloatingStyle() 的缓存（防止切页签重建迷你栏 ⇒ 圆形闪一帧） */
+  private cachedFloatStyle: HdsTabsFloatingStyle | null = null
+  private cachedFloatKey: string = ''
+  /** 是否存在听书会话（书名信息条的显示条件；必须走 StorageLink 才会驱动重绘） */
+  @StorageLink('listenActive') listenActive: boolean = false
 
   // ══════════════════════════════════════════════════════════════════════════
   // 一镜到底（书架 → 阅读器）运行态 —— 2026-09-23
@@ -414,6 +452,8 @@ struct Main {
     testGetColorFunction();
     // ★ 首帧前就把配色对齐（冷启动时夜间开关可能已经是持久化的 true）
     NightMode.setMainTab(this.currentTabIndex)
+    // 听书解锁位：与 ReaderPage3:3140 同源（@StorageLink 初值 false，必须从 Preferences 拉）
+    this.listenUnlocked = ListenUnlock.isUnlocked()
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
   }
 
@@ -448,6 +488,138 @@ struct Main {
     .height("100%")
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 听书迷你 dock（2026-10-09 新增，用户需求）—— HdsTabs 的 MiniBar 载体
+  // ══════════════════════════════════════════════════════════════════════════
+  // 为什么用 MiniBar 而不是自绘：官方 MiniBar 的**原生语义**就是
+  // 「点击迷你栏，miniBar展开的同时和tabsBar会折叠起来」（官方 Spatialization
+  // 示例 README 原文）—— 正好是用户要的"圆形展开成 dock / 原 dock 收缩成圆形"。
+  // 自绘做不到这个几何（原生 Tabs 的 FloatingTabBarStyle 没有 miniBar，见文件头注释）。
+  /**
+   * 听书入口可见条件（用户 2026-10-09 第二版要求「分离式 dock 要在书架/主题/设置/我的
+   * 全部保持一致」）⇒ **不再按页签区分**，只要解锁就显示。
+   */
+  private listenEntryVisible(): boolean {
+    return this.listenUnlocked
+  }
+
+  @Builder
+  listenMiniBarBuilder() {
+    ListenDock({
+      controller: this.tabController,
+      onStartListen: (): void => {
+        this.startListenFromShelf()
+      }
+    })
+  }
+
+  /**
+   * 书架点圆形听书按钮 ⇒ **留在书架原地起播**（用户 2026-10-09 第二版明确要求：
+   * 「点击圆形播放不应该进入阅读页，只是此时如果进入阅读页直接就是沉浸听读模式而已，
+   *   而且进度都是同步的，这才是天然同步」）。
+   *
+   * ⇒ 不 push 任何页面；起播交给 `ListenLauncher`（TtsEngine 自开解析器）。
+   *   「进阅读页自动进入沉浸听读」由 `ReaderPage3.registerTtsCallbacks()` 末尾的
+   *   状态回拉负责 —— 该逻辑已真机实证生效：
+   *   日志原文 `01:51:12.935 tts state restored on enter: state=playing spine=174`。
+   *
+   * ⚠️ 前提（同期修复）：`ReaderPage3.aboutToDisappear()` 在听书进行中**不再 releaseBook()**。
+   *   否则 handler 会失效，起播后每一章都报 1017010002（真机日志 666 次）。
+   */
+  private startListenFromShelf(): void {
+    ListenLauncher.startLastRead(this.getUIContext().getHostContext() as common.UIAbilityContext);
+  }
+
+  /**
+   * `listenExpanded` 被外部改回 false（例如从阅读器返回、停播、无历史）时，
+   * 把 **HDS 的几何**也钉回折叠态 —— 光改 AppStorage 不会动 HDS 的容器宽度。
+   *
+   * 真机症状（用户截图 01:50:31）：容器是展开的宽条，里面却画着圆形内容、
+   * 书名条还挂着 ⇒ 就是这两套状态不同步。
+   * 用 `lastHdsMiniBar` 做闸门，避免 HDS 自己已经折叠时再调一次造成回环。
+   */
+  onListenExpandedChanged(): void {
+    if (!this.listenExpanded && this.lastHdsMiniBar === HdsBarStyle.EXPAND) {
+      this.tabController.applyMiniBarStyle(HdsBarStyle.COLLAPSE);
+    }
+  }
+
+  /**
+   * HdsTabs 悬浮样式 + MiniBar。
+   *
+   * 与旧实现（`ImmersiveMaterialUtil.tabsFloatingStyle`）的差别：
+   * · 材质入口换成 HDS 的 `systemMaterialEffect`（`materialType` + `materialLevel`）；
+   *   官方推荐 `MaterialLevel.ADAPTIVE`（「由系统根据设备性能自动选择合适的档位，
+   *   推荐大多数场景使用」），不再自己判高低端。
+   * · 新增 `miniBar`（听书 dock）。
+   * · `barSideMargin` / `barBottomMargin` 沿用旧值，避免视觉跳变。
+   *
+   * 一键回退：`ImmersiveMaterialUtil.ENABLED = false` 时下面两处都会退成
+   * 不设材质的普通悬浮条；彻底回退到 `Tabs` 需要把本文件里的 HdsTabs 换回 Tabs
+   * （见文件头 import 注释）。
+   */
+  private hdsFloatingStyle(): HdsTabsFloatingStyle {
+    // ★★ 2026-10-09「切页签时圆形闪一下」修复：**缓存样式对象，不要每次渲染都新建** ★★
+    //   原因：`.barFloatingStyle(新对象)` 每次切页签都会拿到一个**新引用**
+    //   （`onAnimationStart` 里 `currentTabIndex = target` 触发 Index 重渲染 ⇒ 本方法重跑），
+    //   HDS 会把新对象当成"配置变了"重新应用 ⇒ **迷你栏 builder 重建** ⇒
+    //   圆形那一帧重新布局 + 沉浸光感材质重新合成 ⇒ 肉眼就是"闪一下"。
+    //   缓存后：只有真的影响样式的输入（底部避让值 / 听书入口是否可见）变了才重建对象。
+    const key: string = `${this.bottomRectHeight}|${this.listenEntryVisible()}`;
+    if (this.cachedFloatStyle !== null && this.cachedFloatKey === key) {
+      return this.cachedFloatStyle;
+    }
+    const st: HdsTabsFloatingStyle = {
+      barSideMargin: 16,
+      barBottomMargin: this.bottomRectHeight + 8
+    };
+    // ★ 一键回退点：`ImmersiveMaterialUtil.ENABLED = false`（或设备不支持沉浸光感）时
+    //   **一个材质字段都不设** ⇒ 页签条回到普通悬浮/贴底形态，与改造前一致。
+    //   （`isOn()` = 总开关 && `uiMaterial.isImmersiveMaterialSupported()`）
+    if (ImmersiveMaterialUtil.isOn()) {
+      st.systemMaterialEffect = {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      };
+    }
+    if (this.listenEntryVisible()) {
+      st.miniBar = {
+        // ⚠️ **故意不设 `miniBarStyle`**：第一版设成 COLLAPSE，而 `hdsFloatingStyle()`
+        //    每次渲染都重建一个对象 ⇒ HDS 反复把初始态刷回 COLLAPSE，
+        //    真机表现就是"点了不展开"。窄屏默认折叠由 HDS 自己按官方规则决定
+        //    （「宽屏设备（如平板）默认展开，窄屏设备（如手机）默认折叠」）。
+        miniBarBuilder: () => {
+          this.listenMiniBarBuilder()
+        },
+        // ★ 必须关掉迷你栏裁剪（默认 true）。第一版把 48×48 的圆形放在裁剪容器里，
+        //   真机表现是"右侧缺一块、像月牙" —— 圆被迷你栏自己的裁剪区切掉了。
+        enableMiniBarClip: false,
+        /**
+         * 折叠/展开的唯一真相源。
+         *
+         * ★ 2026-10-09 用户第二版要求：「**把播放和暂停都放在展开后**」。
+         *   所以点圆形**只展开**，起播/暂停/续播全部由展开 dock 里的 ▶⏸ 驱动
+         *   （`ListenDock.onPlayPauseTap()` → `onStartListen` 回调 → 本文件的
+         *    `startListenFromShelf()`）。
+         *   ⚠️ 第一版在这里按 `mode === USER_CLICK && →EXPAND` 直接起播，
+         *      真机表现是"点圆形立刻播放+展开"，与用户预期不符 ⇒ 已删除该分支。
+         */
+        onBarStyleChange: (miniBarStyle: HdsBarStyle, tabBarStyle: HdsBarStyle,
+          miniBarWidth: number, tabBarWidth: number, mode: HdsTabsBarChangeMode): void => {
+          this.lastHdsMiniBar = miniBarStyle
+          ListenSession.setExpanded(miniBarStyle === HdsBarStyle.EXPAND)
+          console.info('LISTENDOCK',
+            `miniBar=${miniBarStyle} tabBar=${tabBarStyle} mw=${miniBarWidth} tw=${tabBarWidth} mode=${mode}`);
+        }
+      };
+    }
+    // 写入缓存：下次切页签（Index 重渲染）直接复用同一个对象引用，
+    // HDS 不会把它当成"配置变了"，迷你栏就不会重建 ⇒ 圆不再闪。
+    this.cachedFloatStyle = st;
+    this.cachedFloatKey = key;
+    return st;
+  }
+
   // 底部导航（2026-10-01 用户改版）：**书架、主题、设置、我的** 四页签。
   // · 主题/设置原来是「我的」页顶部角落按钮（用户"很难点击"）⇒ 提级为 dock 页签，
   //   拇指热区直达；两页本来就是设置类页面，做成常驻页签（无返回语义、状态保持）恰好合适。
@@ -473,8 +645,16 @@ struct Main {
     //      Navigation + NavDestination 的路由体系，**而非 Router**」。
     // 本期 `appRoutes()` 匹配不到任何 name ⇒ 所有页面仍走 router，视觉与行为不变。
     Navigation(this.pageStack) {
+    // ⚠️⚠️ 2026-10-09 严重回退：「书名条」原先靠一个 Stack 包住 `#main` 来叠放，
+    //   结果**打断了一镜到底的几何基准** —— `LongTakeBook.capture()` 与
+    //   `Index` 的飞行计算都是拿 `getRectangleById('main')` 的 `windowOffset` 当原点
+    //   （证据：`common/utils/LongTakeBook.ets:81-82` 同时取 `componentId` 与 `'main'`）。
+    //   把 `#main` 从 Navigation 的直接子节点变成 Stack 的子节点后，真机表现是
+    //   「开启圆形播放后，书架打开/回落动画位置全变、回落到第二本书，且不可逆」。
+    //   ⇒ 这里**必须**保持 `Column` 是 Navigation 的直接子节点，结构不许再包一层。
+    //   书名条改由迷你栏 builder 自己向上溢出绘制（`enableMiniBarClip: false` 已开）。
     Column() {
-      Tabs({
+      HdsTabs({
         index: this.currentTabIndex,
         barPosition: BarPosition.End,
         controller: this.tabController
@@ -529,7 +709,14 @@ struct Main {
       // ⚠️ 连带影响（说清楚）：官方原文「it applies to **all** tab switching animations」⇒
       //   **解锁标签栏后的左右滑动**也会从弹簧变成 `FastOutSlowIn`。滑动默认关闭
       //   （`APP_INDEX_SCROLLABLE` 默认 true ⇒ `.scrollable(false)`），影响面很小。
-      .animationCurve(UiMotion.TABS_ANIM_CURVE)
+      // ⚠️ 2026-10-09 迁 HdsTabs 后**必须删掉** `.animationCurve(...)`：
+      //   `HdsTabsAttribute` **不继承 `TabsAttribute`**（SDK `@hms.hds.hdsBaseComponent.d.ets:5483`
+      //   原文 `declare class HdsTabsAttribute extends CommonMethod<HdsTabsAttribute>`），
+      //   它只有 vertical/barPosition/scrollable/barMode/barWidth/barHeight/animationDuration/
+      //   onChange/onAnimationStart/divider/barOverlap/barBackground*/onContentWillChange/
+      //   onTabBarClick/blurStrategy/barFloatingStyle/onSelected/onUnselected/cachedMaxCount
+      //   —— **没有 animationCurve、没有 edgeEffect**。
+      //   页签切换曲线因此回到 HdsTabs 的默认值；离线验证用 MCP check（0 error）。
       // ── `animationDuration` ──────────────────────────────────────────────
       // SDK `component/tabs.d.ts:1246`。默认值原文：「API version 11 and later versions: …
       //   the default value is **0** when the tab bar is set to **BottomTabBarStyle** and **300**
@@ -559,7 +746,13 @@ struct Main {
       //     真机看就是"扯出一块白"。改成 `None`：到边界即停，不再拉白。
       //   `EdgeEffect = { Spring, Fade, None }`（`enums.d.ts`，全局枚举）。
       //   注意：这只影响**越界回弹**，不改变页签之间正常的左右滑动切换。
-      .edgeEffect(EdgeEffect.None)
+      // ⚠️ 2026-10-09 迁 HdsTabs 后**必须删掉** `.edgeEffect(EdgeEffect.None)`：
+      //   依据同上一段 —— `HdsTabsAttribute` 上没有 `edgeEffect`。
+      //   旧实现原文（保留备查）：「默认 `EdgeEffect.Spring` 会在滑到第一个/最后一个页签
+      //   之外时"拉出"一段空白再弹回，真机看就是"扯出一块白"。改成 `None`：到边界即停。」
+      //   ⚠️ 这是本次迁移**唯一的行为回退风险点**：HdsTabs 下越界回弹可能重新出现。
+      //   但 `.scrollable(false)` 已禁手势 ⇒ 越界手势本身不成立，实际影响面接近 0。
+      //   真机验证点：在书架页签上向左拖，看是否拉出白边。
       // ── 沉浸光感悬浮页签（2026-09-21）────────────────────────────────────
       // 官方硬性约束（documentId `…/沉浸光感开发指导/组件适配沉浸光感/…`）原文：
       //   「悬浮样式仅在 barOverlap 为 true、vertical 为 false、barPosition 为
@@ -576,7 +769,7 @@ struct Main {
       //    从"给 Tabs 加 padding"改成"给悬浮条加 barBottomMargin"，否则两处叠加会把条顶太高。
       //    关闭沉浸光感时（`ImmersiveMaterialUtil.ENABLED = false`）两个表达式都会回到原样。
       .barOverlap(ImmersiveMaterialUtil.isOn())
-      .barFloatingStyle(ImmersiveMaterialUtil.tabsFloatingStyle(this.bottomRectHeight + 8))
+      .barFloatingStyle(this.hdsFloatingStyle())
       .padding({ bottom: ImmersiveMaterialUtil.isOn() ? 0 : this.bottomRectHeight })
       // 同 TabContent 上的说明：官方参考实现给 Tabs 也挂了 expandSafeArea。
       .expandSafeArea([SafeAreaType.SYSTEM])
@@ -586,6 +779,9 @@ struct Main {
         // 左右滑动已被禁，不存在"滑动切页也震"的误触。
         Haptics.tap();
         this.currentTabIndex = targetIndex
+        // ★ 换页签 ⇒ 听书 dock 一律收回圆形（它只在书架页签可见）。
+        //   不停播：听书是后台会话（用户拍板"全 app 都继续，仅书架显示控制入口"）。
+        ListenSession.setExpanded(false)
         // ★ 页签变了 ⇒ 重新算配色并下发：书架（0）= 深色档、主题(1)/设置(2)/我的(3) = 浅色档。
         //   规则与依据见 `NightMode.desiredDark()`。
         NightMode.setMainTab(targetIndex)

@@ -151,6 +151,21 @@ export default struct BookContent {
     }
   }
   scroller: Scroller = new Scroller()
+  /**
+   * 一镜到底的封面节点 id。
+   *
+   * ★★ 2026-10-09 修复（用户实测：「回落甚至都变到第二本书的位置去了」）★★
+   * 旧实现是 'ltCoverL' + index —— **按下标**。而书架会因为「读完一本 / 置顶」重排，
+   * 同一个下标在重排前后指向**不同的书** ⇒ 点击时拍到的几何属于别人，
+   * 回落自然飞错位置。
+   * ⇒ 改用 Books.id（数据库主键，跟着书走）。重排只会让同一个 id 换个屏幕位置，
+   *   那正是我们要的"实时反映书真实所在的位置"。
+   * 极端兜底：id 缺失时退回下标（保证 id 唯一，绝不返回相同字符串）。
+   */
+  private longtakeIdFor(prefix: string, item: Books, index: number): string {
+    const key: string = item.id !== undefined && item.id !== null ? String(item.id) : ('i' + index);
+    return prefix + key;
+  }
   build() {
     if (this.isLoading) {
       Row(){
@@ -194,14 +209,21 @@ export default struct BookContent {
                 waveId: this.entranceWaveId,
                 // 一镜到底（2026-09-23）：封面节点 id（点击时按它拍几何）。
                 // 列表/宫格前缀不同 ⇒ 切形态瞬间新旧两份组件共存也不会撞 id。
-                longtakeId: 'ltCoverG' + index
+                // ★ 2026-10-09 三个问题之一的正解：**id 必须用稳定的"书身份"，不能用下标**
+                //   旧实现是 `'ltCoverG' + index` / `'ltCoverL' + index`。而书架会因为
+                //   「读完一本 / 置顶」而**重排**（用户原话：「进入某一本书，退出，这个书会到最上方」）
+                //   ⇒ 同一个 `ltCoverL2` 在重排前后指向**不同的书**
+                //   ⇒ 一镜到底的起飞/回落几何落到别人身上（用户实测：「回落甚至都变到第二本书的位置」）。
+                //   改用 `Books.id`（数据库主键，永远跟着书走）后，重排只会让同一个 id
+                //   换个屏幕位置 —— 那正是我们要的"实时更新书真实所在的位置"。
+                longtakeId: this.longtakeIdFor('ltCoverG', item, index)
               })
             } else {
               BookInfos({
                 book: item,
                 itemIndex: index,
                 waveId: this.entranceWaveId,
-                longtakeId: 'ltCoverL' + index
+                longtakeId: this.longtakeIdFor('ltCoverL', item, index)
               })
             }
           }

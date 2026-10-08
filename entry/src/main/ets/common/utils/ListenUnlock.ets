@@ -13,8 +13,11 @@
  *    （`isUnlocked()` 只读标志位，不再比对用户名）。
  *  · "除非软件重装"：标志位存 Preferences（应用沙箱内），卸载即清 —— 天然满足。
  *    （换设备/卸载重装后回到未解锁态，属用户认可的语义。）
- *  · 只藏**阅读器底栏的「听书」按钮**这一个入口：`ReaderPage3` 底栏按解锁位渲染。
- *    其余听书能力（TtsEngine、桌面快速听书快捷方式、TtsMiniBar）一律不动 —— 不影响功能。
+ *  · 藏**听书入口**：`ReaderPage3` 底栏按解锁位渲染。
+ *    2026-10-09 起**书架底部的圆形听书按钮（`ListenDock`）同样受本门禁**（用户拍板）——
+ *    未解锁时 `Index.hdsFloatingStyle()` 根本不挂 `miniBar` ⇒ 那个圆不会出现。
+ *    其余听书能力（TtsEngine、桌面快速听书快捷方式、阅读页内的 TtsMiniBar）一律不动
+ *    —— 不影响功能。
  */
 import { PreferencesUtil } from '@pura/harmony-utils';
 
