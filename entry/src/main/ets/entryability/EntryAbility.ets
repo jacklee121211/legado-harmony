@@ -14,6 +14,8 @@ import { WindowAbility } from './WindowAbility';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import BrightnessUtil from '../../common/utils/BrightnessUtil';
 import { NightMode } from '../common/utils/NightMode';
+// 防窥两层（2026-10-08）：启动即按已存开关应用（全局生效，见 utils/AntiPeep.ets 文件头）
+import { AntiPeep } from '../common/utils/AntiPeep';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -166,6 +168,11 @@ export default class EntryAbility extends UIAbility {
       }
       // 初始化屏幕亮度设置
       BrightnessUtil.initWindow(windowClass);
+
+      // ── 防窥两层（2026-10-08）：启动最早时机把主窗口交给 AntiPeep ——
+      //    第 1 层（防截屏/录屏）立即按用户意图应用；第 2 层（阅读防窥）静默对账系统防窥开关
+      //    （**不**在启动拉起系统设置页，见 AntiPeep 文件头的引导时机说明）。
+      AntiPeep.start(this.context as common.UIAbilityContext, windowClass);
 
       //全屏
       windowClass.setWindowLayoutFullScreen(true)

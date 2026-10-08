@@ -21,6 +21,10 @@ import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog
 import FontConstants from '../../../common/constants/FontConstants'
 // ── 按键翻页（2026-10-07 新增）：音量键/智控键翻页开关，订阅调度见 utils/ReaderKeyTurn.ets ──
 import { ReaderKeyTurn, KEY_KEY_VOL_TURN, KEY_KEY_FP_TURN } from '../../../common/utils/ReaderKeyTurn'
+// ── 防窥两层开关（2026-10-08 新增，VIP 特权）：真值/下沉逻辑全在 utils/AntiPeep.ets ──
+import { AntiPeep, KEY_ANTI_PEEP_CAPTURE, KEY_ANTI_PEEP_DLP } from '../../../common/utils/AntiPeep'
+import { VipManager } from '../../../common/utils/VipManager'
+import { VipDialog } from '../../../componets/myCenter/VipDialog'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -29,16 +33,31 @@ export default struct MySetPage{
   // `isShowPreDon` / `isShowLanguage` / `setImgAnti` / `select` / `selectLanguage` /
   // `tempNum` / `preDow` / `fruits` / `languageList`，以及对应的两个半模态
   // `preDowSheet()` / `languageSheet()`。
-  @StorageLink(MySetConstants.SET_REFRESH) setRefresh: boolean = true
-  /** 书架书名显示拓展名（2026-09-27 新增，默认关；Preferences 持久化） */
+  // 2026-10-08 再精简（用户决定：「全删了就完了」）：以下 6 项**全仓零消费点**的假开关移除 ——
+  //  · 自动刷新 `setRefresh`：书源/联网取书路径已整体删除（`database/index.ets:17`），无数据源；
+  //  · 自动跳转最近阅读 `setJump`：真实跳转只服务桌面快捷方式（`Index.consumeQuickAction`
+  //    要求 quickAction = 'read'/'listen'），与开关无关；
+  //  · 默认启用替换净化 `setReplace`：净化功能已删（`ReaderPage3.ets:6001-6006` 无规则表/DAO）；
+  //  · 返回时提示放入书架 `setTip`：全仓无任何实现；
+  //  · 全程响应耳机按键 `setHead`：全仓无耳机按键处理（只在注释里出现过）；
+  //  · 文字操作显示搜索 `setSearch`：阅读页没有正文长按菜单/搜索（只有目录搜索）。
+  //  ⚠️ 这 6 个还都是 `@StorageLink`（内存态、无 putSync）⇒ 关掉重启即复原，本就形同虚设。
+  /** 书架书名显示拓展名（2026-09-27，本项目自研功能：默认关；Preferences 持久化） */
   @StorageLink(MySetConstants.SET_EXT_NAME) setExtName: boolean = false
-  @StorageLink(MySetConstants.SET_JUMP) setJump: boolean = true
-  @StorageLink(MySetConstants.SET_REPLACE) setReplace: boolean = true
-  @StorageLink(MySetConstants.SET_TIP) setTip: boolean = true
-  @StorageLink(MySetConstants.SET_HEAD) setHead: boolean = true
-  @StorageLink(MySetConstants.SET_SEARCH) setSearch: boolean = true
   /** 阅读器信息窗（2026-10-07）：全屏阅读时右上角防窥/定时实时信息，Preferences 持久化 */
   @StorageLink(MySetConstants.SET_INFO_WIN) setInfoWin: boolean = false
+
+  // ── 防窥两层开关（2026-10-08 拆层，VIP 特权）──────────────────────────────
+  // ⚠️ 这两个 @StorageLink 绑的是**有效值**（非 VIP 恒 false、第 2 层还要求系统防窥开关已开），
+  //    由 AntiPeep 在启动 / 本页进场时写入；用户意图（Preferences）另存，见 AntiPeep 文件头。
+  /** 第 2 层 阅读防窥（默认开） */
+  @StorageLink('antiPeepDlpOn') @Watch('syncAntiPeepRows') setAntiPeepDlp: boolean = false
+  /** 第 1 层 防截屏/录屏（默认关） */
+  @StorageLink('antiPeepCaptureOn') @Watch('syncAntiPeepRows') setAntiPeepCapture: boolean = false
+  /** VIP 开通成功后要补开的那个开关（'' = 无待办；用户第 4 点要求） */
+  private pendingAntiPeep: string = ''
+  /** 「VIP 购买」弹窗控制器（范式与 MyThemeConfigComp.openVip 一致） */
+  private vipDialog: CustomDialogController | null = null
 
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
@@ -81,15 +100,31 @@ export default struct MySetPage{
     this.calibDevOn = this.calibDevRead()
     // 书架拓展名开关初值（2026-09-27，默认关=隐藏后缀）
     this.setExtName = PreferencesUtil.getSync('setExtName', false) as boolean
+    this.bookSetList[0].toggleStatus = this.setExtName
     // 按键翻页开关初值（2026-10-07，默认关；Preferences 持久化，订阅调度在 ReaderKeyTurn）
     this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) as boolean
     this.setKeyFpTurn = PreferencesUtil.getSync(KEY_KEY_FP_TURN, false) as boolean
     this.keyTurnSetList[0].toggleStatus = this.setKeyVolTurn
     this.keyTurnSetList[1].toggleStatus = this.setKeyFpTurn
     ReaderKeyTurn.queryFpSupported()
+    // 智控键可用性提示（2026-10-08）：探测异步，先按当前值回填一次，300ms 后再回填一次
+    // （真机实测探测 ~25ms 完成：`KeyTurn fpProbe … support=false`）。
+    this.applySmartKeyHint()
+    setTimeout((): void => {
+      this.applySmartKeyHint()
+    }, 300)
     // 阅读器信息窗开关初值（2026-10-07，默认关）
     this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean
-    this.otherSetList[2].toggleStatus = this.setInfoWin
+    this.otherSetList[0].toggleStatus = this.setInfoWin
+    // 防窥两层开关初值（2026-10-08）：先让 AntiPeep 复算（写 AppStorage 的**有效值**），
+    // 再回填行状态；第 2 层的系统防窥开关是异步对账，稍后由 @StorageLink 自动刷新。
+    this.otherSetList[1].vipMark = true
+    this.otherSetList[2].vipMark = true
+    AntiPeep.refresh()
+    this.setAntiPeepDlp = AppStorage.get<boolean>(KEY_ANTI_PEEP_DLP) ?? false
+    this.setAntiPeepCapture = AppStorage.get<boolean>(KEY_ANTI_PEEP_CAPTURE) ?? false
+    this.otherSetList[1].toggleStatus = this.setAntiPeepDlp
+    this.otherSetList[2].toggleStatus = this.setAntiPeepCapture
     if (ListenUnlock.isUnlocked()) {
       this.engineSetList = [
         new SetList(false, '使用 Edge TTS 引擎', this.edgeTtsOn, '',
@@ -102,6 +137,38 @@ export default struct MySetPage{
       ]
       this.setGroupList = this.setGroupList.concat(
         [new SetGroupList('听书引擎（进阶）', this.engineSetList)])
+    }
+  }
+
+  /**
+   * 防窥两行的开关状态跟随 AppStorage 的**有效值**（2026-10-08）。
+   * 为什么必须挂 @Watch：第 2 层要异步问系统防窥开关 —— 用户没开、又在系统页里取消，
+   * 有效值会回弹为 false，行状态必须跟着回弹；阅读页眼睛图标改的也是同一份有效值。
+   */
+  private syncAntiPeepRows(): void {
+    if (this.otherSetList.length > 2) {
+      this.otherSetList[1].toggleStatus = this.setAntiPeepDlp
+      this.otherSetList[2].toggleStatus = this.setAntiPeepCapture
+    }
+  }
+
+  /**
+   * 智控键可用性文案（2026-10-08）：探测为"本机不支持"时，把「智控键翻页」那一行的
+   * 副标题换成实话 —— 依据官方《优先响应系统功能键开发指导》示例
+   * 「若不支持智控键上滑及智控键下滑按键，则关闭用户入口」，以及本机实测
+   * `KeyTurn fpProbe devices=9 support=false`（9 个输入设备全部 false）。
+   */
+  private applySmartKeyHint(): void {
+    if (this.keyTurnSetList.length < 2) {
+      return
+    }
+    const unsupported: boolean = ReaderKeyTurn.smartKeyUnsupported()
+    // 置灰 + 文案（渲染侧见 SetListView 的 `.opacity` / `Toggle.enabled`）
+    this.keyTurnSetList[1].disabled = unsupported
+    if (unsupported) {
+      this.keyTurnSetList[1].bottomText = ReaderKeyTurn.smartKeyHint()
+      // 不支持 ⇒ 开关显示为关（订阅已被闸门拦掉，显示"开"会骗人）
+      this.keyTurnSetList[1].toggleStatus = false
     }
   }
 
@@ -150,18 +217,19 @@ export default struct MySetPage{
   //    「清除webview数据」「用户代理」的 case 都是空 break；
   //  · 「其他」里的「语言」删除 —— `languageSheet` 只有 4 行不可点的 Text，选完没有任何效果。
   @State bookSetList: SetList[]=[
-    new SetList(false,'自动刷新',this.setRefresh,'','打开软件时自动更新书籍',MySetConstants.SET_REFRESH),
-    new SetList(false,'自动跳转最近阅读',this.setJump,'','关闭将以底部弹窗形式提示',MySetConstants.SET_JUMP),
-    new SetList(false,'默认启用替换净化',this.setReplace,'','新加入书架的书是否启用替换净化',MySetConstants.SET_REPLACE),
-    new SetList(false,'返回时提示放入书架',this.setTip,'','',MySetConstants.SET_TIP),
+    // 2026-10-08：本组只剩本项目自研的「显示文件拓展名」（消费者：`BookInfos.ets:28`
+    // 书架显示 + `TtsEngine.ets:3068` 听书标题）；其余 4 项假开关已删。
     new SetList(false,'显示文件拓展名',this.setExtName,'','书架上书名是否显示 .txt 等后缀',MySetConstants.SET_EXT_NAME)
   ]
 
   @State otherSetList: SetList[]=[
-    new SetList(false,'全程响应耳机按键',this.setHead,'','即使退出也响应耳机按键',MySetConstants.SET_HEAD),
-    new SetList(false,'文字操作显示搜索',this.setSearch,'','长按文字在操作菜单中显示阅读搜索',MySetConstants.SET_SEARCH),
     // 阅读器信息窗（2026-10-07 新增，默认关）：全屏阅读时右上角的防窥/定时实时信息
     new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时右上角会出现防窥模式以及定时的实时信息',MySetConstants.SET_INFO_WIN),
+    // ── 防窥两层（2026-10-08 新增，均 VIP 特权；用户设计：两个独立开关，可只开其一）──
+    // 第 2 层默认开（系统能力不足/系统防窥开关未开时自动显示为关，见 AntiPeep）；
+    // 第 1 层默认关。阅读页顶栏眼睛图标 = 第 2 层的第二个入口（同键同源）。
+    new SetList(false,'阅读防窥',this.setAntiPeepDlp,'','检测到旁人注视屏幕时，用系统蒙层遮住当前窗口（阅读页顶栏眼睛图标同源）',MySetConstants.SET_ANTI_PEEP_DLP),
+    new SetList(false,'防截屏/录屏',this.setAntiPeepCapture,'','开启后本应用不可被截屏录屏，退到后台时最近任务卡片也会显示白屏/隐私蒙层',MySetConstants.SET_ANTI_PEEP_CAPTURE),
   ]
 
   /** 震动反馈组（2026-09-25 新增）：开关项；强度滑块单独渲染（见 build 末尾的自绘卡片） */
@@ -182,11 +250,13 @@ export default struct MySetPage{
   /** 听书引擎组（2026-09-25 新增）：仅解锁后在 aboutToAppear 里填充并追加到分组列表 */
   @State engineSetList: SetList[]=[]
 
+  // 分组顺序（2026-10-08 用户重排）：书架 → 按键翻页 → 震动反馈 → 其他
+  // （听书引擎组解锁后 concat 到末尾，位置不变）
   @State setGroupList: SetGroupList[] = [
     new SetGroupList('书架',this.bookSetList),
-    new SetGroupList('其他',this.otherSetList),
+    new SetGroupList('按键翻页',this.keyTurnSetList),
     new SetGroupList('震动反馈',this.hapticSetList),
-    new SetGroupList('按键翻页',this.keyTurnSetList)
+    new SetGroupList('其他',this.otherSetList)
   ]
 
   // 定义分组设置头部（**说明级** 12 号：小标题不跟条目抢视觉，见 FontConstants 语义阶梯）
@@ -264,34 +334,6 @@ export default struct MySetPage{
       TabHeader({ title: '设置' })
 
       List(){
-        // ── 测试账号入口（2026-10-01 重设计，用户需求）────────────────────────
-        // 原来是左右撑满的列表行；改为**居中胶囊按钮**（dock 同款观感：圆角 + 卡底 + 淡阴影），
-        // 文案前加 person symbol（SDK 符号表核实）。置于 List 首项而非外部 —— 随内容滚动且
-        // 不破坏上方 SetHead 结构。
-        ListItem() {
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.person'))
-              .fontSize(18)
-              .fontColor([this.theme.mainColor])
-            Text('测试账号')
-              .fontSize(FontConstants.ITEM)
-              .fontWeight(FontConstants.W_TITLE)
-              .fontColor($r('app.color.text_primary'))
-          }
-          .justifyContent(FlexAlign.Center)
-          .padding({ left: 28, right: 28, top: 12, bottom: 12 })
-          .borderRadius(22)
-          .backgroundColor($r('app.color.card_bg'))
-          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
-            Haptics.tap();
-            this.openTestAccountDialog()
-          })
-        }
-        .width('100%')
-        .padding({ top: 4, bottom: 12 })
-
         ForEach(this.setGroupList,(group:SetGroupList)=>{
           //分组头部
           ListItemGroup({header:this.itemHead(group.groupValue)}){
@@ -299,7 +341,13 @@ export default struct MySetPage{
             if(group.setList){
               ForEach(group.setList,(item:SetList)=>{
                 ListItem(){//设置内容，首尾裁剪
-                  if (group.setList.indexOf(item) == 0){
+                  // 2026-10-08：单行分组（如删剩一项的「书架」）要**四角全圆**；
+                  // 「震动反馈」例外 —— 它下面还接一条自绘滑块行（占下圆角，见下），
+                  // 这里必须只给上圆角，否则两块拼不出完整卡片。
+                  if (group.setList.length === 1 && group.groupValue !== '震动反馈'){
+                    SetListView({setList:item,topLeft:20,topRight:20,bottomLeft:20,bottomRight:20})
+                      .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
+                  }else if (group.setList.indexOf(item) == 0){
                     SetListView({setList:item,topLeft:20,topRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
 
@@ -397,17 +445,50 @@ export default struct MySetPage{
           }
         }, (group: SetGroupList): string => group.groupValue)
 
+        // ── 测试账号入口（2026-10-01 重设计 → 2026-10-08 用户要求**移到列表最下面**）──
+        // 居中胶囊按钮（圆角 + 卡底 + 淡阴影），文案前加 person symbol（SDK 符号表核实）；
+        // 放最后一项：随内容滚动，滚到底才出现。底部让位由 List 的 `contentEndOffset` 负责。
+        ListItem() {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.person'))
+              .fontSize(18)
+              .fontColor([this.theme.mainColor])
+            Text('测试账号')
+              .fontSize(FontConstants.ITEM)
+              .fontWeight(FontConstants.W_TITLE)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .justifyContent(FlexAlign.Center)
+          .padding({ left: 28, right: 28, top: 12, bottom: 12 })
+          .borderRadius(22)
+          .backgroundColor($r('app.color.card_bg'))
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            Haptics.tap();
+            this.openTestAccountDialog()
+          })
+        }
+        .width('100%')
+        .padding({ top: 16, bottom: 4 })
+
       }.width('100%')
       .height('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Off)
-      // 底部 dock 让位（2026-10-01）：最后一个设置组滚到底要停在悬浮 dock 之上
+      // 底部 dock 让位（2026-10-01）：最后一个设置组/测试账号滚到底要停在悬浮 dock 之上。
+      // ⚠️ 这里已经含 `bottomRectHeight`（手势区实测值）——见 `dockContentEndOffset()`，
+      //    所以**根 Column 不能再垫一次底部 padding**（否则底部多出一条没有内容、只有底色的
+      //    空白带，真机表现为手势条区域"白条 + 蒙版"）。2026-10-08 修正。
       .contentEndOffset(ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight))
     }
-    .padding({
-      top:this.topRectHeight,
-      bottom: this.bottomRectHeight,
-    })
+    // 顶部照旧避让状态栏；**底部不再留 padding** —— 底色一路铺到屏幕最底（与书架页/主题页
+    // 同款「直接贯穿」），手势/导航条区域的让位交给上面 List 的 contentEndOffset。
+    // ⚠️ 依据：同页签的 `MyThemeConfig.ets:90-97` 就是同款结构，其注释记着同一类反馈
+    //    （「主题格子下面还有个白色蒙版 ⇒ 去掉卡片底色，背景一色」）。
+    .padding({ top: this.topRectHeight })
+    .height('100%')
+    .width('100%')
     .backgroundColor($r('app.color.page_bg_alt'))
   }
 
@@ -427,37 +508,36 @@ export default struct MySetPage{
     // 顺序说明：先 tap 再翻转 —— 关闭震动反馈时还能感受到"最后一下"。
     Haptics.tap();
     switch (value){
-      case MySetConstants.SET_REFRESH:
-        this.setRefresh = !this.setRefresh
-        this.bookSetList[0].toggleStatus = this.setRefresh;
-        break;
-      case MySetConstants.SET_JUMP:
-        this.setJump = !this.setJump
-        this.bookSetList[1].toggleStatus = this.setJump;
-        break;
-      case MySetConstants.SET_REPLACE:
-        this.setReplace = !this.setReplace
-        this.bookSetList[2].toggleStatus = this.setReplace;
-        break;
-      case MySetConstants.SET_TIP:
-        this.setTip = !this.setTip
-        this.bookSetList[3].toggleStatus = this.setTip;
-        break;
-      case MySetConstants.SET_HEAD:
-        this.setHead = !this.setHead
-        this.otherSetList[0].toggleStatus = this.setHead;
-        break;
-      case MySetConstants.SET_SEARCH:
-        this.setSearch = !this.setSearch
-        this.otherSetList[1].toggleStatus = this.setSearch;
-        break;
+      // 2026-10-08：`SET_REFRESH / SET_JUMP / SET_REPLACE / SET_TIP / SET_HEAD / SET_SEARCH`
+      // 六个 case 已随假开关一起删除（全仓零消费点，理由见本文件 bookSetList 上方的注释）。
       case MySetConstants.SET_INFO_WIN:
         // 阅读器信息窗（2026-10-07）：Preferences 持久化；阅读页进场时读一次，
         // 开关只在设置页改 ⇒ 无需跨页广播。
         this.setInfoWin = !this.setInfoWin
-        this.otherSetList[2].toggleStatus = this.setInfoWin;
+        this.otherSetList[0].toggleStatus = this.setInfoWin;
         PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN, this.setInfoWin)
         break;
+      // ── 防窥两层（2026-10-08，VIP 特权）────────────────────────────────────
+      // 非 VIP：开关不动，弹 VIP 弹窗并记下待办；开通成功后 onClose 里补开（用户第 4 点）。
+      // 已开通：把**目标值**下发给 AntiPeep（第 2 层由它异步对账系统防窥开关）。
+      case MySetConstants.SET_ANTI_PEEP_DLP: {
+        if (!VipManager.isVip()) {
+          this.pendingAntiPeep = KEY_ANTI_PEEP_DLP
+          this.openVip()
+          break
+        }
+        AntiPeep.setDlp(!this.setAntiPeepDlp)
+        break
+      }
+      case MySetConstants.SET_ANTI_PEEP_CAPTURE: {
+        if (!VipManager.isVip()) {
+          this.pendingAntiPeep = KEY_ANTI_PEEP_CAPTURE
+          this.openVip()
+          break
+        }
+        AntiPeep.setCapture(!this.setAntiPeepCapture)
+        break
+      }
       case MySetConstants.SET_HAPTICS:
         this.setHaptics = !this.setHaptics
         this.hapticSetList[0].toggleStatus = this.setHaptics;
@@ -480,9 +560,13 @@ export default struct MySetPage{
         PreferencesUtil.putSync(KEY_KEY_VOL_TURN, this.setKeyVolTurn)
         ReaderKeyTurn.refresh()
         break;
-      case MySetConstants.SET_KEY_FP:
-        // 智控键翻页（2026-10-07）：同上；本机不支持时开关保留但不动作（官方要求
-        // 使用前 supportKeysSync 探测，KEYCODE_FINGERPRINT_SLIDE_* 非全机型按键）
+      case MySetConstants.SET_KEY_FP: {
+        // 智控键翻页（2026-10-07）：同上；本机不支持时**整行已置灰**（见 applySmartKeyHint），
+        // 这里再兜一道：置灰状态下点击不做任何事（官方要求使用前 supportKeysSync 探测，
+        // KEYCODE_FINGERPRINT_SLIDE_* 非全机型按键）。
+        if (ReaderKeyTurn.smartKeyUnsupported()) {
+          break
+        }
         this.setKeyFpTurn = !this.setKeyFpTurn
         this.keyTurnSetList[1].toggleStatus = this.setKeyFpTurn
         PreferencesUtil.putSync(KEY_KEY_FP_TURN, this.setKeyFpTurn)
@@ -491,11 +575,12 @@ export default struct MySetPage{
         }
         ReaderKeyTurn.refresh()
         break;
+      }
       case MySetConstants.SET_EXT_NAME:
         // 书架书名拓展名（2026-09-27）：AppStorage（@StorageLink）即时驱动书架刷新，
         // Preferences 持久化跨启动（aboutToAppear 回读）。
         this.setExtName = !this.setExtName
-        this.bookSetList[4].toggleStatus = this.setExtName
+        this.bookSetList[0].toggleStatus = this.setExtName
         PreferencesUtil.putSync('setExtName', this.setExtName)
         break;
       case MySetConstants.SET_CALIB_DEV:
@@ -505,6 +590,49 @@ export default struct MySetPage{
         this.engineSetList[1].toggleStatus = this.calibDevOn
         this.calibDevWrite(this.calibDevOn)
         break;
+    }
+  }
+
+  /** 「VIP 购买」弹窗（2026-10-08 新增；范式抄 MyThemeConfigComp.openVip） */
+  private openVip(): void {
+    this.vipDialog = new CustomDialogController({
+      builder: VipDialog({
+        dark: NightMode.isDarkSurface(),
+        vipOwned: VipManager.isVip(),
+        onClose: (): void => {
+          this.vipDialog?.close()
+          this.vipDialog = null
+          // VipDialog 没有"成功回调"语义 ⇒ 关窗后查一次事实源（IAP 写缓存位），
+          // 买成了就把用户刚才点的那一层补开（用户 2026-10-08 第 4 点要求）。
+          this.applyPendingAntiPeep()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '88%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.vipDialog = null
+      }
+    })
+    this.vipDialog?.open()
+  }
+
+  /** VIP 开通成功后补开用户刚点的那一层（未开通 / 用户取消 = 什么都不做） */
+  private applyPendingAntiPeep(): void {
+    const p: string = this.pendingAntiPeep
+    this.pendingAntiPeep = ''
+    if (p.length === 0 || !VipManager.isVip()) {
+      return
+    }
+    if (p === KEY_ANTI_PEEP_DLP) {
+      AntiPeep.setDlp(true)
+    } else {
+      AntiPeep.setCapture(true)
     }
   }
 }

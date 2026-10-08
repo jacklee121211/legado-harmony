@@ -39,6 +39,20 @@ export struct SetListView{
 
 
       Row(){
+        // VIP 金标（2026-10-08）：防窥两层开关为会员特权。用户明确"与阅读页的做法不一样"
+        //   —— 阅读页只在未开通时显示，这里**常驻**标记。
+        // 配色取自阅读页顶栏同款（ReaderPage3.ets 的 VIP 金标）。
+        if (this.setList.vipMark === true){
+          Text('VIP')
+            .fontSize(9)
+            .fontWeight(600)
+            .fontColor('#B8860B')
+            .backgroundColor('rgba(255, 215, 0, 0.28)')
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .borderRadius(4)
+            .margin({ right: 6 })
+        }
+
         if (this.setList.rightText != null && this.setList.rightText.length > 0){
           Text(this.setList.rightText).fontSize(FontConstants.CAPTION).fontColor($r('app.color.text_tertiary'))
         }
@@ -48,6 +62,8 @@ export struct SetListView{
         }else {
           Toggle({ type: ToggleType.Switch, isOn: this.setList.toggleStatus})
             .selectedColor("#F60").hoverEffect(HoverEffect.None)
+            // 整行置灰时开关不可点（2026-10-08：智控键在本机不支持）
+            .enabled(this.setList.disabled !== true)
             // 沉浸光感（2026-09-21）。官方 `…/组件适配沉浸光感/…`「开关（Toggle）」原文：
             //   「组件级开启：开关支持通过 systemMaterial 属性设置沉浸光感效果。」
             //   「ToggleType.Switch：传入的材质参数**仅作为开启沉浸光感的开关标记**，
@@ -70,6 +86,9 @@ export struct SetListView{
     .padding({ left:20,right:20,top:12,bottom:12 })
     .justifyContent(FlexAlign.SpaceBetween)
     .alignItems(VerticalAlign.Center)
+    // 置灰（2026-10-08）：整行降透明度，配合 Toggle.enabled(false)；
+    // 点击数由页面 `itemOnclick` 自行拦截（本组件不持有回调）。
+    .opacity(this.setList.disabled === true ? 0.45 : 1)
     .borderRadius({topLeft:this.topLeft,topRight:this.topRight,bottomLeft:this.bottomLeft,bottomRight:this.bottomRight})
     .onChildTouchTest((touchinfo) => {//将事件交给text处理，text不处理将由自己处理
       return { id:'text',strategy: TouchTestStrategy.FORWARD }
