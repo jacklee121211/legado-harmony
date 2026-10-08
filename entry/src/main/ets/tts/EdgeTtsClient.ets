@@ -14,6 +14,9 @@ const DOMAIN = 0x0001;
 const TAG = 'EdgeTts';
 
 // ---- 协议常量（可随微软调整更新） ----
+// ⚠️ 这四个常量目前是**硬编码**：微软一改校验，就得改代码 → 打包 → 提审 → 等用户更新。
+//    下方的 [TODO-EDGE-PARAMS] 记录了「改成可更新参数」的完整方案。
+//    **现在不做**（2026-10-08 用户拍板：迟早要用，但不是现在）——真失效时照它做即可。
 const EDGE_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
 const EDGE_GEC_VERSION = '1-143.0.3650.75';
 const EDGE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0';
@@ -21,6 +24,61 @@ const EDGE_ORIGIN = 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold';
 const EDGE_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
 const CONNECT_TIMEOUT_MS = 15000;
 const TURN_TIMEOUT_MS = 30000;
+
+/**
+ * ── [TODO-EDGE-PARAMS] 协议常量「可更新化」改造（**暂不实施**，2026-10-08 记录）──────
+ *
+ * ── 一、为什么要做：失效是**必然**，不是可能 ──────────────────────────────────
+ * · 上面四个常量全部**写死在本文件**。其中 `EDGE_GEC_VERSION`('1-143.0.3650.75') 与
+ *   `EDGE_UA` 里的 'Edg/143.0.0.0' 绑的是**某一个 Edge 版本号**；微软推进版本、
+ *   或调整 Sec-MS-GEC 风控时，这几个值会**一起失效 ⇒ 全量用户 403**。
+ *   而本工程**没有服务端**可下发新值 ⇒ 唯一的修法是改代码走完整发版。
+ * · 外部前例（同类实现，均已确认）：
+ *   - rany2/edge-tts#458（2026-01-20 建）："Today I started gettinh the below:
+ *     WSServerHandshakeError: 403, message='Invalid response status'"
+ *     ⇒ 特征是**某一天起全量失效**，不是渐变。
+ *     https://github.com/rany2/edge-tts/issues/458
+ *   - hrygo/hotplex#294（2026-05-07）："does not implement the Sec-MS-GEC token
+ *     authentication **now required** by Microsoft's Edge TTS WebSocket endpoint …
+ *     Microsoft **tightened access controls**" ⇒ 微软已经收紧过一次，把一整批
+ *     实现同时打挂；修法就是"实现 Sec-MS-GEC + 伪造 Edge 头"——正是本文件在做的事。
+ *     https://github.com/hrygo/hotplex/issues/294
+ * · 第二类触发（个体性，非全量）：`computeSecMsGec()` 用 `Date.now()` 派生 token
+ *   （本文件 :127-140，按 300s 取整）⇒ **用户设备时钟不对会持续 403**。
+ *   【待验证】服务端容忍窗口多宽尚未实测。验证法：真机把系统时间改到 1 个月前，
+ *   再合成一句；若立刻 403 即坐实（坐实后可用一次 HTTPS 响应的 `Date` 头校正时钟）。
+ *
+ * ── 二、怎么做（三步，按序）──────────────────────────────────────────────────
+ * ① 参数外置：新增 `entry/src/main/resources/rawfile/edge_params.json`
+ *      { "token": "...", "gecVersion": "...", "userAgent": "...", "origin": "..." }
+ *    本文件把四个常量改为「默认值 + 运行时覆盖」：`let EDGE_PARAMS = DEFAULTS`，
+ *    由 `applyEdgeParams(json)` 覆盖；**缺字段 / 解析失败一律保留默认值**
+ *    ⇒ 天然可一键回退（删掉 rawfile 或让覆盖失效即回到今天的硬编码行为）。
+ * ② 手动更新入口：设置页「听书 → 在线引擎」区块加一个**「检查引擎参数更新」**按钮，
+ *    点击才去拉你自控域名上的同名 json，成功后连时间戳一起写 Preferences，重启生效。
+ *    ⚠️ **必须用户手动点，不要自动拉**：本应用 AGC 备案口径是「**单机应用**」
+ *    （官方定义：未通过连接公共互联网提供互联网信息服务的移动应用程序，
+ *      见 FAQ/应用市场服务_AppGallery_Kit/HarmonyOS应用备案指导和常见问题/faqs-appgallery-32）；
+ *    **每新增一个自动联网点都在削薄这个口径**。手动触发可主张"用户主动发起的下载"。
+ * ③ 失败兜底：拉取失败 / 校验不过 ⇒ 继续用 rawfile 默认值，
+ *    **绝不因为"更新失败"而不出声**（听书链路不允许被参数更新阻断）。
+ *
+ * ── 三、为什么现在不做 ─────────────────────────────────────────────────────
+ * · 当前没坏；改造本身会引入新故障面（新联网点、新持久化键、新回退分支）；
+ * · 真发生时照上面三步做即可，成本可控（半天量级）；
+ * · 在此之前先做**更便宜、立刻降低伤害**的两件事（都在 TtsEngine.ets）：
+ *   ① `activeEngineId()` 加「Edge 连续失败 N 次 ⇒ 回落 'local'」——
+ *      现在它只看「是否解锁 + 用户选了什么」，**不看连通性**，
+ *      所以微软一收紧，用户听到的是垫片环境音循环，而不是换个音色继续读；
+ *   ② `TtsEngine.ets:1613` 的 toast「网络不佳，静音等待恢复…」在 403 场景是**错误归因**
+ *      （网络其实是通的），应区分「网络不通」与「在线引擎不可用」。
+ *
+ * ── 四、红线：本文件必须留在公开仓库（GPL-3.0，与"删不删"无关）─────────────────
+ * HAP 里编入了本文件，按 GPL-3.0 §6 就必须向拿到 HAP 的人提供对应源码
+ * （LICENSE:245-267，措辞是 "for **all the software in the product** that is
+ * covered by this License"）⇒ 任何"挪进私有仓、只公开主仓"的做法**直接违规**，
+ * 不是风险。要降低微软侧敞口只有两条路：继续公开，或从发行包彻底删除。
+ */
 
 export interface WordSpan {
   text: string;
