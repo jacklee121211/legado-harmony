@@ -871,10 +871,12 @@ export default struct ReaderPage3 {
   /** 顶栏防窥眼睛图标的 Q弹缩放值（同上） */
   @State antiPeepScale: number = 1
   /**
-   * 防窥开关（2026-10-07）：AppStorage `antiPeepOn` 同名键驱动（顶栏眼睛图标用）。
-   * 真值落盘与两层防护全在 `AntiPeep`（utils/AntiPeep.ets）；默认关。
+   * 阅读防窥（第 2 层）开关（2026-10-08 拆层）：AppStorage `antiPeepDlpOn` 同名键驱动
+   * （顶栏眼睛图标用）。绑的是**有效值**（非 VIP 恒 false，且要求系统防窥开关已开）；
+   * 用户意图落盘与两层防护全在 `AntiPeep`（utils/AntiPeep.ets）；默认开。
+   * ⚠️ 眼睛**只管第 2 层**（用户 2026-10-08 拍板）：第 1 层防截屏/录屏只在设置页开关。
    */
-  @StorageLink('antiPeepOn') antiPeepOn: boolean = false
+  @StorageLink('antiPeepDlpOn') antiPeepDlpOn: boolean = false
   /**
    * VIP 解锁位（2026-10-07 会员化：防窥为 VIP 特权，眼睛图标按此显示金标 + 门控）。
    * 键与 VipManager.STORAGE_KEY 同源（编译期字面量），进页时由 VipManager.isVip() 灌初值；
@@ -1647,19 +1649,21 @@ export default struct ReaderPage3 {
    * `…\sdk\default\openharmony\ets\build-tools\ets-loader\sysResource.js` 查得。
    */
   private antiPeepIcon(): Resource {
-    return this.antiPeepOn ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye')
+    return this.antiPeepDlpOn ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye')
   }
 
   /**
-   * 防窥开关（2026-10-07）：切两层防护（窗口隐私 + DLP 窥视蒙层，能力不足自动降级）。
-   * 会员化（2026-10-07）：本方法只服务已开通 VIP 的用户（调用方先门控，免费用户直接进
-   * VIP 弹窗、不会走到这里）。提示语按**目标值**算（不读 this.antiPeepOn —— setEnabled
-   * 会同步广播写回该值，读旧值会把「开启/关闭」说反）。
+   * 阅读防窥（第 2 层）开关（2026-10-07 新增 / 2026-10-08 拆层）。
+   * **眼睛只切第 2 层**：用户拍板「点击小眼睛 = 直接开启防窥（第 2 层）」；第 1 层
+   * 防截屏/录屏须去设置页手动开（同为 VIP 特权），两层可任意组合。
+   * 会员化：本方法只服务已开通 VIP 的用户（调用方先门控，免费用户直接进 VIP 弹窗）。
+   * 提示语按**目标值**算（不读 this.antiPeepDlpOn —— setDlp 会同步广播/异步回写该值，
+   * 读旧值会把「开启/关闭」说反）。
    */
   private toggleAntiPeep(): void {
-    const next: boolean = !this.antiPeepOn
-    AntiPeep.setEnabled(next)
-    showMessage(next ? '防窥已开启' : '防窥已关闭')
+    const next: boolean = !this.antiPeepDlpOn
+    AntiPeep.setDlp(next)
+    showMessage(next ? '阅读防窥已开启' : '阅读防窥已关闭')
   }
 
   // ── 居中下拉书签手势（2026-10-07）────────────────────────────────────────
@@ -3228,7 +3232,8 @@ export default struct ReaderPage3 {
         // 引擎未就绪（开场转场中）时忽略本次按键
       }
     });
-    // ── 防窥保护（2026-10-07）：取窗口 + 恢复上次开关状态（眼睛图标随 AppStorage 同步）
+    // ── 防窥（2026-10-08 拆层）：兜底取窗口 + 复算两层有效值（眼睛图标随 AppStorage 同步）。
+    //    正常路径已由 EntryAbility 启动时初始化（AntiPeep.start），这里是幂等兜底。
     AntiPeep.ensureInit(this.getUIContext().getHostContext() as common.UIAbilityContext);
     // 会员化（2026-10-07）：灌入 VIP 解锁位（@StorageLink vipOn 的初值；与「我的」页同键）
     AppStorage.setOrCreate('vipUnlocked', VipManager.isVip());
@@ -5850,8 +5855,9 @@ export default struct ReaderPage3 {
                 .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
 
               // ── 防窥入口（2026-10-07 用户设计）：顶栏依次 防窥/书签 ──────────────
-              // 睁眼 = 未开启，闭眼 = 已开启；点击切换两层防护（窗口隐私 + DLP 窥视蒙层，
-              // 方案见 utils/AntiPeep.ets）。规格与书签完全同款：SymbolGlyph 22、
+              // 睁眼 = 未开启，闭眼 = 已开启；**点击只切第 2 层（阅读防窥）**——
+              // 2026-10-08 用户拍板：第 1 层防截屏/录屏只在设置页手动开，眼睛不碰它。
+              // 规格与书签完全同款：SymbolGlyph 22、
               // ReplaceSymbolEffect 形变动效、runJellyClick Q弹缩放。
               // ⚠️ 定时入口已迁入听书面板顶栏（2026-10-07 用户设计：与听书功能同源，
               //   面板=父窗、定时弹窗=子窗），顶栏不再保留闹钟图标。
@@ -5869,9 +5875,20 @@ export default struct ReaderPage3 {
               SymbolGlyph(this.antiPeepIcon())
                 .fontSize(22)
                 .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
-                .symbolEffect(new ReplaceSymbolEffect(), this.antiPeepOn ? 1 : 0)
+                .symbolEffect(new ReplaceSymbolEffect(), this.antiPeepDlpOn ? 1 : 0)
                 .scale({ x: this.antiPeepScale, y: this.antiPeepScale })
                 .margin({ right: 12 })
+                // ── 点击热区放大到 44×44（2026-10-08 真机日志定位）────────────────
+                // 依据：2026-10-08 15:50:33 那次点击**命中链里只有 Stack、没有 SymbolGlyph**
+                // （`日志.md:1813/1819`），说明手指落在 22vp 字形本体之外 —— 官方通用属性
+                // `responseRegion(value: Array<Rectangle> | Rectangle): T`
+                // （SDK `component/common.d.ts:17299-17311`，@since 8）原文：
+                // 「Sets one or more touch targets. … The default touch target is the
+                //   entire component.」（默认热区 = 组件本体）
+                // 现在 22vp 字形 → 四周各外扩 11vp 的 44×44 命中区：左侧吃掉标题方向、
+                // 右侧吃掉 12vp 图标间距（与书签字形留 1vp 余量，两者热区不重叠）；
+                // 上下各 11vp 刚好落在本行 padding 的 12vp 内。观感完全不变。
+                .responseRegion({ x: -11, y: -11, width: 44, height: 44 })
                 .onClick(() => {
                   Haptics.tap();
                   // 会员化（2026-10-07）：未开通 ⇒ 一律进 VIP 弹窗（免费用户开不了防窥，
@@ -5906,6 +5923,9 @@ export default struct ReaderPage3 {
                 //    收藏状态一变这个数就变，动效自然触发，且不需要额外状态。
                 .symbolEffect(new ReplaceSymbolEffect(), this.isBookmarked ? 1 : 0)
                 .scale({ x: this.bookmarkScale, y: this.bookmarkScale })
+                // 热区同上（44×44，依据与取值见防窥眼睛那处注释）：书签是本行最后一个图标，
+                // 右侧本来还有 20vp 行内边距全是死区 ⇒ 同样是"看着点到了却没反应"的高发点。
+                .responseRegion({ x: -11, y: -11, width: 44, height: 44 })
                 .onClick(() => {
                   Haptics.tap();
                   runJellyClick((v: number) => {
