@@ -70,7 +70,7 @@ import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
 @Component
 struct Main {
   @State showReadShow: boolean = true
-  @State currentTabIndex: number = 0
+  @State @Watch('onStateProbe') currentTabIndex: number = 0
   /**
    * App 级夜间开关（书架深色档的总闸）。
    *
@@ -82,9 +82,9 @@ struct Main {
    */
   @StorageLink(NightMode.KEY) @Watch('onNightModeChanged') nightOn: boolean = false
   @State isShow: boolean = true
-  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
+  @StorageLink('bottomRectHeight') @Watch('onStateProbe') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
-  @State ShowBar: boolean = true
+  @State @Watch('onStateProbe') ShowBar: boolean = true
   // 2026-10-09 迁 HdsTabs：控制器类型同步换成 HdsTabsController
   // （SDK `@hms.hds.hdsBaseComponent.d.ets:5805`：`class HdsTabsController extends TabsController`，
   //  所以 `changeIndex()` 等 TabsController 的能力全部保留）
@@ -94,7 +94,7 @@ struct Main {
    * 与 `ReaderPage3:3140` 同源 —— `@StorageLink` 初值是 false，
    * 必须主动从 Preferences 拉一次，否则已解锁用户冷启动后看不到入口。
    */
-  @StorageLink('listenEntryUnlocked') listenUnlocked: boolean = false
+  @StorageLink('listenEntryUnlocked') @Watch('onStateProbe') listenUnlocked: boolean = false
   /** 听书 dock 是否展开（HDS MiniBar 的 EXPAND 态） */
   @StorageLink('listenExpanded') @Watch('onListenExpandedChanged') listenExpanded: boolean = false
   /** HDS 最近一次回报的迷你栏样式（`onBarStyleChange` 里更新；只作闸门，不驱动 UI） */
@@ -103,7 +103,7 @@ struct Main {
   private cachedFloatStyle: HdsTabsFloatingStyle | null = null
   private cachedFloatKey: string = ''
   /** 是否存在听书会话（书名信息条的显示条件；必须走 StorageLink 才会驱动重绘） */
-  @StorageLink('listenActive') listenActive: boolean = false
+  @StorageLink('listenActive') @Watch('onStateProbe') listenActive: boolean = false
 
   // ══════════════════════════════════════════════════════════════════════════
   // 一镜到底（书架 → 阅读器）运行态 —— 2026-09-23
@@ -116,7 +116,7 @@ struct Main {
   //   详情页 / 快捷方式 / 书签回跳不置臂 ⇒ 走 else 普通分支 ⇒ EXPLODE 原样保留（反馈缺口A）。
   // 回退：UiMotion.LONGTAKE_ENABLED = false ⇒ 点击侧整体旁路（不再置臂、不再捕获）。
   /** 臂旗：书架点击在 push 前置位 ⇒ 本次 READER 建成「飞行分支」。弹栈后由 onDisappear 解除。 */
-  @StorageLink('ltArm') ltArm: boolean = false
+  @StorageLink('ltArm') @Watch('onStateProbe') ltArm: boolean = false
   // （2026-10-02 已回退上一轮的"看门狗 + Navigation.enabled 交互闸"：裸 ltTransEndAt
   //  比较没有代际隔离，新转场清零打点会让所有在途看门狗误判失败、连环强制清空
   //  正在进行的转场 —— 真机白屏卡死回归（2026-10-02 02:31 日志实证）。
@@ -129,7 +129,7 @@ struct Main {
    * 防返回打断转场（自研方案三轮卡死的根因）。由 customNavContentTransition
    * 回调的 onTransitionStart/End 切换。skill: hmos-arkui-longtake-transition。
    */
-  @State ltNavEnabled: boolean = true
+  @State @Watch('onStateProbe') ltNavEnabled: boolean = true
   /** 阅读器一镜到底会话（官方库迁移 2026-10-02）。@State：Delegate 的 longTakeSession
    *  是 @ObjectLink，只接受父组件状态字段初始化 */
   @State readerLtSession: LongTakeSession = new LongTakeSession()
@@ -265,7 +265,7 @@ struct Main {
    */
   pageStack: NavPathStack = new NavPathStack()
   // 主题颜色
-  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  @StorageProp(ThemeStorageKey.THEME) @Watch('onStateProbe') theme: ThemeItem = {} as ThemeItem
   // ---------- 桌面快捷方式（快速听书 / 快速阅读）----------
   /**
    * 由 `EntryAbility.captureQuickAction()` 写入，值 `'listen'` | `'read'`。
@@ -538,6 +538,17 @@ struct Main {
    * 书名条还挂着 ⇒ 就是这两套状态不同步。
    * 用 `lastHdsMiniBar` 做闸门，避免 HDS 自己已经折叠时再调一次造成回环。
    */
+  /**
+   * ★ 状态变化探针（2026-10-09 排查"迷你栏节点每 0.5 秒重建一次 ⇒ 圆闪"）。
+   *
+   * 为什么用 @Watch 而不是在 uild() 里计数：@Entry 组件的 uild() **只允许一个根容器、
+   * 不允许语句**（编译期报 can have only one root node）。而 @Watch 回调会带**属性名**，
+   * 这正好是我们需要的 —— **谁在 2Hz 变，就直接点名**。
+   * 定位完即删。
+   */
+  onStateProbe(propName: string): void {
+    console.info('LISTENDOCK', 'state changed: ' + propName)
+  }
   onListenExpandedChanged(): void {
     if (!this.listenExpanded && this.lastHdsMiniBar === HdsBarStyle.EXPAND) {
       this.tabController.applyMiniBarStyle(HdsBarStyle.COLLAPSE);
@@ -558,7 +569,14 @@ struct Main {
    * 不设材质的普通悬浮条；彻底回退到 `Tabs` 需要把本文件里的 HdsTabs 换回 Tabs
    * （见文件头 import 注释）。
    */
+  private floatStyleCalls: number = 0
   private hdsFloatingStyle(): HdsTabsFloatingStyle {
+    // ★ 判别打点（2026-10-09）：本方法**只在 Index 重渲染时**才会被调用。
+    //   空闲时它也打 ⇒ Index 真在重渲染（说明还有我没探到的状态源在跳）⇒ 情况 A
+    //   空闲时它**不打**、但 `dock node rebuilt` 照打 ⇒ HDS 自己在重跑迷你栏 builder ⇒ 情况 B
+    this.floatStyleCalls++
+    console.info('LISTENDOCK', 'floatStyle#' + this.floatStyleCalls + ' tab=' + this.currentTabIndex
+      + ' bottom=' + this.bottomRectHeight + ' unlocked=' + this.listenUnlocked)
     // ★★ 2026-10-09「切页签时圆形闪一下」修复：**缓存样式对象，不要每次渲染都新建** ★★
     //   原因：`.barFloatingStyle(新对象)` 每次切页签都会拿到一个**新引用**
     //   （`onAnimationStart` 里 `currentTabIndex = target` 触发 Index 重渲染 ⇒ 本方法重跑），
@@ -785,6 +803,14 @@ struct Main {
         // ★ 页签变了 ⇒ 重新算配色并下发：书架（0）= 深色档、主题(1)/设置(2)/我的(3) = 浅色档。
         //   规则与依据见 `NightMode.desiredDark()`。
         NightMode.setMainTab(targetIndex)
+        // ★ 判别打点：记录本拍的主题色与页签号（排查"切页签圆形闪"用，定案后可删）
+        console.info('LISTENDOCK',
+          `tab ${index} -> ${targetIndex}, mainColor=${this.theme.mainColor}, expanded=${this.listenExpanded}`)
+        // ⚠️ 2026-10-09 回退：这里**恢复为同步调用**。
+        //   曾经为"切页签圆形闪"把它延后 340ms，但真机日志证明闪的成因是
+        //   **迷你栏节点被高频重建**（`dock node rebuilt` 约 2 次/秒，且与切页签无关），
+        //   跟配色模式切换**没有关系**。延后 `sync` 只会引入"切页签后 340ms 内还是旧配色"
+        //   的可见副作用，**净负收益** ⇒ 还原。（教训：修 A 之前先用日志证明确实是 A。）
         NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
         // 切到「我的」（2026-10-01 四页签后 index = 3）时通知 `MyCenter` 重拉三个计数
         //（读过/读完/书签）。为什么必须在这里做：`MyCenter` 是**子组件**、没有 `onPageShow`，
