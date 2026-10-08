@@ -1013,6 +1013,18 @@ export class TtsEngine {
     TtsEngine.readerPosProvider = provider;
   }
 
+  /**
+   * 清空阅读器位置提供者（2026-10-09 新增）。
+   *
+   * 为什么必须清：`readerPosProvider` 是**闭包捕获了 ReaderPage3 实例**的箭头函数
+   * （见 `ReaderPage3.registerTtsCallbacks`）。阅读页销毁后引擎仍在播（书架继续听书），
+   * 一旦某条路径再调用它，就会读到已销毁页面的 `pageRange` ⇒ 至少是无效坐标，
+   * 更差的情况是抛错打断朗读。页面 `aboutToDisappear` 里必须调本方法。
+   */
+  static clearReaderPositionProvider(): void {
+    TtsEngine.readerPosProvider = null;
+  }
+
   /** 在块队列中找到第一个 (节点, 字符) ≥ (node, char) 的块下标 */
   private static chunkIndexForPosition(chunks: QueueChunk[], node: number,
     char: number): number {
@@ -1176,7 +1188,17 @@ export class TtsEngine {
     }
     TtsEngine.scheduleCachePrune(); // 会话开始顺带整理一次缓存
     if (TtsEngine.state !== 'stopped') {
+      // ⚠️⚠️ 这是"重新开播前先停旧的"**内部**动作，**绝不能**当成用户停播往外播报。
+      //   调用方（阅读页 `ttsStart()` / 书架 `ListenLauncher.startBook()`）的顺序是
+      //   **先 `ListenSession.begin()`，再调本方法**；若这里照常发 `onState('stopped')`，
+      //   `ListenSession.end()` 会立刻把 ACTIVE / URL / ID 全部清空，
+      //   而 `begin()` 不会再跑第二次 ⇒ 之后虽然进入 `playing`，会话身份也回不来了
+      //   ⇒ `ReaderPage3.listeningThisBook()` **恒为 false**
+      //   ⇒ **正在听的那本书也进不了沉浸听读**（用户 2026-10-09 反馈的现象）。
+      //   真机日志佐证：`tts state restored on enter` 一次都没打出来过。
+      TtsEngine.suppressStopCb = true;
       TtsEngine.stopInternal('');
+      TtsEngine.suppressStopCb = false;
     }
     try {
       await TtsEngine.beginPlaybackEnv();
@@ -1188,6 +1210,130 @@ export class TtsEngine {
     TtsEngine.setState('playing');
     const gen = ++TtsEngine.sessionGen;
     await TtsEngine.run(gen, spineIndex, startNode, startChar);
+  }
+
+  /**
+   * 只负责"打开自己的解析器"，失败一律返回 null（不抛）。
+   * 抽成独立方法是为了让 `startStandalone` 里的判空是**显式**的 ——
+   * ArkTS 里 `let x: T | null` 在 try 里赋值、catch 里 return 的写法，
+   * 后续读取会被窄化异常（工程已踩过 `never` 的坑，见 AGENTS.md）。
+   */
+  private static async openOwnHandler(path: string): Promise<bookParser.BookParserHandler | null> {
+    try {
+      return await bookParser.getDefaultHandler(path);
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'openOwnHandler err %{public}s',
+        e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }
+
+  // ---------- 解析器自愈（2026-10-09，用户第三轮真机）------------------------
+  /**
+   * 本会话所用的书籍文件路径（自愈时用它重开解析器）。
+   * 由 `startStandalone()` / `ListenLauncher.startBook()` 通过 `setOwnPath()` 写入。
+   */
+  private static ownPath: string = '';
+  /** 上次自愈时刻（冷却用，防止失败时打成死循环） */
+  private static lastHealAt: number = 0;
+  private static readonly HEAL_COOLDOWN_MS: number = 3000;
+
+  /** 记录本会话的书籍路径（供 `tryHealHandler()` 重开解析器） */
+  static setOwnPath(path: string): void {
+    TtsEngine.ownPath = path;
+  }
+
+  /**
+   * 解析器自愈：`getSpineItemContent` 失败时按 `ownPath` 重开一份再读一次。
+   *
+   * 为什么需要（两边都不能牺牲的冲突）：
+   *   · 阅读页销毁时**必须** `releaseBook()` —— 不释放，下一本书就 `registerBookParser`
+   *     不上、此后不再产生 `pageShow`，真机表现是**进入任何书都黑屏**；
+   *   · 但 `releaseBook()` 会连带作废 TtsEngine 手里的 `BookParserHandler`，
+   *     此后每章都报 `1017010002`（bookParser 的 Invalid request）⇒ 听书断流。
+   * ⇒ 唯一出路是"释放照常 + 引擎自己重开"。只重试一次，且 3s 冷却，失败即放弃本章。
+   *
+   * @returns 读到的正文；重开也失败则 null
+   */
+  private static async tryHealHandler(spineIndex: number): Promise<string | null> {
+    if (TtsEngine.ownPath.length === 0) {
+      return null;
+    }
+    const now: number = Date.now();
+    if (now - TtsEngine.lastHealAt < TtsEngine.HEAL_COOLDOWN_MS) {
+      return null;
+    }
+    TtsEngine.lastHealAt = now;
+    const h: bookParser.BookParserHandler | null = await TtsEngine.openOwnHandler(TtsEngine.ownPath);
+    if (h === null) {
+      return null;
+    }
+    TtsEngine.handler = h;
+    try {
+      TtsEngine.spineCount = h.getSpineList().length;
+    } catch (e) {
+      // spineCount 取不到就保留旧值，不影响下面这次读取
+    }
+    hilog.info(DOMAIN, TAG, 'handler healed, retry spine=%{public}d spineCount=%{public}d',
+      spineIndex, TtsEngine.spineCount);
+    try {
+      return await h.getSpineItemContent(spineIndex);
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'heal retry still failed spine=%{public}d: %{public}s',
+        spineIndex, e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }
+
+  /**
+   * 【2026-10-09 新增】从**书籍文件路径**自行打开解析器后开播 —— 与阅读页彻底解耦。
+   *
+   * ── 为什么需要（真机风险点）─────────────────────────────────────────────
+   * 旧路径 `start(context, this.BookHandler, …)` 借用的是阅读页那个
+   * `BookParserHandler`，而阅读页销毁时会调
+   * `readerComponentController.releaseBook()`。SDK 原文
+   * （`@hms.core.readerservice.readerComponent.d.ets:272-280`）：
+   *   「release current book.」  @syscap SystemCapability.Reader.ReaderService.ReaderCore
+   * 而 `BookParserHandler` 属**另一个 syscap**
+   * （`@hms.core.readerservice.bookParser.d.ts:28-136`，
+   *  `SystemCapability.Reader.ReaderService.BookParser`）且**没有任何 release/close 成员**。
+   *
+   * ⇒ 能确证：`releaseBook()` 释放的是"阅读组件当前的书"。
+   * ⇒ **不能**确证：它会不会连带作废 `registerBookParser()` 注册进去的那个 handler 实例。
+   *   这条**无法本地验证**，只能真机试。所以这里采用"各开各的"：
+   *   TtsEngine 自己 `getDefaultHandler(path)` 一份，阅读页 `releaseBook()` 照常调，
+   *   两者互不影响 —— 从根上绕开这个不确定性。
+   *
+   * ── 一键回退 ─────────────────────────────────────────────────────────────
+   * 调用方改回 `TtsEngine.start(context, this.BookHandler, …)` 即可（旧签名原样保留）。
+   * 回退后要真机验证：阅读页里开播正常、返回书架后朗读停止（旧行为）。
+   *
+   * ⚠️ 必须传**显式**的 startNode/startChar（本方法故意不给默认值）——
+   *   ArkTS 里"可选的函数形参"会把后续实参误判类型（AGENTS.md 实测坑）。
+   */
+  static async startStandalone(context: common.UIAbilityContext, bookPath: string,
+    spineIndex: number, prefs: TtsPrefs, bookTitle: string,
+    startNode: number, startChar: number): Promise<void> {
+    // 先落 context，这样解析失败时 cb 里的 onToast 还能用
+    TtsEngine.context = context;
+    // 记录路径：解析器被 releaseBook 作废后，`tryHealHandler()` 靠它重开
+    TtsEngine.setOwnPath(bookPath);
+    const own: bookParser.BookParserHandler | null = await TtsEngine.openOwnHandler(bookPath);
+    if (own === null) {
+      TtsEngine.cb?.onToast('书籍解析失败，无法朗读');
+      return;
+    }
+    await TtsEngine.start(context, own, spineIndex, prefs, bookTitle, startNode, startChar);
+  }
+
+  /** 当前朗读的书名（书架听书 dock 用；`start()` 里已赋值） */
+  static getBookTitle(): string {
+    return TtsEngine.bookTitle;
+  }
+
+  /** 当前朗读的章节名（书架听书 dock 用；`notifyChapter()` 里维护） */
+  static getChapterTitle(): string {
+    return TtsEngine.curChapterTitle;
   }
 
   /** 暂停：只动播放器与状态标志，协程原地挂起（恢复后从原位继续，不重读）。
@@ -1477,10 +1623,21 @@ export class TtsEngine {
       } catch (e) {
         hilog.error(DOMAIN, TAG, 'getSpineItemContent %{public}d failed: %{public}s',
           spineIndex, e instanceof Error ? e.message : String(e));
-        TtsEngine.cb?.onToast('本章内容读取失败，已跳过');
-        spineIndex++;
-        TtsEngine.chapterIndex = spineIndex;
-        continue;
+        // ★★ 2026-10-09 自愈（用户第三轮真机）：解析器被 `releaseBook()` 作废后**重开再试一次** ★★
+        //   机理：阅读页销毁时会 `readerComponentController.releaseBook()`（无条件，为了
+        //   让下一本书还能注册；不释放会黑屏）。而这一次释放会连带作废 TtsEngine 手里的
+        //   `BookParserHandler` ⇒ 之后每一章都报 1017010002（bookParser 的 Invalid request）。
+        //   两边都不能牺牲，所以在这里自愈：按记录下来的 bookPath 重开一份，再读一次。
+        //   只重试一次，且两次之间设冷却，避免失败时变成死循环。
+        const healed: string | null = await TtsEngine.tryHealHandler(spineIndex);
+        if (healed !== null) {
+          content = healed;
+        } else {
+          TtsEngine.cb?.onToast('本章内容读取失败，已跳过');
+          spineIndex++;
+          TtsEngine.chapterIndex = spineIndex;
+          continue;
+        }
       }
       // 1. 建"ReaderKit 块节点模型"（与阅读器 DOM 块节点 1:1，唯一坐标系）
       const nodes = buildChapterNodes(content).nodes;
@@ -2564,6 +2721,12 @@ export class TtsEngine {
     }
   }
 
+  /**
+   * 内部"停旧会话"时抑制 `onState('stopped')` 往外播报。
+   * 见 `start()` 里那段的注释 —— 不抑制会把 `ListenSession` 的会话身份清掉。
+   */
+  private static suppressStopCb: boolean = false;
+
   private static stopInternal(reason: string): void {
     TtsEngine.sessionGen++;
     TtsEngine.state = 'stopped';
@@ -2579,7 +2742,11 @@ export class TtsEngine {
     if (TtsEngine.player !== null) {
       TtsEngine.player.stop();
     }
-    TtsEngine.cb?.onState('stopped');
+    // ⚠️ 抑制标记只在"重新开播前先停旧的"那条内部路径上为 true，
+    //   普通停播（用户点 X / 播完 / 睡眠定时）照常播报，dock 该收回还是会收。
+    if (!TtsEngine.suppressStopCb) {
+      TtsEngine.cb?.onState('stopped');
+    }
     if (reason.length > 0) {
       TtsEngine.cb?.onToast(reason);
     }

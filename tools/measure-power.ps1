@@ -1,4 +1,4 @@
-# measure-power.ps1 —— 用 hdc 直接测本机整机电流（真机实测）
+﻿# measure-power.ps1 —— 用 hdc 直接测本机整机电流（真机实测）
 #
 # 数据来源：hdc shell "hidumper -s BatteryService -a -i"
 #   nowCurrent     当前瞬时电流(mA，负=放电)
