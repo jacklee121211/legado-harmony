@@ -248,6 +248,71 @@ const READER_BAR_HEIGHT: number = 60;
  */
 const READER_BAR_BOTTOM_GAP: number = 10;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 居中下拉书签手势（2026-10-07 用户需求）
+// ══════════════════════════════════════════════════════════════════════════════
+/**
+ * 全屏阅读（菜单栏隐藏）时，在**屏幕居中区**向下拖拽 ⇒ 整页跟手下移、松手回弹；
+ * 位移过阈值即切换本页书签（有则删、无则存，复用顶栏书签图标那一支 `toggleBookmark()`）。
+ *
+ * ── 左右翻页的手势逻辑（先查清主从关系，2026-10-07 补）─────────────────────
+ * · 翻页交互**整块在 ReaderKit 组件内部**，没有任何开关：
+ *   官方文档 `开发指南/Reader_Kit_阅读服务/书籍内容交互/手动触发翻页/reader-flip-page`
+ *   原文：「Reader Kit的交互能力**已经集成了手指点击和触摸滑动翻页**，如果开发者需要
+ *   增加其它翻页场景时（如：耳机播控翻页），可使用手动翻页接口实现自定义翻页场景。」
+ *   ⇒ `flipPage()` 只是"额外场景"的补充接口，不是接管内置手势；
+ *   `ReaderSetting`（`@hms.core.readerservice.readerComponent.d.ets:69-199`）**只有 13 个
+ *   排版字段**（fontName/fontSize/fontWeight/fontColor/fontPath/lineHeight/nightMode/
+ *   themeColor/themeBgImg/flipMode/scaledDensity/viewPortWidth/viewPortHeight），
+ *   没有任何手势/点击区配置 ⇒ 想在 ArkTS 侧"关掉"内置翻页是做不到的。
+ * · 翻页方式只有两档：`flipMode` `'0'=仿真`、`'1'=横滑`
+ *   （documentId `…/修改翻页方式_字体大小及行间距/reader-setting-other` 原文注释
+ *   「0代表仿真翻页，1代表横滑翻页」）。仿真档的纸张卷曲**不挑方向**，
+ *   这就是"下拉也会翻页"的来源。
+ * · 主从关系是"**同类型手势父组件优先**"：真机日志实证 ReaderKit 内部那个翻页手势是
+ *   **PanGesture**（`…tViewModifier onActionEnd {"offsetX":0,"offsetY":221.26,…"angle":0,
+ *   "speed":0}`；`gesture.d.ts:1060/1072` 明确 offsetX/offsetY "Used in **PanGesture**
+ *   scenarios"），两侧同为 PanGesture ⇒ 用 `priorityGesture`（官方：
+ *   「当父组件使用 priorityGesture 绑定与子组件**同类型**的手势时，父组件优先识别」）
+ *   就能让本页下拉先被识别，卷曲不再起手。详见 `build()` 里那两段注释。
+ *
+ * ── 与既有一镜到底 / 架构是否冲突（逐条取证）──────────────────────────────
+ * · **不新增覆盖层**：左右翻页依赖触摸打到 XComponent（工程已知坑：任何盖在它上面的
+ *   ArkTS 节点都会把左右点/滑吃掉，见 `build()` 里测量通道那段注释）。故本手势只挂在
+ *   **本页根 Stack 的父层**上 —— 父层本来就在命中链上、且不吃子组件命中；
+ * · **两道闸**：`priorityGesture`（同类型父优先，主闸）+ `monopolizeEvents(true)`
+ *   （官方原文见 `build()` 注释；实测单靠它不够 —— 日志里 ReaderKit 的 pan 仍被接受）；
+ * · **一镜到底**：`CardLongTakeDelegate` 的返回手势是
+ *   `PanGesture({ direction: PanDirection.Right })`（`CardLongTakeDelegate.ets:53`）——
+ *   方向不同；且它在**祖先**层，同类型时子组件优先 ⇒ 本手势不夺它的返回手势。
+ *
+ * 一键回退：`BM_PULL_ENABLED = false` ⇒ 不挂手势、也不做位移（完全回到改造前）。
+ * ⚠️ 待真机验证：①XComponent 原生 surface 是否跟随父层 `translate` 一起合成；
+ *   ②`priorityGesture` 是否让轻点（拉菜单/点两侧翻页）变迟钝、横滑翻页是否被推迟
+ *   `BM_PULL_DISTANCE`（看日志 `PAN RACC` 是否恢复成每次交互**一条**、`flipOk` 不再出现）。
+ */
+const BM_PULL_ENABLED: boolean = true;
+/** 最大位移（vp）：同时是底部垫层的固定高度 ⇒ 露出的缺口永远被垫层盖住，不透底 */
+const BM_PULL_MAX: number = 120;
+/** 触发阈值（vp）：松手时位移 ≥ 它才真正切书签 */
+const BM_PULL_TRIGGER: number = 64;
+/** 跟手阻尼：页面位移 = 手指位移 × 它（1 = 完全 1:1 跟手） */
+const BM_PULL_DAMP: number = 0.65;
+/** 全局变暗的最大不透明度（随位移线性增长，回弹即恢复） */
+const BM_SCRIM_MAX: number = 0.55;
+/** 居中起手区（窗口宽的比例，避开左右翻页区） */
+const BM_PULL_ZONE_L: number = 0.25;
+const BM_PULL_ZONE_R: number = 0.75;
+/**
+ * 下拉手势的起手距离（vp）：**取 5 = 平台默认值**（SDK `gesture.d.ts:1620` 原文
+ * 「**distance**: minimum pan distance to trigger the gesture, in vp. … **Default value:
+ * **8** for the stylus and **5** for other input sources」）—— 这个 5vp 正是框架用来
+ * 区分"轻点"和"滑动"的界线，跟着它走才不会把"轻点拉菜单/轻点翻页"吃掉。
+ * 想更早抢在 ReaderKit 卷曲起手之前（本工程 `ReaderBgPalette.ets:181-183` 用过
+ * `distance: 1` 抢 Scroll）可以把这里调小，代价是轻点可能被误判成下拉 ⇒ 需要真机权衡。
+ */
+const BM_PULL_DISTANCE: number = 5;
+
 /**
  * 「自定义背景色」拖动时，ReaderKit `setPageConfig` 的**最小间隔**（ms）。
  *
@@ -816,6 +881,12 @@ export default struct ReaderPage3 {
    * 在 VIP 弹窗里开通成功后 VipManager.setVip 广播 ⇒ 本页图标即时解锁。
    */
   @StorageLink('vipUnlocked') vipOn: boolean = false
+
+  // ── 居中下拉书签手势（2026-10-07 用户需求，常量与取证见文件头 BM_PULL_* 段）────
+  /** 当前下拉位移（vp）：驱动内容层 `translate` 与顶部提示条 */
+  @State bmPullY: number = 0
+  /** 本次手势是否已通过起手门禁（全屏 + 居中起手），false ⇒ 忽略后续 update/end */
+  private bmPullArmed: boolean = false
 
   // ── 阅读器信息窗（2026-10-07 用户设计）────────────────────────────────────
   // 全屏阅读（菜单栏隐藏）时右上角显示 防窥眼睛 + 定时实时信息。用户拍板：
@@ -1589,6 +1660,148 @@ export default struct ReaderPage3 {
     const next: boolean = !this.antiPeepOn
     AntiPeep.setEnabled(next)
     showMessage(next ? '防窥已开启' : '防窥已关闭')
+  }
+
+  // ── 居中下拉书签手势（2026-10-07）────────────────────────────────────────
+  /** 窗口宽（vp）：居中起手区判定用（`windowWidth` 是 px） */
+  private winWidthVp(): number {
+    const d = display.getDefaultDisplaySync().densityPixels
+    return this.windowWidth / (d > 0 ? d : 1)
+  }
+
+  /** 本页底色：取 `themeColor`（下拉提示条的底色，必须与正文底色一致才看不出接缝）；
+   *  空串兜底用工程既有的日夜页底色（同 `:1923` / `:7011` 那两处赋值）。 */
+  private pageBaseColor(): string {
+    const c = this.readerSetting.themeColor
+    if (c !== undefined && c.length > 0) {
+      return c
+    }
+    return this.colorMode == 0 ? '#202224' : '#FFFFFF'
+  }
+
+  /** 起手门禁：全屏（菜单栏隐藏）+ 非一镜到底转场中 + 手指落点在居中区（避开左右翻页区） */
+  private bmPullStart(e: GestureEvent): void {
+    this.bmPullArmed = false
+    if (!BM_PULL_ENABLED || this.isShowSetting) {
+      return
+    }
+    // 一镜到底转场中不接：此时内容层在 delegate 的缩放/裁切盒里（`CardLongTakeDelegate:142-177`），
+    // 再叠一层位移会与飞行几何打架（标志位由 `LongTakeSession:202` 维护）。
+    if (AppStorage.get<boolean>(UiMotion.LT_FLAG_TRANSITIONING) === true) {
+      return
+    }
+    const f = e.fingerList
+    if (f === undefined || f.length === 0) {
+      return
+    }
+    const w = this.winWidthVp()
+    const x = f[0].localX
+    if (x < w * BM_PULL_ZONE_L || x > w * BM_PULL_ZONE_R) {
+      // ⚠️ hilog 不支持 `%{public}.1f` 这种"带精度的"格式（实测会打印成 `localX=}.1f`、
+      //    参数被整段丢掉）⇒ 一律先 `toFixed()` 再用 `%{public}s`。
+      hilog.info(0x0000, 'testTag', 'BMPULL start rejected: localX=%{public}s winW=%{public}s',
+        x.toFixed(1), w.toFixed(1))
+      return
+    }
+    this.bmPullArmed = true
+    // 取证行：起手坐标 + 起手瞬间的位移（判"是否串了左右翻页区 / 是否已经斜了"）
+    hilog.info(0x0000, 'testTag',
+      'BMPULL armed: localX=%{public}s localY=%{public}s winW=%{public}s offX=%{public}s offY=%{public}s',
+      x.toFixed(1), f[0].localY.toFixed(1), w.toFixed(1),
+      e.offsetX.toFixed(1), e.offsetY.toFixed(1))
+  }
+
+  /** 跟手：位移直接写状态（不包 animateTo ⇒ 与手指同帧） */
+  private bmPullUpdate(e: GestureEvent): void {
+    if (!this.bmPullArmed) {
+      return
+    }
+    const d: number = e.offsetY > 0 ? e.offsetY : 0
+    this.bmPullY = Math.min(d * BM_PULL_DAMP, BM_PULL_MAX)
+  }
+
+  /** 回弹（快弹簧，与顶栏图标动效同一套令牌）；过阈值才切书签（提示语由 toggleBookmark 出） */
+  private bmPullEnd(): void {
+    if (!this.bmPullArmed) {
+      return
+    }
+    this.bmPullArmed = false
+    const hit: boolean = this.bmPullY >= BM_PULL_TRIGGER
+    // 取证行：位移与命中一起看，可判定"下拉是否被 ReaderKit 抢走 / 是否斜了"
+    hilog.info(0x0000, 'testTag', 'BMPULL end: pullY=%{public}s hit=%{public}s',
+      this.bmPullY.toFixed(1), String(hit))
+    this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
+      this.bmPullY = 0
+    })
+    if (hit) {
+      Haptics.tap()
+      this.toggleBookmark()
+    }
+  }
+
+  /** 手势被取消（多指/系统抢焦）：只回弹，不切书签 */
+  private bmPullCancel(): void {
+    if (!this.bmPullArmed) {
+      return
+    }
+    this.bmPullArmed = false
+    this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
+      this.bmPullY = 0
+    })
+  }
+
+  /**
+   * 下拉书签的**整套覆盖层**（2026-10-07 用户改版：白条 → 全局变暗）：
+   *   ① 底部垫层：与页面**同底色**的实色条，盖住内容层下移露出的缺口 ——
+   *      本页 NavDestination 是 `Color.Transparent`（`Index.ets:1334`），没有它就会透出下层页面；
+   *   ② 全局变暗：整屏黑色蒙层，不透明度随位移线性增长（`BM_SCRIM_MAX`），回弹即恢复；
+   *   ③ 提示：书签图标 + 一行文案，压在蒙层之上（所以始终看得清）。
+   * 固定高 `BM_PULL_MAX` + `translate(y - BM_PULL_MAX)` ⇒ 无位移时整条在屏幕上方之外。
+   * 全部 `HitTestMode.None`（工程已知坑：None 只穿透自身，子节点得逐个设）。
+   */
+  @Builder
+  BookmarkPullHint() {
+    // ⚠️ 必须自带 `alignContent: Alignment.TopStart` 的整屏 Stack 包裹：本层是外层
+    // `Stack()` 的子节点，而 **Stack 的 alignContent 默认是 `Alignment.Center`**
+    // （SDK `stack.d.ts:37/:98`「Default value: **Alignment.Center**」）——
+    // 不包这一层，120 高的垫层/提示会被**垂直居中**再叠加 `translate`，
+    // 表现就是"白条跑到屏幕中间"（2026-10-07 用户截图为证）。
+    Stack({ alignContent: Alignment.TopStart }) {
+      // ① 底部垫层（页面同底色）
+      Column()
+        .width('100%')
+        .height(BM_PULL_MAX)
+        .backgroundColor(this.pageBaseColor())
+        .translate({ y: this.bmPullY - BM_PULL_MAX })
+        .hitTestBehavior(HitTestMode.None)
+
+      // ② 全局变暗
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Black)
+        .opacity(this.bmPullY / BM_PULL_MAX * BM_SCRIM_MAX)
+        .hitTestBehavior(HitTestMode.None)
+
+      // ③ 提示（图标 + 文案）
+      Column({ space: 4 }) {
+        SymbolGlyph(this.bookmarkIcon())
+          .fontSize(26)
+          .fontColor([this.readerSetting.fontColor])
+        Text(this.isBookmarked ? '松开移除书签' : '松开添加书签')
+          .fontSize(11)
+          .fontColor(this.readerSetting.fontColor)
+      }
+      .width('100%')
+      .height(BM_PULL_MAX)
+      .justifyContent(FlexAlign.End)
+      .padding({ bottom: 10 })
+      .translate({ y: this.bmPullY - BM_PULL_MAX })
+      .hitTestBehavior(HitTestMode.None)
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
   }
 
   /** 顶栏书签图标：当前页有书签 = 实心 */
@@ -5463,7 +5676,13 @@ export default struct ReaderPage3 {
   // `docs/shelf-to-reader-longtake-spec.md`（供后续重做）。
 
   build() {
+    // ── 居中下拉书签（2026-10-07）：外层 = **手势宿主 + 提示条**，永不移动 ──────────
+    //   内层 = 原根 Stack（整页内容，含菜单浮层），下拉时整体 `translate` 下移。
+    //   拆两层的原因：手势的 `offsetY` 是"相对手指按下点"的位移（`gesture.d.ts:1072`），
+    //   与组件自身 transform 无关；但把**宿主**与**被移动的内容**分开，
+    //   可确保提示条不跟着动（它就是用来盖住缺口的），也让命中链保持原样。
     Stack() {
+      Stack() {
       // 不可见测量通道：一段一个 Text，交给 ArkUI 真实排版，只用于读断行结果（getLayoutManager）。
       // ⚠️ 必须放在 ReadPageComponent **之前**（z 序之下）：HitTestMode.None 只让容器自身退出命中
       // 测试，它的**子节点仍会参与**——之前放在上面，这些隐藏 Text 把左右点击/滑动都吃掉了，
@@ -5562,13 +5781,24 @@ export default struct ReaderPage3 {
       }
 
       // ── 阅读器信息窗（2026-10-07 用户设计）：仅全屏（菜单栏隐藏）且开关开启时显示 ──
-      // 右上角：定时实时信息（时间型=秒级倒计时 / 章节型=剩余X章，可并存）+ 防窥眼睛。
+      // 右上角：定时实时信息（时间型=秒级倒计时 / 章节型=剩余X章，可并存）+ 防窥眼睛；
+      // 本页有书签时，书签图标出现在**定时左侧**（2026-10-07 用户需求）。
       // 用户拍板：①非全屏不显示（顶栏已有三个图标）；②不可点击（"像和文字一样被渲染
       //   的内容"）⇒ 整层与全部子节点逐个 HitTestMode.None（工程已知坑：None 只穿透
       //   自身，子节点照样吃触摸）。字色随正文（readerSetting.fontColor 与正文同源）。
       // 位置与顶栏图标同一视觉基线（topRectHeight+12，右 20）。
       if (!this.isShowSetting && this.infoWinOn) {
         Row({ space: 8 }) {
+          // 书签联动的**实时性来源**：`isBookmarked` 是 @State，翻页时由
+          // `pageShow → syncBookmarkState()` 刷新、点顶栏/下拉手势时由 `toggleBookmark()`
+          // 立即改写 ⇒ 本行随状态直接重渲染，不存在"要等翻页/其他操作才刷新"的延迟。
+          if (this.isBookmarked) {
+            SymbolGlyph(this.bookmarkIcon())
+              .fontSize(16)
+              .fontColor([this.readerSetting.fontColor])
+              .opacity(0.9)
+              .hitTestBehavior(HitTestMode.None)
+          }
           if (this.infoTimerText.length > 0) {
             Text(this.infoTimerText)
               .fontSize(13)
@@ -5943,11 +6173,61 @@ export default struct ReaderPage3 {
       }.width("100%").height("100%").enabled(this.isShowSetting).padding({
         top: this.topRectHeight,
       })
-    }.width('100%').height('100%').onClick(() => {
-      Haptics.tap();
-      // 点击拉起菜单栏功能
-      this.isShowSetting = true
-    })
+      }
+      .width('100%')
+      .height('100%')
+      // 下拉跟手位移（只动 transform，符合工程既有的《动画帧率优化》口径）
+      .translate({ y: this.bmPullY })
+      .onClick(() => {
+        Haptics.tap();
+        // 点击拉起菜单栏功能
+        this.isShowSetting = true
+      })
+
+      // 下拉覆盖层（垫层 + 全局变暗 + 提示），见 `BookmarkPullHint()`
+      this.BookmarkPullHint()
+    }
+    .width('100%')
+    .height('100%')
+    // 事件独占（2026-10-07）：官方原文（documentId
+    // `…/触摸交互控制/事件独占控制/ts-universal-attributes-monopolize-events`）
+    // 「设置了独占控制的组件上的事件**如果首先响应**，则本次交互只允许此组件上设置的
+    //   事件响应，窗口内其他组件上的事件不会响应」⇒ 本页下拉手势一响应，本次交互内
+    //   其他组件（含 ReaderKit 的翻页手势）都不再响应；轻点不会触发我们的 pan ⇒
+    //   轻点翻页/拉菜单照旧。与上面的 priorityGesture 是两道闸（实测单靠本闸不够：
+    //   日志里 ReaderKit 的 pan 仍被接受过）。
+    .monopolizeEvents(true)
+    // 居中下拉手势（2026-10-07 三轮定案：**priorityGesture**）：
+    // 真机日志（`日志.md` 2026-10-08 13:40:07~25）实证 —— 每次下拉都有**两个** pan 识别器被接受
+    // （`PAN RACC, T: Stack` 成对出现，间隔 ~12ms），ReaderKit 自己的那个先被接受：
+    //   · 07.237 `AnimationPageAnim onActionStart` + `flip_PageAnim …targetPage` +
+    //     `StatusManager setPageStatus 5` + OpenGL `Set start pos` ⇒ **卷曲立刻开始**；
+    //   · 07.250 才是我的 `BMPULL armed`；
+    //   · 松手 08.340 `…tViewModifier onActionEnd {"offsetX":0,"offsetY":221.26,…,"angle":0,
+    //     "speed":0}` ⇒ 它是 **PanGesture**（`gesture.d.ts:1060/1072`：offsetX/offsetY
+    //     "Used in **PanGesture** scenarios"；angle/speed 全 0 ⇒ 不是 Swipe）；
+    //   · 14 次下拉里 `flipOk` 13 次 false、**1 次 true** ⇒ 偶尔真翻页（用户报的现象）。
+    // 官方口径（documentId `…/添加交互响应/添加手势响应/绑定手势方法/arkts-gesture-events-binding`）
+    // 原文：「当父组件使用 priorityGesture 绑定与子组件**同类型**的手势时，**父组件优先识别**
+    // 通过 priorityGesture 绑定的手势」——两边都是 PanGesture ⇒ 改成 priorityGesture 后
+    // 本页下拉先被识别，ReaderKit 的 pan 在本次交互内不再被接受（卷曲不会起手）。
+    // 方向仍是 `PanDirection.Down`：横向滑动时我们的 pan 达不到方向条件即失败，
+    // ReaderKit 的 pan 随即接管 ⇒ 左右翻页不受影响（代价：横滑判定晚 `BM_PULL_DISTANCE`）。
+    .priorityGesture(
+      PanGesture({ fingers: 1, direction: PanDirection.Down, distance: BM_PULL_DISTANCE })
+        .onActionStart((e: GestureEvent): void => {
+          this.bmPullStart(e)
+        })
+        .onActionUpdate((e: GestureEvent): void => {
+          this.bmPullUpdate(e)
+        })
+        .onActionEnd((): void => {
+          this.bmPullEnd()
+        })
+        .onActionCancel((): void => {
+          this.bmPullCancel()
+        })
+    )
   }
 
   /**
