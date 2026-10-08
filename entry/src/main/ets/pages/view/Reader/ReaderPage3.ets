@@ -810,6 +810,12 @@ export default struct ReaderPage3 {
    * 真值落盘与两层防护全在 `AntiPeep`（utils/AntiPeep.ets）；默认关。
    */
   @StorageLink('antiPeepOn') antiPeepOn: boolean = false
+  /**
+   * VIP 解锁位（2026-10-07 会员化：防窥为 VIP 特权，眼睛图标按此显示金标 + 门控）。
+   * 键与 VipManager.STORAGE_KEY 同源（编译期字面量），进页时由 VipManager.isVip() 灌初值；
+   * 在 VIP 弹窗里开通成功后 VipManager.setVip 广播 ⇒ 本页图标即时解锁。
+   */
+  @StorageLink('vipUnlocked') vipOn: boolean = false
 
   // ── 阅读器信息窗（2026-10-07 用户设计）────────────────────────────────────
   // 全屏阅读（菜单栏隐藏）时右上角显示 防窥眼睛 + 定时实时信息。用户拍板：
@@ -1573,10 +1579,16 @@ export default struct ReaderPage3 {
     return this.antiPeepOn ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye')
   }
 
-  /** 防窥开关（2026-10-07）：切两层防护（窗口隐私 + DLP 窥视蒙层，能力不足自动降级） */
+  /**
+   * 防窥开关（2026-10-07）：切两层防护（窗口隐私 + DLP 窥视蒙层，能力不足自动降级）。
+   * 会员化（2026-10-07）：本方法只服务已开通 VIP 的用户（调用方先门控，免费用户直接进
+   * VIP 弹窗、不会走到这里）。提示语按**目标值**算（不读 this.antiPeepOn —— setEnabled
+   * 会同步广播写回该值，读旧值会把「开启/关闭」说反）。
+   */
   private toggleAntiPeep(): void {
-    AntiPeep.setEnabled(!this.antiPeepOn)
-    showMessage(this.antiPeepOn ? '防窥已开启' : '防窥已关闭')
+    const next: boolean = !this.antiPeepOn
+    AntiPeep.setEnabled(next)
+    showMessage(next ? '防窥已开启' : '防窥已关闭')
   }
 
   /** 顶栏书签图标：当前页有书签 = 实心 */
@@ -3005,6 +3017,8 @@ export default struct ReaderPage3 {
     });
     // ── 防窥保护（2026-10-07）：取窗口 + 恢复上次开关状态（眼睛图标随 AppStorage 同步）
     AntiPeep.ensureInit(this.getUIContext().getHostContext() as common.UIAbilityContext);
+    // 会员化（2026-10-07）：灌入 VIP 解锁位（@StorageLink vipOn 的初值；与「我的」页同键）
+    AppStorage.setOrCreate('vipUnlocked', VipManager.isVip());
     // ── 阅读器信息窗（2026-10-07）：开关只在设置页改，进场读一次即可
     this.infoWinOn = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean;
     this.syncInfoTicker();
@@ -5562,11 +5576,15 @@ export default struct ReaderPage3 {
               .opacity(0.9)
               .hitTestBehavior(HitTestMode.None)
           }
-          SymbolGlyph(this.antiPeepIcon())
-            .fontSize(16)
-            .fontColor([this.readerSetting.fontColor])
-            .opacity(0.9)
-            .hitTestBehavior(HitTestMode.None)
+          // 会员化（2026-10-07）：防窥为 VIP 特权 ⇒ 非会员不显示该状态图标
+          // （信息窗只做"呈现"，不给免费用户展示一个用不了的静默图标）。
+          if (this.vipOn) {
+            SymbolGlyph(this.antiPeepIcon())
+              .fontSize(16)
+              .fontColor([this.readerSetting.fontColor])
+              .opacity(0.9)
+              .hitTestBehavior(HitTestMode.None)
+          }
         }
         .justifyContent(FlexAlign.End)
         // ⚠️ 必须显式撑满高度 + 顶部对齐：Stack 子元素默认垂直居中（2026-10-07 真机实测：
@@ -5607,6 +5625,17 @@ export default struct ReaderPage3 {
               // ReplaceSymbolEffect 形变动效、runJellyClick Q弹缩放。
               // ⚠️ 定时入口已迁入听书面板顶栏（2026-10-07 用户设计：与听书功能同源，
               //   面板=父窗、定时弹窗=子窗），顶栏不再保留闹钟图标。
+              // 会员化（2026-10-07）：防窥为 VIP 特权 —— 未开通时图标左侧挂 VIP 金标，
+              //   点击弹 VIP 弹窗（门控范式与「更多材质/更多方案」一致）；已开通则正常切换。
+              if (!this.vipOn) {
+                Text('VIP')
+                  .fontSize(9)
+                  .fontWeight(600)
+                  .fontColor('#B8860B')
+                  .backgroundColor('rgba(255, 215, 0, 0.28)')
+                  .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                  .borderRadius(4)
+              }
               SymbolGlyph(this.antiPeepIcon())
                 .fontSize(22)
                 .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
@@ -5615,6 +5644,12 @@ export default struct ReaderPage3 {
                 .margin({ right: 12 })
                 .onClick(() => {
                   Haptics.tap();
+                  // 会员化（2026-10-07）：未开通 ⇒ 一律进 VIP 弹窗（免费用户开不了防窥，
+                  //   所以这里也不出「已开启/已关闭」提示）
+                  if (!this.vipOn) {
+                    this.openVipDialog()
+                    return
+                  }
                   runJellyClick((v: number) => {
                     this.antiPeepScale = v
                   })

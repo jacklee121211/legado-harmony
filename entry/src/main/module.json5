@@ -44,20 +44,20 @@
           "when": "inuse"
         }
       },
-      // ⚠️【受限权限·暂缓启用】DLP_GET_HIDE_STATUS（防窥第2层：窥视检测/系统蒙层）。
-      // 受限开放权限（ACL）：Profile 里没有该权限白名单时**安装即失败**
-      //（错误码 9568289 "grant request permissions failed"，2026-10-07 真机实测）。
-      // 等 AGC「申请受限权限」审批通过、重新出带 ACL 的 Profile 后，把下面这块
-      // 取消注释即可（运行时无需其它改动：AntiPeep.ets 对 201/801 已静默降级为仅第1层）。
-      // 参考实现：D:\Arkts\xiaowei（其 key/xiaoweiRelease.p7b 自带 ACL 所以能装）。
-      // {
-      //   "name": "ohos.permission.DLP_GET_HIDE_STATUS",
-      //   "reason": "$string:anti_peep_reason",
-      //   "usedScene": {
-      //     "abilities": ["EntryAbility"],
-      //     "when": "inuse"
-      //   }
-      // }
+//       ⚠️【受限权限·已经启用】DLP_GET_HIDE_STATUS（防窥第2层：窥视检测/系统蒙层）。
+//       受限开放权限（ACL）：Profile 里没有该权限白名单时**安装即失败**
+//      （错误码 9568289 "grant request permissions failed"，2026-10-07 真机实测）。
+//       等 AGC「申请受限权限」审批通过、重新出带 ACL 的 Profile 后，把下面这块
+//       取消注释即可（运行时无需其它改动：AntiPeep.ets 对 201/801 已静默降级为仅第1层）。
+//       参考实现：D:\Arkts\xiaowei（其 key/xiaoweiRelease.p7b 自带 ACL 所以能装）。现已申请通过已经开放2026.10.8 11：11
+       {
+         "name": "ohos.permission.DLP_GET_HIDE_STATUS",
+         "reason": "$string:anti_peep_reason",
+         "usedScene": {
+           "abilities": ["EntryAbility"],
+           "when": "inuse"
+         }
+       }
     ],
     "deviceTypes": [
       "phone",
