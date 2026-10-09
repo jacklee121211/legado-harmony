@@ -81,7 +81,7 @@ export default struct BookBodyContent {
             //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
             //     0.92 → 0.55 的 alpha 调优是关键。
             //   容器高 = 15号字(18) + 8×2 = **34vp**（与右胶囊 symbol 视觉 20 + 7×2 = 34vp 等高）。
-            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.25)' : 'rgba(255, 255, 255, 0.25)')
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.15)' : 'rgba(255, 255, 255, 0.15)')
             .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
             .borderRadius(20)
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
@@ -93,18 +93,18 @@ export default struct BookBodyContent {
         // ── 行尾动作区：搜索 / 更多（2026-09-29 自顶部行下移，填充「浏览历史」撤除后的空位）──
         // Flex 是 SpaceBetween ⇒ 本节点贴行尾；垂直随 alignItems 与胶囊居中。
         // ★ 2026-10-11：给搜索/更多**加胶囊**（与左/下胶囊同款配方）：
-        //   0.25 透明兑底 + REGULAR 毛玻璃 + borderRadius(20) +
-        //   padding top/bottom 5（symbol 自带视觉留白补足，容器高 ≈ 左/下 34vp） +
+        //   0.15 透明兑底 + REGULAR 毛玻璃 + borderRadius(20) +
+        //   padding top/bottom **7**（SDK 规范 SymbolGlyph 高度 = fontSize 20vp，
+        //   20 + 7 + 7 = 34vp = 左/下 18 + 8 + 8，**真等高**） +
         //   左右 padding 10。
         if (this.trailingActions) {
           Row() {
             this.trailingActions()
           }
-          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.25)' : 'rgba(255, 255, 255, 0.25)')
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.15)' : 'rgba(255, 255, 255, 0.15)')
           .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
           .borderRadius(20)
-          // ★ 2026-10-11：top/bottom 8→**5** 让右胶囊与左/下 34vp 几乎等高
-          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
         }
       }
       .padding(15)

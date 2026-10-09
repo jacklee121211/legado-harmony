@@ -330,7 +330,7 @@ export default struct groupTypeComponent {
         //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
         //   容器高 = 15号字(18) + 8×2 = **34vp**（与左/右胶囊**完全等高**）。
         //   ⚠️ 右 padding 仍为 0：三横列靠右贴边缘（End 对齐），不受 padding 影响。
-        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.25)' : 'rgba(255, 255, 255, 0.25)')
+        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.15)' : 'rgba(255, 255, 255, 0.15)')
         .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
         .borderRadius(20)
         .padding({ left: 12, right: 0, top: 8, bottom: 8 })
