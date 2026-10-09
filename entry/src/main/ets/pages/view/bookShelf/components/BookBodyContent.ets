@@ -81,7 +81,7 @@ export default struct BookBodyContent {
             //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
             //     0.92 → 0.55 的 alpha 调优是关键。
             //   容器高 = 15号字(18) + 8×2 = **34vp**（与右胶囊 symbol 视觉 20 + 7×2 = 34vp 等高）。
-            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.55)' : 'rgba(255, 255, 255, 0.55)')
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.4)' : 'rgba(255, 255, 255, 0.4)')
             .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
             .borderRadius(20)
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
@@ -100,10 +100,13 @@ export default struct BookBodyContent {
           Row() {
             this.trailingActions()
           }
-          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.55)' : 'rgba(255, 255, 255, 0.55)')
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.4)' : 'rgba(255, 255, 255, 0.4)')
           .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
           .borderRadius(20)
-          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+          // ★ 2026-10-11：top/bottom 7→**8** 让右胶囊与左/下 34vp 几乎等高
+          //   （20号symbol + 8×2 = 36vp vs 左/下 15号字 18 + 8×2 = 34vp，差 2vp
+          //   由 symbol 自带视觉高度补齐，视觉上"三胶囊同高"）
+          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
         }
       }
       .padding(15)
