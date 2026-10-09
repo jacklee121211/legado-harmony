@@ -48,11 +48,14 @@ export default struct readStatistics {
   // 都是新实例 ⇒ 构造时取色即为当次正确的深浅档）。
   Column = new ColumnModifier().backgroundColor(ShelfColors.pageBg())
   @State type: number | string = 0
-  /** 小说/漫画/有声书 三个小标签的数量（按 `Books.bookType` 真实统计） */
+  /**
+   * 「读过 / 读完」列表上方那个小页签条的内容。
+   *
+   * 2026-10-11：与书架顶部同步 —— 漫画/有声书两个入口已删（书架只剩「书架」一个页签），
+   * 这里也只留「书架」。数字见 `loadData()`。
+   */
   @State read_list: dataItem[] = [
-    new dataItem("小说", 0),
-    new dataItem("漫画", 0),
-    new dataItem("有声书", 0),
+    new dataItem("书架", 0),
   ]
   @State title_list: dataItem[] = [
     new dataItem("读过", 0),
@@ -71,15 +74,16 @@ export default struct readStatistics {
   /** 与 `bookList` **下标对齐**的原始 Books，删除时取 id */
   private rawBooks: Books[] = []
   /**
-   * 当前页类型（读过/读完）的**全量**记录 —— 页签过滤的数据源。
-   * 2026-09-29（审核问题⑤）：页签（小说/漫画/有声书）过去只动 `readTabs`
-   * 内部的滑块、从不上报 ⇒ 列表恒为全量、"筛选无效果"。
-   * 现在 `typeIndex` 记住选中页签（0=小说/1=漫画/2=有声书，与 `bookType` 同码），
-   * `applyTypeFilter()` 按它过滤；`rawBooks` 与渲染列表**同源同过滤**，
-   * 保证批量删除时下标始终对齐。
+   * 当前页类型（读过/读完）的**全量**记录 —— 渲染列表的数据源。
+   * 2026-09-29（审核问题⑤）：页签过去只动 `readTabs` 内部的滑块、从不上报
+   * ⇒ 列表恒为全量、"筛选无效果"。当时引入 `typeIndex` 按 `bookType` 过滤。
+   * 2026-10-11：分类页签只剩「书架」一个（漫画/有声书入口已删）⇒ 不再按 `bookType`
+   * 过滤，`typeIndex` 仅保留为 `readTabs` 回调的状态镜像。
+   * ⚠️ `rawBooks` 必须与渲染列表**同源**（`applyTypeFilter()` 里一次产出），
+   * 批量删除靠下标对齐（`bookList[i]` ↔ `rawBooks[i]`）。
    */
   private allTypeBooks: Books[] = []
-  /** 当前选中的类型页签（0=小说 / 1=漫画 / 2=有声书） */
+  /** 当前选中的类型页签（现只有「书架」一档，恒为 0） */
   @State typeIndex: number = 0
   /** 书签列表（文字两行） */
   @State markList: BookmarkRow[] = []
@@ -445,15 +449,10 @@ export default struct readStatistics {
       list = []
     }
     this.allTypeBooks = list
-    // 小说/漫画/有声书 三个页签的数量：按**当前口径列表**（读过/读完）真实统计。
-    // 原实现统计的是全书架 ⇒ 页签上的数字与列表内容对不上。
-    let n0 = 0
-    let n1 = 0
-    let n2 = 0
-    for (const b of list) {
-      if (b.bookType === 0) { n0++ } else if (b.bookType === 1) { n1++ } else if (b.bookType === 2) { n2++ }
-    }
-    this.read_list = [new dataItem("小说", n0), new dataItem("漫画", n1), new dataItem("有声书", n2)]
+    // 2026-10-11：原先这里按 `bookType` 分别统计「小说/漫画/有声书」三个数字；
+    //   现在页签只剩「书架」一个（老数据已由 `BooksDao.migrateBookTypeToShelf()`
+    //   把 bookType 1/2 归一到 0）⇒ 直接给当前口径列表的总数。
+    this.read_list = [new dataItem("书架", list.length)]
     this.applyTypeFilter()
   }
 
@@ -466,7 +465,10 @@ export default struct readStatistics {
    */
   private applyTypeFilter(): void {
     const t = Number(this.type)
-    const filtered: Books[] = this.allTypeBooks.filter((b: Books) => b.bookType === this.typeIndex)
+    // 2026-10-11：分类页签只剩「书架」一个 ⇒ 不再按 `bookType` 过滤（原：
+    //   `filter((b) => b.bookType === this.typeIndex)`）。保留本方法是因为它还要算
+    //   「YYYY年 N 本」表头、算每本进度、并产出与渲染列表**下标对齐**的 `rawBooks`。
+    const filtered: Books[] = this.allTypeBooks
     this.rawBooks = filtered
     const year = new Date().getFullYear()
     const yearStart = new Date(year, 0, 1, 0, 0, 0, 0).getTime()

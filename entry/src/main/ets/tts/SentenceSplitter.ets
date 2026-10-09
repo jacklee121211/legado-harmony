@@ -137,10 +137,18 @@ function sentenceEndAt(text: string, i: number): boolean {
     || c === '.' || c === '!' || c === '?';
 }
 
-/** 分段 → 合成块（超长按句末标点装箱，硬上限 800 单位，对齐 PC 版） */
-export function splitSegmentsIntoChunks(seg: SpeakSegment): SpeakSegment[] {
+/**
+ * 分段 → 合成块（超长按句末标点装箱）。
+ * @param maxUnits 单块上限（单位制：CJK=2）。默认/Edge 用 {@link CHUNK_MAX_UNITS}(800)；
+ *   **AI 引擎传 500**（2026-10-10）——依据：① 参考项目对非 Edge 引擎用的就是 500
+ *   （`voiceReadTextChunks.ts:23-27` 的 `VOICE_READ_CHUNK_UNITS_DEFAULT`）；
+ *   ② AI 无流式，首块延迟 ∝ 单块字数，真机实测 400 汉字一块"好久才出声"。
+ *   ⚠️ 必须**显式传参**（本工程铁律：可选形参会让后续实参被误判成 string，AGENTS.md §7）。
+ */
+export function splitSegmentsIntoChunks(seg: SpeakSegment, maxUnits: number): SpeakSegment[] {
+  const limit: number = maxUnits > 0 ? maxUnits : CHUNK_MAX_UNITS;
   const units = textUnits(seg.text);
-  if (units <= CHUNK_MAX_UNITS) {
+  if (units <= limit) {
     return [seg];
   }
   const out: SpeakSegment[] = [];
@@ -153,7 +161,7 @@ export function splitSegmentsIntoChunks(seg: SpeakSegment): SpeakSegment[] {
   }
   if (!hasSentenceEnd) {
     // 无句末标点：按硬上限对半切
-    const step = Math.floor(CHUNK_MAX_UNITS / 2);
+    const step = Math.floor(limit / 2);
     for (let s = 0; s < seg.text.length; s += step) {
       out.push(makeSeg(seg.nodeIndex, seg.text, s, Math.min(seg.text.length, s + step), seg.isDialogue));
     }
@@ -164,7 +172,7 @@ export function splitSegmentsIntoChunks(seg: SpeakSegment): SpeakSegment[] {
   for (let i = 0; i < seg.text.length; i++) {
     acc += textUnits(seg.text.charAt(i));
     if (sentenceEndAt(seg.text, i)) {
-      if (acc >= CHUNK_MAX_UNITS && chunkStart < i) {
+      if (acc >= limit && chunkStart < i) {
         out.push(makeSeg(seg.nodeIndex, seg.text, chunkStart, i + 1, seg.isDialogue));
         chunkStart = i + 1;
         acc = 0;

@@ -527,6 +527,52 @@ export class MaterialColumnModifier implements AttributeModifier<ColumnAttribute
  * ⚠️ 官方另有提醒：「You are advised **not to use this API together with** the aforementioned APIs
  *    [backgroundColor, borderColor, borderWidth, shadow]」⇒ 所以这里在开启分支里只设材质与字色。
  */
+/**
+ * **悬浮小 dock 的材质背板**（2026-10-09，目录弹窗右侧「顶部/定位/底部」那组按钮用）。
+ *
+ * ── 为什么要单独一个修饰器 ────────────────────────────────────────────────
+ * 用户要求：「适配和书架一样的 dock」。书架 dock 的光感来自
+ *   `HdsTabs.barFloatingStyle.systemMaterialEffect`；而这个三按钮组是**普通组件**，
+ *   没有 HDS 容器可用 ⇒ 只能走**组件级** `systemMaterial`（官方两条路里的另一条：
+ *   「普通ArkUI组件通过应用级开启或者组件级开启方式开启沉浸光感」）。
+ *
+ * ⚠️ 两条硬约束（都不能用三元表达式绕过）：
+ *   ① 官方：「沉浸光感开启后，如果**已主动设置背景色**、背景模糊等自定义样式属性，
+ *      则**不呈现**沉浸光感效果」⇒ 开材质时**一个 backgroundColor 都不能设**
+ *      （连 `Color.Transparent` 也算"设置了背景色"）。这正是必须用 `AttributeModifier`
+ *      的原因 —— 三元表达式一定会调到 `backgroundColor`。
+ *   ② 官方：「要关闭一个默认开启沉浸光感的组件，应使用 `uiMaterial.Material.empty`」
+ *      —— 本组件的场景是"默认没有材质、我们要开"，所以关的时候直接不设即可。
+ *
+ * 一键回退：`ImmersiveMaterialUtil.ENABLED = false`（或设备不支持）⇒ 自动落回
+ *   `fallbackColor`（改造前那块 `rgba(0,125,255,1)` 蓝），视觉与改造前一致。
+ */
+export class MaterialDockModifier implements AttributeModifier<ColumnAttribute> {
+  private fallbackColor: ResourceColor;
+
+  constructor(fallbackColor: ResourceColor) {
+    this.fallbackColor = fallbackColor;
+  }
+
+  applyNormalAttribute(instance: ColumnAttribute): void {
+    // ⚠️⚠️ 2026-10-09 真机反馈修正（用户原话：「三个图标光秃秃在那里…你是不是搞错层了」）⚠️⚠️
+    //   第一版这里写的是 `systemMaterial(controlMaterial())` —— **错了，而且是我自己文档里
+    //   早就记过的坑**。官方 FAQ 对材质的**生效范围**只有两处（见本文件头注释第 50-56 行）：
+    //     「`Material inactive: out of scope. Use component in navigation title bar or Tabbar.`」
+    //   而本修饰器用在**弹窗里的一个普通 Column** 上 ⇒ **越界** ⇒ 材质**静默失效**；
+    //   又因为"材质与 backgroundColor 互斥"把背景色删掉了 ⇒ **什么都不剩**（三个裸图标）。
+    //   ⇒ 结论：**这个元素拿不到沉浸光感**。改回**一定渲染得出来**的毛玻璃：
+    //     半透明底 + `backgroundBlurStyle`。观感接近书架 dock，且绝不静默失效。
+    //   （真正的沉浸光感只留给"标题栏 / 底部页签"这两个在生效范围内的位置。）
+    if (ImmersiveMaterialUtil.isOn()) {
+      instance.backgroundBlurStyle(BlurStyle.COMPONENT_THICK, { colorMode: ThemeColorMode.SYSTEM });
+      instance.backgroundColor(this.fallbackColor);
+      return;
+    }
+    // 回退档 / 设备不支持：保持改造前的实底纯色
+    instance.backgroundColor(this.fallbackColor);
+  }
+}
 export class MaterialButtonModifier implements AttributeModifier<ButtonAttribute> {
   private bg: ResourceColor;
   private fg: ResourceColor;

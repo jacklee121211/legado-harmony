@@ -17,12 +17,24 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { bookParser } from '@kit.ReaderKit';
 import { util } from '@kit.ArkTS';
 import { synthesizeOnce, hasSpeakableText, WordSpan } from './EdgeTtsClient';
-import { splitParagraphIntoSegments, splitSegmentsIntoChunks, SpeakSegment } from './SentenceSplitter';
+import { splitParagraphIntoSegments, splitSegmentsIntoChunks, SpeakSegment,
+  CHUNK_MAX_UNITS } from './SentenceSplitter';
 import { buildChapterNodes } from './ChapterNodes';
 import { TtsPrefs } from './TtsPrefs';
-import { classifyDialogueGenders, SpeakerItem } from './TtsSpeaker';
+import { classifyDialogueLabels, SpeakerItem, SpeakerKind, SpeakerLabel } from './TtsSpeaker';
+import { applySpeakFilter, countMaskedChars, parseSpeakFilterText,
+  SpeakFilterRuleLocal } from './SpeakFilter';
 import { decodeMp3ToPcm, PcmDecodeResult } from './NativeDecoder';
 import { synthesizeLocalWav, LOCAL_TTS_SAMPLE_RATE } from './LocalTtsClient';
+// ── AI 听书（2026-10-09 新增）：用户自接入 TTS ────────────────────────────────
+// 设计见 docs/ai-voice-read-plan-2026-10-09.md；实现全部自研（许可合规见其 §14）。
+import { AiCancelToken, AiProviderMeta, AiSynthReq, AiSynthRes, AiTtsConfig, aiConfigFingerprint,
+  aiPermanentDetail, isAiPermanentError
+} from './ai/AiTtsTypes';
+import { aiConfigReady, aiProviderMetaOf, aiSynthesize } from './ai/AiTtsProviders';
+import { AiVoiceOption } from './ai/AiTtsTypes';
+import { aiVoiceOptionsFor } from './ai/AiTtsVoices';import { AI_CANCELLED_MSG } from './ai/AiTtsHttp';
+import { AI_TARGET_SAMPLE_RATE, parseWavPcm, shapePcmToTarget } from './PcmShape';
 import { ListenUnlock } from '../common/utils/ListenUnlock';
 import { computePausePoints, applyPauses, buildSentenceTimeline, buildLyricTimeline, lookupOrigMs,
   SentenceMark } from './PauseSplicer';
@@ -263,6 +275,41 @@ function netRetryBackoffMs(attempt: number): number {
   const last: number = NET_RETRY_BACKOFF_MS.length - 1;
   return NET_RETRY_BACKOFF_MS[attempt > last ? last : attempt];
 }
+
+/**
+ * ── AI 听书：预取深度与重试次数（2026-10-09）─────────────────────────────────
+ * **为什么与 Edge 不同**：AI 是**按字符计费**的。Edge 的 `NET_PREFETCH_AHEAD=4` +
+ * `NET_RETRY_ATTEMPTS=4` 意味着一次断网抖动可能把同一块文本重复计费 4 次、并提前
+ * 预取 4 块（用户可能这几块根本不听）。⇒ AI 收敛为 **预取 2 / 重试 2**。
+ * 回退：把这两个常量改成与 Edge 同值（4/4）即回到"与 Edge 一致"的行为。
+ * 方案依据：docs/ai-voice-read-plan-2026-10-09.md §6.4（用户 2026-10-09 拍板采纳）。
+ */
+const AI_PREFETCH_AHEAD: number = 2;
+const AI_RETRY_ATTEMPTS: number = 2;
+/**
+ * AI 引擎的**单块上限**（单位制：CJK=2）——800 → 500（2026-10-10，真机延迟驱动）。
+ * 依据：① 参考项目对非 Edge 引擎用的就是 500（`voiceReadTextChunks.ts:23-27`）；
+ *      ② AI 无流式，**首块延迟 ∝ 单块字数**：用户实测"书中播放好久才出声"，
+ *         日志里单块 `chars=181/103` 混合，最长单块 400 汉字（=800 单位）。
+ * 回退：把本常量改成 800 即回到与 Edge 相同分块。
+ */
+const AI_CHUNK_MAX_UNITS: number = 500;
+/**
+ * 说话人识别的分批大小与上下文预算（2026-10-10 修复"一章只识别前 50 块"）。
+ * · {@link SPEAKER_BATCH}：每批提交给 LLM 的对白块数（沿用原 50，批次间串行）；
+ * · {@link SPEAKER_CTX_MAX_NODES}：单向最多扫多少节点（对齐参考项目 15 行的量级）；
+ * · {@link SPEAKER_CTX_NODE_CHARS}：单节点限长，控制 prompt 体积与费用。
+ */
+const SPEAKER_BATCH: number = 50;
+/**
+ * 单章最多识别多少条对白（**成本护栏**，2026-10-10 加）。
+ * 由来：识别改为后台后不再阻塞首声，但**调用次数**仍是 items/50 ——
+ * 一章 500 条对白 = 10 次 LLM 调用。这里设上限并打日志，让成本**可见且可控**。
+ * 超出部分回落默认对白音色（不会失声）。
+ */
+const SPEAKER_MAX_ITEMS: number = 300;
+const SPEAKER_CTX_MAX_NODES: number = 8;
+const SPEAKER_CTX_NODE_CHARS: number = 80;
 
 /**
  * ── T2 子开关：网络失败时「静音垫片保活」（假水池 / silence padding）──────────
@@ -640,6 +687,23 @@ interface QueueChunk {
   voiceId: string;   // 本块使用的音色（AI 识别后按男/女改写）
   words: WordSpan[]; // 合成返回的词级时间戳（停顿拼接/句级显示用）
   cachePath: string; // '' 表示无可读内容，直接跳过
+  /**
+   * ── 下列三项**仅 AI 产物**会填（2026-10-09）────────────────────────────
+   * 空 fmt = 老路径（本地 .wav / Edge .mp3），行为与改动前逐字一致。
+   * 有 fmt = 走 PcmShape 归一化（立体声折叠 + 重采样到 24k），
+   * 见 docs/ai-voice-read-plan-2026-10-09.md §5.4/§5.5。
+   */
+  fmt: string;       // '' | 'mp3' | 'wav' | 'pcm'
+  rate: number;      // 0 = 未知（AI 按 24000 兜底）
+  ch: number;        // 0/1 = 单声道
+  /**
+   * ── 下列两项由**说话人识别**写入（2026-10-10）──────────────────────────
+   * · emotion：LLM 标注的语气（自然语言，空串=不标注）→ 拼进该服务商的风格参数；
+   * · voiceDirect：**角色名自动分配**直接指定的 AI 音色 id（空串=按角色槽位映射）。
+   *   ⚠️ 两者都必须进 AI 的缓存键（否则换语气/换角色音色会命中旧音频）。
+   */
+  emotion: string;
+  voiceDirect: string;
 }
 
 /** 当前朗读位置（ReaderKit 坐标系：spine / 块节点 / 节点内字符） */
@@ -712,6 +776,106 @@ export class TtsEngine {
   private static player: PcmPlayer | null = null;
 
   private static synthInFlight: Map<string, Promise<number>> = new Map();
+  /**
+   * 在飞的 AI 合成取消令牌（键 = 缓存文件路径），2026-10-09 新增。
+   * 为什么需要：AI 合成走 HTTP，失败会被上层当成"网络故障"进静音垫片；
+   * 而"用户停止朗读/切书"造成的失败**绝不能**进垫片（否则停止后还在垫音）。
+   * ⇒ stopInternal/abortPlay 把它们全部置 cancelled，provider 收到后抛
+   *    `AI_CANCELLED_MSG`，run() 的 catch 识别该消息直接 continue（由 alive(gen) 退出）。
+   */
+  private static aiCancels: Map<string, AiCancelToken> = new Map();
+
+  /**
+   * ── AI「永久性失败」熔断（2026-10-10，真机日志驱动）─────────────────────────
+   * 真机物证（`日志.md` L2782-2783）：接口填错（404）时，错误被当成"断网"进了静音垫片，
+   * 之后 `silence keepalive: one probe round failed, keep padding` **无限垫音**，
+   * 用户既听不到内容也看不到报错。
+   * 现在：一旦出现永久性错误（接口不存在/鉴权失败/参数被拒/配置非法）就置此标记，
+   * 块循环开头立即**停播 + toast 原文**，不再重试、不再垫片。
+   * 清空时机：`stopInternal`（本次会话结束）与 `updateConfig`（用户改了配置，给重试机会）。
+   */
+  private static aiFatalMsg: string = '';
+
+  /** 取消所有在飞 AI 合成（停止/切书/换章时调用；幂等） */
+  private static cancelAllAiSynth(): void {
+    if (TtsEngine.aiCancels.size === 0) {
+      return;
+    }
+    TtsEngine.aiCancels.forEach((token: AiCancelToken): void => {
+      token.cancelled = true;
+    });
+    TtsEngine.aiCancels.clear();
+    hilog.info(DOMAIN, TAG, 'ai synth cancel-all');
+  }
+
+  // ── AI 试听（2026-10-09，P0）──────────────────────────────────────────────
+  // 与朗读会话完全隔离：独立的 PcmPlayer + 独立取消令牌，
+  // 不启动长时任务/AVSession（试听不是"后台播放"场景）。
+  private static previewPlayer: PcmPlayer | null = null;
+  private static previewCancel: AiCancelToken | null = null;
+
+  /**
+   * 试听一段文本（走当前 AI 配置；**不要求**开关已打开，方便用户先测再开）。
+   * `voiceId` 由调用方按槽位解析好后传入。
+   * `onPlayStart` 为**必填**回调（试听 UI 用它切换"合成中→播放中"）——
+   * ⚠️ 按本工程铁律：ArkTS 下"可选函数形参"会把后续实参误判成 string（AGENTS.md §7），
+   *    故这里不接受可选回调，调用方传空实现。
+   * @throws 合成/解码失败时抛出（UI 显示原文）
+   */
+  static async previewAiSpeech(text: string, voiceId: string,
+    onPlayStart: () => void): Promise<void> {
+    const prefs = TtsEngine.prefs;
+    if (prefs === null) {
+      throw new Error('引擎未初始化，请先在阅读页打开听书面板');
+    }
+    TtsEngine.stopAiPreview();
+    const token: AiCancelToken = { cancelled: false };
+    TtsEngine.previewCancel = token;
+    const req: AiSynthReq = {
+      // 试听同样走朗读过滤（对齐参考项目：试听与正式朗读共用同一套规则）
+      text: TtsEngine.speakFiltered(text, prefs),
+      voiceId: voiceId,
+      rate: prefs.rate,
+      pitch: prefs.pitch,
+      cfg: TtsEngine.aiConfigFrom(prefs)
+    };
+    const r: AiSynthRes = await aiSynthesize(req, token, true);
+    if (token.cancelled) {
+      return;
+    }
+    const decoded: PcmDecodeResult = await TtsEngine.decodeAiBytes(r.data, r.format,
+      r.sampleRate, r.channels);
+    if (token.cancelled || decoded.pcm.byteLength === 0) {
+      return;
+    }
+    if (TtsEngine.previewPlayer === null) {
+      TtsEngine.previewPlayer = new PcmPlayer();
+    }
+    const pcm = new Int16Array(decoded.pcm);
+    onPlayStart();
+    await TtsEngine.previewPlayer.play(pcm, decoded.sampleRate, (_ms: number): void => {
+    });
+  }
+
+  /** 停止试听（幂等） */
+  static stopAiPreview(): void {
+    if (TtsEngine.previewCancel !== null) {
+      TtsEngine.previewCancel.cancelled = true;
+      TtsEngine.previewCancel = null;
+    }
+    if (TtsEngine.previewPlayer !== null) {
+      TtsEngine.previewPlayer.stop();
+    }
+  }
+
+  /** 当前服务商是否可用（配置就绪）——供 UI 判断能否试听 */
+  static aiConfigUsable(): boolean {
+    const prefs = TtsEngine.prefs;
+    if (prefs === null) {
+      return false;
+    }
+    return aiConfigReady(TtsEngine.aiConfigFrom(prefs));
+  }
   /** 当前章的合成块队列（seekToSegment 立即更新锚点用） */
   private static currentChunks: QueueChunk[] | null = null;
   /** 当前章的 ReaderKit 块节点文本（下标 = domPos 的 X-1；文本框全文匹配定位用） */
@@ -1040,6 +1204,8 @@ export class TtsEngine {
   /** 面板参数改动后同步：尚未合成的块立即生效（音量/停顿在下一次拼接时生效） */
   static updateConfig(prefs: TtsPrefs): void {
     TtsEngine.prefs = prefs;
+    // 配置一变就清掉「AI 永久错误」熔断（用户很可能就是去改配置了，得给他重试机会）
+    TtsEngine.aiFatalMsg = '';
   }
 
   private static isPlaying(): boolean {
@@ -1083,7 +1249,11 @@ export class TtsEngine {
     }, 0);
   }
 
-  /** 超过上限时按 mtime 从旧到新删除（.mp3 与其 .json 词表 sidecar 一起删） */
+  /**
+   * 超过上限时按 mtime 从旧到新删除（音频与其 .json sidecar 一起删）。
+   * ⚠️ 2026-10-09：原实现**只扫 `.mp3`** ⇒ AI 产出的 `.wav`/`.pcm` 永远不被清理。
+   *    现在把三种扩展名都纳入（`.wav` 也是本地引擎的产物，一并统计正是期望行为）。
+   */
   private static pruneTtsCache(): void {
     const ctx = TtsEngine.context;
     if (ctx === null) {
@@ -1098,7 +1268,8 @@ export class TtsEngine {
       let total = 0;
       const now = Date.now();
       for (let i = 0; i < names.length; i++) {
-        if (!names[i].endsWith('.mp3')) {
+        const nm: string = names[i];
+        if (!nm.endsWith('.mp3') && !nm.endsWith('.wav') && !nm.endsWith('.pcm')) {
           continue;
         }
         const p = dir + '/' + names[i];
@@ -1583,6 +1754,10 @@ export class TtsEngine {
   // ---------- 主循环 ----------
   private static async run(gen: number, spineIndex: number,
     startNode: number = -1, startChar: number = 0): Promise<void> {
+    // 审查修复（2026-10-10）：开播时先停掉 AI 试听。
+    // 试听用的是**独立的 PcmPlayer**，若用户点完试听立刻开始朗读，
+    // 会出现"两个渲染器同时出声"的叠音。这里在会话入口统一收口。
+    TtsEngine.stopAiPreview();
     if (TtsEngine.handler === null || TtsEngine.prefs === null) {
       return;
     }
@@ -1654,14 +1829,25 @@ export class TtsEngine {
       if (TtsEngine.prefs.scheme === 'multi'
         && TtsEngine.prefs.aiSpeakerRecognitionEnabled
         && TtsEngine.prefs.aiBaseUrl.length > 0 && TtsEngine.prefs.aiApiKey.length > 0) {
-        await TtsEngine.applySpeakerRecognition(chunks, nodes);
-        if (!TtsEngine.alive(gen)) {
-          return;
-        }
+        // ⚠️⚠️ 2026-10-10 回归修复（真机日志驱动，**禁止再改回 await**）⚠️⚠️
+        //
+        // 原来这里是 `await TtsEngine.applySpeakerRecognition(chunks, nodes)`，
+        // 而它位于**首块合成之前**。真机日志（`日志.md`）时间线：
+        //   17:41:31.281 chapter: chunks=30        ← 队列 141ms 建好
+        //   17:41:37.164 speaker recognition items=5   ← **+5.88s 全卡在这**
+        //   17:41:37.333 splice:                   ← 首个音频（距点击 6.19s）
+        // 第二次同样：48.933 → 58.939（**+10.0s**）→ 59.360。
+        // 一因两果：
+        //   ① 首声被整整推迟（用户："点击播放，好半天才播放，以前很快"）；
+        //   ② 沉浸听书的闸门是 `ttsState !== 'stopped'`（`ReaderPage3.ets:7517`），
+        //      而 ttsState 只在**真正出声后**才变 ⇒ 用户看到"先不沉浸、出声后才沉浸"。
+        // 现在改成**后台执行**：识别结果到达时改写"尚未合成"的块；
+        // 已经播出去/已缓存的块不受影响（下一章起全部生效）。
+        TtsEngine.runSpeakerRecognitionBg(gen, chunks, nodes);
       }
       TtsEngine.failStreak = 0;
       TtsEngine.notifyChapter(spineIndex);
-    TtsEngine.scheduleCachePrune(); // 换章是自然的缓存整理边界
+      TtsEngine.scheduleCachePrune(); // 换章是自然的缓存整理边界
       if (chunks.length === 0) {
         spineIndex++;
         TtsEngine.chapterIndex = spineIndex;
@@ -1688,6 +1874,19 @@ export class TtsEngine {
           }
           continue;
         }
+        // ---------- AI 永久性失败熔断（2026-10-10，真机日志驱动）----------
+        // 必须在暂停/重试/垫片之前：接口不存在或鉴权失败时，继续跑只会无限垫音
+        // （真机物证 `日志.md` L2782-2783）。这里停播 + 把服务端/配置原文 toast 出去。
+        if (TtsEngine.aiFatalMsg.length > 0) {
+          const detail: string = TtsEngine.aiFatalMsg;
+          TtsEngine.aiFatalMsg = '';
+          hilog.error(DOMAIN, TAG, 'ai fatal -> stop playback: %{public}s', detail);
+          TtsEngine.cb?.onToast('AI 语音失败：' + detail);
+          TtsEngine.stopInternal('AI 语音不可用，已停止朗读');
+          TtsEngine.stopBackground();
+          TtsEngine.deactivateSession();
+          return;
+        }
         // ---------- 睡眠定时：**墙钟到点即停** ----------
         // ⚠️ D1 修正（2026-10-07）：本条**必须排在暂停分支之前**。
         //    旧顺序是「先判暂停（sleep(150) + continue）再判到点」⇒ 暂停期间永远走不到这里，
@@ -1705,7 +1904,7 @@ export class TtsEngine {
             if (Date.now() >= TtsEngine.netProbeDueAt) {
               TtsEngine.netProbeDueAt = Date.now() + NET_PAUSE_PROBE_MS;
               try {
-                await TtsEngine.ensureSynth(chunks[i]);
+                await TtsEngine.ensureSynth(chunks[i], true);
                 if (!TtsEngine.alive(gen)) {
                   return;
                 }
@@ -1732,7 +1931,9 @@ export class TtsEngine {
         // 预取后续块的合成（只写缓存，不解码）
         // T2 新路径：预取 2 → NET_PREFETCH_AHEAD(4) 块，加厚熄屏挂起期间的安全垫
         //（官方口径：连续 5 次失败才转 paused；underrun 即可能被系统冻结，见 TTS_NET_RESILIENCE 注释）
-        const prefetchAhead: number = TTS_NET_RESILIENCE ? NET_PREFETCH_AHEAD : 2;
+        const prefetchAhead: number = TtsEngine.activeEngineId() === 'ai'
+          ? AI_PREFETCH_AHEAD
+          : (TTS_NET_RESILIENCE ? NET_PREFETCH_AHEAD : 2);
         for (let k = 1; k <= prefetchAhead; k++) {
           TtsEngine.prefetch(chunks, i + k);
         }
@@ -1746,19 +1947,43 @@ export class TtsEngine {
           // 可播块被饿死成纯音乐。守卫只对"未缓存 + 断网新鲜"的块生效。
           const cached: boolean = chunks[i].cachePath.length > 0 && chunks[i].words.length > 0
             && TtsEngine.fileExists(chunks[i].cachePath);
+          // ⚠️ 2026-10-10 修正：这条"跳过重试、直接进垫片"的短路**只对 Edge/本地成立**。
+          //    真机日志证据（`日志.md` 15:00:14）：预取失败刷了 lastNetFailAt 之后，
+          //    播放点打的是 `synth fail #1: net down (prefetch)` ⇒ **连一次都没试**就
+          //    `silence keepalive start`，用户听到的是垫片。
+          //    而 AI 走的是**用户自己的服务**（局域网/自建），一次请求 1~5 秒，
+          //    在播放点重试一次远好过直接放垫片 ⇒ AI 引擎不吃这个短路。
           if (TTS_NET_RESILIENCE && TTS_SILENCE_KEEPALIVE && !cached
-            && Date.now() - TtsEngine.lastNetFailAt < NET_SKIP_RETRY_MS) {
+            && Date.now() - TtsEngine.lastNetFailAt < NET_SKIP_RETRY_MS
+            && TtsEngine.activeEngineId() !== 'ai') {
             throw new Error('net down (prefetch)');
           }
-          await TtsEngine.ensureSynth(chunks[i]);
+          await TtsEngine.ensureSynth(chunks[i], true);
           if (!TtsEngine.alive(gen)) {
             return;
           }
           TtsEngine.failStreak = 0;
         } catch (e) {
+          const emsg: string = e instanceof Error ? e.message : String(e);
+          if (emsg === AI_CANCELLED_MSG) {
+            // ── AI 合成被"停止/切书"取消（2026-10-09）─────────────────────────
+            // ⚠️ 绝不能当成网络故障：否则用户点了停止，静音垫片反而开始垫音。
+            // continue 后由循环条件 `alive(gen)` 决定退出（stopInternal 已 bump gen）。
+            hilog.info(DOMAIN, TAG, 'ai synth cancelled (stop/switch) chunk=%{public}d', i);
+            continue;
+          }
+          if (isAiPermanentError(emsg)) {
+            // ── 永久性错误（2026-10-10）：立即停，不进垫片、不累计 failStreak ────
+            const detail: string = aiPermanentDetail(emsg);
+            hilog.error(DOMAIN, TAG, 'ai permanent -> stop: %{public}s', detail);
+            TtsEngine.cb?.onToast('AI 语音失败：' + detail);
+            TtsEngine.stopInternal('AI 语音不可用，已停止朗读');
+            TtsEngine.stopBackground();
+            TtsEngine.deactivateSession();
+            return;
+          }
           TtsEngine.failStreak++;
-          hilog.error(DOMAIN, TAG, 'synth fail #%{public}d: %{public}s', TtsEngine.failStreak,
-            e instanceof Error ? e.message : String(e));
+          hilog.error(DOMAIN, TAG, 'synth fail #%{public}d: %{public}s', TtsEngine.failStreak, emsg);
           // ---------- T2 静音垫片保活：首次失败立即进入（不等 failStreak 累积到暂停阈值）----------
           // 不 setState('paused')：渲染器保持 RUNNING + 持续数据流（静音 PCM），
           // 系统"一致性校验"看到的是正常播放 ⇒ 不触发"无有效音频播放"冻结。
@@ -1797,7 +2022,7 @@ export class TtsEngine {
                 // 探活与垫静音并行：串行探活空窗会抽干熄屏缓冲（≤10000ms）再次触发冻结
                 const probeOnce = async (): Promise<boolean> => {
                   try {
-                    await TtsEngine.ensureSynth(chunks[i]);
+                    await TtsEngine.ensureSynth(chunks[i], true);
                     return true;
                   } catch (e) {
                     return false;
@@ -1889,19 +2114,49 @@ export class TtsEngine {
    * charStart 是"原始节点文本"内的字符偏移——即 domPos 的 Y，
    * 因此这里**不能 trim**（trim 会让 Y 整体前移，定位就会偏）。
    */
+  /**
+   * 套用朗读过滤（掩码）后返回**送合成**的文本（2026-10-10）。
+   * 关掉开关 = 原样返回 ⇒ 行为与改动前逐字一致（一键回退）。
+   */
+  private static speakFiltered(text: string, prefs: TtsPrefs): string {
+    if (!prefs.speakFilterEnabled) {
+      return text;
+    }
+    const rules: SpeakFilterRuleLocal[] = parseSpeakFilterText(prefs.speakFilterText);
+    if (rules.length === 0) {
+      return text;
+    }
+    return applySpeakFilter(text, rules);
+  }
+
   private static buildQueue(nodes: string[]): QueueChunk[] {
     const prefs = TtsEngine.prefs!;
     const chunks: QueueChunk[] = [];
+    // AI 引擎分块调小（800→500 单位）：AI 无流式 ⇒ 首块延迟 ∝ 单块字数（见常量注释）
+    const maxUnits: number = TtsEngine.activeEngineId() === 'ai'
+      ? AI_CHUNK_MAX_UNITS : CHUNK_MAX_UNITS;
     let carry = false;
+    // ── 朗读过滤（2026-10-10）────────────────────────────────────────────────
+    // **唯一插点**：在这里把节点文本掩码（等长空格），下游的分段/分块/缓存键/
+    // 合成/高亮偏移**全部自动继承**，不需要改任何其它地方。
+    // 依据参考项目 `voiceReadFilterApply.ts`：命中片段换等长空格，字符数不变 ⇒
+    // 高亮偏移与行号不受影响；掩码后不可读的节点由下面的 hasSpeakableText 自动跳过。
+    const rules: SpeakFilterRuleLocal[] = prefs.speakFilterEnabled
+      ? parseSpeakFilterText(prefs.speakFilterText) : [];
+    let maskedChars: number = 0;
     for (let p = 0; p < nodes.length && chunks.length < MAX_CHUNKS_PER_CHAPTER; p++) {
-      const raw = nodes[p];
+      const raw0 = nodes[p];
+      const raw: string = rules.length > 0 ? applySpeakFilter(raw0, rules) : raw0;
+      if (raw !== raw0) {
+        maskedChars += countMaskedChars(raw0, raw);
+      }
       if (raw.length === 0 || !hasSpeakableText(raw)) {
         continue;
       }
       const segs: SpeakSegment[] = splitParagraphIntoSegments(p, raw, carry, prefs.quoteStyles);
       carry = segs.length > 0 && segs[segs.length - 1].isDialogue && !segs[segs.length - 1].endsSentence;
       for (let s = 0; s < segs.length; s++) {
-        const parts = splitSegmentsIntoChunks(segs[s]);
+        const parts = splitSegmentsIntoChunks(segs[s], maxUnits);
         for (let k = 0; k < parts.length; k++) {
           const seg = parts[k];
           const chunk: QueueChunk = {
@@ -1912,11 +2167,20 @@ export class TtsEngine {
             charStart: seg.charStart,
             voiceId: seg.isDialogue ? prefs.dialogueVoiceId : prefs.narrationVoiceId,
             words: [],
-            cachePath: ''
-          };
-          chunks.push(chunk);
+            cachePath: '',
+            fmt: '',
+            rate: 0,
+            ch: 1,
+            emotion: '',
+            voiceDirect: ''
+          };          chunks.push(chunk);
         }
       }
+    }
+    // 取证日志：过滤生效时把"掩码掉多少字"打出来（真机核对用）
+    if (maskedChars > 0) {
+      hilog.info(DOMAIN, TAG, 'speak filter: masked=%{public}d chars rules=%{public}d chunks=%{public}d',
+        maskedChars, rules.length, chunks.length);
     }
     return chunks;
   }
@@ -1958,16 +2222,66 @@ export class TtsEngine {
   }
 
   /**
-   * 当前生效的引擎（双引擎架构，2026-09-25）：默认本地（Core Speech Kit）；
-   * 'edge' 仅在【暗门解锁 且 prefs 选择 edge】时生效 —— 双重校验，未解锁一律回落本地。
-   * 缓存键/扩展名随引擎隔离（.wav=local / .mp3=edge），切换引擎互不串缓存。
+   * 当前生效的引擎（三引擎架构）。
+   * 优先级 **Edge > AI > local**（用户 2026-10-09 口径：「只要开启 edge，直接使用 edge 不允许切换，
+   * 需要切换则手动去设置中先关闭」）：
+   *  · edge：暗门解锁 **且** prefs 选 edge —— 双重校验，未解锁一律不生效；
+   *  · ai：顶栏开关打开 **且** 配置就绪（baseUrl/key 齐）——不受暗门约束；
+   *  · local：兜底（默认）。
+   * 缓存键/扩展名随引擎隔离，切换引擎互不串缓存。
    */
   private static activeEngineId(): string {
     const prefs = TtsEngine.prefs;
     if (prefs !== null && ListenUnlock.isUnlocked() && prefs.ttsEngine === 'edge') {
       return 'edge';
     }
+    if (prefs !== null && prefs.aiTtsEnabled && aiConfigReady(TtsEngine.aiConfigFrom(prefs))) {
+      return 'ai';
+    }
     return 'local';
+  }
+
+  /** TtsPrefs → AI 合成配置（每次现取，保证改配置立刻生效；不做持久化副本） */
+  private static aiConfigFrom(prefs: TtsPrefs): AiTtsConfig {
+    const cfg: AiTtsConfig = {
+      providerId: prefs.aiProviderId,
+      baseUrl: prefs.aiTtsBaseUrl,
+      apiKey: prefs.aiTtsApiKey,
+      model: prefs.aiTtsModel,
+      format: prefs.aiFormat,
+      instructions: prefs.aiInstructions,
+      extraBody: prefs.aiExtraBody,
+      extraHeaders: prefs.aiExtraHeaders
+    };
+    return cfg;
+  }
+
+  /**
+   * AI 引擎的角色 → 音色槽位翻译（与 `localPersonFor` 同款思路，证据 `:1979-1993`）。
+   * `chunk.voiceId` 存的是**角色标签**（prefs 里的 Edge 音色字段值，见 `buildQueue`），
+   * 这里把它翻成 AI 的五个槽位之一。
+   * ⚠️ 因此 AI 的缓存键必须并入翻译后的音色（见 `cachePathFor` 与 `aiConfigFingerprint`），
+   *    否则用户改 AI 音色后 roleTag 不变 ⇒ 命中旧音频。
+   */
+  private static aiVoiceFor(voiceId: string, prefs: TtsPrefs, direct: string): string {
+    // 角色名自动分配（2026-10-10）：直接指定的音色优先于槽位映射
+    const d: string = direct.trim();
+    if (d.length > 0) {
+      return d;
+    }
+    if (prefs.scheme === 'single') {
+      return prefs.aiSingleVoiceId;
+    }
+    if (voiceId === prefs.dialogueMaleVoiceId) {
+      return prefs.aiDialogueMaleVoiceId;
+    }
+    if (voiceId === prefs.dialogueFemaleVoiceId) {
+      return prefs.aiDialogueFemaleVoiceId;
+    }
+    if (voiceId === prefs.dialogueVoiceId) {
+      return prefs.aiDialogueVoiceId;
+    }
+    return prefs.aiNarrationVoiceId;
   }
 
   /**
@@ -1992,19 +2306,43 @@ export class TtsEngine {
     return prefs.localNarrationPerson;
   }
 
+  /** AI 输出格式 → 缓存文件扩展名（仅决定落盘后缀；真正分派看 sidecar 的 fmt） */
+  private static aiExtFor(format: string): string {
+    const f: string = format.trim().toLowerCase();
+    if (f === 'wav') {
+      return 'wav';
+    }
+    if (f === 'pcm') {
+      return 'pcm';
+    }
+    return 'mp3';
+  }
+
   private static cachePathFor(chunk: QueueChunk): string {
     const prefs = TtsEngine.prefs!;
     const engineId: string = TtsEngine.activeEngineId();
     const isLocal: boolean = engineId === 'local';
+    const isAi: boolean = engineId === 'ai';
     const rate: number = isLocal ? prefs.localRate : prefs.rate;
     const person: number = isLocal ? TtsEngine.localPersonFor(chunk.voiceId, prefs) : 0;
-    const key = engineId + '|' + person + '|' + chunk.voiceId + '|' + rate.toFixed(2) + '|' + prefs.pitch.toFixed(2) + '|' + chunk.text;
+    let key = engineId + '|' + person + '|' + chunk.voiceId + '|' + rate.toFixed(2) + '|' + prefs.pitch.toFixed(2) + '|' + chunk.text;
+    let ext: string = isLocal ? '.wav' : '.mp3';
+    if (isAi) {
+      // ⚠️ AI 必须并入配置指纹（见 aiConfigFingerprint 的注释）：
+      //    chunk.voiceId 只是**角色标签**，用户改「AI 旁白音色」时它不变 ⇒
+      //    不加指纹就会命中上一次音色的旧音频（"改了没用"）。
+      const cfg: AiTtsConfig = TtsEngine.aiConfigFrom(prefs);
+      const resolved: string = TtsEngine.aiVoiceFor(chunk.voiceId, prefs, chunk.voiceDirect);
+      // ⚠️ 情绪与"角色直配音色"都必须进键：否则改语气/换角色音色会命中旧音频
+      key = key + '|' + aiConfigFingerprint(cfg, resolved)
+        + '|emo:' + chunk.emotion + '|dir:' + chunk.voiceDirect;
+      ext = '.' + TtsEngine.aiExtFor(cfg.format);
+    }
     let hash = 0x811c9dc5;
     for (let i = 0; i < key.length; i++) {
       hash ^= key.charCodeAt(i);
       hash = (hash * 0x01000193) >>> 0;
     }
-    const ext: string = isLocal ? '.wav' : '.mp3';
     return TtsEngine.context !== null ? TtsEngine.context.cacheDir + '/tts/' + hash.toString(16) + ext : '';
   }
 
@@ -2012,52 +2350,292 @@ export class TtsEngine {
    * AI 说话人识别（对齐 PC 版机制）：对对白块批量标注 male/female/unknown，
    * 分别套用 男生音色/女生音色/对白音色。失败静默回落（保持统一对白音色）。
    */
+  /**
+   * 节点文本清洗（上下文用：折叠空白、限长，控制 prompt 体积）
+   * @param maxLen 0 = 不限长
+   */
+  private static cleanNodeText(raw: string, maxLen: number): string {
+    const t: string = raw.replace(/\s+/g, ' ').trim();
+    if (maxLen > 0 && t.length > maxLen) {
+      return t.substring(0, maxLen) + '…';
+    }
+    return t;
+  }
+
+  /** 某节点是否为"纯对白"（切段后有效内容全是对白、无旁白引导语） */
+  private static isPureDialogueNode(text: string, prefs: TtsPrefs): boolean {
+    const segs: SpeakSegment[] = splitParagraphIntoSegments(0, text, false, prefs.quoteStyles);
+    let has: boolean = false;
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i].text.trim().length === 0) {
+        continue;
+      }
+      if (!segs[i].isDialogue) {
+        return false;
+      }
+      has = true;
+    }
+    return has;
+  }
+
+  /**
+   * 收集说话人判断用的**上下文**（2026-10-10 修复：原来只取相邻 1 个节点，太浅）。
+   *
+   * 语义对齐参考项目 `voiceReadSpeakerContext.ts:47-118`：
+   * 向两侧**穿过纯对白节点**，收到首个非纯对白节点后**再多收一个**即停；
+   * 单向最多 {@link SPEAKER_CTX_MAX_NODES} 个节点、每节点限 {@link SPEAKER_CTX_NODE_CHARS} 字。
+   * 为什么重要：连续对白（无"某某道"引导语）时，浅上下文会让 LLM 只能瞎猜性别。
+   */
+  private static collectSpeakerContext(nodes: string[], nodeIndex: number,
+    prefs: TtsPrefs): string[] {
+    const before: string[] = [];
+    let state: number = 0; // 0=seek 1=extra 2=done
+    for (let d = 1; state !== 2 && before.length < SPEAKER_CTX_MAX_NODES; d++) {
+      const idx: number = nodeIndex - d;
+      if (idx < 0) {
+        break;
+      }
+      const t: string = TtsEngine.cleanNodeText(nodes[idx], SPEAKER_CTX_NODE_CHARS);
+      if (t.length === 0) {
+        continue;
+      }
+      before.unshift(t); // 由远到近
+      if (state === 0) {
+        if (!TtsEngine.isPureDialogueNode(t, prefs)) {
+          state = 1;
+        }
+      } else {
+        state = 2;
+      }
+    }
+    const after: string[] = [];
+    state = 0;
+    for (let d = 1; state !== 2 && after.length < SPEAKER_CTX_MAX_NODES; d++) {
+      const idx: number = nodeIndex + d;
+      if (idx >= nodes.length) {
+        break;
+      }
+      const t: string = TtsEngine.cleanNodeText(nodes[idx], SPEAKER_CTX_NODE_CHARS);
+      if (t.length === 0) {
+        continue;
+      }
+      after.push(t); // 由近到远
+      if (state === 0) {
+        if (!TtsEngine.isPureDialogueNode(t, prefs)) {
+          state = 1;
+        }
+      } else {
+        state = 2;
+      }
+    }
+    const out: string[] = [];
+    out.push(before.join(' / '));
+    out.push(after.join(' / '));
+    return out;
+  }
+
+  /**
+   * 合成用配置（2026-10-10）：把 LLM 标注的语气拼进 `instructions`。
+   * 仅当该服务商 `supportsEmotion` 才拼 —— MiniMax 只吃固定枚举，拼了也会被静默忽略。
+   * （开关 `aiEmotionEnabled` 已在说话人识别阶段生效：关掉时 chunk.emotion 就是空串）
+   */
+  private static aiConfigForSynth(prefs: TtsPrefs, chunk: QueueChunk): AiTtsConfig {
+    const cfg: AiTtsConfig = TtsEngine.aiConfigFrom(prefs);
+    const emo: string = chunk.emotion.trim();
+    if (emo.length === 0) {
+      return cfg;
+    }
+    const meta: AiProviderMeta | null = aiProviderMetaOf(cfg.providerId);
+    if (meta === null || !meta.supportsEmotion) {
+      return cfg;
+    }
+    const base: string = prefs.aiInstructions.trim();
+    cfg.instructions = base.length > 0 ? base + '。本条语气：' + emo : '本条语气：' + emo;
+    return cfg;
+  }
+
+  /**
+   * 角色名 → 音色（**稳定哈希**：同一角色全书同一声音）。
+   *
+   * 这是用户拍板的"低成本折中"：不需要角色卡、不需要 AI 书籍分析。
+   * 池 = 该服务商建议音色中与性别匹配的项，并**排除旁白音色**（避免旁白与角色同声）。
+   * @returns `''` = 池为空 ⇒ 调用方回落男/女槽位（保命线，绝不因为缺池而失声）
+   */
+  private static pickVoiceForName(name: string, kind: SpeakerKind, prefs: TtsPrefs): string {
+    const pool: AiVoiceOption[] = aiVoiceOptionsFor(prefs.aiProviderId);
+    const cand: string[] = [];
+    for (let i = 0; i < pool.length; i++) {
+      const id: string = pool[i].id;
+      if (id === prefs.aiNarrationVoiceId) {
+        continue;
+      }
+      const g: string = pool[i].gender;
+      if (kind === 'male' && g !== 'male') {
+        continue;
+      }
+      if (kind === 'female' && g !== 'female') {
+        continue;
+      }
+      cand.push(id);
+    }
+    if (cand.length === 0) {
+      return '';
+    }
+    // FNV-1a（与缓存哈希同族）：同名 ⇒ 同音色，跨章稳定
+    let h: number = 0x811c9dc5;
+    for (let i = 0; i < name.length; i++) {
+      h ^= name.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
+    }
+    return cand[h % cand.length];
+  }
+
+  /**
+   * **后台**执行说话人识别（不阻塞首声）—— 见 `run()` 里的回归修复注释。
+   *
+   * 语义变化（必须知道）：
+   *   · 首块及其预取可能在识别结果到达前就完成合成 ⇒ 那几块用默认对白音色；
+   *   · 识别结果对**尚未合成**的块生效（`doSynth`/`cachePathFor` 在合成时才读 `chunk.voiceId`）；
+   *   · 会话已切换/停止时不写日志（`alive(gen)` 守卫），但不影响内存中的改写（无害）。
+   */
+  private static runSpeakerRecognitionBg(gen: number, chunks: QueueChunk[],
+    nodes: string[]): void {
+    const t0: number = Date.now();
+    TtsEngine.applySpeakerRecognition(chunks, nodes).then((): void => {
+      if (!TtsEngine.alive(gen)) {
+        return;
+      }
+      hilog.info(DOMAIN, TAG, 'speaker recognition bg done ms=%{public}d', Date.now() - t0);
+    }, (e: Object): void => {
+      hilog.warn(DOMAIN, TAG, 'speaker recognition bg fail ms=%{public}d err=%{public}s',
+        Date.now() - t0, String(e));
+    });
+  }
+
   private static async applySpeakerRecognition(chunks: QueueChunk[], nodes: string[]): Promise<void> {
+    const t0: number = Date.now();
     const prefs = TtsEngine.prefs!;
     const items: SpeakerItem[] = [];
     const itemChunks: QueueChunk[] = [];
-    for (let i = 0; i < chunks.length && items.length < 50; i++) {
+    // 审查修复（2026-10-10）：原来 `items.length < 50` 一刀切 ⇒ **长章节后半段男女声失效**。
+    // 现在收集**全部**对白块（上下文按 collectSpeakerContext 扩到最多 15 个节点），
+    // 再按批（每批 ≤ SPEAKER_BATCH）顺序调用，单批失败只影响该批。
+    for (let i = 0; i < chunks.length && items.length < SPEAKER_MAX_ITEMS; i++) {
       const c = chunks[i];
       if (!c.isDialogue) {
         continue;
       }
-      // 以所属块节点前后各一个节点作上下文（对齐 PC 版"扩到非纯对白行"的简化版）
-      const before = c.nodeIndex > 0 && c.nodeIndex - 1 < nodes.length ? nodes[c.nodeIndex - 1] : '';
-      const after = c.nodeIndex + 1 < nodes.length ? nodes[c.nodeIndex + 1] : '';
-      const item: SpeakerItem = { text: c.text, before: before, after: after };
+      const ctx: string[] = TtsEngine.collectSpeakerContext(nodes, c.nodeIndex, prefs);
+      const item: SpeakerItem = { text: c.text, before: ctx[0], after: ctx[1] };
       items.push(item);
       itemChunks.push(c);
     }
     if (items.length === 0) {
       return;
     }
-    try {
-      const kinds = await classifyDialogueGenders(
-        prefs.aiBaseUrl, prefs.aiApiKey, prefs.aiModel, items);
-      for (let i = 0; i < itemChunks.length; i++) {
-        const kind = i < kinds.length ? kinds[i] : 'unknown';
-        if (kind === 'male') {
-          itemChunks[i].voiceId = prefs.dialogueMaleVoiceId;
-        } else if (kind === 'female') {
-          itemChunks[i].voiceId = prefs.dialogueFemaleVoiceId;
+    // ── 能力判定（2026-10-10）────────────────────────────────────────────────
+    // 情绪：仅 AI 引擎 + 开关开 + 该服务商真支持（否则就是"假控件"，见 §F5）
+    const engineId: string = TtsEngine.activeEngineId();
+    const cfgNow: AiTtsConfig = TtsEngine.aiConfigFrom(prefs);
+    const metaNow: AiProviderMeta | null = aiProviderMetaOf(cfgNow.providerId);
+    const wantEmotion: boolean = engineId === 'ai' && prefs.aiEmotionEnabled
+      && metaNow !== null && metaNow.supportsEmotion;
+    // 角色名→音色：只在 AI 引擎下生效（Edge/local 的槽位体系不同，属刻意取舍）
+    const wantNameMap: boolean = engineId === 'ai';
+
+    // ① 先**全部**分类（分批串行），拿到 labels 后再统一统计说话人
+    const labels: SpeakerLabel[] = [];
+    let failCount: number = 0;
+    for (let off = 0; off < items.length; off += SPEAKER_BATCH) {
+      const end: number = Math.min(off + SPEAKER_BATCH, items.length);
+      const slice: SpeakerItem[] = items.slice(off, end);
+      try {
+        const ls: SpeakerLabel[] = await classifyDialogueLabels(
+          prefs.aiBaseUrl, prefs.aiApiKey, prefs.aiModel, slice, wantEmotion);
+        for (let k = 0; k < slice.length; k++) {
+          if (k < ls.length) {
+            labels.push(ls[k]);
+          } else {
+            const empty: SpeakerLabel = { kind: 'unknown', speaker: '', emotion: '' };
+            labels.push(empty);
+          }
+        }
+      } catch (e) {
+        failCount++;
+        hilog.warn(DOMAIN, TAG, 'speaker batch %{public}d failed: %{public}s',
+          off / SPEAKER_BATCH, e instanceof Error ? e.message : String(e));
+        for (let k = 0; k < slice.length; k++) {
+          const empty: SpeakerLabel = { kind: 'unknown', speaker: '', emotion: '' };
+          labels.push(empty);
         }
       }
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'speaker recognition failed: %{public}s',
-        e instanceof Error ? e.message : String(e));
     }
+
+    // ② 统计说话人出现次数（**同章 ≥2 次才启用名字映射** ⇒ 过滤 LLM 起名噪声）
+    const counts: Map<string, number> = new Map();
+    for (let i = 0; i < labels.length; i++) {
+      const nm: string = labels[i].speaker;
+      if (nm.length === 0) {
+        continue;
+      }
+      const cur = counts.get(nm);
+      counts.set(nm, cur === undefined ? 1 : cur + 1);
+    }
+
+    // ③ 赋值：情绪（原样带给合成）+ 角色直配音色（优先）+ 男/女槽位（兜底）
+    let namedCount: number = 0;
+    for (let i = 0; i < itemChunks.length; i++) {
+      if (i >= labels.length) {
+        break;
+      }
+      const c = itemChunks[i];
+      const lb: SpeakerLabel = labels[i];
+      c.emotion = wantEmotion ? lb.emotion : '';
+      const nm: string = lb.speaker;
+      const cnt = counts.get(nm);
+      if (wantNameMap && nm.length > 0 && cnt !== undefined && cnt >= 2) {
+        const v: string = TtsEngine.pickVoiceForName(nm, lb.kind, prefs);
+        if (v.length > 0) {
+          c.voiceDirect = v;
+          namedCount++;
+          continue;
+        }
+      }
+      if (lb.kind === 'male') {
+        c.voiceId = prefs.dialogueMaleVoiceId;
+      } else if (lb.kind === 'female') {
+        c.voiceId = prefs.dialogueFemaleVoiceId;
+      }
+    }
+    hilog.info(DOMAIN, TAG,
+      'speaker recognition: items=%{public}d failedBatches=%{public}d named=%{public}d emotion=%{public}s ms=%{public}d',
+      items.length, failCount, namedCount, String(wantEmotion), Date.now() - t0);
   }
 
   /** 合成（3 次重试 + 缓存）；同块并发只跑一次（按 cachePath 去重）
    * @throws 合成 3 次均失败时抛出
    */
-  private static async ensureSynth(chunk: QueueChunk): Promise<void> {
-    if (chunk.cachePath.length > 0 && chunk.words.length > 0
-      && TtsEngine.fileExists(chunk.cachePath)) {
+  private static async ensureSynth(chunk: QueueChunk, urgent: boolean): Promise<void> {
+    // ── ★ 2026-10-10 新增不变量：`chunk.cachePath` 必须与**当前**映射一致 ──────────
+    // 映射 = (engineId, 音色, 语速/音调, AI 配置, 情绪, 角色直配音色)，全部进 `cachePathFor`。
+    //
+    // 为什么必须（**说话人识别改后台后暴露的真实缺陷**）：
+    //   识别返回之前就已被预取的块（Edge `NET_PREFETCH_AHEAD=4`）是按**默认对白音色**合成的；
+    //   识别结果一到，`voiceId/voiceDirect/emotion` 被改写，但 `chunk.cachePath` 还指向旧映射
+    //   ⇒ 旧逻辑会直接"缓存命中"并**用错音色播出去**（表现为：每章开头几块男女声没生效）。
+    //   现在先算路径、不一致就把 `cachePath` 作废 ⇒ 尚未播放的块会用**正确音色**重新合成；
+    //   已经播出去的块不会再走这里，因此不受影响。
+    // 代价：Edge 每章最多多合成 4 次（免费）；AI 每章最多多 4 次计费调用（可接受，且只在前几块）。
+    const path: string = TtsEngine.cachePathFor(chunk);
+    if (path.length === 0) {
       return;
     }
-    const path = TtsEngine.cachePathFor(chunk);
-    if (path.length === 0) {
+    if (chunk.cachePath !== path) {
+      // 磁盘文件保留（对旧映射仍是有效缓存），只是本块不再引用它
+      chunk.cachePath = '';
+    }
+    if (chunk.cachePath.length > 0 && chunk.words.length > 0
+      && TtsEngine.fileExists(chunk.cachePath)) {
       return;
     }
     // 缓存命中要求 mp3 + 词表 sidecar 双文件（词表是停顿拼接/句级显示的原料）
@@ -2073,7 +2651,7 @@ export class TtsEngine {
       }
       return;
     }
-    const task = TtsEngine.doSynth(chunk, path);
+    const task = TtsEngine.doSynth(chunk, path, urgent);
     TtsEngine.synthInFlight.set(path, task);
     try {
       const r = await task;
@@ -2085,8 +2663,10 @@ export class TtsEngine {
     }
   }
 
-  /** @returns 1=已写缓存文件；0=无可读内容（空块）；合成失败抛异常 */
-  private static async doSynth(chunk: QueueChunk, path: string): Promise<number> {
+  /** @returns 1=已写缓存文件；0=无可读内容（空块）；合成失败抛异常
+   *  @param urgent true = 播放点需要（AI 引擎下插队到预取之前，见 aiSynthSerial 注释）
+   */
+  private static async doSynth(chunk: QueueChunk, path: string, urgent: boolean): Promise<number> {
     const prefs = TtsEngine.prefs!;
     const voice = chunk.voiceId;
     const engineId: string = TtsEngine.activeEngineId();
@@ -2094,7 +2674,10 @@ export class TtsEngine {
     // T2 新路径：重试 3 → NET_RETRY_ATTEMPTS(4) 次，退避 500ms 指数递增。
     // 依据：真机日志 link-down 场景每次握手失败墙钟 ~3.2s，旧退避(250/500/750ms)
     // 3 次机会约 10s 即烧光，指数退避把单次 doSynth 的抗抖窗口拉到 ~20s。
-    const attempts: number = TTS_NET_RESILIENCE ? NET_RETRY_ATTEMPTS : 3;
+    // ⚠️ AI 单独取 AI_RETRY_ATTEMPTS(2)：按字符计费，重试=重复计费（方案 §6.4）。
+    const attempts: number = engineId === 'ai'
+      ? AI_RETRY_ATTEMPTS
+      : (TTS_NET_RESILIENCE ? NET_RETRY_ATTEMPTS : 3);
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         let audioData: ArrayBuffer;
@@ -2106,6 +2689,36 @@ export class TtsEngine {
           audioData = await synthesizeLocalWav(chunk.text, prefs.localRate, person,
             prefs.pauseSentenceMs, prefs.pauseCommaMs);
           chunk.words = [];
+        } else if (engineId === 'ai') {
+          // ── AI 听书（2026-10-09 新增）─────────────────────────────────────
+          // rate/pitch 传 1.0 基准口径（厂商映射在 provider 内做）；
+          // 无词级时间戳 ⇒ words=[]（与本地引擎同级降级，方案 §5.6）；
+          // fmt/rate/ch 落 sidecar，playChunk 据此走 PcmShape 归一化（§5.4/§5.5）。
+          const req: AiSynthReq = {
+            text: chunk.text,
+            voiceId: TtsEngine.aiVoiceFor(voice, prefs, chunk.voiceDirect),
+            rate: prefs.rate,
+            pitch: prefs.pitch,
+            cfg: TtsEngine.aiConfigForSynth(prefs, chunk)
+          };
+          const token: AiCancelToken = { cancelled: false };
+          TtsEngine.aiCancels.set(path, token);
+          // 取证日志（2026-10-10）：把「角色标签 → 实际音色」打出来。
+          // 由来：用户反馈"AI 男女声似乎没用"，而日志证明 `classify ok items=44` 分类是成功的
+          // ⇒ 真正原因是**四个槽位都回落成同一个音色**（默认值还是 OpenAI 的 onyx/nova，
+          //    本机服务认不出）。有了这行，下次一眼就能看出角色是否真的换了音色。
+          hilog.info(DOMAIN, TAG, 'ai synth req role=%{public}s voice=%{public}s chars=%{public}d',
+            voice, req.voiceId, chunk.text.length);
+          try {
+            const r: AiSynthRes = await aiSynthesize(req, token, urgent);
+            audioData = r.data;
+            chunk.words = [];
+            chunk.fmt = r.format;
+            chunk.rate = r.sampleRate;
+            chunk.ch = r.channels;
+          } finally {
+            TtsEngine.aiCancels.delete(path);
+          }
         } else {
           const r = await synthesizeOnce(chunk.text, voice, prefs.rate, prefs.pitch);
           audioData = r.mp3;
@@ -2118,11 +2731,18 @@ export class TtsEngine {
         const f = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
         fs.writeSync(f.fd, audioData);
         fs.closeSync(f.fd);
-        // 词表随音频落盘（跨会话恢复停顿拼接/句级显示所需；本地引擎为空词表）
-        TtsEngine.writeWordsSidecar(path, chunk.words);
+        // 词表 + fmt/rate/ch 随音频落盘（跨会话恢复停顿拼接/句级显示/音频规格所需）
+        TtsEngine.writeWordsSidecar(path, chunk.words, chunk.fmt, chunk.rate, chunk.ch);
         return 1;
       } catch (e) {
         lastErr = e instanceof Error ? e : new Error(String(e));
+        // 永久性错误（接口不存在/鉴权失败/参数被拒）：重试毫无意义，立刻抛出
+        // （既省时间，也避免按字符计费的服务被重复扣费）
+        if (isAiPermanentError(lastErr.message)) {
+          hilog.error(DOMAIN, TAG, 'ai permanent fail (no retry): %{public}s',
+            aiPermanentDetail(lastErr.message));
+          throw lastErr;
+        }
         // F4：新路径查 NET_RETRY_BACKOFF_MS 表（300/600/1200/2400ms）；
         // 旧路径仍是 250/500/750ms（netRetryBackoffMs 内部分流，旧行为逐字保留）
         await TtsEngine.sleep(netRetryBackoffMs(attempt));
@@ -2131,8 +2751,16 @@ export class TtsEngine {
     throw lastErr;
   }
 
-  /** 词表 sidecar：<hash>.mp3.json */
-  private static writeWordsSidecar(path: string, words: WordSpan[]): void {
+  /**
+   * sidecar：`<hash>.<ext>.json`。内容 = 词表 + （**仅 AI 产物**）音频规格。
+   *
+   * 向后兼容契约（很重要，决定了老缓存能不能继续用）：
+   *  · 非 AI 路径传 fmt='' ⇒ JSON 里**不写** fmt/rate/ch 三个字段
+   *    ⇒ 老文件读出来与改动前完全一致，playChunk 走老分支，Edge/本地零回归；
+   *  · AI 路径写 fmt/rate/ch ⇒ playChunk 走 PcmShape 归一化（方案 §5.4/§5.5）。
+   */
+  private static writeWordsSidecar(path: string, words: WordSpan[], fmt: string,
+    rate: number, ch: number): void {
     try {
       const arr: string[] = [];
       for (let i = 0; i < words.length; i++) {
@@ -2140,7 +2768,13 @@ export class TtsEngine {
         const esc = w.text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         arr.push(`{"text":"${esc}","startMs":${w.startMs},"endMs":${w.endMs}}`);
       }
-      const json = '{"words":[' + arr.join(',') + ']}';
+      let json = '{"words":[' + arr.join(',') + ']';
+      const f2: string = fmt.trim().toLowerCase();
+      if (f2.length > 0) {
+        json += ',"fmt":"' + f2 + '","rate":' + Math.max(0, Math.floor(rate))
+          + ',"ch":' + (ch < 1 ? 1 : Math.floor(ch));
+      }
+      json += '}';
       const f = fs.openSync(path + '.json', fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
       fs.writeSync(f.fd, json);
       fs.closeSync(f.fd);
@@ -2166,6 +2800,25 @@ export class TtsEngine {
       fs.closeSync(f.fd);
       const text = util.TextDecoder.create('utf-8').decodeToString(new Uint8Array(buf));
       const root = JSON.parse(text) as Record<string, Object>;
+      // ── AI 音频规格（老文件没有这三项 ⇒ fmt 保持 '' ⇒ playChunk 走老分支）──────
+      // 必须在下面的 `Array.isArray(rawArr)` 提前 return **之前**读取，
+      // 因为 AI 产物的 sidecar 里 words 是空数组，但没有 fmt 就没有归一化。
+      const fmtRaw = root['fmt'];
+      if (typeof fmtRaw === 'string') {
+        const fs2 = (fmtRaw as string).trim().toLowerCase();
+        if (fs2 === 'mp3' || fs2 === 'wav' || fs2 === 'pcm') {
+          chunk.fmt = fs2;
+        }
+      }
+      const rateRaw = root['rate'];
+      if (typeof rateRaw === 'number') {
+        chunk.rate = Math.max(0, Math.floor(rateRaw as number));
+      }
+      const chRaw = root['ch'];
+      if (typeof chRaw === 'number') {
+        const c2 = Math.floor(chRaw as number);
+        chunk.ch = c2 < 1 ? 1 : c2;
+      }
       const rawArr = root['words'];
       if (!Array.isArray(rawArr)) {
         return;
@@ -2205,13 +2858,20 @@ export class TtsEngine {
       || TtsEngine.synthInFlight.has(path)) {
       return;
     }
-    const task = TtsEngine.doSynth(c, path).then((r: number): number => {
+    const task = TtsEngine.doSynth(c, path, false).then((r: number): number => {
       if (r === 1) {
         c.cachePath = path;
         TtsEngine.lastNetFailAt = 0; // 合成成功 ⇒ 网络在通，清除断网标记
       }
       return r;
     }).catch((e: Error): number => {
+      if (isAiPermanentError(e.message)) {
+        // 永久性错误：**不**当成断网（否则会把 lastNetFailAt 刷新 ⇒ 播放点跳过重试
+        // 直接进静音垫片 ⇒ 无限垫音，真机日志 L2782-2783 实证）。改为熔断。
+        TtsEngine.aiFatalMsg = aiPermanentDetail(e.message);
+        hilog.error(DOMAIN, TAG, 'prefetch ai permanent -> fatal: %{public}s', TtsEngine.aiFatalMsg);
+        return -1;
+      }
       TtsEngine.lastNetFailAt = Date.now(); // 断网实锤（此时书还在播 ⇒ 应用不可冻结）
       hilog.warn(DOMAIN, TAG, 'prefetch fail: %{public}s', e.message);
       // F2：断网第一时间预热垫片。真机窗口（`Downloads/2.md`）：首次预取失败 01:17:17.641
@@ -2263,7 +2923,78 @@ export class TtsEngine {
   }
 
   /**
-   * 解码缓存 MP3 → 计算停顿点 → 拼接 PCM → 流式播放（句级进度回传）。
+   * AI 产物解码 + 规格归一化（2026-10-09）。
+   *
+   * 为什么不能复用原来的两分支：
+   *  · 原 `.wav` 分支**写死 44 字节头 + 16kHz**（老代码只服务本地引擎的产物）；
+   *  · `decodeMp3ToPcm` 只认 MP3（`tts_decoder.cpp:230`），且**不回传折叠/重采样**；
+   *  · `PcmPlayer` 渲染器固定单声道（`PcmPlayer.ets:317-328`）⇒ 立体声会 2 倍速。
+   * ⇒ AI 产物一律经 `PcmShape` 折成"单声道 @24000"（与 Edge 同率，避免渲染器重建）。
+   */
+  /** 播放缓存块时的 AI 解码入口（参数取自 sidecar 恢复出来的 chunk 字段） */
+  private static async decodeAiAudio(bytes: ArrayBuffer, chunk: QueueChunk): Promise<PcmDecodeResult> {
+    return TtsEngine.decodeAiBytes(bytes, chunk.fmt, chunk.rate, chunk.ch);
+  }
+
+  /**
+   * AI 音频字节 → 单声道 @24000 PCM（试听与朗读共用同一实现，避免两套行为分叉）。
+   *
+   * 为什么不能复用原来的两分支：
+   *  · 原 `.wav` 分支**写死 44 字节头 + 16kHz**（老代码只服务本地引擎的产物）；
+   *  · `decodeMp3ToPcm` 只认 MP3（`tts_decoder.cpp:230`），且**不回传折叠/重采样**；
+   *  · `PcmPlayer` 渲染器固定单声道（`PcmPlayer.ets:317-328`）⇒ 立体声会 2 倍速。
+   * ⇒ AI 产物一律经 `PcmShape` 折成"单声道 @24000"（与 Edge 同率，避免渲染器重建）。
+   */
+  private static async decodeAiBytes(bytes: ArrayBuffer, fmt: string, rate0: number,
+    ch0: number): Promise<PcmDecodeResult> {
+    let pcm: Int16Array;
+    let rate: number = rate0 > 0 ? rate0 : AI_TARGET_SAMPLE_RATE;
+    let ch: number = ch0 < 1 ? 1 : ch0;
+    if (fmt === 'mp3') {
+      const d = await decodeMp3ToPcm(bytes);
+      pcm = new Int16Array(d.pcm);
+      rate = d.sampleRate > 0 ? d.sampleRate : rate;
+      ch = d.channels > 0 ? d.channels : ch;
+    } else if (fmt === 'wav') {
+      const w = parseWavPcm(bytes);
+      if (w === null) {
+        // 解析失败兜底：当裸 PCM 处理（宁可出声，也不要静音）
+        hilog.warn(DOMAIN, TAG, 'ai wav parse failed -> treat as raw pcm %{public}dB', bytes.byteLength);
+        pcm = TtsEngine.rawPcm16(bytes);
+      } else {
+        pcm = new Int16Array(w.pcm);
+        rate = w.sampleRate > 0 ? w.sampleRate : rate;
+        ch = w.channels > 0 ? w.channels : ch;
+      }
+    } else {
+      pcm = TtsEngine.rawPcm16(bytes);
+    }
+    const shaped: Int16Array = await shapePcmToTarget(pcm, rate, ch, AI_TARGET_SAMPLE_RATE);
+    hilog.info(DOMAIN, TAG,
+      'ai pcm: fmt=%{public}s in=%{public}dHz/%{public}dch samples=%{public}d out=%{public}dHz',
+      fmt, rate, ch, shaped.length, AI_TARGET_SAMPLE_RATE);
+    const out: PcmDecodeResult = {
+      // ⚠️ `Int16Array.buffer` 在 ArkTS 里是 ArrayBufferLike ⇒ 必须显式断言，
+      //    否则对象字面量过不了 `arkts-no-untyped-obj-literals`（实测报在 `{` 上）。
+      pcm: shaped.buffer as ArrayBuffer,
+      sampleRate: AI_TARGET_SAMPLE_RATE,
+      channels: 1
+    };
+    return out;
+  }
+
+  /** 裸 S16LE 字节 → Int16Array（奇数长度截断，避免 Int16Array 构造抛异常） */
+  private static rawPcm16(bytes: ArrayBuffer): Int16Array {
+    const n: number = bytes.byteLength >> 1;
+    const out = new Int16Array(n);
+    if (n > 0) {
+      new Uint8Array(out.buffer).set(new Uint8Array(bytes, 0, n * 2));
+    }
+    return out;
+  }
+
+  /**
+   * 解码缓存音频 → 计算停顿点 → 拼接 PCM → 流式播放（句级进度回传）。
    * @throws 解码/装载失败
    */
   private static async playChunk(chunk: QueueChunk, index: number, total: number): Promise<void> {
@@ -2272,28 +3003,27 @@ export class TtsEngine {
     if (player === null) {
       return;
     }
-    // 缓存命中的块：从 sidecar 恢复词表（停顿拼接与句级显示的原料）
+    // 缓存命中的块：从 sidecar 恢复词表（停顿拼接与句级显示的原料）+ AI 音频规格
     TtsEngine.loadWordsSidecar(chunk);
-    // 读缓存音频（双引擎：local=.wav 直读 PCM；edge=.mp3 走解码）
+    // 读缓存音频（三引擎：local=.wav 直读；edge=.mp3 解码；ai=按 sidecar 的 fmt 分派）
     const stat = fs.statSync(chunk.cachePath);
+    const raw = new ArrayBuffer(stat.size);
+    const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
+    fs.readSync(f.fd, raw);
+    fs.closeSync(f.fd);
     let decoded: PcmDecodeResult;
-    if (chunk.cachePath.endsWith('.wav')) {
-      const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
-      const wav = new ArrayBuffer(stat.size);
-      fs.readSync(f.fd, wav);
-      fs.closeSync(f.fd);
-      // 44 字节标准 WAV 头（LocalTtsClient.pcmToWav 写入）后即 16k/单声道/S16LE PCM
+    if (chunk.fmt.length > 0) {
+      // AI 产物：按 sidecar 记录的格式解码并归一化（方案 §5.4/§5.5）
+      decoded = await TtsEngine.decodeAiAudio(raw, chunk);
+    } else if (chunk.cachePath.endsWith('.wav')) {
+      // 老路径（本地引擎）：44 字节标准 WAV 头 + 固定 16k/单声道 —— 行为逐字不变
       decoded = {
-        pcm: wav.slice(44),
+        pcm: raw.slice(44),
         sampleRate: LOCAL_TTS_SAMPLE_RATE,
         channels: 1
       };
     } else {
-      const mp3 = new ArrayBuffer(stat.size);
-      const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
-      fs.readSync(f.fd, mp3);
-      fs.closeSync(f.fd);
-      decoded = await decodeMp3ToPcm(mp3);
+      decoded = await decodeMp3ToPcm(raw);
     }
     if (decoded.pcm.byteLength === 0) {
       return;
@@ -2715,6 +3445,8 @@ export class TtsEngine {
   }
 
   private static abortPlay(): void {
+    // AI 在飞合成作废（2026-10-09）：避免"停止后 HTTP 还在跑、返回的音频仍被写成缓存"
+    TtsEngine.cancelAllAiSynth();
     // PcmPlayer 内部 abortFlag 使写循环退出并清空队列；下一次 play() 自动复位
     if (TtsEngine.player !== null) {
       TtsEngine.player.stop();
@@ -2730,6 +3462,10 @@ export class TtsEngine {
   private static stopInternal(reason: string): void {
     TtsEngine.sessionGen++;
     TtsEngine.state = 'stopped';
+    // AI 在飞合成作废（2026-10-09，见 aiCancels 注释）
+    TtsEngine.cancelAllAiSynth();
+    // AI 熔断标记随会话结束清空（2026-10-10）：下次开播重新给一次机会
+    TtsEngine.aiFatalMsg = '';
     // ★ 2026-10-08：停止 ⇒ "暂停释放"整条状态作废（定时器 + 已释放标记）。
     //   放这里而不是 `stop()`：`start()` 里"重新开播前先停旧的"也走 `stopInternal`，
     //   那条路径同样应该把暂停态清干净。

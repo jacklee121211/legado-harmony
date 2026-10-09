@@ -30,6 +30,7 @@ import CommonConstants from '../../../common/constants/CommonConstants';
 import { TtsPrefs, loadTtsPrefs } from '../../../tts/TtsPrefs';
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
+import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
 import { NightMode } from '../../../common/utils/NightMode';
 import { TtsControlPanel } from '../../../components/tts/TtsControlPanel';
@@ -813,6 +814,25 @@ export default struct ReaderPage3 {
   /** 可观察的"沉浸可渲染"标志：currentNodeTexts() 是静态字段，不放进状态里
    *  ArkUI 就不会重估 if 分支（表现为"必须点一下播放键才变沉浸"）。 */
   @State immReady: boolean = false
+  /**
+   * "已点击朗读、首声还没出来"的窗口（2026-10-10 新增）。
+   *
+   * 由来（真机反馈）：点击播放后**不立刻进沉浸**，要等出声才进。
+   * 根因：`TtsState` 只有 `stopped/playing/paused`（`TtsEngine.ets:666`），而闸门是
+   * `ttsState !== 'stopped'`（本文件 `immersiveActive()`）——引擎只在**首块真正开播**时
+   * 才 `setState('playing')`（`TtsEngine.ets:1913`）。AI 时代这里被"说话人识别"阻塞到 6~10s，
+   * 所以现象被放大成"明显不进沉浸"。
+   *
+   * ⚠️ 为什么不给 `TtsState` 加 `'preparing'`：那是共享枚举，阅读器/听书 Dock/书架圆钮
+   *    全都读它，加值的爆炸半径远大于本页一个本地标志位。
+   */
+  @State ttsStarting: boolean = false
+  /**
+   * 本次朗读的**起始块节点**（-1 = 未知）。给"准备中提前锚定沉浸页"用：
+   * 点击瞬间队列还没建（`currentNodeTexts()` 仍为 null），只能在 `onChapter`
+   * （`buildQueue` 完成后回调，实测距点击约 141ms）才拿得到节点表。
+   */
+  @State pendingStartNode: number = -1
   /** 章节固定分页缓存：页 → 段列表（段 = [节点号, 起始字符, 结束字符]，可段中切断）/ 节点 → 页号 */
   private immPages: number[][][] = []
   private immPageOfNode: number[] = []
@@ -828,6 +848,25 @@ export default struct ReaderPage3 {
    * 定位必然失败（真机日志：`locate: startPlay 未落位，转翻页搜索 (none)`）。
    */
   private pendingTtsRestoreFollow: boolean = false
+  /**
+   * **首屏是否已排版出来**（2026-10-09）。
+   *
+   * 背景：真机日志实证，格式/结构异常的书 ReaderKit 解析会走兜底路径，很慢 ——
+   *   原文：`10:24:05.459 init: openBook success` → `10:24:05.814 Engine parse epub or txt
+   *   content failed!` → `10:24:10.047 pageShow: …`，**中间 4.59 秒页面全黑**。
+   *   用户原话：「有一本书，我们进去黑屏，几秒钟之后才出正文」。
+   * ⇒ 在第一个 `pageShow` 到来之前显示「正在排版…」，让用户知道是在干活而不是卡死。
+   *   `pageShow` 是 ReaderKit 自己"排版完成"的信号（本文件多处注释已引用该语义）。
+   */
+  /**
+   * **本页实际使用的书籍文件路径**（2026-10-09 转译版接线）。
+   * 正常书 = `bookData.bookUrl`；格式异常的书 = `BookNormalizer` 产出的转译版路径。
+   * **ReaderKit 与 TTS 必须共用它**，否则两边正文不同源、章号错位。
+   */
+  private effectiveBookPath: string = ''
+  @State firstPageReady: boolean = false
+  /** 「正在排版…」占位是否已经显示够久（避免快书时闪一下反而更难看） */
+  @State showTypesettingHint: boolean = false
   /** updateHighlight 重入保护（防止 requestLocate 的同步回调形成递归 → 爆栈闪退） */
   private inHighlight: boolean = false
   /** 遮罩色块（测量优先；无测量时回落到模型单块） */
@@ -3269,6 +3308,12 @@ export default struct ReaderPage3 {
     }
     //修改为设置的主题，需要在初始化阅读器后设置
     // 诊断（临时）：确认 aboutToAppear 的尾部真的执行到了
+    // ★ 「正在排版…」占位：延 250ms 才显示（正常书首屏 <250ms，不加延迟会闪一下）
+    setTimeout((): void => {
+      if (!this.firstPageReady) {
+        this.showTypesettingHint = true;
+      }
+    }, 250);
     hilog.info(0x0000, 'testTag', 'reader: aboutToAppear tail, nightMode=%{public}s',
       String(this.readerSetting.nightMode));
     this.colorMode = this.readerSetting.nightMode ? 0 : 1
@@ -3299,8 +3344,27 @@ export default struct ReaderPage3 {
   private async startPlay(path: string, resourceIndex: number, domPos: string) {
     try {
       let context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      // ★★ 2026-10-09「转译版」接线（用户拍板）★★
+      //   格式/编码异常的书 ReaderKit 会 `Engine parse ... failed` ⇒ 零目录 + 首屏 4.6 秒黑屏。
+      //   这里先问 `BookNormalizer`：命中缓存直接给转译版路径；没缓存且我们自己能切出章节
+      //   就返回 null（不折腾，走原文件）；切不出才现场规整并缓存（**只新增文件，不动原书**）。
+      //   ⚠️ 换路径之后 **TTS 也必须用同一个路径**（见 `effectiveBookPath`），
+      //      否则 ReaderKit 按转译版排版、TTS 按原文件取正文 ⇒ 章号/正文对不上。
+      let usePath: string = path;
+      try {
+        const norm = await BookNormalizer.ensure(context, this.bookData);
+        if (norm !== null && norm.path.length > 0) {
+          usePath = norm.path;
+          hilog.info(0x0000, 'testTag', 'startPlay: 使用转译版 %{public}s (toc=%{public}d)',
+            usePath, norm.toc.length);
+        }
+      } catch (e) {
+        hilog.warn(0x0000, 'testTag', 'BookNormalizer.ensure failed: %{public}s',
+          e instanceof Error ? e.message : String(e));
+      }
+      this.effectiveBookPath = usePath;
       let initPromise: Promise<void> = this.readerComponentController.init(context);
-      let defaultHandler: Promise<bookParser.BookParserHandler> = bookParser.getDefaultHandler(path);
+      let defaultHandler: Promise<bookParser.BookParserHandler> = bookParser.getDefaultHandler(usePath);
       let result: [bookParser.BookParserHandler, void] = await Promise.all([defaultHandler, initPromise]);
       // ★★ 关键守卫（2026-09-22 修复黑屏）★★
       // `init` / `getDefaultHandler` 是异步的，等待期间用户完全可能已经退出阅读页
@@ -3338,6 +3402,34 @@ export default struct ReaderPage3 {
       this.registerWebSyncListener();                // v1.1：阅读中电脑翻章 → toast 知会
     } catch (err) {
       hilog.error(0x0000, 'testTag', `failed to startPlay, Code is ${err.code}, message is ${err.message}`);
+      // ★★ 2026-10-09 用户反馈「有的书进入之后是黑屏」—— 根因与处理都在这里 ★★
+      //
+      // 真机日志原文（`D:\Arkts\3.8.11\miaoyueKey\日志.md`，10-09 10:19）：
+      //   `E  failed to startPlay, Code is 1017010004, message is File is not exist`
+      //   （`101701xxxx` 属 **bookParser**；1017010004 = 文件不存在。）
+      //
+      // 成因：本地书的文件被删/被移走后（例如经 web 传输清理过、或当初是用临时 URI 导入的），
+      //   ReaderKit 打不开书；而这里**原来只打一行日志就结束** ⇒ 页面停在空内容上
+      //   ⇒ 用户看到的就是**黑屏**（而且反复点也没反应）。
+      //
+      // ⇒ 修法：明确告知 + **退回书架**，绝不把用户留在黑屏里。
+      //   这类失败不可恢复（文件真没了），提示用户重新导入，不要假装能继续。
+      const code = err !== undefined && err !== null ? (err as BusinessError).code : -1;
+      const msg = err !== undefined && err !== null ? (err as BusinessError).message : '';
+      // ⚠️ 文案必须说实话：`1017010004` 的字面是 "File is not exist"，但真机上它**经常是误报**。
+      //   同一份日志里 bookparser 先打了真因：
+      //     `OpenBook failed,the <private> type is not support.`
+      //     `Open book failed, error encoding is <private>.`
+      //   ⇒ 真实原因是 **ReaderKit 不支持这个文件的格式/编码**（别的阅读器宽容所以能读），
+      //     而不是磁盘上没这个文件。用户按"文件不存在"的提示去删了重导，当然没用。
+      const tip: string = code === 1017010004
+        ? '打不开这本书：格式或文本编码不受支持'
+        : ('打开书籍失败：' + msg);
+      this.getUIContext().getPromptAction().showToast({ message: tip });
+      // 稍等一拍让 toast 先上屏，再退栈（否则页面一销毁 toast 可能被吞掉）
+      setTimeout((): void => {
+        AppRouter.pop();
+      }, 260);
     }
   }
 
@@ -4090,6 +4182,11 @@ export default struct ReaderPage3 {
         || (Date.now() - this.lastNavMs < 2500);
       this.updateHighlight();
       this.onPageShowLocate(range);
+      // ★ 首屏已排版出来 ⇒ 撤掉「正在排版…」占位（第一个 pageShow 即 ReaderKit 排版完成的信号）
+      if (!this.firstPageReady) {
+        this.firstPageReady = true;
+        hilog.info(0x0000, 'testTag', 'first pageShow: 排版完成，撤掉占位');
+      }
       // ★★ 2026-10-09：进书时若听书已在播，**在第一次 pageShow 之后**把阅读器定位到朗读处 ★★
       //
       // 为什么要等 pageShow 而不是在 `registerTtsCallbacks()` 里直接做：
@@ -4426,7 +4523,12 @@ export default struct ReaderPage3 {
           return;
         }
         this.ttsState = s;
+        // 首声已出来（playing）或暂停/停止 ⇒ "准备中"窗口结束
+        if (s !== 'stopped') {
+          this.ttsStarting = false;
+        }
         if (s === 'stopped') {
+          this.ttsStarting = false;
           this.ttsSegText = '';
           this.ttsSegTotal = 0;
           this.immPageIdx = -1;
@@ -4442,6 +4544,16 @@ export default struct ReaderPage3 {
         this.immPageIdx = -1; // 换章：重新分页并重新锚定
         this.immPagesKey = '';
         this.immReady = TtsEngine.currentNodeTexts() !== null; // 让沉浸层立刻出现（可观察状态）
+        // ★ 2026-10-10 提前锚定：此时 `buildQueue` 已完成（节点表可用），
+        //   把沉浸页直接定位到**本次朗读的起始块**，这样"准备中"窗口内也能渲染出正确正文
+        //   ——否则 `immCurPage()` 会返回 `[]`，沉浸层只剩一层背景色（见 `immersiveActive()` 注释）。
+        if (this.ttsStarting && this.immPageIdx < 0 && this.pendingStartNode >= 0) {
+          this.ensureImmersivePages();
+          const pn: number = this.pendingStartNode;
+          if (pn < this.immPageOfNode.length) {
+            this.immPageIdx = this.immPageOfNode[pn];
+          }
+        }
         // 只同步目录下标；真正的翻章（startPlay）由定位流程按精确坐标执行
         this.syncCatalogIndex(spineIndex);
       },
@@ -4484,17 +4596,7 @@ export default struct ReaderPage3 {
     //   ⇒ 不拉的话页面会停在 `'stopped'`：沉浸听读不出现、迷你条不出现、
     //   书架与阅读器显示的就不是同一个状态（正是用户要的"一模一样"反例）。
     const curState: TtsState = TtsEngine.getState();
-    // ★★ 无条件诊断（2026-10-09）：进书时把"谁在听"和"我是谁"一次打全 ★★
-    //   之前每次都要靠猜，这次一行定死。字段含义：
-    //     engine= 引擎状态 / active= 会话是否登记 / myId,listenId= 书 id 比对
-    //     myUrl,listenUrl= bookUrl 比对 / myTitle,listenTitle= 书名比对
-    //   判据顺序：id → url → 书名（见 `listeningThisBook()`）。
-    hilog.info(0x0000, 'testTag',
-      'LTID engine=%{public}s active=%{public}s match=%{public}s | myId=%{public}d listenId=%{public}d | myUrl=%{public}s listenUrl=%{public}s | myTitle=%{public}s listenTitle=%{public}s',
-      curState, String(ListenSession.isActive()), String(this.listeningThisBook()),
-      this.bookData.id ?? -1, ListenSession.bookId(),
-      this.bookData.bookUrl ?? '', ListenSession.bookUrl(),
-      this.bookData.bookName, ListenSession.bookTitle());
+
     // ⚠️ 同样必须叠加"在听的是不是本页这本"：在听 A 时打开 B，
     //   B 不能把 A 的听书状态当成自己的（否则 B 会渲染 A 的沉浸听读，退出时黑屏）。
     if (curState !== 'stopped' && this.listeningThisBook()) {
@@ -5244,10 +5346,24 @@ export default struct ReaderPage3 {
     //   —— 本页 `aboutToDisappear` 的 `releaseBook()` 不再影响听书续播。
     // 一键回退：改回 `TtsEngine.start(context, this.BookHandler, …)`（旧签名原样保留）。
     ListenSession.begin(this.bookData.bookName, this.bookData.bookUrl ?? '', this.bookData.id ?? -1);
-    TtsEngine.startStandalone(context, this.bookData.bookUrl ?? '', spineIndex, this.ttsPrefs,
+    // ── 提前进沉浸（2026-10-10）──────────────────────────────────────────────
+    // 点击即置"准备中"并记下起始块节点；真正的沉浸页锚定放在 `onChapter`
+    // （那时 `buildQueue` 已完成、节点表才存在）。
+    this.ttsStarting = true;
+    this.pendingStartNode = startNode;
+    // 安全阀：20 秒内既没出声、也没进入任何非 stopped 状态（启动静默失败）⇒ 自动收回，
+    // 绝不把界面留在"沉浸但无声"的状态。
+    setTimeout((): void => {
+      if (this.ttsState === 'stopped') {
+        this.ttsStarting = false;
+      }
+    }, 20000);
+    // ⚠️ 必须用 ffectiveBookPath（可能指向转译版），否则与 ReaderKit 排版的正文不同源
+      TtsEngine.startStandalone(context, this.effectiveBookPath, spineIndex, this.ttsPrefs,
       this.bookData.bookName, startNode, startChar)
       .catch((e: Object) => {
         hilog.error(0x0000, 'testTag', 'tts start failed: %{public}s', JSON.stringify(e));
+        this.ttsStarting = false;
       });
   }
 
@@ -5896,6 +6012,38 @@ export default struct ReaderPage3 {
       // 沉浸听读层（可选）：自绘本页 + 句内高亮画在文字内部；整层穿透触摸
       if (this.immersiveActive()) {
         this.ImmersiveListenLayer()
+      }
+
+      // ── 「正在排版…」占位（2026-10-09）──────────────────────────────────────
+      // 为什么需要：格式/结构异常的书 ReaderKit 解析走兜底路径，真机实测 **4.59 秒**
+      //   才出第一个 `pageShow`，这期间页面全黑，看起来像卡死/黑屏（用户反馈原话）。
+      //   这里给一个明确的"在干活"信号。
+      // 为什么延 250ms 才显示：正常书首屏 <250ms，不加延迟的话占位会闪一下更难看。
+      // 命中条件：`firstPageReady`（首个 pageShow）为假 **且** 已超过 250ms。
+      if (!this.firstPageReady && this.showTypesettingHint) {
+        Column({ space: 14 }) {
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            // ⚠️ 本页**没有** `theme` 字段（那是 Index/ListenDock 的）⇒ 用中性色，深浅档各取一个
+            .color(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.85)' : 'rgba(0,0,0,0.65)')
+          Text('正在排版…')
+            .fontSize(14)
+            .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.75)' : 'rgba(0,0,0,0.6)')
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        // ★★ 2026-10-09 用户反馈修复：**这一层必须是不透明的** ★★
+        //   症状原文：「进入还是先黑屏，然后都出内容了才看到正在排版」。
+        //   原因：本层原来**透明** ⇒ 底下 `ReadPageComponent` 的 surface 首帧未上屏时是**黑**的，
+        //     直接透上来，于是先看到黑、等 surface 出画才看见「正在排版…」。
+        //   ⇒ 铺一个不透明的**阅读底色**（日间=白、夜间=深）把黑顶掉。
+        //     用户原话：「把这个黑屏换成白屏，这样也能看到正在排版的字样」。
+        .backgroundColor(NightMode.isDarkSurface() ? '#000000' : '#FFFFFF')
+        // 不拦截触摸：排版期间用户仍可以点返回
+        .hitTestBehavior(HitTestMode.None)
       }
 
       // 几何标定标尺（HL_CALIB_MODE）：红线=我们认为的每个行位，绿线=我们认为的文本左右边界。
@@ -7413,8 +7561,18 @@ export default struct ReaderPage3 {
    * ⚠️ 必须叠加 `listeningThisBook()`：否则在听 A 时打开 B，B 会被渲染成 A 的沉浸听读。
    */
   private immersiveActive(): boolean {
-    return this.ttsPrefs.immersiveListen && this.ttsState !== 'stopped' && this.immReady
+    const base: boolean = this.ttsPrefs.immersiveListen && this.immReady
       && this.listeningThisBook();
+    if (!base) {
+      return false;
+    }
+    if (this.ttsState !== 'stopped') {
+      return true;
+    }
+    // 准备中（已点朗读、首声未出）：**只有已能定位到要读的那一页**才提前进沉浸。
+    // 为什么加这个条件：`immCurPage()` 在 `immPageIdx < 0` 时返回 `[]`（本文件 :4697-4701）
+    // ⇒ 没有锚点就进沉浸会渲染出**一整层纯背景色**（闪色），比晚一点进更糟。
+    return this.ttsStarting && this.immPageIdx >= 0;
   }
 
   private immNodeText(nodeIdx: number): string {

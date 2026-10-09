@@ -49,7 +49,6 @@ export struct ListenDock {
     //   （= HDS 把 `barFloatingStyle` 当成"配置变了"重新应用）⇒ 闪是"重建"造成的；
     //   如果切页签**完全不出现**，则节点没重建 ⇒ 闪只能是"重绘/配色"造成的。
     //   两者修法完全不同，所以必须先分清。
-    console.info('LISTENDOCK', `dock node rebuilt, playing=${this.playing} expanded=${this.expanded}`);
     // 与 `ReaderPage3:3140` 同源：`@StorageLink` 初值 false，必须从 Preferences 拉一次，
     // 否则已解锁用户冷启动后书架上看不到这个入口。
     this.unlocked = ListenUnlock.isUnlocked();
@@ -100,10 +99,25 @@ export struct ListenDock {
   circle() {
     Stack() {
       Column() {
-        Image($r('app.media.app_icon'))
+        // ★★ 2026-10-09 用户要求：**只取图标前景层，剔除粉色背景层** ★★
+        //   应用图标是**分层图标**（`AppScope/resources/base/media/layered_image.json`）：
+        //     { "background": "$media:background", "foreground": "$media:foreground" }
+        //   `background.png` 是纯色底、`foreground.png` 是**透明底**的前景（猫）。
+        //   原先用 `app_icon.png`（带粉底的平铺图）⇒ 圆里有一块不透明粉底，
+        //   把迷你栏的沉浸光感材质挡住了。
+        //   ⇒ 换成**前景层**后，材质自然从圆的区域透上来，与 dock 其余部分同质。
+        //
+        //   ⚠️ 只用 `foreground`，**绝对不要用 `background`**：
+        //      `entry/src/main/resources/base/media/` 下**存在同名 `background.png`**，
+        //      与 AppScope 那张撞名（模块资源优先）⇒ 取到的不是图层底色。
+        //      `foreground.png` 只在 AppScope 里有一份，无歧义。
+        //
+        //   `ImageFit.Contain`（不用 Cover）：前景图自带透明留白，Cover 会裁掉留白、
+        //      把猫放大出界；Contain 完整装进圆形区域。
+        Image($r('app.media.foreground'))
           .width(CIRCLE_SIZE)
           .height(CIRCLE_SIZE)
-          .objectFit(ImageFit.Cover)
+          .objectFit(ImageFit.Contain)
           // ★★ 2026-10-09「切页签圆形区域闪一下」的**正解** ★★
           //   真机打点实证：切页签时 `currentTabIndex` 变 → Index 重渲染 →
           //   `hdsFloatingStyle()` 重跑 → 迷你栏 builder 重跑 →

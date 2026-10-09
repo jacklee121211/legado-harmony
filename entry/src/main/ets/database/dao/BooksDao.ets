@@ -7,6 +7,24 @@ import { BooksTypeSearchParams } from '../types/BooksType';
 import { ColumnInfo, ColumnType } from '../types/ColumnInfo';
 import { PreferencesUtil } from '@pura/harmony-utils';
 
+/**
+ * 「分类页签合并」迁移的一次性标志（Preferences 键）。
+ * 见 `BooksDao.migrateBookTypeToShelf()`。
+ */
+const KEY_BOOKTYPE_MERGED: string = 'bookTypeMergedToShelfV1'
+
+/**
+ * 迁移**前**的原始值留档键（JSON：`BookTypeBackupRow[]`）。
+ * 本迁移的 UPDATE 不可逆，这份留档是唯一可用的还原依据。
+ */
+const KEY_BOOKTYPE_BACKUP: string = 'bookTypeMergedToShelfV1_backup'
+
+/** 迁移前留档用的一行（见 `BooksDao.backupBookTypeBeforeMerge()`） */
+interface BookTypeBackupRow {
+  id: number
+  bookType: number
+}
+
 class BooksDao {
   TABLE_NAME: string = 'books'
 
@@ -750,6 +768,90 @@ class BooksDao {
       'durChapterIndex', 'durChapterPos', 'durChapterTime',
       'wordCount', 'syncTime', 'updateTime'
     ]);
+  }
+
+  /**
+   * 一次性迁移：把「漫画 / 有声书」两个分类页签的数据并回「书架」。
+   *
+   * 背景（2026-10-11 用户裁定）：书架顶部三个页签（小说/漫画/有声书）在实现上只是
+   * `Books.bookType` 的 SQL 分区，而漫画/有声书没有任何对应的渲染与导入格式
+   * ⇒ 两个入口删除，只剩「书架」。
+   *
+   * ⚠️ 删入口不能丢数据：历史上如果用户站在那两个页签下导入过书，
+   *    `FileHandler.CopyFile(src, currentIndex)` 会把 `bookType` 记成 1/2
+   *    （`FileHandler.ets:82`）⇒ 入口删掉后这些书**在界面上再也查不到**
+   *    （`BooksDao.buildWhereClause` 的 `bookType = type` 恒为 0）。
+   *    同理，在这两个页签下自建的分组 `groupType` 记成 1/2
+   *    （`BookSelectGroupDialog.ets:213` `bookGroups.groupType = this.currentIndex`）、
+   *    书单 `worksType` 也按大类分过档。
+   *
+   * 做法：UPDATE 三张表，把 1/2 一律归一成 0。
+   *  · 幂等：Preferences 标志 `bookTypeMergedToShelfV1`，跑过一次就不再跑；
+   *  · 失败**不打标志** ⇒ 下次启动重试（与 `FileHandler.seedDefaultBook` 同款约定）；
+   *  · 顺序：在 `DataBase.initAllTable()` 建表**之后**调用（三张表此时必存在）。
+   *
+   * 回退：把下面 `KEY_BOOKTYPE_MERGED` 对应的 Preferences 值清掉即可再跑一次；
+   *   若已迁移又想退回三页签，只能靠备份 —— 本迁移**不可逆**（符合用户选择：归到书架、不丢书）。
+   */
+  /**
+   * 回退说明（「删掉漫画/有声书两个页签」这一版改动）：
+   *  · 代码侧 —— `git checkout` 本文件 + `database/index.ets` + `IndexShelf.ets` +
+   *    `readStatistics.ets` + `readTabs.ets` + `groupTypePanel.ets` + `BookBodyContent.ets`，
+   *    即可恢复三页签（`IndexShelf.titleArray` 是唯一入口清单）。
+   *  · 数据侧 —— 下面的 UPDATE 是**原地覆盖、不可逆**。所以迁移**之前**已把「将被改动的
+   *    主键 + 原 bookType」序列化进 Preferences（键 `bookTypeMergedToShelfV1_backup`）。
+   *    要还原：取出该 JSON，按 id 逐条 `UPDATE books SET bookType = ?` 即可
+   *    （应用内没有 SQL 控制台 ⇒ 手工手段是 hdc 拉库，或临时写一段一次性代码执行）。
+   *  · 留档只覆盖 `books`：`book_groups` / `works_lists` / `book_history` 三张表在本工程
+   *    里**没有写入 1/2 的入口**（`newBookShelf.ets:168,499` 恒写 0；
+   *    `BookSelectGroupDialog.ets:213` 写的是当前大类 = 0），实际不会产生这两档数据。
+   */
+  async migrateBookTypeToShelf(): Promise<void> {
+    if (PreferencesUtil.getSync(KEY_BOOKTYPE_MERGED, false) === true) {
+      console.info('TagInfo', 'migrateBookTypeToShelf: already done, skip');
+      return;
+    }
+    try {
+      await this.backupBookTypeBeforeMerge()
+      await DbUtil.executeSql(
+        `UPDATE ${this.TABLE_NAME} SET bookType = 0 WHERE bookType = 1 OR bookType = 2`)
+      await DbUtil.executeSql(
+        `UPDATE book_groups SET groupType = 0 WHERE groupType = 1 OR groupType = 2`)
+      await DbUtil.executeSql(
+        `UPDATE works_lists SET worksType = 0 WHERE worksType = 1 OR worksType = 2`)
+      // book_history 的 bookType 只在「浏览历史」里用，那个入口早已摘除；
+      // 一并归一，保证存量数据不会在别处按旧口径被过滤掉。
+      await DbUtil.executeSql(
+        `UPDATE book_history SET bookType = 0 WHERE bookType = 1 OR bookType = 2`)
+      PreferencesUtil.putSync(KEY_BOOKTYPE_MERGED, true)
+      console.info('TagInfo', 'migrateBookTypeToShelf: done (bookType/groupType/worksType -> 0)');
+    } catch (e) {
+      // 不打标志 ⇒ 下次启动重试。必须留原因（上一版种书迁移静默失败吃过亏）。
+      console.error('TagInfo', 'migrateBookTypeToShelf failed: ' + JSON.stringify(e));
+    }
+  }
+
+  /**
+   * 迁移**前**留档：把 `bookType = 1/2` 的书的 `{id, bookType}` 存进 Preferences，
+   * 作为「万一要退回三页签」的唯一还原依据（UPDATE 本身不可逆）。
+   * ⚠️ 留档失败**不阻断迁移**（它是附加保障，不是前置条件），但必须留痕。
+   */
+  private async backupBookTypeBeforeMerge(): Promise<void> {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      // ⚠️ 必须 `SELECT *`：`DbUtil.parseResultSet` 会对 `column` 里的**每一列**调
+      //    `result.getColumnIndex(name)`，只 SELECT 少数字段会让其余列索引为 -1 而读崩。
+      const rows: Books[] = await DbUtil.querySqlForList<Books>(
+        `SELECT * FROM ${this.TABLE_NAME} WHERE bookType = 1 OR bookType = 2`, column);
+      const backup: BookTypeBackupRow[] = [];
+      for (const r of rows) {
+        backup.push({ id: r.id ?? -1, bookType: r.bookType });
+      }
+      PreferencesUtil.putSync(KEY_BOOKTYPE_BACKUP, JSON.stringify(backup));
+      console.info('TagInfo', 'migrateBookTypeToShelf: backed up ' + backup.length + ' row(s)');
+    } catch (e) {
+      console.error('TagInfo', 'backupBookTypeBeforeMerge failed: ' + JSON.stringify(e));
+    }
   }
 }
 

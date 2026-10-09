@@ -20,9 +20,24 @@ export interface SpeakerItem {
 }
 
 const SYSTEM_PROMPT =
-  '你是小说朗读的说话人识别助手。对给定的每条对白，判断说话人的性别。' +
-  '只输出一个 JSON 对象：键是对白编号（字符串数字），值只能是 "male"、"female" 或 "unknown"。' +
+  '你是小说朗读的说话人识别助手。对给定的每条对白，判断说话人性别、可能的说话人名字、以及朗读语气。' +
+  '只输出一个 JSON 对象：键是对白编号（字符串数字），值是一个对象：' +
+  '{"kind":"male|female|unknown","speaker":"角色名或空串","emotion":"10~30字的语气描述或空串"}。' +
   '不要输出 JSON 以外的任何内容。';
+
+/**
+ * 一条对白的完整标注（2026-10-10 扩展）。
+ * · kind：性别（原有能力，三引擎通用）
+ * · speaker：**说话人名字**——用于"角色名 → 音色自动分配"（用户接受的低成本折中方案，
+ *   不需要角色卡、不需要 AI 书籍分析）；
+ * · emotion：**朗读语气**（自然语言）——仅对该服务商支持时透传（见 AiProviderMeta.supportsEmotion）。
+ * ⚠️ 三者都从**同一次 LLM 调用**返回，不额外增加请求数。
+ */
+export interface SpeakerLabel {
+  kind: SpeakerKind;
+  speaker: string;
+  emotion: string;
+}
 
 /** OpenAI 兼容请求体（显式接口，满足 ArkTS 对象字面量类型约束） */
 interface ChatMessage {
@@ -37,7 +52,7 @@ interface ChatRequest {
 }
 
 function buildUserPrompt(items: SpeakerItem[]): string {
-  let sb = '请逐条判断下列对白的说话人性别：\n';
+  let sb = '请逐条判断下列对白的说话人性别、可能的说话人名字、以及朗读语气：\n';
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     sb += `[${i}] 对白：${it.text}`;
@@ -49,6 +64,7 @@ function buildUserPrompt(items: SpeakerItem[]): string {
     }
     sb += '\n';
   }
+  sb += '提示：说话人名字只能来自上文/下文中出现的角色名，不确定就留空串，不要编造。';
   return sb;
 }
 
@@ -80,17 +96,22 @@ function kindOf(v: Object): SpeakerKind {
 }
 
 /**
- * 批量标注性别。返回数组长度与 items 一致。
+ * 批量标注（性别 + 说话人 + 语气）。返回数组长度与 items 一致。
+ *
+ * **向后兼容**：模型若仍只回 `"0":"male"`（字符串形式），按"只有性别"解析，
+ * 说话人与语气留空 —— 老行为不丢。
+ *
  * @throws { Error } 网络请求失败 / 非 2xx / 响应无法解析时抛出，由调用方回落为 'unknown'
  */
-export async function classifyDialogueGenders(baseUrl: string, apiKey: string,
-  model: string, items: SpeakerItem[]): Promise<SpeakerKind[]> {
-  const kinds: SpeakerKind[] = [];
+export async function classifyDialogueLabels(baseUrl: string, apiKey: string,
+  model: string, items: SpeakerItem[], wantEmotion: boolean): Promise<SpeakerLabel[]> {
+  const out: SpeakerLabel[] = [];
   for (let i = 0; i < items.length; i++) {
-    kinds.push('unknown');
+    const l: SpeakerLabel = { kind: 'unknown', speaker: '', emotion: '' };
+    out.push(l);
   }
   if (items.length === 0) {
-    return kinds;
+    return out;
   }
   const batch = items.length > MAX_BATCH ? items.slice(0, MAX_BATCH) : items;
 
@@ -136,13 +157,44 @@ export async function classifyDialogueGenders(baseUrl: string, apiKey: string,
     }
     for (let i = 0; i < batch.length; i++) {
       const v = map[i.toString()];
-      if (v !== undefined && v !== null) {
-        kinds[i] = kindOf(v);
+      if (v === undefined || v === null) {
+        continue;
+      }
+      if (typeof v === 'string') {
+        // 旧格式兼容：值直接是 "male"/"female"/"unknown"
+        out[i].kind = kindOf(v);
+        continue;
+      }
+      const o = v as Record<string, Object>;
+      out[i].kind = kindOf(o['kind']);
+      const sp = o['speaker'];
+      if (typeof sp === 'string') {
+        const s = (sp as string).trim();
+        // 容忍模型把"无"写成 null 字符串
+        if (s.length > 0 && s !== 'null' && s !== '无' && s !== 'unknown') {
+          out[i].speaker = s.length > 20 ? s.substring(0, 20) : s;
+        }
+      }
+      if (wantEmotion) {
+        const em = o['emotion'];
+        if (typeof em === 'string') {
+          const e = (em as string).trim();
+          if (e.length > 0 && e !== 'auto' && e !== 'null') {
+            out[i].emotion = e.length > 40 ? e.substring(0, 40) : e;
+          }
+        }
       }
     }
-    hilog.info(DOMAIN, TAG, 'classify ok items=%{public}d', batch.length);
-    return kinds;
+    hilog.info(DOMAIN, TAG, 'classify ok items=%{public}d emotion=%{public}s',
+      batch.length, String(wantEmotion));
+    return out;
   } finally {
     httpRequest.destroy();
   }
 }
+
+/**
+ * 批量标注（性别 + 说话人 + 语气），见 {@link classifyDialogueLabels}。
+ * 旧的 `classifyDialogueGenders` 已删除（2026-10-10）：它只是新函数的薄封装，
+ * 留着会触发 etsLint「函数可能抛异常」告警，且无人调用。
+ */
