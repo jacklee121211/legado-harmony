@@ -109,13 +109,21 @@ export default struct BookBodyContent {
       }
       .padding(15)
 
+      // ★ 2026-10-11（A5 方案）：下胶囊**从 Stack 拿出来**放到普通 Column 文档流里
+      //   （在 Row(双胶囊) 之下、Stack 之上）。这样：
+      //   1) 下胶囊的 `backgroundBlurStyle(REGULAR)` 模糊**采样的"背后"= 渐变彩带**
+      //      （与左/右胶囊采样的背景一致）—— **朦胧出色感统一**；
+      //   2) 下胶囊**不和 Tabs 内书封重叠**——不再"穿模"（看不到朦胧感）；
+      //   3) 不需要 zIndex 浮在书封上（groupTypeComponent 自身不再有 zIndex）；
+      //   4) 容器高度 = 15号字(18) + 8×2 = 34vp —— **高度不动**（你说"不要动"）。
+      groupTypeComponent({
+        bookTypeNumber:this.bookTypeNumber,
+        currentIndex: this.currentIndex,
+        groupCoverShow: this.groupCoverShow,
+        GROUP: this.GROUP
+      })
+
       Stack() {
-        groupTypeComponent({
-            bookTypeNumber:this.bookTypeNumber,
-            currentIndex: this.currentIndex,
-            groupCoverShow: this.groupCoverShow,
-            GROUP: this.GROUP
-          }).zIndex(999)
         Tabs({
           controller:this.tabsBookBodyController,
           index: this.bookBodyIndex
