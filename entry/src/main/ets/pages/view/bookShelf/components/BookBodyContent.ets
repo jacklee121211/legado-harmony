@@ -71,11 +71,18 @@ export default struct BookBodyContent {
                   .fontSize(15)
                   .fontWeight(400)
             }
-            // ── 2026-09-23「书架顶部向沉浸光感看齐」（用户选 A：调到最像）──────────────
-            // 自绘内容拿不到真材质（官方生效范围见 `IndexShelf` 顶部同款注释）⇒ 通用属性模拟，
-            // 取值与阅读页胶囊一致：半透明底 + COMPONENT_ULTRA_THICK + 圆角 20。
-            .backgroundColor(ShelfColors.surface())
-            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+            // ★ 2026-10-11：三胶囊配方完全统一（用户拍板"和双图标胶囊对齐"）。
+            //   上一版"无 backgroundColor + 纯 REGULAR"在下胶囊位置**几乎不可见**（user 截图）：
+            //   下胶囊盖在 Tabs 内容（浅色书封网格）+ 渐变底端（接近白色）上，REGULAR
+            //   模糊采样到浅色 → 朦胧出浅灰白，与页面背景几乎融为一体，视觉消失。
+            //   修法：所有三胶囊都加 `backgroundColor(0.55 透明白/暗)` 兑底层，让朦胧有
+            //   "色感"统一，能被肉眼识别。alpha=0.55 是 user 拍板的"折中"——足够识别
+            //   但不压制 REGULAR 毛玻璃主效果。
+            //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
+            //     0.92 → 0.55 的 alpha 调优是关键。
+            //   容器高 = 15号字(18) + 8×2 = **34vp**（与右胶囊 symbol 视觉 20 + 7×2 = 34vp 等高）。
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.55)' : 'rgba(255, 255, 255, 0.55)')
+            .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
             .borderRadius(20)
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           }
@@ -85,8 +92,18 @@ export default struct BookBodyContent {
 
         // ── 行尾动作区：搜索 / 更多（2026-09-29 自顶部行下移，填充「浏览历史」撤除后的空位）──
         // Flex 是 SpaceBetween ⇒ 本节点贴行尾；垂直随 alignItems 与胶囊居中。
+        // ★ 2026-10-11：给搜索/更多**加胶囊**（与左/下胶囊同款配方）：
+        //   0.55 透明兑底 + REGULAR 毛玻璃 + borderRadius(20) +
+        //   padding top/bottom 7（symbol 渲染自高 2vp ⇒ 与左 8 配对达到 34vp 等高） +
+        //   左右 padding 10（比左 14 窄，因图标不需要那么宽的边距）。
         if (this.trailingActions) {
-          this.trailingActions()
+          Row() {
+            this.trailingActions()
+          }
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.55)' : 'rgba(255, 255, 255, 0.55)')
+          .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
+          .borderRadius(20)
+          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
         }
       }
       .padding(15)

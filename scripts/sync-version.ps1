@@ -1,4 +1,4 @@
-﻿<#
+<#
   scripts/sync-version.ps1 —— 版本号 + 更新日志的**唯一生成器**
   ============================================================================
   谁是权威：**git 提交备注**。本脚本把它同步到两个地方，再由 `commit-msg` 钩子
@@ -79,8 +79,9 @@ foreach ($chunk in ($raw -split $SEP_REC)) {
 if ($CommitMsgFile -ne '' -and (Test-Path $CommitMsgFile)) {
   # 显式 UTF-8 读（git 写的 COMMIT_EDITMSG 是 UTF-8）
   $msgText = [System.IO.File]::ReadAllText($CommitMsgFile, (New-Object System.Text.UTF8Encoding($false)))
-  # 去掉 git 默认的注释行（以 # 开头）
-  $lines = ($msgText -split "`r?`n") | Where-Object { $_ -notmatch '^\s*#' }
+  # 去掉 git 默认的注释行（以 # 开头）+ **纯数字 AI 序号行**（`1`/`11`/`111`，
+  #   2026-10-10 用户约定：每次 AI commit 末尾追加 1/11/111 序号，**不进更新日志**）
+  $lines = ($msgText -split "`r?`n") | Where-Object { $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*\d+\s*$' }
   $msgText = ($lines -join "`n").Trim()
   if ($msgText -ne '') {
     $subj = ($msgText -split "`r?`n")[0]
@@ -121,8 +122,16 @@ foreach ($r in $records) {
   $items = New-Object System.Collections.Generic.List[string]
   # 分隔符：分号/换行；另加"空格 + 编号 + ."这种漏了分号的写法（如 `…排布 9.增加本地TTS方案`）
   # ⚠️ 只认"编号后面跟非数字"，避免把条目里的版本号（`鸿蒙7.0沉浸式`）切开
+  # ★ 2026-10-11：处理历史 commit 的"末尾 AI 序号"问题——
+  #   git log 把多行 message 压单行（$r.subject = 整段），subject 末尾会带" 1"，
+  #   导致最后一项变成 `30.优化UI显示效果 1` 进 items 污染日志。
+  #   修法：**先把 $rest 末尾的" \d+" 剥掉**——只剥" 1/11/111"（纯数字 + 前导空格），
+  #   不影响正常的"4.听书稳定性优化1"（数字 + 文字混合）。
+  $rest = $rest -replace ' \d+$', ''
+  # 再加一个**纯数字 item**的过滤，兜底 line 85 没拦住的场景
   foreach ($piece in (($rest + ';' + $r.body) -split '[;；\n\r]|\s+(?=\d+\s*[\.、\)]\s*\D)')) {
     $t = Strip-Number $piece
+    if ($t -match '^\d+$') { continue }
     if ($t -ne '' -and -not $items.Contains($t)) { $items.Add($t) }
   }
 

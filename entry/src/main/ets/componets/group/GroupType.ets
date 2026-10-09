@@ -7,9 +7,12 @@ import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverI
 import ImmersiveMaterialUtil from '../../common/utils/ImmersiveMaterialUtil'
 import UiMotion, { runJellyClick } from '../../common/utils/UiMotion'
 import { showMessage } from '../common/promptShow'
-import { NightMode, ShelfColors } from '../../common/utils/NightMode'
+import { NightMode } from '../../common/utils/NightMode'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../common/utils/Haptics'
+// ★ 2026-10-11：分组行三横图标跟随主题色（与 IndexShelf.trailingIconColor 同款语义）
+import { ThemeItem } from '../../common/model/Theme'
+import { ThemeStorageKey } from '../../common/constants/Theme'
 
 /**
  * 分组管理弹窗「停在分组行下面」的位置修正量（vp，**唯一可调点**）。
@@ -104,6 +107,8 @@ export default struct groupTypeComponent {
   }
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`），理由见 `IndexShelf` 同名字段 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  // ★ 2026-10-11：主题颜色（与 IndexShelf.ets:164 同款），给"三横"图标跟随主题色用。
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   @Link @Watch('changeRefresh')currentIndex: number
   @Link groupCoverShow:boolean
   @Link GROUP:string
@@ -218,6 +223,14 @@ export default struct groupTypeComponent {
     this.groupPanelDialog?.close()
   }
 
+  /**
+   * 分组行尾部"三横"图标颜色（2026-10-11：与搜索/更多同款主题色跟随）。
+   * 与 IndexShelf.trailingIconColor() 语义一致：亮色档=主题主色、暗色档=浅色对比色。
+   */
+  private groupIconColor(): string {
+    return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : this.theme.mainColor
+  }
+
   build() {
     // ── 2026-09-23 结构简化（用户：「点击展开分组管理…首先这个模块没有沉浸光感材质，
     //    也就是 CustomDialog，其次没有展开动画」）────────────────────────────────
@@ -285,9 +298,10 @@ export default struct groupTypeComponent {
           // ── 分组行尾部按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）──
           // 2026-10-01：justifyContent End ⇒ 三横贴右边距（margin 15），与上一行
           // 「最近阅读」行尾「更多」按钮中心（右边距 15+12=27vp）垂直对齐。
+          // ★ 2026-10-11：字号 24→20，颜色跟随主题色（与搜索/更多同款）。
           SymbolGlyph($r('sys.symbol.line_3_horizontal'))
-            .fontSize(24)
-            .fontColor([ShelfColors.icon()])
+            .fontSize(20)
+            .fontColor([this.groupIconColor()])
             .scale({ x: this.groupRowScale, y: this.groupRowScale })
             .onClick(()=>{
               Haptics.tap();
@@ -303,19 +317,23 @@ export default struct groupTypeComponent {
         // 2026-10-01（用户，夜间模式反馈）：三横原来贴住胶囊右边缘（上一轮为对齐改成
         // End+右padding 0），"没有间距"⇒ 往回来 8vp。列右内边距 8 ⇒ 图标右缘在
         // 右边距 15+8=23vp 处，与上一行「更多」仍基本对齐（中心 35 vs 27，视觉可接受）。
-        .padding({ right: 8 })
+        // ★ 2026-10-11：right padding 8→10，与"更多"图标右 padding 10 对齐
+        //   ⇒ 三横右缘 = 屏右 - 15(margin) - 10(padding) = 屏右 - 25vp
+        //   = "更多"图标右缘（屏右 - 15 - 10）= **两图标同列右对齐**。
+        .padding({ right: 10 })
       }.margin({ left: 15, right: 15, bottom: 10})
-        // ── 2026-09-23「书架顶部向沉浸光感看齐」（用户选 A：调到最像）──────────────
-        // 「分组 / 全部 / 未分组 / 本地」这一栏：自绘内容拿不到真材质（官方生效范围见
-        // `IndexShelf` 顶部同款注释）⇒ 通用属性模拟，取色与阅读页胶囊一致。
-        .backgroundColor(ShelfColors.surface())
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        // ★ 2026-10-11：三胶囊配方完全统一（与左/右胶囊同款 0.55 透明兑底 + REGULAR）。
+        //   user 截图反馈下胶囊"几乎看不见"——盖在 Tabs 内容（浅色书封网格）+ 渐变底端
+        //   （接近白色）上时，单纯 REGULAR 模糊采样到浅色 → 朦胧出浅灰白，与页面背景
+        //   几乎融为一体。修法：加 0.55 透明兑底层让朦胧有"色感"统一，能被肉眼识别。
+        //   alpha=0.55 是 user 拍板的"折中"——足够识别但不压制 REGULAR 毛玻璃主效果。
+        //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
+        //   容器高 = 15号字(18) + 8×2 = **34vp**（与左/右胶囊**完全等高**）。
+        //   ⚠️ 右 padding 仍为 0：三横列靠右贴边缘（End 对齐），不受 padding 影响。
+        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.55)' : 'rgba(255, 255, 255, 0.55)')
+        .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
         .borderRadius(20)
-        // ⚠️ 右 padding 2026-10-01 改 0：三横按钮要与上一行（最近阅读）行尾的「更多」
-        // 按钮对齐 —— 上一行容器 padding 15 ⇒「更多」中心在右边距 15+12=27vp 处；
-        // 本行 margin 15 + 三横列 justifyContent End ⇒ 三横中心同为 27vp（原 right:12
-        // 时中心在 ~39vp，肉眼可见错位，用户点名对齐）。
-        .padding({ left: 12, right: 0, top: 6, bottom: 6 })
+        .padding({ left: 12, right: 0, top: 8, bottom: 8 })
         // ★ 2026-09-23 用户反馈：「这一行下面没空间，和下面的书籍叠加了」。
         //   本栏与书籍列表是同一个 Stack 里的两层（本栏 zIndex 999 浮在上面）
         //   ⇒ 把**实测高度**上报，由 `BookBodyContent` 给列表让位（不写死数字）。
