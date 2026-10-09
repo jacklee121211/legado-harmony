@@ -77,8 +77,10 @@ export default struct BookContentRefresh {
     // 现在按 `GroupType` 用 onAreaChange **实测上报**的高度算：`实测高度 + 4`（4 = 视觉间隙）；
     // 拿不到实测值时回落旧的 30。**只在这一处让位**（`BookBodyContent` 里那份叠加已删除）。
     // （2026-09-29 摘除「浏览历史」后不再有 0 让位的分支 —— 见 BookBodyContent 同日注释。）
+    // ★ 2026-10-11：groupTypeComponent 改文档流（不再浮在 Tabs 上），
+    //   不再需要让位 —— top 固定 0（让 BookContentRefresh 内容紧贴 groupTypeComponent 之下）。
     .margin({
-      top: this.shelfGroupRowH > 0 ? this.shelfGroupRowH + 4 : 30
+      top: 0
     })
     .onStateChange((refreshStatus: RefreshStatus) => {
       if (refreshStatus === 1 || refreshStatus === 2) {
