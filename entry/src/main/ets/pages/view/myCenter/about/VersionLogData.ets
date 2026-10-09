@@ -20,7 +20,7 @@ export const APP_VERSION_FALLBACK: string = 'V2.1.4'
 export const VERSION_LOGS: VersionEntry[] = [
   {
     version: 'V2.1.4',
-    date: '2026-10-09',
+    date: '2026-10-10',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -51,6 +51,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '新增下划增加/删除书签手势',
       '重构dock栏，新增听书圆形按钮',
       '新增AI听书接口，适配主流TTS模型',
+      '优化UI显示效果',
     ]
   },
 ]

@@ -259,7 +259,12 @@ export default struct IndexShelf {
         console.log('index:' + index)
         this.currentIndex = index
       })
-      .backgroundColor(ShelfColors.pageBg())
+      // ★ 2026-10-11 试一下：去掉 Tabs 的 `pageBg()` 兜底白底，让外层 Column 的
+      //   `linearGradient` 贯通下来（与"我的"页同款观感）。
+      //   原行：`.backgroundColor(ShelfColors.pageBg())`。
+      //   二次遮挡（顶部胶囊 surface 0.92 / 卡片 card #FFFFFF）保留——它们是设计上有意
+      //   保留的层次，渐变只露在它们之间的空隙。
+      //   回退：把 `.backgroundColor(ShelfColors.pageBg())` 加回去即恢复。
       .scrollable(this.APP_INDEX_SCROLLABLE)
     }
     .height('100%')
