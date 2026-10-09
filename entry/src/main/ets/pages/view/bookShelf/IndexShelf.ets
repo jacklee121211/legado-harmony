@@ -176,6 +176,15 @@ export default struct IndexShelf {
   tabsController: TabsController = new TabsController();
   private scrollController: Scroller = new Scroller();
 
+  /**
+   * 搜索/更多图标颜色（2026-10-11：与下面"全部/本地"那行三横同款主题色跟随）。
+   * 亮色档=主题主色（与 HdsTabs dock 选中态同语义），暗色档=浅色对比色保留夜间可读性。
+   * GroupType.ts 的 groupIconColor() 同样配方。
+   */
+  private trailingIconColor(): string {
+    return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : this.theme.mainColor
+  }
+
   build() {
     Column() {
       Flex({
@@ -316,8 +325,8 @@ export default struct IndexShelf {
       // 颜色沿用 `ShelfColors.icon()`（日/夜双档，替代原 SVG 的显式染色；
       //   夜间不染色的坑见原注释，现在由 icon() 统一保证）。
       SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(24)
-        .fontColor([ShelfColors.icon()])
+        .fontSize(20)        // ★ 2026-10-11：24→20，与下面"全部/本地"那行三横字号统一
+        .fontColor([this.trailingIconColor()])
         .scale({ x: this.searchScale, y: this.searchScale })
         .onClick(() => {
           Haptics.tap();
@@ -345,8 +354,8 @@ export default struct IndexShelf {
       // ── 更多按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
       // 符号名 `more`（横向三点）同表查得；`more_fill` 也在表里（未用）。
       SymbolGlyph($r('sys.symbol.more'))
-        .fontSize(24)
-        .fontColor([ShelfColors.icon()])
+        .fontSize(20)        // ★ 2026-10-11：24→20，与下面"全部/本地"那行三横字号统一
+        .fontColor([this.trailingIconColor()])
         .scale({ x: this.moreScale, y: this.moreScale })
         .bindMenu(this.MenuBuilder())
         .bindSheet($$this.isShowImport, this.ImportDialog(), {
