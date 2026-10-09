@@ -17,6 +17,11 @@ class DataBase {
     // ★ 2026-09-28 书源/订阅体系整体移除：book_sources / rssSources / searchBooks
     //   等表定义与对应 DAO 一并删除，本地阅读器不再有任何联网取书路径。
     await BookmarksDao.initBookmarksTable()
+    // ★ 2026-10-11 分类页签合并：书架顶部「漫画 / 有声书」两个入口已删除（只剩「书架」）。
+    //   这里把历史数据（bookType / groupType / worksType = 1 或 2）一次性归一到 0，
+    //   保证删入口不丢书；自带 Preferences 标志 ⇒ 只跑一次、失败下次重试。
+    //   必须在**建表之后**调用（要 UPDATE 的四张表此时才存在）。
+    await BooksDao.migrateBookTypeToShelf()
   }
 }
 

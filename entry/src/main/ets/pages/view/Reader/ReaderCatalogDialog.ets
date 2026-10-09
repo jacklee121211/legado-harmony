@@ -1,6 +1,8 @@
 import { bookParser } from '@kit.ReaderKit'
 import BasicDataSource from '../../../common/LazyIDataSource/BasicDataSource'
-import { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
+import { MaterialColumnModifier, MaterialDockModifier, default as ImmersiveMaterialUtil } from '../../../common/utils/ImmersiveMaterialUtil'
+import { ThemeStorageKey } from '../../../common/constants/Theme'
+import { ThemeItem } from '../../../common/model/Theme'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
 import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao'
@@ -99,6 +101,12 @@ export struct ReaderCatalogDialog {
   @Prop totalChapterNum: number = 0
   /** 日/夜模式（**0 = 夜间**，1 = 日间；与父页面 `colorMode` 同义） */
   @Prop colorMode: number = 0
+  /**
+   * ★ 2026-10-09 用户要求：「和书架 dock 一样，跟随主题色」。
+   *   书架 dock 的颜色来自 `@StorageProp(ThemeStorageKey.THEME).mainColor`，
+   *   这里用**同一个源** ⇒ 换主题时两处一起变。
+   */
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** 本书书名（书签按书名过滤的唯一关联键） */
   @Prop bookName: string = ''
   /** 初始页签（0=目录 1=书签）—— 父页面记忆上次选择 */
@@ -391,8 +399,19 @@ export struct ReaderCatalogDialog {
         })
       }
       .padding(5)
-      // 2026-09-25 用户反馈：「背景色换一下，不喜欢绿色」⇒ 换应用蓝色强调色
-      .backgroundColor('rgba(0, 125, 255, 1.00)')
+      // ★★ 2026-10-09 用户要求：「适配和书架一样的 dock」★★
+      //   改造前是一块**写死的蓝色实底**（2026-09-25 用户反馈「不喜欢绿色」时换的）。
+      //   现在改成与书架 dock 同源的**沉浸光感材质**：
+      //     · 书架那条走 HDS 的 `systemMaterialEffect`；
+      //     · 这组普通按钮没有 HDS 容器 ⇒ 走**组件级** `systemMaterial`
+      //       （官方：「普通ArkUI组件通过应用级开启或者组件级开启方式开启沉浸光感」）。
+      //   ⚠️ 材质与 `backgroundColor` **互斥**（官方：「已主动设置背景色、背景模糊等自定义
+      //      样式属性，则不呈现沉浸光感效果」）⇒ **不能**用三元表达式，必须交给
+      //      `MaterialDockModifier` 二选一（开材质时一个背景属性都不设）。
+      //   一键回退：`ImmersiveMaterialUtil.ENABLED = false` ⇒ 自动落回原来那块蓝。
+      // ★ 跟随主题色（半透明 —— 毛玻璃要透出后面的目录文字，不能是实底）
+      .attributeModifier(new MaterialDockModifier(
+        ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.82)))
       .borderRadius(20)
       .position({ bottom: '10%', right: '5%' })
     }

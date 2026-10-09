@@ -286,6 +286,24 @@ export class ShelfColors {
     return NightMode.isDarkSurface() ? '#26262A' : '#FFFFFF';
   }
 
+  /**
+   * **主文字色**：页面主标题 / 选中态页签。
+   *
+   * 2026-10-11 新增（修书架顶部「书架」标签对比度）。原本顶部标签取 `theme.mainColor`
+   * 作字色，而它压着的正是**同一条主题渐变彩带**、渐变起点就是 `mainColor`
+   * （`IndexShelf.ets:271-275` + SDK `enums.d.ts:2513-2523`：`GradientDirection.Bottom`
+   * = 从上到下 ⇒ stop 0 在屏幕顶边）⇒ 字与底同色系。
+   * 真机截图像素采样（`screenshots/v1.jpeg`，橙主题）：字 `#FF6600` / 底 `#FF9650`
+   * ⇒ WCAG 对比度 **1.36:1**（黄主题最差 1.02:1；大字粗体门槛也要 3:1）。
+   * 同一个 `mainColor` 压在浅底 `#FFFFFF` 上也只有 2.2–3.8:1 ⇒ 主标题一律走本方法：
+   * 日间近黑（压在彩带上 8.6:1）、夜间近白（14.9:1）。
+   * ⚠️ 取值与 `IndexSearchType.chipFg()`、`BookMark` 的 `isBackground=false` 分支
+   *    逐字一致（那两处可后续并入本方法，本次未动以免扩大改动面）。
+   */
+  static textMain(): string {
+    return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 1)' : 'rgba(0, 0, 0, 1.00)';
+  }
+
   /** 次级文字（书籍简介 / 最新章节 / 空列表提示） */
   static textSub(): string {
     return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.62)' : 'rgba(96, 96, 96, 0.6)';

@@ -9,8 +9,6 @@ import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/Folde
 import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverInfoDialog'
 import UiMotion from '../../common/utils/UiMotion'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil'
-import { updateAppData } from '../../storage/appData'
-import customizeDialogExample from '../common/customizeDialog'
 import hideDialogExample from '../common/hideDialog'
 import { showMessage } from '../common/promptShow'
 import { NightMode } from '../../common/utils/NightMode'
@@ -33,7 +31,13 @@ export default struct groupTypePanel {
   @Prop showGroupList: BookGroups[] = []
   @State hideList: BookGroups[] = []
   @Prop currentIndex: number = 0
-  @StorageProp('APP_INDEX_SCROLLABLE') APP_INDEX_SCROLLABLE: boolean = true
+  // ── 2026-10-11：「标签锁」开关已删（随分类页签合并）─────────────────────────
+  // 它原本读写的 `APP_INDEX_SCROLLABLE` 只有一个作用：`IndexShelf` 那个
+  // 小说/漫画/有声书 Tabs 的 `.scrollable()`（左右滑动切大类）。
+  // 现在大类只剩「书架」一个 ⇒ 开关无论开关都**没有任何效果**，
+  // 留着就是本工程明令清理的「假开关」（参 `MySetPage` 同款清理注释）。
+  // 连带删除：`updateAppData` / `customizeDialogExample` 两个 import、tagLock 弹窗。
+  // 回退：`git checkout` 本文件即可恢复。
   @Prop clickGroup: BookGroups
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
@@ -171,20 +175,8 @@ export default struct groupTypePanel {
           Text('隐藏分组').fontSize(16).fontWeight(500).lineHeight(24).fontColor(this.fgMain())
           Text('点击进入,长按编辑').fontSize(12).fontWeight(400).lineHeight(20).fontColor(this.fgSub())
         }.alignItems(VerticalAlign.Bottom)
-
-        Row({ space: 8 }) {
-          Image($r('app.media.help')).width(20).height(20).onClick(() => {
-            Haptics.tap();
-            this.tagLockDialog?.open()
-          })
-          Text('标签锁').fontSize(16).fontWeight(500).lineHeight(24).fontColor(this.fgSub())
-          Toggle({ type: ToggleType.Switch, isOn: $$this.APP_INDEX_SCROLLABLE })
-            .selectedColor(this.theme.mainColor).hoverEffect(HoverEffect.None)
-            .onChange(() => {
-              updateAppData(this.APP_INDEX_SCROLLABLE)
-              showMessage(this.APP_INDEX_SCROLLABLE ? '标签栏锁已开启' : '标签栏已解锁')
-            })
-        }.alignItems(VerticalAlign.Bottom).justifyContent(FlexAlign.End)
+        // 2026-10-11：「标签锁」开关（含 ? 帮助图标 + `customizeDialogExample`）整行已删，
+        //   原因见类字段区的注释（页签只剩「书架」一个 ⇒ 该开关恒为空操作）。
       }
 
       if (this.hideList.length > 0) {
@@ -292,28 +284,8 @@ export default struct groupTypePanel {
     .attributeModifier(this.surface)
   }
 
-  @State tagLockContent: string = '长按底部tab栏书架图标可锁定分组标签栏，再次长按解锁，锁定后左右滑动将直接切换小说，漫画，有声书分组大类。'
-  tagLockDialog: CustomDialogController | null = new CustomDialogController({
-    builder: customizeDialogExample({
-      confirm: () => {
-        this.onAccept()
-      },
-      title: '标签锁',
-      content: this.tagLockContent
-    }),
-    width: '90%',
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    // offset: { dx: 0, dy: '-40%' },
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25
-  })
-
-  onAccept() {
-    this.tagLockDialog?.close()
-  }
-
+  // 2026-10-11：`tagLockContent` / `tagLockDialog` / `onAccept()` 三个成员已随
+  //   「标签锁」开关一并删除（它唯一的作用是切换已不存在的三个分类大类）。
   @State dragIndex: number = 0
 
   changeIndex(index1: number, index2: number, type: number = 2) { // 交换数组位置

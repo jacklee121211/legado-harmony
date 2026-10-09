@@ -17,6 +17,16 @@ import {
   listLocalVoices, downloadLocalVoice, LocalVoiceRow, mergeDownloadedRows
 } from '../../tts/LocalTtsClient';
 import { ListenUnlock } from '../../common/utils/ListenUnlock';
+// ── AI 听书（2026-10-09 新增）：用户自接入 TTS 的配置面板 ─────────────────────
+import { AiProviderMeta, AiTtsConfig, AiVoiceOption, AiCancelToken, aiErrorText
+} from '../../tts/ai/AiTtsTypes';
+import { aiConfigReady, aiListVoices, aiProviderMetaList } from '../../tts/ai/AiTtsProviders';
+import { aiVoiceLabel, aiVoiceOptionsFor } from '../../tts/ai/AiTtsVoices';
+import { aiCatalogAgeText, aiCatalogStale, loadAiCatalog, saveAiCatalog
+} from '../../tts/ai/AiVoiceCatalog';
+import { AiProfile, applyAiProfile, parseAiProfiles, removeAiProfile, serializeAiProfiles,
+  snapshotAiProfile, upsertAiProfile } from '../../tts/ai/AiProfile';
+import { DEFAULT_SPEAK_FILTER_TEXT } from '../../tts/SpeakFilter';
 import { audio } from '@kit.AudioKit';
 import vibrator from '@ohos.vibrator';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -62,6 +72,28 @@ const TTS_SLIDERS_LOCAL: SliderDef[] = [
   { key: 'volume', label: '音量', min: 0, max: 1.0, step: 0.05, unit: '' },
   { key: 'pauseSentenceMs', label: '句末停顿', min: 0, max: 3000, step: 100, unit: 'ms' },
   { key: 'pauseCommaMs', label: '句中停顿', min: 0, max: 1800, step: 60, unit: 'ms' }
+];
+
+/**
+ * AI 引擎滑杆：**只渲染真正生效的两项**（方案 §13.2 的三条 UI 规则）。
+ *  · 语速：由 provider 映射进请求体（OpenAI 兼容走 speed），本工程口径 1.0=原速；
+ *    面板沿用 0.5~2.0 的既有档位，provider 内部再按厂商范围 clamp（0.25~4.0）。
+ *  · 音量：播放端 PCM 增益，**与是否有词级时间戳无关**（`applyPauses` 在无停顿点时
+ *    也会调 `applyVolume`，证据 `PauseSplicer.ets:255-261`）⇒ AI 模式恒可用。
+ * 不渲染：音调（OpenAI 兼容无此参数）、句末/句中停顿（无词级时间戳，方案 §6.3）。
+ */
+const TTS_SLIDERS_AI: SliderDef[] = [
+  { key: 'rate', label: '语速', min: 0.5, max: 2.0, step: 0.1, unit: 'x' },
+  { key: 'volume', label: '音量', min: 0, max: 1.0, step: 0.05, unit: '' }
+];
+
+/**
+ * AI 引擎但**该服务商不支持语速**时（如阿里通义：参考实现根本不传 rate）
+ * ⇒ 只渲染音量。依据：审查发现的"假控件"——滑杆能拖但请求里没有该参数。
+ * 对齐参考项目的条件渲染（`SettingsVoiceReadPanel.vue:906-911` 的同类做法）。
+ */
+const TTS_SLIDERS_AI_NO_RATE: SliderDef[] = [
+  { key: 'volume', label: '音量', min: 0, max: 1.0, step: 0.05, unit: '' }
 ];
 
 const SLEEP_MINUTES: ChipDef[] = [  { label: '关', value: 0 },
@@ -149,6 +181,15 @@ export struct TtsControlPanel {
   onOpenSleepTimer: () => void = (): void => {};
   @State voiceSlot: number = 0;           // 0=旁白 1=对白 2=男生 3=女生
   @State showVoices: boolean = false;
+  /**
+   * 音色区**为哪个引擎配音色**的显式选择（2026-10-10 三修，用户反馈驱动）。
+   * 取值：`'auto'`（跟随当前生效引擎）/ `'local'`（华为本地）/ `'ai'` / `'edge'`。
+   *
+   * 为什么必须显式：用户两次反馈"音色选择还是华为 tts 的"。隐式规则（跟随生效引擎）
+   * 在"AI 配好了但开关没开"、"只想先给 AI 配音色"等场景必然让人困惑。
+   * ⇒ 给一个来源选择器，"我在给谁配音色"一眼可见、随时可切。
+   */
+  @State voiceSourceExplicit: string = 'auto';
   // ── 本地引擎音色枚举/下载（2026-09-25，SDK @since 19 的 listVoices/downloadVoice）──
   @State localRows: LocalVoiceRow[] = [];  // 动态音色表（权威）；空=未加载/查询失败
   @State localVoiceQueryFailed: boolean = false; // 查询失败 ⇒ 回退静态 LOCAL_VOICES
@@ -167,6 +208,40 @@ export struct TtsControlPanel {
   @State aiModelDraft: string = '';
   @State aiDirty: boolean = false;
   @State aiHint: string = '';
+  // ---------- AI 听书（用户自接入 TTS，2026-10-09）----------
+  // 与上面「AI 男女声」是**两套配置**：上面填对话大模型，下面填语音合成。
+  @State showAiTts: boolean = false;        // 折叠「AI 语音」块
+  @State showAiAdvanced: boolean = false;   // 折叠「高级（附加请求体/头）」
+  @State aiVoiceSlot: number = 0;           // 0=旁白/单音色 1=对白 2=男声 3=女生
+  @State aiTtsBaseUrlDraft: string = '';
+  @State aiTtsApiKeyDraft: string = '';
+  @State aiTtsModelDraft: string = '';
+  @State aiFormatDraft: string = 'mp3';
+  @State aiInstructionsDraft: string = '';
+  @State aiExtraBodyDraft: string = '';
+  @State aiExtraHeadersDraft: string = '';
+  // ⚠️ 音色**不用草稿**（2026-10-10 修正「AI 开关与 AI 男女声冲突」）：
+  //    音色只保留**一处**编辑（展开档「音色」区），直接落 prefs —— 与本地/Edge 既有行为一致；
+  //    AI 也走同一条路（applyVoice → applyAiVoiceToPrefs）。此前 AI 音色用的是草稿
+  //    且藏在「AI 语音」块里，造成"两处音色、两种提交语义"的冲突。
+  @State aiVoiceCustomDraft: string = '';   // 手填音色 id（AI 引擎；本工程允许手填）
+  // AI 音色清单：从服务商拉取后缓存到 Preferences（见 AiVoiceCatalog.ets）
+  @State aiCatalogVoices: AiVoiceOption[] = [];
+  @State aiVoiceFetching: boolean = false;
+  @State aiCatalogInfo: string = '';
+  // AI 配置方案（见 tts/ai/AiProfile.ets）
+  @State aiProfiles: AiProfile[] = [];
+  @State aiProfileNameDraft: string = '';
+  // 朗读过滤（见 tts/SpeakFilter.ets）
+  @State showFilterRules: boolean = false;
+  @State speakFilterDraft: string = '';
+  @State speakFilterDirty: boolean = false;
+  @State speakFilterHint: string = '';
+  @State aiTtsDirty: boolean = false;
+  @State aiTtsHint: string = '';
+  // 试听状态机：0=空闲 1=合成中 2=播放中（与参考项目的 previewPhase 语义一致，
+  // 但文案与试听文本都是本工程自写，见方案 §14.3「表达类内容自己写」）
+  @State aiPreviewPhase: number = 0;
   // ---------- D3 修复：睡眠定时回读 + 剩余量 ----------
   @State sleepStatus: string = '';
   /**
@@ -231,6 +306,8 @@ export struct TtsControlPanel {
     this.aiModelDraft = this.prefs.aiModel;
     this.aiDirty = false;
     this.aiHint = '';
+    // AI 听书：把已保存的配置填进草稿（与上面 D2 同款做法，2026-10-09）
+    this.fillAiTtsDrafts();
     this.refreshSilentMode(); // #3：进入面板先探一次静音状态
     // D3：回读引擎里的真实定时状态（旧实现只显示本地 @State，重开面板必显示「关」）
     this.syncSleepFromEngine();
@@ -240,6 +317,8 @@ export struct TtsControlPanel {
 
   aboutToDisappear(): void {
     this.stopSleepTicker();
+    // 面板关闭：停掉可能还在响的 AI 试听（否则关窗后继续出声）
+    TtsEngine.stopAiPreview();
   }
 
   /** 面板显示/隐藏切换 ⇒ 启停 5s 刷新器（隐藏时不刷新，避免无效唤醒） */
@@ -328,6 +407,604 @@ export struct TtsControlPanel {
         this.voiceSlot = 1;
       }
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AI 听书（用户自接入 TTS，2026-10-09）
+  // 设计：docs/ai-voice-read-plan-2026-10-09.md §13.3 / §13.6.1
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 当前服务商的能力位（面板据此条件渲染参数行） */
+  private aiMeta(): AiProviderMeta | null {
+    const list: AiProviderMeta[] = aiProviderMetaList();
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === this.prefs.aiProviderId) {
+        return list[i];
+      }
+    }
+    return list.length > 0 ? list[0] : null;
+  }
+
+  /** 把草稿装成配置对象（给 aiConfigReady 判可用性） */
+  private aiDraftConfig(): AiTtsConfig {
+    const cfg: AiTtsConfig = {
+      providerId: this.prefs.aiProviderId,
+      baseUrl: this.aiTtsBaseUrlDraft,
+      apiKey: this.aiTtsApiKeyDraft,
+      model: this.aiTtsModelDraft,
+      format: this.aiFormatDraft,
+      instructions: this.aiInstructionsDraft,
+      extraBody: this.aiExtraBodyDraft,
+      extraHeaders: this.aiExtraHeadersDraft
+    };
+    return cfg;
+  }
+
+  /** 从**已保存**的 prefs 构造配置（= 引擎口径，与 TtsEngine.aiConfigFrom 同源） */
+  private aiPrefsConfig(): AiTtsConfig {
+    const cfg: AiTtsConfig = {
+      providerId: this.prefs.aiProviderId,
+      baseUrl: this.prefs.aiTtsBaseUrl,
+      apiKey: this.prefs.aiTtsApiKey,
+      model: this.prefs.aiTtsModel,
+      format: this.prefs.aiFormat,
+      instructions: this.prefs.aiInstructions,
+      extraBody: this.prefs.aiExtraBody,
+      extraHeaders: this.prefs.aiExtraHeaders
+    };
+    return cfg;
+  }
+
+  /**
+   * **引擎口径**的"配置就绪"。
+   *
+   * 2026-10-10 修正（审查发现的"丢西瓜捡芝麻"型不一致）：原来这里读**草稿**，
+   * 于是出现"面板显示 AI 音色列表 / 开关可以开，但引擎实际仍走本地"的假状态
+   * —— 因为 `TtsEngine.activeEngineId()` 读的是**已保存**的 prefs。
+   * 现在拆成两个口径：
+   *   · 本函数 = 已保存（引擎行为、顶栏开关、试听 用）；
+   *   · {@link aiDraftsReady} = 草稿（"正在配置"的展示用，例如音色区自动切 AI）。
+   */
+  private aiTtsReady(): boolean {
+    return aiConfigReady(this.aiPrefsConfig());
+  }
+
+  /** **草稿口径**：用户填完但可能还没点【保存】（仅用于展示判断，不代表引擎已切换） */
+  private aiDraftsReady(): boolean {
+    return aiConfigReady(this.aiDraftConfig());
+  }
+
+  /**
+   * Edge 是否已接管（解锁 + 用户选了 edge）。
+   * 用户口径：「只要开启 edge，直接使用 edge 不允许切换，需要切换则手动去设置中先关闭」
+   * ⇒ 此状态下 AI 开关**置灰**并给引导文案（与 TtsEngine.activeEngineId 的优先级同源）。
+   */
+  private aiEdgeTakeover(): boolean {
+    return ListenUnlock.isUnlocked() && this.prefs.ttsEngine === 'edge';
+  }
+
+  /** 顶栏 AI 开关能否操作：① 必须处于停止态（暂停也算未停止）② Edge 未接管 */
+  private aiSwitchEnabled(): boolean {
+    return this.ttsState === 'stopped' && !this.aiEdgeTakeover();
+  }
+
+  /** 顶栏 AI 开关的当前值：Edge 接管时显示为"关"（实际走 Edge） */
+  private aiSwitchOn(): boolean {
+    if (this.aiEdgeTakeover()) {
+      return false;
+    }
+    return this.prefs.aiTtsEnabled;
+  }
+
+  /** 顶栏开关切换（关→开前先校验配置；不满足则提示且**不落盘**，避免"开了没声"） */
+  private toggleAiTts(value: boolean): void {
+    if (!this.aiSwitchEnabled()) {
+      return;
+    }
+    if (value && !this.aiTtsReady()) {
+      this.showAiTts = true;
+      // 区分两种"没就绪"：① 压根没填 → 去填；② 填了但没保存 → 去保存
+      // （2026-10-10 口径修正：开关要求**已保存**的配置，与 TtsEngine 读 prefs 一致）
+      this.aiTtsHint = this.aiDraftsReady()
+        ? '请先点【保存】把配置落盘，再打开 AI 听书'
+        : '请先填写接口地址与 API Key，再打开 AI 听书';
+      this.prefs.aiTtsEnabled = false;
+      this.commitPrefs();
+      return;
+    }
+    this.prefs.aiTtsEnabled = value;
+    this.commitPrefs();
+    this.aiTtsHint = value ? '已切换到 AI 听书（下一段生效）' : '已切换回华为本地 TTS';
+  }
+
+  /** 进入面板时把已保存的 AI 配置填进草稿（与 D2 的 AI 男女声同款做法） */
+  private fillAiTtsDrafts(): void {
+    this.aiTtsBaseUrlDraft = this.prefs.aiTtsBaseUrl;
+    this.aiTtsApiKeyDraft = this.prefs.aiTtsApiKey;
+    this.aiTtsModelDraft = this.prefs.aiTtsModel;
+    this.aiFormatDraft = this.prefs.aiFormat.length > 0 ? this.prefs.aiFormat : 'mp3';
+    this.aiInstructionsDraft = this.prefs.aiInstructions;
+    this.aiExtraBodyDraft = this.prefs.aiExtraBody;
+    this.aiExtraHeadersDraft = this.prefs.aiExtraHeaders;
+    this.aiTtsDirty = false;
+    this.aiTtsHint = '';
+    // 音色清单：从本地缓存回填（同步、不联网）
+    this.reloadAiCatalog();
+    this.reloadAiProfiles();
+    // 朗读过滤规则草稿（已保存值优先；空则填默认，避免用户面对空白框）
+    this.speakFilterDraft = this.prefs.speakFilterText.length > 0
+      ? this.prefs.speakFilterText : DEFAULT_SPEAK_FILTER_TEXT;
+  }
+
+  /** 保存 AI 配置（显式保存：附加 JSON 先校验，非法则拒绝落盘并给原文） */
+  private saveAiTtsConfig(): void {
+    const body: string = this.aiExtraBodyDraft.trim();
+    if (body.length > 0) {
+      try {
+        JSON.parse(body);
+      } catch (e) {
+        this.aiTtsHint = '附加请求体不是合法 JSON：' + aiErrorText(e);
+        return;
+      }
+    }
+    this.prefs.aiTtsBaseUrl = this.aiTtsBaseUrlDraft.trim();
+    this.prefs.aiTtsApiKey = this.aiTtsApiKeyDraft.trim();
+    this.prefs.aiTtsModel = this.aiTtsModelDraft.trim();
+    this.prefs.aiFormat = this.aiFormatDraft;
+    this.prefs.aiInstructions = this.aiInstructionsDraft.trim();
+    this.prefs.aiExtraBody = this.aiExtraBodyDraft;
+    this.prefs.aiExtraHeaders = this.aiExtraHeadersDraft;
+    // 配置改了但开关开着却不满足条件 ⇒ 自动回落，避免"开着但走的是本地引擎"的假状态
+    if (this.prefs.aiTtsEnabled && !aiConfigReady(this.aiPrefsConfig())) {
+      this.prefs.aiTtsEnabled = false;
+      this.aiTtsHint = '配置不完整，已自动关闭 AI 听书';
+    } else {
+      this.aiTtsHint = '已保存';
+    }
+    this.commitPrefs();
+    this.aiTtsDirty = false;
+    // 接口地址可能变了 ⇒ 清单指纹变化，重新回填
+    this.reloadAiCatalog();
+  }
+
+  /** 清空 AI 配置（含已存盘数据；同时关掉开关） */
+  private clearAiTtsConfig(): void {
+    this.aiTtsBaseUrlDraft = '';
+    this.aiTtsApiKeyDraft = '';
+    this.aiTtsModelDraft = '';
+    this.aiFormatDraft = 'mp3';
+    this.aiInstructionsDraft = '';
+    this.aiExtraBodyDraft = '';
+    this.aiExtraHeadersDraft = '';
+    this.prefs.aiTtsBaseUrl = '';
+    this.prefs.aiTtsApiKey = '';
+    this.prefs.aiTtsModel = '';
+    this.prefs.aiFormat = 'mp3';
+    this.prefs.aiInstructions = '';
+    this.prefs.aiExtraBody = '';
+    this.prefs.aiExtraHeaders = '';
+    this.prefs.aiTtsEnabled = false;
+    this.commitPrefs();
+    this.aiTtsDirty = false;
+    this.aiTtsHint = '已清空并关闭 AI 听书';
+  }
+
+  /** 当前槽位的 AI 音色（**直接读 prefs**，不再是草稿） */
+  private aiVoiceForSlotFromPrefs(slot: number): string {
+    if (this.prefs.scheme === 'single') {
+      return this.prefs.aiSingleVoiceId;
+    }
+    if (slot === 1) {
+      return this.prefs.aiDialogueVoiceId;
+    }
+    if (slot === 2) {
+      return this.prefs.aiDialogueMaleVoiceId;
+    }
+    if (slot === 3) {
+      return this.prefs.aiDialogueFemaleVoiceId;
+    }
+    return this.prefs.aiNarrationVoiceId;
+  }
+
+  /**
+   * 写入选中的 AI 音色槽位（列表点选与手填共用）——**直接落盘**，
+   * 与本地/Edge 的 `applyVoice` 语义一致：音色全工程**只此一处**编辑。
+   */
+  private applyAiVoiceToPrefs(id: string): void {
+    const v: string = id.trim();
+    if (v.length === 0) {
+      return;
+    }
+    if (this.prefs.scheme === 'single') {
+      this.prefs.aiSingleVoiceId = v;
+    } else if (this.aiVoiceSlot === 1) {
+      this.prefs.aiDialogueVoiceId = v;
+    } else if (this.aiVoiceSlot === 2) {
+      this.prefs.aiDialogueMaleVoiceId = v;
+    } else if (this.aiVoiceSlot === 3) {
+      this.prefs.aiDialogueFemaleVoiceId = v;
+    } else {
+      this.prefs.aiNarrationVoiceId = v;
+    }
+    this.commitPrefs();
+    this.aiTtsHint = '音色已保存';
+  }
+
+  /**
+   * 音色区是否按 **AI** 显示（2026-10-10 二次修正）。
+   *
+   * 上一版只用 `isAiEngine()`（= 开关已开且配置就绪）⇒ 造成死锁：
+   * **要配 AI 音色就必须先打开 AI 开关，可没配音色又听不出男女声效果**（用户实测反馈：
+   * 「音色里面还是华为 tts 的音色，而且 ai 男女声似乎没用」）。
+   * ⇒ 改为：**当前生效是 AI** 或 **用户正在配置 AI（AI 块展开且配置已就绪）** 都显示 AI 音色。
+   *    这样"填完接口地址与 Key（草稿即算就绪）→ 音色区自动切 AI → 配四个槽位"一气呵成。
+   */
+  private isAiVoiceUi(): boolean {
+    if (this.isAiEngine()) {
+      return true;
+    }
+    return this.showAiTts && this.aiDraftsReady();
+  }
+
+  /**
+   * 音色区**当前在为哪个引擎配音色**（三修，2026-10-10）。
+   *
+   * 判定顺序：
+   *  ① 用户显式选的来源（`voiceSourceExplicit`）优先，但做可用性校验
+   *     （AI 未配置就忽略、Edge 未解锁就忽略）；
+   *  ② 否则跟随"当前生效引擎"，或"正在展开配置 AI"（`isAiVoiceUi()`）。
+   *
+   * @returns `'ai'` | `'local'` | `'edge'`
+   */
+  private voiceKind(): string {
+    if (this.voiceSourceExplicit === 'local') {
+      return 'local';
+    }
+    if (this.voiceSourceExplicit === 'ai' && this.aiDraftsReady()) {
+      return 'ai';
+    }
+    if (this.voiceSourceExplicit === 'edge' && !this.isLocal()) {
+      return 'edge';
+    }
+    // ⚠️ 这里必须调 `isAiVoiceUi()`，**不能**调 `voiceKind()`（会自我递归 ⇒ 爆栈）。
+    //    2026-10-10 踩过：一次批量替换把本行也换成了 `voiceKind()`。
+    if (this.isAiVoiceUi()) {
+      return 'ai';
+    }
+    return this.isLocal() ? 'local' : 'edge';
+  }
+
+  /** 音色来源的中文名（给用户一眼看清"我在给谁配音色"） */
+  private voiceKindLabel(): string {
+    const k: string = this.voiceKind();
+    if (k === 'ai') {
+      return 'AI 语音（服务商：' + this.prefs.aiProviderId + '）';
+    }
+    if (k === 'edge') {
+      return 'Edge TTS';
+    }
+    return '华为本地 TTS';
+  }
+
+  /** 当前引擎是否是 AI（决定哪些参数行该渲染） */
+  private isAiEngine(): boolean {
+    if (this.isLocal() || this.prefs.ttsEngine === 'edge') {
+      return false;
+    }
+    // 与 TtsEngine.activeEngineId 同口径：开关开着 **且** 配置就绪才算 AI 生效
+    return this.prefs.aiTtsEnabled && this.aiTtsReady();
+  }
+
+  // ── 能力位读取（供 build() 条件渲染；避免在 build 里做类型断言）──────────────
+  private aiMetaNeedsBaseUrl(): boolean {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m !== null && m.needsBaseUrl;
+  }
+
+  private aiMetaNeedsApiKey(): boolean {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m !== null && m.needsApiKey;
+  }
+
+  private aiMetaSupportsInstructions(): boolean {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m !== null && m.supportsInstructions;
+  }
+
+  /** 该服务商是否有「列音色」接口（决定 UI 是否显示「拉取音色」） */
+  private aiMetaSupportsListVoices(): boolean {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m !== null && m.supportsListVoices;
+  }
+
+  /** 该服务商是否接受自然语言语气（决定 UI 是否显示「AI 语气」开关，防假控件） */
+  private aiMetaSupportsEmotion(): boolean {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m !== null && m.supportsEmotion;
+  }
+
+  /**
+   * 切换服务商时**自动重置四个音色槽位**（2026-10-10 用户拍板："需要自动重置"）。
+   *
+   * 为什么必须：不同厂商的音色 id **不通用**，留着上一家的 id 会被服务商
+   * **静默回落**成同一个默认音色 —— 用户实测踩过（"AI 男女声似乎没用"，
+   * 日志里 `role=zh-CN-YunxiNeural voice=onyx` 就是证据）。
+   *
+   * 策略：按该服务商建议值的**性别**挑：旁白/男声取第一个男声、对白取第二个男声、
+   * 女生取第一个女声、单音色取第一条；挑不到就都指向第一条（保证不空）。
+   */
+  private resetAiVoiceSlotsForProvider(providerId: string): void {
+    const list: AiVoiceOption[] = aiVoiceOptionsFor(providerId);
+    if (list.length === 0) {
+      return;
+    }
+    const males: string[] = [];
+    const females: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const g: string = list[i].gender;
+      if (g === 'male') {
+        males.push(list[i].id);
+      } else if (g === 'female') {
+        females.push(list[i].id);
+      }
+    }
+    const first: string = list[0].id;
+    const m0: string = males.length > 0 ? males[0] : first;
+    const m1: string = males.length > 1 ? males[1] : m0;
+    const f0: string = females.length > 0 ? females[0] : first;
+    this.prefs.aiSingleVoiceId = first;
+    this.prefs.aiNarrationVoiceId = m0;
+    this.prefs.aiDialogueVoiceId = m1;
+    this.prefs.aiDialogueMaleVoiceId = m0;
+    this.prefs.aiDialogueFemaleVoiceId = f0;
+    this.commitPrefs();
+    hilog.info(0x0000, 'TtsPanel',
+      'ai voice slots reset for %{public}s: single=%{public}s narration=%{public}s dialogue=%{public}s male=%{public}s female=%{public}s',
+      providerId, first, m0, m1, m0, f0);
+  }
+
+  private aiMetaFormatOptions(): string[] {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m === null ? [] : m.formatOptions;
+  }
+
+  private aiMetaDesc(): string {
+    const m: AiProviderMeta | null = this.aiMeta();
+    return m === null ? '' : m.description;
+  }
+
+  /** 当前引擎该渲染哪些滑杆（抽成方法：ForEach 首参写三元表达式会触发"参数未被读取"的误报） */
+  private sliderDefs(): SliderDef[] {
+    if (this.isAiEngine()) {
+      // 按**服务商能力位**裁剪：不支持语速的服务商不渲染语速行（防"假控件"，见常量注释）
+      const m: AiProviderMeta | null = this.aiMeta();
+      if (m !== null && !m.supportsRate) {
+        return TTS_SLIDERS_AI_NO_RATE;
+      }
+      return TTS_SLIDERS_AI;
+    }
+    return this.isLocal() ? TTS_SLIDERS_LOCAL : TTS_SLIDERS_EDGE;
+  }
+
+  /** 内置建议音色（列表里没有的 id 也可以手填，见 aiVoiceCustomDraft） */
+  private aiVoiceList(): AiVoiceOption[] {
+    // 有服务商清单就用它（更权威、更新）；否则回落内置建议值
+    if (this.aiCatalogVoices.length > 0) {
+      return this.aiCatalogVoices;
+    }
+    return aiVoiceOptionsFor(this.prefs.aiProviderId);
+  }
+
+  // ── AI 配置方案（2026-10-10）─────────────────────────────────────────────
+  // 只覆盖 AI 段（用户拍板）：小说/散文各一套音色、A/B 两个服务商不用重填。
+  // 密钥按用户决定明文存本机、不加密、不上传。
+
+  private reloadAiProfiles(): void {
+    this.aiProfiles = parseAiProfiles(this.prefs.aiProfiles);
+  }
+
+  private persistAiProfiles(list: AiProfile[]): void {
+    this.aiProfiles = list;
+    this.prefs.aiProfiles = serializeAiProfiles(list);
+    this.commitPrefs();
+  }
+
+  /** 当前设置是否就是某个方案（用于高亮；只比"连接四要素"，音色改动不算切换） */
+  private isActiveAiProfile(p: AiProfile): boolean {
+    return this.prefs.aiProviderId === p.providerId
+      && this.aiTtsBaseUrlDraft.trim() === p.baseUrl
+      && this.aiTtsApiKeyDraft === p.apiKey
+      && this.aiTtsModelDraft.trim() === p.model;
+  }
+
+  private onSaveAiProfile(): void {
+    const name: string = this.aiProfileNameDraft.trim();
+    if (name.length === 0) {
+      this.aiTtsHint = '请先填方案名';
+      return;
+    }
+    // 快照的是**用户当前看到的值**（草稿），不要求先点【保存】——避免"存的不是看到的"
+    const p: AiProfile = snapshotAiProfile('p' + Date.now(), name,
+      this.prefs.aiProviderId, this.aiTtsBaseUrlDraft.trim(), this.aiTtsApiKeyDraft,
+      this.aiTtsModelDraft.trim(), this.aiInstructionsDraft, this.prefs);
+    this.persistAiProfiles(upsertAiProfile(this.aiProfiles, p));
+    this.aiProfileNameDraft = '';
+    this.aiTtsHint = '已保存方案「' + name + '」（含密钥，仅存本机）';
+  }
+
+  private onApplyAiProfile(p: AiProfile): void {
+    applyAiProfile(this.prefs, p);
+    this.commitPrefs();
+    // 同步草稿，否则界面还显示旧值（"点了没反应"观感）
+    this.fillAiTtsDrafts();
+    this.reloadAiCatalog();
+    this.aiTtsHint = '已套用方案「' + p.name + '」';
+  }
+
+  private onDeleteAiProfile(id: string): void {
+    this.persistAiProfiles(removeAiProfile(this.aiProfiles, id));
+    this.aiTtsHint = '已删除方案';
+  }
+
+  /** 从本地缓存回填音色清单（同步、不联网） */
+  private reloadAiCatalog(): void {    const cfg: AiTtsConfig = this.aiDraftConfig();
+    this.aiCatalogVoices = loadAiCatalog(cfg);
+    const stale: boolean = aiCatalogStale(cfg);
+    this.aiCatalogInfo = aiCatalogAgeText(cfg)
+      + (this.aiCatalogVoices.length > 0 ? '（' + this.aiCatalogVoices.length + ' 个音色）' : '')
+      + (stale && this.aiCatalogVoices.length > 0 ? ' · 建议刷新' : '');
+  }
+
+  /**
+   * 拉取音色清单（**只在用户点击时联网**，符合"用户主动发起"的合规口径）。
+   * 成功后落盘缓存；失败原样提示（不改动已有列表）。
+   */
+  private async onFetchAiVoices(): Promise<void> {
+    if (this.aiVoiceFetching) {
+      return;
+    }
+    const meta: AiProviderMeta | null = this.aiMeta();
+    if (meta === null || !meta.supportsListVoices) {
+      this.aiCatalogInfo = '该服务商没有「列音色」接口，请手填音色 id';
+      return;
+    }
+    if (!this.aiDraftsReady()) {
+      this.aiCatalogInfo = '请先填写接口地址与 API Key';
+      return;
+    }
+    this.aiVoiceFetching = true;
+    this.aiCatalogInfo = '拉取中…';
+    const cfg: AiTtsConfig = this.aiDraftConfig();
+    const token: AiCancelToken = { cancelled: false };
+    try {
+      const list: AiVoiceOption[] = await aiListVoices(cfg, token);
+      if (list.length === 0) {
+        this.aiCatalogInfo = '服务商返回空清单（可能该账号无可用音色）';
+      } else {
+        saveAiCatalog(cfg, list);
+        this.reloadAiCatalog();
+        this.aiCatalogInfo = '已更新：' + aiCatalogAgeText(cfg) + '（' + list.length + ' 个音色）';
+      }
+    } catch (e) {
+      this.aiCatalogInfo = '拉取失败：' + aiErrorText(e);
+    } finally {
+      this.aiVoiceFetching = false;
+    }
+  }
+
+  /** 槽位标题（单音色方案只有一个槽） */
+  private aiSlotLabel(slot: number): string {
+    if (this.prefs.scheme === 'single') {
+      return '音色';
+    }
+    if (slot === 1) {
+      return '对白';
+    }
+    if (slot === 2) {
+      return '男生';
+    }
+    if (slot === 3) {
+      return '女生';
+    }
+    return '旁白';
+  }
+
+  /** 当前槽位的音色是否被选中（列表打勾用） */
+  private aiVoiceSelected(id: string): boolean {
+    return this.aiVoiceForSlotFromPrefs(this.aiVoiceSlot) === id;
+  }
+
+  /** 当前槽位的音色展示文案 */
+  private aiVoiceLabelForSlot(): string {
+    return aiVoiceLabel(this.prefs.aiProviderId, this.aiVoiceForSlotFromPrefs(this.aiVoiceSlot));
+  }
+
+  /**
+   * 检测「四个槽位撞名」并点名（2026-10-10 新增，防呆）。
+   *
+   * 由来：用户实测"AI 男女声似乎没用"，而日志证明分类是成功的（`classify ok items=44`）——
+   * 真因是**四个槽位都回落成同一个音色**。撞名是最常见的前兆（例如默认值旁白=onyx、
+   * 男生=onyx 就同名），所以这里直接算出来告诉他，比让他去猜日志快得多。
+   * @returns 空串 = 没撞名
+   */
+  private aiVoiceCollisionHint(): string {
+    if (this.prefs.scheme !== 'multi') {
+      return '';
+    }
+    const names: string[] = ['旁白', '对白', '男生', '女生'];
+    const vals: string[] = [
+      this.prefs.aiNarrationVoiceId.trim(),
+      this.prefs.aiDialogueVoiceId.trim(),
+      this.prefs.aiDialogueMaleVoiceId.trim(),
+      this.prefs.aiDialogueFemaleVoiceId.trim()
+    ];
+    const dup: string[] = [];
+    for (let i = 0; i < vals.length; i++) {
+      if (vals[i].length === 0) {
+        continue;
+      }
+      for (let j = i + 1; j < vals.length; j++) {
+        if (vals[i] === vals[j]) {
+          dup.push(names[i] + '=' + names[j] + '（' + vals[i] + '）');
+        }
+      }
+    }
+    if (dup.length === 0) {
+      return '';
+    }
+    return '⚠ 槽位撞名：' + dup.join('、') + ' —— 这几个角色会听出同一个声音。';
+  }
+
+  // ── 试听（2026-10-09，P0）────────────────────────────────────────────────
+  /**
+   * 试听文本：**本工程自写**（不照搬参考项目的示例台词，见方案 §14.3「表达类内容自己写」）。
+   */
+  private aiPreviewText(): string {
+    return '这是一段试听文本，用来确认这个音色的语气、语速和停顿是否合适。';
+  }
+
+  /** 试听按钮点击：空闲⇒开始；合成中/播放中⇒停止 */
+  private async onAiPreviewClick(): Promise<void> {
+    if (this.aiPreviewPhase !== 0) {
+      TtsEngine.stopAiPreview();
+      this.aiPreviewPhase = 0;
+      this.aiTtsHint = '已停止试听';
+      return;
+    }
+    if (!this.aiTtsReady()) {
+      this.aiTtsHint = '请先填写接口地址与 API Key（点【保存】后再试听）';
+      return;
+    }
+    const voice: string = this.aiVoiceForSlotFromPrefs(this.aiVoiceSlot);
+    if (voice.trim().length === 0) {
+      this.aiTtsHint = '请先选择或填写音色';
+      return;
+    }
+    this.aiPreviewPhase = 1;
+    this.aiTtsHint = '合成中…（用已保存的配置与音色）';
+    try {
+      await TtsEngine.previewAiSpeech(this.aiPreviewText(), voice, (): void => {
+        this.aiPreviewPhase = 2;
+        this.aiTtsHint = '播放中…（再点一次可停止）';
+      });
+      if (this.aiPreviewPhase !== 0) {
+        this.aiPreviewPhase = 0;
+        this.aiTtsHint = '试听结束';
+      }
+    } catch (e) {
+      this.aiPreviewPhase = 0;
+      this.aiTtsHint = '试听失败：' + aiErrorText(e);
+    }
+  }
+
+  private aiPreviewLabel(): string {
+    if (this.aiPreviewPhase === 1) {
+      return '合成中…';
+    }
+    if (this.aiPreviewPhase === 2) {
+      return '停止';
+    }
+    return '试听';
   }
 
   /**
@@ -455,7 +1132,13 @@ export struct TtsControlPanel {
   }
 
   private currentVoiceForSlot(): string {
-    if (this.isLocal()) {
+    // ⚠️ AI 必须先判，且**必须在 isLocal() 之前**（2026-10-10 修正）：
+    //    isLocal() 只区分 local/edge，对 AI 会误判成"本地" ⇒ 音色区显示华为音色、
+    //    选中态打在 local person 上。这正是用户报的「AI 开关与 AI 男女声冲突」的根因。
+    if (this.voiceKind() === 'ai') {
+      return this.aiVoiceForSlotFromPrefs(this.voiceSlot);
+    }
+    if (this.voiceKind() === 'local') {
       return String(this.currentLocalPersonForSlot());
     }
     if (this.prefs.scheme === 'single') {
@@ -491,7 +1174,12 @@ export struct TtsControlPanel {
   }
 
   private applyVoice(id: string): void {
-    if (this.isLocal()) {
+    // 同上：AI 先判，否则点 AI 音色会被 `Number(id)` 变成 NaN 写进 local person
+    if (this.voiceKind() === 'ai') {
+      this.applyAiVoiceToPrefs(id);
+      return;
+    }
+    if (this.voiceKind() === 'local') {
       this.applyLocalVoice(Math.floor(Number(id)));
       return;
     }
@@ -663,7 +1351,17 @@ export struct TtsControlPanel {
   }
 
   private voiceSummary(): string {
-    if (this.isLocal()) {
+    if (this.voiceKind() === 'ai') {
+      const p: string = this.prefs.aiProviderId;
+      if (this.prefs.scheme === 'multi') {
+        const ai2: string = this.prefs.aiSpeakerRecognitionEnabled
+          ? ` · 男 ${aiVoiceLabel(p, this.prefs.aiDialogueMaleVoiceId)} / 女 ${aiVoiceLabel(p, this.prefs.aiDialogueFemaleVoiceId)}`
+          : '';
+        return `AI 旁白 ${aiVoiceLabel(p, this.prefs.aiNarrationVoiceId)} · 对白 ${aiVoiceLabel(p, this.prefs.aiDialogueVoiceId)}${ai2}`;
+      }
+      return `AI ${aiVoiceLabel(p, this.prefs.aiSingleVoiceId)}`;
+    }
+    if (this.voiceKind() === 'local') {
       if (this.prefs.scheme === 'multi') {
         const ai = this.prefs.aiSpeakerRecognitionEnabled
           ? ` · 男 ${localVoiceLabel(this.prefs.localDialogueMalePerson)} / 女 ${localVoiceLabel(this.prefs.localDialogueFemalePerson)}`
@@ -705,29 +1403,46 @@ export struct TtsControlPanel {
 
   build() {
     Column({ space: 14 }) {
-      // 顶栏（2026-10-07 用户设计：定时入口从阅读器顶栏迁入本面板，居中）
+      // 顶栏（2026-10-07：定时入口从阅读器顶栏迁入本面板；2026-10-09：改 4 元素）
+      // 布局：`[朗读] [闹钟(左移)] —— [AI 听书 开关] [完成]`
+      // 证据：用户 2026-10-09 口径「将现有的闹钟图标左移，然后右侧放一个开关，
+      //   默认关闭，打开为 ai 听书」「听书状态下，这个按钮不可用，只有停止听书才可以切换」
       Row() {
         Text('朗读')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.fg())
-        Blank()
-        // ── 睡眠定时入口（子窗口：点它拉起定时弹窗，本面板由页面暂收、子关父回）──
-        // 睁/实心 = 已设定时（口径：sleepChap>0 || sleepMin>0，与 syncSleepFromEngine 同源）
+        // ── 睡眠定时入口（左移：紧贴标题；子窗口，点它拉起定时弹窗）──
+        // 空心/实心 = 是否已设定时（口径 sleepChap>0 || sleepMin>0，与 syncSleepFromEngine 同源）
         SymbolGlyph((this.sleepChap > 0 || this.sleepMin > 0)
           ? $r('sys.symbol.alarm_fill') : $r('sys.symbol.alarm'))
           .fontSize(20)
           .fontColor([this.accent()])
-          .margin({ right: 2 })
+          .margin({ left: 10 })
           .onClick(() => {
             Haptics.tap();
             this.onOpenSleepTimer()
           })
           .clickEffect(UiMotion.CLICK)
         Blank()
+        // ── AI 听书开关（2026-10-09 新增）──
+        // 只在 ttsState==='stopped' 时可切（暂停也算未停止）；Edge 接管时置灰并提示。
+        Text('AI 听书')
+          .fontSize(14)
+          .fontColor(this.aiSwitchEnabled() ? this.fg() : this.fgSub())
+          .opacity(this.aiSwitchEnabled() ? 1 : 0.4)
+        Toggle({ type: ToggleType.Switch, isOn: this.aiSwitchOn() })
+          .selectedColor(this.accent())
+          .enabled(this.aiSwitchEnabled())
+          .opacity(this.aiSwitchEnabled() ? 1 : 0.4)
+          .onChange((value: boolean) => {
+            Haptics.tap();
+            this.toggleAiTts(value);
+          })
         Text('完成')
           .fontSize(16)
           .fontColor(this.accent())
+          .margin({ left: 12 })
           .onClick(() => {
             Haptics.tap();
             this.backAndClose();
@@ -1045,6 +1760,60 @@ export struct TtsControlPanel {
 
           // 音色选择
           if (this.showVoices && !this.compactMode) {
+            // ── 音色**来源**（三修，2026-10-10）────────────────────────────────
+            // 用户两次反馈"音色选择还是华为 tts 的" ⇒ 给一个显式来源选择器：
+            // "我在给哪个引擎配音色"一眼可见、随时可切，不再靠隐式推断。
+            Row({ space: 8 }) {
+              Text('来源').fontSize(13).fontColor(this.fgSub())
+              Text('自动')
+                .fontSize(13)
+                .fontColor(this.voiceSourceExplicit === 'auto' ? this.accent() : this.fgSub())
+                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                .borderRadius(12)
+                .backgroundColor(this.voiceSourceExplicit === 'auto' ? this.chipBg() : Color.Transparent)
+                .onClick(() => {
+                  Haptics.tap();
+                  this.voiceSourceExplicit = 'auto';
+                })
+              Text('华为本地')
+                .fontSize(13)
+                .fontColor(this.voiceSourceExplicit === 'local' ? this.accent() : this.fgSub())
+                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                .borderRadius(12)
+                .backgroundColor(this.voiceSourceExplicit === 'local' ? this.chipBg() : Color.Transparent)
+                .onClick(() => {
+                  Haptics.tap();
+                  this.voiceSourceExplicit = 'local';
+                })
+              if (this.aiDraftsReady()) {
+                Text('AI 语音')
+                  .fontSize(13)
+                  .fontColor(this.voiceSourceExplicit === 'ai' ? this.accent() : this.fgSub())
+                  .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                  .borderRadius(12)
+                  .backgroundColor(this.voiceSourceExplicit === 'ai' ? this.chipBg() : Color.Transparent)
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.voiceSourceExplicit = 'ai';
+                  })
+              }
+              if (!this.isLocal()) {
+                Text('Edge')
+                  .fontSize(13)
+                  .fontColor(this.voiceSourceExplicit === 'edge' ? this.accent() : this.fgSub())
+                  .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                  .borderRadius(12)
+                  .backgroundColor(this.voiceSourceExplicit === 'edge' ? this.chipBg() : Color.Transparent)
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.voiceSourceExplicit = 'edge';
+                  })
+              }
+              Blank()
+            }.width('100%')
+            Text('当前在为「' + this.voiceKindLabel() + '」配音色')
+              .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(1)
+
             Row({ space: 10 }) {
               Text('选择').fontSize(14).fontColor(this.fg())
               if (this.prefs.scheme === 'multi') {
@@ -1102,7 +1871,36 @@ export struct TtsControlPanel {
             }.width('100%')
 
             List({ space: 4 }) {
-              if (this.isLocal()) {
+              if (this.voiceKind() === 'ai') {
+                // ── AI 引擎音色（2026-10-10 新增分支）──────────────────────────
+                // 这里是**唯一**的 AI 音色编辑处；选中即落盘（applyAiVoiceToPrefs）。
+                // 允许手填 id：内置表只是"建议值"，不是权威清单（见 AiTtsVoices 头注释）。
+                ForEach(this.aiVoiceList(), (v: AiVoiceOption) => {
+                  ListItem() {
+                    Row() {
+                      Column({ space: 2 }) {
+                        Text(v.label).fontSize(14).fontColor(this.fg())
+                        Text(v.description).fontSize(11).fontColor(this.fgSub())
+                      }
+                      .alignItems(HorizontalAlign.Start)
+                      .layoutWeight(1)
+                      if (this.aiVoiceSelected(v.id)) {
+                        SymbolGlyph($r('sys.symbol.checkmark'))
+                          .fontSize(18)
+                          .fontColor([this.accent()])
+                      }
+                    }
+                    .width('100%')
+                    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+                    .borderRadius(10)
+                    .backgroundColor(this.aiVoiceSelected(v.id) ? this.chipBg() : Color.Transparent)
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.applyAiVoiceToPrefs(v.id);
+                    })
+                  }
+                }, (v: AiVoiceOption) => v.id)
+              } else if (this.voiceKind() === 'local') {
                 // 本地引擎音色：listVoices 动态枚举（权威）+ 状态徽标 + 点击下载（含进度）
                 ForEach(this.localRenderRows(), (v: LocalVoiceRow) => {
                   ListItem() {
@@ -1177,7 +1975,67 @@ export struct TtsControlPanel {
             .width('100%')
             .scrollBar(BarState.Auto)
             // ⚠️ 提示行必须在 List **外**（List 只允许 ListItem 系子组件，Text 内嵌编译报错）
-            if (this.isLocal() && this.localHint.length > 0) {
+            if (this.voiceKind() === 'ai') {
+              // ── 从服务商拉取音色（仅当该服务商有「列音色」接口）──────────────
+              // 设计：拉取 → 落盘缓存（带时间戳+服务商指纹）→ 变更/过期再更新。
+              // **只在用户点击时联网**（合规：用户主动发起）。
+              if (this.aiMetaSupportsListVoices()) {
+                Row({ space: 8 }) {
+                  Text(this.aiCatalogVoices.length > 0 ? '刷新音色' : '拉取音色')
+                    .fontSize(13)
+                    .fontColor(this.aiVoiceFetching ? this.fgSub() : this.accent())
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.aiVoiceFetching ? this.fgSub() : this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.onFetchAiVoices();
+                    })
+                  Text(this.aiVoiceFetching ? '拉取中…' : this.aiCatalogInfo)
+                    .fontSize(11)
+                    .fontColor(this.fgSub())
+                    .layoutWeight(1)
+                    .maxLines(2)
+                }.width('100%')
+              } else {
+                Text('该服务商没有「列音色」接口 ⇒ 请手填音色 id（下面那行）')
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
+              }
+              // AI 音色允许手填（内置表只是建议值）；填完点「填入」即落盘
+              Row({ space: 8 }) {
+                TextInput({ text: this.aiVoiceCustomDraft, placeholder: '或直接填音色 id（本服务商支持的任意值）' })
+                  .fontSize(12)
+                  .layoutWeight(1)
+                  .backgroundColor(this.chipBg())
+                  .fontColor(this.fg())
+                  .placeholderColor(this.fgSub())
+                  .onChange((v: string) => {
+                    this.aiVoiceCustomDraft = v;
+                  })
+                Text('填入')
+                  .fontSize(13)
+                  .fontColor(this.accent())
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.applyAiVoiceToPrefs(this.aiVoiceCustomDraft);
+                    this.aiVoiceCustomDraft = '';
+                  })
+              }.width('100%')
+              Text('当前 ' + this.aiSlotLabel(this.prefs.scheme === 'single' ? 0 : this.voiceSlot)
+                + '：' + this.aiVoiceLabelForSlot())
+                .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(1)
+              // 防呆（2026-10-10 用户实测踩过）：音色名由服务商定义，填错会**静默回落**，
+              // 四个槽位全落同一个音色 ⇒ 男女声"听起来没用"。
+              Text('提示：音色名由服务商定义。填了它不认识的 id 会回落到服务商的默认音色 —— '
+                + '那样旁白/男/女会变成同一个声音。请确认四个槽位填的是该服务商真实存在的音色。')
+                .fontSize(11).fontColor('#E6A23C').width('100%').maxLines(3)
+              if (this.aiVoiceCollisionHint().length > 0) {
+                Text(this.aiVoiceCollisionHint())
+                  .fontSize(11).fontColor('#E6A23C').width('100%').maxLines(2)
+              }
+            }
+            if (this.voiceKind() === 'local' && this.localHint.length > 0) {
               Text(this.localHint)
                 .fontSize(11)
                 .fontColor(this.fgSub())
@@ -1204,7 +2062,7 @@ export struct TtsControlPanel {
               Haptics.tap();
               this.showVoices = true;
               // 本地引擎：展开时才枚举音色（listVoices 权威动态表，含下载状态）
-              if (this.isLocal()) {
+              if (this.voiceKind() === 'local') {
                 this.loadLocalVoices();
               }
             })
@@ -1234,6 +2092,26 @@ export struct TtsControlPanel {
                   this.showAiConfig = !this.showAiConfig;
                 })
             }.width('100%')
+
+            // AI 情绪/语气（2026-10-10 新增）—— 与男女声**同一次 LLM 调用**返回，
+            // 不额外增加请求数；⚠️ 只在**该服务商真支持自然语言语气**时显示
+            // （MiniMax 只吃固定枚举，显示=假控件，见 AiProviderMeta.supportsEmotion）。
+            if (this.aiMetaSupportsEmotion()) {
+              Row({ space: 10 }) {
+                Text('AI 语气').fontSize(14).fontColor(this.fg())
+                Toggle({ type: ToggleType.Switch, isOn: this.prefs.aiEmotionEnabled })
+                  .selectedColor(this.accent())
+                  .onChange((value: boolean) => {
+                    Haptics.tap();
+                    this.prefs.aiEmotionEnabled = value;
+                    this.commitPrefs();
+                  })
+                Text('按剧情给语气（需先开「AI 男女声」）')
+                  .fontSize(11)
+                  .fontColor(this.fgSub())
+                  .layoutWeight(1)
+              }.width('100%')
+            }
 
             if (this.showAiConfig) {
               Column({ space: 8 }) {
@@ -1311,10 +2189,311 @@ export struct TtsControlPanel {
             }
           }
 
+          // ══ AI 语音（用户自接入 TTS，2026-10-09 新增）══════════════════════════
+          // ⚠️ 与上面「AI 男女声」是**两套配置**：上面填对话大模型（说话人识别），
+          //    这里填语音合成接口。分块 + 文案写清，避免用户填串（方案 §5.8）。
+          // 参数行由**服务商能力位**条件渲染：没能力的参数不出现（方案 §13.3）。
+          if (!this.compactMode) {
+            Row({ space: 10 }) {
+              Text('AI 语音').fontSize(14).fontColor(this.fg())
+              Text(this.prefs.aiTtsEnabled ? '已开启' : '未开启')
+                .fontSize(11)
+                .fontColor(this.prefs.aiTtsEnabled ? this.accent() : this.fgSub())
+              Blank()
+              Text(this.showAiTts ? '收起' : '接入设置')
+                .fontSize(13)
+                .fontColor(this.accent())
+                .onClick(() => {
+                  Haptics.tap();
+                  this.showAiTts = !this.showAiTts;
+                })
+            }.width('100%')
+
+            if (this.aiEdgeTakeover()) {
+              Text('Edge TTS 已开启并优先接管。如需 AI 听书，请先到「我的-设置」关闭 Edge TTS。')
+                .fontSize(11).fontColor('#E6A23C').width('100%').maxLines(2)
+            } else if (this.ttsState !== 'stopped') {
+              Text('朗读进行中不可切换引擎：请先停止听书，再开/关 AI 听书。')
+                .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
+            }
+
+            if (this.showAiTts) {
+              Column({ space: 8 }) {
+                // ── 服务商（5 家；Flex 换行防溢出 —— 窄屏下 Row 会挤爆）────────────
+                Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+                  Text('服务商').fontSize(13).fontColor(this.fg()).margin({ right: 8, bottom: 6 })
+                  ForEach(aiProviderMetaList(), (m: AiProviderMeta) => {
+                    Text(m.label)
+                      .fontSize(13)
+                      .fontColor(this.prefs.aiProviderId === m.id ? this.accent() : this.fgSub())
+                      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                      .borderRadius(14)
+                      .margin({ right: 8, bottom: 6 })
+                      .backgroundColor(this.prefs.aiProviderId === m.id ? this.chipBg() : Color.Transparent)
+                      .onClick(() => {
+                        Haptics.tap();
+                        const changed: boolean = this.prefs.aiProviderId !== m.id;
+                        this.prefs.aiProviderId = m.id;
+                        if (this.aiTtsBaseUrlDraft.trim().length === 0) {
+                          this.aiTtsBaseUrlDraft = m.defaultBaseUrl;
+                        }
+                        if (this.aiTtsModelDraft.trim().length === 0) {
+                          this.aiTtsModelDraft = m.modelHint;
+                        }
+                        if (changed) {
+                          // ⚠️ 音色 id 跨厂商不通用 ⇒ 换服务商必须重置槽位，
+                          // 否则会静默回落成同一个声音（用户拍板："需要自动重置"）
+                          this.resetAiVoiceSlotsForProvider(m.id);
+                        }
+                        this.aiTtsDirty = true;
+                        // 换服务商 ⇒ 音色清单指纹变了：重新回填缓存
+                        this.reloadAiCatalog();
+                        this.aiTtsHint = changed
+                          ? '已切换服务商，音色槽位已按该服务商重置'
+                          : '有未保存的修改';
+                      })
+                  }, (m: AiProviderMeta) => m.id)
+                }.width('100%')
+                Text(this.aiMetaDesc())
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
+
+                // ── AI 配置方案（2026-10-10）：小说/散文各一套、A/B 两个服务商不用重填 ──
+                Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+                  Text('方案').fontSize(13).fontColor(this.fg()).margin({ right: 8, bottom: 6 })
+                  ForEach(this.aiProfiles, (p: AiProfile) => {
+                    Row({ space: 2 }) {
+                      Text(p.name)
+                        .fontSize(13)
+                        .fontColor(this.isActiveAiProfile(p) ? this.accent() : this.fgSub())
+                        .onClick(() => {
+                          Haptics.tap();
+                          this.onApplyAiProfile(p);
+                        })
+                      Text('×')
+                        .fontSize(14)
+                        .fontColor(this.fgSub())
+                        .padding({ left: 4, right: 4 })
+                        .onClick(() => {
+                          Haptics.tap();
+                          this.onDeleteAiProfile(p.id);
+                        })
+                    }
+                    .padding({ left: 10, right: 8, top: 5, bottom: 5 })
+                    .borderRadius(14)
+                    .margin({ right: 8, bottom: 6 })
+                    .backgroundColor(this.isActiveAiProfile(p) ? this.chipBg() : Color.Transparent)
+                  }, (p: AiProfile) => p.id)
+                  if (this.aiProfiles.length === 0) {
+                    Text('（暂无，先在下面填好再存）')
+                      .fontSize(11).fontColor(this.fgSub()).margin({ bottom: 6 })
+                  }
+                }.width('100%')
+                Row({ space: 8 }) {
+                  TextInput({ text: this.aiProfileNameDraft, placeholder: '方案名，如「小说·沉稳男声」' })
+                    .fontSize(13)
+                    .layoutWeight(1)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiProfileNameDraft = v;
+                    })
+                  Text('存为方案')
+                    .fontSize(13)
+                    .fontColor(this.accent())
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.onSaveAiProfile();
+                    })
+                }.width('100%')
+
+                // ── 连接参数（按能力位渲染）──────────────────────────────────
+                if (this.aiMetaNeedsBaseUrl()) {
+                  TextInput({ text: this.aiTtsBaseUrlDraft, placeholder: '接口地址（openai.com 在国内不可达；建议填中转或自建服务）' })
+                    .fontSize(13)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiTtsBaseUrlDraft = v;
+                      this.aiTtsDirty = true;
+                      this.aiTtsHint = '有未保存的修改';
+                    })
+                }
+                if (this.aiMetaNeedsApiKey()) {
+                  TextInput({ text: this.aiTtsApiKeyDraft, placeholder: 'API Key' })
+                    .fontSize(13)
+                    .type(InputType.Password)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiTtsApiKeyDraft = v;
+                      this.aiTtsDirty = true;
+                      this.aiTtsHint = '有未保存的修改';
+                    })
+                }
+                TextInput({ text: this.aiTtsModelDraft, placeholder: '模型名，如 tts-1' })
+                  .fontSize(13)
+                  .backgroundColor(this.chipBg())
+                  .fontColor(this.fg())
+                  .placeholderColor(this.fgSub())
+                  .onChange((v: string) => {
+                    this.aiTtsModelDraft = v;
+                    this.aiTtsDirty = true;
+                    this.aiTtsHint = '有未保存的修改';
+                  })
+
+                // ── 输出格式（能力位提供可选项；不强制的服务商不渲染）────────
+                if (this.aiMetaFormatOptions().length > 0) {
+                  Row({ space: 8 }) {
+                    Text('输出格式').fontSize(13).fontColor(this.fg())
+                    ForEach(this.aiMetaFormatOptions(), (f: string) => {
+                      Text(f)
+                        .fontSize(13)
+                        .fontColor(this.aiFormatDraft === f ? this.accent() : this.fgSub())
+                        .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                        .borderRadius(14)
+                        .backgroundColor(this.aiFormatDraft === f ? this.chipBg() : Color.Transparent)
+                        .onClick(() => {
+                          Haptics.tap();
+                          this.aiFormatDraft = f;
+                          this.aiTtsDirty = true;
+                          this.aiTtsHint = '有未保存的修改';
+                        })
+                    }, (f: string) => f)
+                    Blank()
+                    Text('mp3 最通用（本机解码器只认 mp3）')
+                      .fontSize(11).fontColor(this.fgSub())
+                  }.width('100%')
+                }
+
+                // ── 风格提示词（能力位支持才渲染）────────────────────────────
+                if (this.aiMetaSupportsInstructions()) {
+                  TextInput({ text: this.aiInstructionsDraft, placeholder: '风格提示词（可选），如：语气温和、语速平缓' })
+                    .fontSize(13)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiInstructionsDraft = v;
+                      this.aiTtsDirty = true;
+                      this.aiTtsHint = '有未保存的修改';
+                    })
+                }
+
+                // ── 音色：**不在这里选**（2026-10-10 修正）────────────────────
+                // 用户模型（原话）：「AI 男女声只是个辅助功能…只要能听书，无论哪种 tts
+                // 都天然享受 AI 男女生的红利」。⇒ 音色只保留**一处**编辑：展开档上方的
+                // 「音色」区，它会按当前引擎自动切换列表（AI 引擎时显示 AI 音色）。
+                // 这里只给一句指引，避免此前"两处音色、两种提交语义（草稿/直存）"的冲突。
+                Text('音色 → 在上方「音色」区选择：**展开本块后**音色区会自动切成 AI 音色列表，'
+                  + '旁白/对白/男生/女生 四个槽位都在那里设，选完即生效。')
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(3)
+
+                // ── 高级：附加请求体 / 附加请求头（兼容任意中转的逃生口）──────
+                Row({ space: 8 }) {
+                  Text('高级').fontSize(13).fontColor(this.fg())
+                  Blank()
+                  Text(this.showAiAdvanced ? '收起' : '展开')
+                    .fontSize(13)
+                    .fontColor(this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.showAiAdvanced = !this.showAiAdvanced;
+                    })
+                }.width('100%')
+                if (this.showAiAdvanced) {
+                  Text('附加请求体（JSON 片段，会合并进请求；同名键后者生效）')
+                    .fontSize(11).fontColor(this.fgSub()).width('100%')
+                  TextArea({ text: this.aiExtraBodyDraft, placeholder: '{"language_boost":"auto"}' })
+                    .fontSize(12)
+                    .height(64)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiExtraBodyDraft = v;
+                      this.aiTtsDirty = true;
+                      this.aiTtsHint = '有未保存的修改';
+                    })
+                  Text('附加请求头（每行一条 `Key: Value`）')
+                    .fontSize(11).fontColor(this.fgSub()).width('100%')
+                  TextArea({ text: this.aiExtraHeadersDraft, placeholder: 'X-Organization: xxx' })
+                    .fontSize(12)
+                    .height(52)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiExtraHeadersDraft = v;
+                      this.aiTtsDirty = true;
+                      this.aiTtsHint = '有未保存的修改';
+                    })
+                }
+
+                // ── 保存 / 清空 ───────────────────────────────────────────────
+                Row({ space: 10 }) {
+                  // 试听（P0，2026-10-09）：用已保存的配置与当前槽位音色合成一句话
+                  Text(this.aiPreviewLabel())
+                    .fontSize(13)
+                    .fontColor(Color.White)
+                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
+                    .borderRadius(14)
+                    .backgroundColor(this.aiPreviewPhase === 0 ? this.accent() : '#E6A23C')
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.onAiPreviewClick();
+                    })
+                  Text('保存')
+                    .fontSize(13)
+                    .fontColor(Color.White)
+                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
+                    .borderRadius(14)
+                    .backgroundColor(this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.saveAiTtsConfig();
+                    })
+                  Text('清空')
+                    .fontSize(13)
+                    .fontColor(this.fgSub())
+                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.fgSub())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.clearAiTtsConfig();
+                    })
+                  Text(this.aiTtsHint.length > 0 ? this.aiTtsHint
+                    : (this.aiTtsDirty ? '有未保存的修改' : ''))
+                    .fontSize(11)
+                    .fontColor(this.aiTtsDirty ? '#E6A23C' : this.fgSub())
+                    .layoutWeight(1)
+                    .maxLines(2)
+                }.width('100%')
+
+                Text('隐私：本功能不使用我们的服务器，也不收集任何信息。'
+                  + '只有你手动打开上方开关后，正文才会发送到你自己填写的接口。'
+                  + '密钥仅保存在本机。')
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(3)
+              }
+              .width('100%')
+              .padding(10)
+              .borderRadius(10)
+              .backgroundColor(this.chipBg())
+            }
+          }
+
           // 语速 / 音调 / 音量 / 停顿 —— **收起档不渲染**（细节行，展开档才看）
           // 双引擎：本地=语速(localRate)/音量/句末停顿/句中停顿（无音调）；Edge=原 5 项
           if (!this.compactMode) {
-            ForEach(this.isLocal() ? TTS_SLIDERS_LOCAL : TTS_SLIDERS_EDGE, (d: SliderDef) => {
+            ForEach(this.sliderDefs(), (d: SliderDef) => {
               Row({ space: 12 }) {
                 Text(d.label).fontSize(14).fontColor(this.fg()).width(70)
                 Slider({
@@ -1338,6 +2517,77 @@ export struct TtsControlPanel {
                   .textAlign(TextAlign.End)
               }.width('100%')
             }, (d: SliderDef) => d.key)
+          }
+
+          // 朗读过滤（2026-10-10 新增）—— **收起档不渲染**（细节行）
+          // 能力对齐参考项目：命中片段换成**等长空格**（不删字）⇒ 高亮偏移/行号不变。
+          if (!this.compactMode) {
+            Row({ space: 10 }) {
+              Text('朗读过滤').fontSize(14).fontColor(this.fg())
+              Toggle({ type: ToggleType.Switch, isOn: this.prefs.speakFilterEnabled })
+                .selectedColor(this.accent())
+                .onChange((value: boolean) => {
+                  Haptics.tap();
+                  this.prefs.speakFilterEnabled = value;
+                  this.commitPrefs();
+                  this.showFilterRules = value ? this.showFilterRules : false;
+                })
+              Text('跳过括号注释、章末噪音等（不朗读，但正文照常显示）')
+                .fontSize(11)
+                .fontColor(this.fgSub())
+                .layoutWeight(1)
+              Text(this.showFilterRules ? '收起规则' : '编辑规则')
+                .fontSize(13)
+                .fontColor(this.accent())
+                .onClick(() => {
+                  Haptics.tap();
+                  this.showFilterRules = !this.showFilterRules;
+                })
+            }.width('100%')
+
+            if (this.showFilterRules) {
+              Column({ space: 8 }) {
+                Text('一行一条规则：默认按正则；~ 开头按字面量；# 开头是注释')
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
+                TextArea({ text: this.speakFilterDraft, placeholder: '例如：[(（〔﹝][^)）〕﹞]{0,60}[)）〕﹞]' })
+                  .fontSize(12)
+                  .height(120)
+                  .backgroundColor(this.chipBg())
+                  .fontColor(this.fg())
+                  .placeholderColor(this.fgSub())
+                  .onChange((v: string) => {
+                    this.speakFilterDraft = v;
+                    this.speakFilterDirty = true;
+                  })
+                Row({ space: 10 }) {
+                  Text('保存规则')
+                    .fontSize(13)
+                    .fontColor(this.accent())
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.prefs.speakFilterText = this.speakFilterDraft;
+                      this.commitPrefs();
+                      this.speakFilterDirty = false;
+                      this.speakFilterHint = '已保存（下一段生效）';
+                    })
+                  Text('恢复默认')
+                    .fontSize(13)
+                    .fontColor(this.fgSub())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.speakFilterDraft = DEFAULT_SPEAK_FILTER_TEXT;
+                      this.speakFilterDirty = true;
+                      this.speakFilterHint = '已填入默认规则，记得点【保存规则】';
+                    })
+                  Blank()
+                  Text(this.speakFilterHint).fontSize(11).fontColor(this.fgSub())
+                }.width('100%')
+              }.width('100%')
+            }
           }
 
           // 引号风格（多角色时有效）—— **收起档不渲染**（细节行）

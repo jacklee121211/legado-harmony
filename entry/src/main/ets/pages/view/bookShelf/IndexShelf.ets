@@ -24,7 +24,26 @@ import { Haptics } from '../../../common/utils/Haptics'
 @Component
 export default struct IndexShelf {
   @State currentIndex: number = 0
-  titleArray: Array<string> = ['小说', '漫画', '有声书']
+  /**
+   * 顶部分类页签。**2026-10-11 起只剩「书架」一个**（用户裁定：删掉漫画/有声书两个入口，
+   * 并把「小说」字样改成「书架」）。
+   *
+   * 为什么删：这两个页签在实现上只是 `Books.bookType` 的 SQL 分区
+   * （`BooksDao.ets:134-136` 的 `bookType = type`），**全工程没有任何按 `bookType`
+   * 分流的渲染**（`ReaderPage3.ets` 里 grep `bookType` 零命中，点书一律进同一个
+   * ReaderKit 文本阅读器）。而：
+   *   · 导入白名单只有文本后缀（见 `pickLocalBooks()` 的注释）；
+   *   · ReaderKit 的排版参数 `readerCore.ReaderSetting` 只有 13 个字段
+   *     （字体/行高/背景/翻页/视口），**没有图片模式、也没有音频模式**
+   *     （SDK `…\hms\ets\api\@hms.core.readerservice.readerComponent.d.ets:69-199`）；
+   * ⇒ 漫画/有声书页签永远装不进对应内容，是**空入口**。
+   *
+   * ⚠️ `currentIndex` 仍保留：它就是 `bookType`（导入归类、自建分组的 `groupType` 都用它），
+   *    现在恒为 0。
+   * 老数据：曾落在 bookType = 1/2 的书与分组由 `BooksDao.migrateBookTypeToShelf()`
+   *    一次性搬到 0（删入口不丢书）。
+   */
+  titleArray: Array<string> = ['书架']
   @State bookTypeNumber: number = 2
   @State EXHIBIT: string = '列表'
   @State @Watch('changeGroup') GROUP: string = '标签'
@@ -166,28 +185,10 @@ export default struct IndexShelf {
         Row() {
           List({ scroller: this.scrollController }) {
             ListItem() {
-              BookMark({ title: '小说', index: 0, currentIndex: this.currentIndex }).onClick(() => {
+              BookMark({ title: '书架', index: 0, currentIndex: this.currentIndex }).onClick(() => {
                 Haptics.tap();
                 this.currentIndex = 0
                 this.tabsController.changeIndex(0)
-                console.log(this.currentIndex + '')
-              })
-            }
-
-            ListItem() {
-              BookMark({ title: '漫画', index: 1, currentIndex: this.currentIndex }).onClick(() => {
-                Haptics.tap();
-                this.currentIndex = 1
-                this.tabsController.changeIndex(1)
-                console.log(this.currentIndex + '')
-              })
-            }
-
-            ListItem() {
-              BookMark({ title: '有声书', index: 2, currentIndex: this.currentIndex }).onClick(() => {
-                Haptics.tap();
-                this.currentIndex = 2
-                this.tabsController.changeIndex(2)
                 console.log(this.currentIndex + '')
               })
             }
@@ -203,8 +204,8 @@ export default struct IndexShelf {
 
         // ── 搜索 / 更多已下移（2026-09-29 用户裁定）────────────────────────────
         // 用户原话：摘掉「浏览历史」后「最近阅读这一行后面空了，和下面这一行不对齐，
-        //   上面小说这一行还有一个搜索和一个更多的图标，放在下面是不是非常完美」。
-        // ⇒ 两个图标挪进「最近阅读」行的尾部（本组件只留「小说/漫画/有声书」一行），
+        //   上面这一行还有一个搜索和一个更多的图标，放在下面是不是非常完美」。
+        // ⇒ 两个图标挪进「最近阅读」行的尾部（本组件顶部只留「书架」一行），
         //   全部交互逻辑（搜索浮窗 / ⋯菜单 / Q弹动效）仍在 IndexShelf，
         //   经 `BookBodyContent.trailingActions`（@BuilderParam）注入渲染，
         //   与设置 sheet 复用页面 @Builder 是同一官方模式（faqs-arkui-826）。

@@ -50,6 +50,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '全面实现系统级防窥，并支持禁止截屏',
       '新增下划增加/删除书签手势',
       '重构dock栏，新增听书圆形按钮',
+      '新增AI听书接口，适配主流TTS模型',
     ]
   },
 ]

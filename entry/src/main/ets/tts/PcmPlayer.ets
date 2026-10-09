@@ -687,13 +687,16 @@ export class PcmPlayer {
   }
 
   resume(): void {
+    // 先存 pausedFlag 前值：原实现里日志字段在 this.pausedFlag=false 之后打印，
+    // 永远只看到 'false'，误把"AVSession on('play') / on('pause') 派发"判成"应用不知道被暂停了"。
+    const prePaused: boolean = this.pausedFlag;
     this.pausedFlag = false;
     this.writeFailStreak = 0;
     this.streamDeadLogged = false;
     const r = this.renderer;
     // T1-D1 取证日志：真机确认 r.state 的真实取值（不改变行为）
-    hilog.info(DOMAIN, TAG, 'resume: renderer state=%{public}d pausedFlag=%{public}s',
-      r === null ? -2 : r.state, this.pausedFlag ? 'true' : 'false');
+    hilog.info(DOMAIN, TAG, 'resume: renderer state=%{public}d prePaused=%{public}s',
+      r === null ? -2 : r.state, prePaused ? 'true' : 'false');
     if (r !== null && r.state === audio.AudioState.STATE_PAUSED) {
       try {
         r.start();

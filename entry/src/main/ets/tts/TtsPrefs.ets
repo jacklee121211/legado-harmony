@@ -4,6 +4,7 @@
  * quoteStyles: 启用的对白引号风格下标（0="" 1='' 2=「」 3=『』）
  */
 import { PreferencesUtil } from '@pura/harmony-utils';
+import { DEFAULT_SPEAK_FILTER_TEXT } from './SpeakFilter';
 import {
   EDGE_DEFAULT_NARRATION_VOICE, EDGE_DEFAULT_DIALOGUE_VOICE,
   EDGE_DEFAULT_DIALOGUE_MALE_VOICE, EDGE_DEFAULT_DIALOGUE_FEMALE_VOICE,
@@ -17,13 +18,17 @@ import {
 
 export type TtsScheme = 'single' | 'multi';
 /**
- * TTS 引擎选择（2026-09-25 双引擎架构）：
+ * TTS 引擎选择：
  *  · 'local'（默认）：系统本地引擎（Core Speech Kit textToSpeech），端侧合成、无网可用、
  *    上架合规；单音色（聆小珊），无词级时间戳（停顿拼接/句级高亮精度降级）；
  *  · 'edge'：Edge TTS（云端合成、音色丰富、词级时间戳）——**暗门解锁后**才允许选择
- *    （TtsEngine.activeEngineId() 二次校验：未解锁一律回落 'local'）。
+ *    （TtsEngine.activeEngineId() 二次校验：未解锁一律回落 'local'）；
+ *  · 'ai'（2026-10-09 新增）：**用户自接入的 AI 语音**（OpenAI 兼容 /v1/audio/speech 等），
+ *    由听书面板顶栏开关 `aiTtsEnabled` 控制，不受暗门约束；
+ *    ⚠️ 优先级为 **Edge > AI > local**（用户口径：「只要开启 edge，直接使用 edge」），
+ *    见 docs/ai-voice-read-plan-2026-10-09.md §13.6.1。
  */
-export type TtsEngineKind = 'local' | 'edge';
+export type TtsEngineKind = 'local' | 'edge' | 'ai';
 
 export interface TtsPrefs {
   ttsEngine: TtsEngineKind; // 双引擎选择（默认 local；edge 仅解锁后生效）
@@ -50,9 +55,45 @@ export interface TtsPrefs {
   autoFollow: boolean;     // 朗读推进时阅读器跟随跳章
   immersiveListen: boolean; // 沉浸听读：自绘当前页，句子高亮画在文字内部（像素级精确）
   aiSpeakerRecognitionEnabled: boolean; // AI 识别对白说话人性别（男/女分音色）
+  /**
+   * AI 情绪标注（2026-10-10）：与男女声**同一次 LLM 调用**返回语气，
+   * 透传成该服务商的风格参数（instructions / context_texts）。
+   * 仅当服务商 `supportsEmotion` 时 UI 才显示；不支持的厂商（如 MiniMax 只吃固定枚举）隐藏。
+   */
+  aiEmotionEnabled: boolean;
+  /**
+   * AI 配置方案（JSON 数组，见 `tts/ai/AiProfile.ets`）。空串 = 没有方案。
+   * ⚠️ 含密钥，但按用户决定**明文存本地、不加密、不上传**。
+   */
+  aiProfiles: string;
+  /**
+   * 朗读过滤（2026-10-10，对齐参考项目能力）
+   * · enabled：总开关；关闭后行为与改动前逐字一致（可一键回退）；
+   * · text：一行一条规则，`~` 前缀=字面量，`#` 前缀=注释（见 `SpeakFilter.ets`）。
+   * 机制是**等长空格掩码** ⇒ 高亮偏移/行号不受影响。
+   */
+  speakFilterEnabled: boolean;
+  speakFilterText: string;
   aiBaseUrl: string;       // OpenAI 兼容接口，如 https://api.deepseek.com/v1
   aiApiKey: string;
   aiModel: string;         // 如 deepseek-chat
+  // ── AI 听书（用户自接入 TTS，2026-10-09 新增；与上面的大模型接口是**两套配置**）──────
+  // ⚠️ 上面 aiBaseUrl/aiApiKey/aiModel 服务「AI 男女声识别」（对话大模型）；
+  //    下面 aiTts* 服务「AI 语音合成」（TTS）。UI 必须分块显示，否则用户必然填串。
+  aiTtsEnabled: boolean;   // 顶栏开关：默认 false；仅 ttsState==='stopped' 时可切换
+  aiProviderId: string;    // 服务商 id（见 tts/ai/AiTtsProviders，当前仅 'openai'）
+  aiTtsBaseUrl: string;    // TTS 接口地址（OpenAI 兼容形，如 https://api.openai.com/v1）
+  aiTtsApiKey: string;     // TTS 密钥
+  aiTtsModel: string;      // TTS 模型名，如 tts-1
+  aiFormat: string;        // 输出格式：'mp3' | 'wav' | 'pcm'
+  aiInstructions: string;  // 风格/语气提示词（透传为 instructions，仅支持的服务商）
+  aiExtraBody: string;     // 附加请求体 JSON 片段（合并进 body）
+  aiExtraHeaders: string;  // 附加请求头（行式 `Key: Value`）
+  aiSingleVoiceId: string;
+  aiNarrationVoiceId: string;
+  aiDialogueVoiceId: string;
+  aiDialogueMaleVoiceId: string;
+  aiDialogueFemaleVoiceId: string;
 }
 
 export const RATE_MIN = 0.5;
@@ -92,11 +133,42 @@ export function defaultTtsPrefs(): TtsPrefs {
     autoFollow: true,
     immersiveListen: true,
     aiSpeakerRecognitionEnabled: false,
+    aiEmotionEnabled: true,
+    aiProfiles: '',
+    speakFilterEnabled: true,
+    speakFilterText: DEFAULT_SPEAK_FILTER_TEXT,
     aiBaseUrl: '',
     aiApiKey: '',
-    aiModel: ''
+    aiModel: '',
+    // ── AI 听书默认值（全部"关/空"，老用户升级后行为与今天完全一致）──────────
+    aiTtsEnabled: false,
+    aiProviderId: 'openai',
+    aiTtsBaseUrl: '',
+    aiTtsApiKey: '',
+    aiTtsModel: 'tts-1',
+    aiFormat: 'mp3',
+    aiInstructions: '',
+    aiExtraBody: '',
+    aiExtraHeaders: '',
+    aiSingleVoiceId: 'alloy',
+    aiNarrationVoiceId: 'onyx',
+    aiDialogueVoiceId: 'nova',
+    aiDialogueMaleVoiceId: 'onyx',
+    aiDialogueFemaleVoiceId: 'nova'
   };
   return d;
+}
+
+/**
+ * 宽松字符串读取：**允许空串**（与上面的 asString 不同）。
+ * 为什么需要：AI 的 baseUrl / apiKey / 附加 JSON 都允许为空，
+ * 若用 asString 会被"空串回落默认值"的逻辑覆盖成非空默认值。
+ */
+function asText(v: Object, fb: string): string {
+  if (typeof v === 'string') {
+    return v as string;
+  }
+  return fb;
 }
 
 function asString(v: Object, fb: string): string {
@@ -157,8 +229,9 @@ export function normalizeTtsPrefs(raw: object): TtsPrefs {
   }
   const schemeRaw = asString(o['scheme'], '');
   const engineRaw = asString(o['ttsEngine'], 'local');
+  const fmtRaw = asText(o['aiFormat'], d.aiFormat).trim().toLowerCase();
   const p: TtsPrefs = {
-    ttsEngine: engineRaw === 'edge' ? 'edge' : 'local',
+    ttsEngine: engineRaw === 'edge' ? 'edge' : (engineRaw === 'ai' ? 'ai' : 'local'),
     localSinglePerson: asPerson(o['localSinglePerson'], d.localSinglePerson),
     localNarrationPerson: asPerson(o['localNarrationPerson'], d.localNarrationPerson),
     localDialogueMalePerson: asPerson(o['localDialogueMalePerson'], d.localDialogueMalePerson),
@@ -179,9 +252,29 @@ export function normalizeTtsPrefs(raw: object): TtsPrefs {
     autoFollow: asBool(o['autoFollow'], d.autoFollow),
     immersiveListen: asBool(o['immersiveListen'], d.immersiveListen),
     aiSpeakerRecognitionEnabled: asBool(o['aiSpeakerRecognitionEnabled'], d.aiSpeakerRecognitionEnabled),
+    aiEmotionEnabled: asBool(o['aiEmotionEnabled'], d.aiEmotionEnabled),
+    aiProfiles: asString(o['aiProfiles'], d.aiProfiles),
+    speakFilterEnabled: asBool(o['speakFilterEnabled'], d.speakFilterEnabled),
+    speakFilterText: asString(o['speakFilterText'], d.speakFilterText),
     aiBaseUrl: asString(o['aiBaseUrl'], d.aiBaseUrl),
     aiApiKey: asString(o['aiApiKey'], d.aiApiKey),
-    aiModel: asString(o['aiModel'], d.aiModel)
+    aiModel: asString(o['aiModel'], d.aiModel),
+    // ── AI 听书（宽松读取：允许空串）────────────────────────────────────────
+    aiTtsEnabled: asBool(o['aiTtsEnabled'], d.aiTtsEnabled),
+    aiProviderId: asString(o['aiProviderId'], d.aiProviderId),
+    aiTtsBaseUrl: asText(o['aiTtsBaseUrl'], d.aiTtsBaseUrl),
+    aiTtsApiKey: asText(o['aiTtsApiKey'], d.aiTtsApiKey),
+    aiTtsModel: asString(o['aiTtsModel'], d.aiTtsModel),
+    // 白名单：只认三种，其余回落默认（防止手改 Preferences 塞进奇怪扩展名）
+    aiFormat: (fmtRaw === 'mp3' || fmtRaw === 'wav' || fmtRaw === 'pcm') ? fmtRaw : d.aiFormat,
+    aiInstructions: asText(o['aiInstructions'], d.aiInstructions),
+    aiExtraBody: asText(o['aiExtraBody'], d.aiExtraBody),
+    aiExtraHeaders: asText(o['aiExtraHeaders'], d.aiExtraHeaders),
+    aiSingleVoiceId: asString(o['aiSingleVoiceId'], d.aiSingleVoiceId),
+    aiNarrationVoiceId: asString(o['aiNarrationVoiceId'], d.aiNarrationVoiceId),
+    aiDialogueVoiceId: asString(o['aiDialogueVoiceId'], d.aiDialogueVoiceId),
+    aiDialogueMaleVoiceId: asString(o['aiDialogueMaleVoiceId'], d.aiDialogueMaleVoiceId),
+    aiDialogueFemaleVoiceId: asString(o['aiDialogueFemaleVoiceId'], d.aiDialogueFemaleVoiceId)
   };
   return p;
 }
