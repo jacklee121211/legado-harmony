@@ -293,14 +293,15 @@ export struct MyThemeConfigComp {
           this.openThemeEditor()
         })
 
-        // ── 个性化配置入口（2026-10-10 新增）─────────────────────────────────
-        GridItem() {
-          this.plugboardTile()
-        }
-        .onClick(() => {
-          Haptics.tap();
-          this.openPlugboard()
-        })
+        // ── 个性化配置入口（2026-10-10 新增，2026-10-11 隐藏）────────────────
+        // 【已隐藏】效果待优化，暂时隐藏入口
+        // GridItem() {
+        //   this.plugboardTile()
+        // }
+        // .onClick(() => {
+        //   Haptics.tap();
+        //   this.openPlugboard()
+        // })
 
         ForEach(this.themeList, (item: ThemeItem, index) => {
           GridItem() {

@@ -271,20 +271,21 @@ export default struct MyCenter {
           }
 
           // ── 个性化插件屏 · 方块区（2026-10-10 新增）───────────────────────────
+          // 【已隐藏 2026-10-11】效果待优化，暂时隐藏入口
           // 2026-10-11：宽度对齐"读过"列左边到"书签"列右边（屏宽/3 = 屏宽 33%）
           // 居中显示。无内容时不渲染卡片背景（避免空白块）
-          if (PlugboardPrefs.hasContent(PlugZone.MY_BLOCK)) {
-            Row() {
-              PlugboardZone({ zone: PlugZone.MY_BLOCK, zoneLabel: '2区·方块' })
-                .width('33.33%')
-                .borderRadius(10)
-                .backgroundColor($r('app.color.card_bg'))
-                .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.Center)
-            .margin({ top: 16 })
-          }
+          // if (PlugboardPrefs.hasContent(PlugZone.MY_BLOCK)) {
+          //   Row() {
+          //     PlugboardZone({ zone: PlugZone.MY_BLOCK, zoneLabel: '2区·方块' })
+          //       .width('33.33%')
+          //       .borderRadius(10)
+          //       .backgroundColor($r('app.color.card_bg'))
+          //       .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          //   }
+          //   .width('100%')
+          //   .justifyContent(FlexAlign.Center)
+          //   .margin({ top: 16 })
+          // }
 
           // 弹性占位：把「关于我们」推到页尾、底部 dock 之上（2026-10-01 用户需求）。
           // 内层 Column 高度确定（height '100%'）⇒ Blank 撑满剩余空间；
