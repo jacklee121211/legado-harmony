@@ -147,6 +147,15 @@ export default class ImmersiveMaterialUtil {
       //   我们此前没设它们 ⇒ 走系统默认，而默认遮罩在真机上是**屏幕底部一大片灰色渐变**，
       //   用户反馈「太大了」「像底部的特效」。页签条自己已经有材质背板，
       //   再叠一层大面积渐变既费 GPU 又难看 ⇒ 显式关掉。
+      //
+      // ★★ 2026-10-11 交叉引用（写给后来者，别只关这一处）★★
+      //   同一个"关遮罩"动作，在**现在真正在用的 HdsTabs 那条路**上必须再做一遍：
+      //   迁 HdsTabs（2026-10-09 `fe2dd1e`）后字段改名成 `HdsTabsFloatingStyle.gradientMask`，
+      //   且官方明确「蒙层高度**不可设置为 0**」⇒ 下面这套"透明色 + 0 高度"搬不过去，
+      //   当时漏迁 ⇒ **蒙层静默回归**，真机表现是"书架底部手势条那一行多出一条灰白横条"
+      //   （两天后才被发现）。现役实现在 `pages/Index.ets` 的 `hdsFloatingStyle()`：
+      //   `gradientMask: { maskColor: Color.Transparent }`（只传颜色）。
+      //   全过程与判定方法见 `docs/底部手势区贯通-排查记录.md`。
       maskColor: Color.Transparent,
       maskHeight: 0,
     };
