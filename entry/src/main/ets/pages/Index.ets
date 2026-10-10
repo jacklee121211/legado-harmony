@@ -600,9 +600,21 @@ struct Main {
       // 官方明确「蒙层高度**不可设置为 0**」⇒ 唯一关法是**把颜色设成全透明**
       // （只传颜色、不传高度：高度留默认，反正全透明不可见）。
       // 这也是 HdsTabs 之前那套 `FloatingTabBarStyle` 的老关法 —— 见
-      // `common/utils/ImmersiveMaterialUtil.ets:144-151`（`maskColor: Color.Transparent,
+      // `common/utils/ImmersiveMaterialUtil.ets` 的 `tabsFloatingStyle()`（`maskColor: Color.Transparent,
       // maskHeight: 0`），当时的注释已经记着"系统默认遮罩在真机上是屏幕底部一大片灰色渐变"。
       // 迁 HdsTabs 时字段改名成 `gradientMask`、并禁止 0 高度，这层蒙层就**又回来了**。
+      //
+      // ── 【教训 · 通用规则】（2026-10-11，写给后来者）──────────────────────────
+      //   ① **组件换代（ArkUI 原生 → HDS 等）时，旧代码里"显式关掉的系统默认效果"必须逐条复查**：
+      //      这次就是 `FloatingTabBarStyle.maskColor: Transparent` 在迁 HdsTabs 时漏迁（字段改名 +
+      //      新组件禁止 0 高度，老写法搬不过来）⇒ 蒙层静默回归，**两天后才被用户看出来**。
+      //      旧实现在 `ImmersiveMaterialUtil.tabsFloatingStyle()`，新实现就是本方法，两边要一一对照。
+      //   ② **"没写这个字段" ≠ "没有这个效果"**：系统/HDS 组件的默认值往往就是"有"；
+      //      查默认值一律看官方 API 参考表里的「默认值：」列（SDK 注释里的 `@default` 不一定写全）。
+      //   ③ 排查方法（可复用）：`devecocli ui layout --format json` dump **真机节点树**，
+      //      拿「正常页 vs 异常页」里**同一个元素**的 `bounds` 并列对比 → `ui screenshot` 逐行采样颜色
+      //      → 最后**单变量 A/B**（只注释掉可疑的那一行 → 重装 → 再截图）确认因果。
+      //      本次全过程记在 `docs/底部手势区贯通-排查记录.md`。
       //
       // ⚠️ 回退：删掉下面这行 ⇒ 恢复官方默认蒙层（书架底部重新出现白条）。
       gradientMask: { maskColor: Color.Transparent }

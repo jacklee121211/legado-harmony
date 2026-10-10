@@ -30,6 +30,7 @@
 | 改了代码 | MCP `check`（**绝对路径**）+ `devecocli build --modules entry` |
 | 系统行为 / 字体 / 排版 / 音频异常 | **先读 `日志.md`**，用日志数字定位，再决定改什么 |
 | 涉及 ReaderKit | 先读官方 `开发指南/Reader_Kit_阅读服务/...`（`devecocli docs`），按其契约实现 |
+| **UI 布局/样式异常**（底色不对、内容被裁、遮挡、底部不贯通） | `devecocli ui layout --format json` dump **真机节点树**，把「正常页 vs 异常页」里**同一个元素**的 `bounds` 并列对比；再用 `devecocli ui screenshot` 同分辨率截图逐行采样颜色。可疑项做**单变量 A/B**：只注释掉那一行 → 重装 → 再截图。2026-10-11 就是这样定死「书架底部那条横条」的，全过程见 `docs/底部手势区贯通-排查记录.md` |
 
 ## 2. 冲突时的判定顺序（反直觉必须交叉验证）
 
@@ -112,6 +113,24 @@ V2.0.2 封面圆角对齐 + 进场更顺
   （报 `2339 Property 'sid' does not exist on type 'never'`）⇒ 用 `for` 循环 + 显式判空。
 - **DevEco 开着时编辑工具可能偶发 `ReplaceFileW EIO (Win32 1175)`**（原子替换被占用）：
   文件**不会**被损坏，直接重试同一次编辑即可（实测两次都成功）。
+- **底部"手势条那一行"有东西 / 内容画不到屏幕最底 = 两个独立元凶**（2026-10-11 真机 dump + 像素双证，
+  详见 `docs/底部手势区贯通-排查记录.md`）：
+  1. **HDS 悬浮页签自带的背板蒙层** `HdsTabsFloatingStyle.gradientMask` —— **不写就是官方默认**：
+     浅色 `#CCF1F3F5`、深色 `#99000000`，高度 = 页签栏默认高 + 16vp，全宽铺在屏幕最底，画在**内容之上**
+     ⇒ 压在主题色底（书架 `#ffece0`）上就是一条灰白"横条"，压在设置页灰底 `#F5F5F5` 上几乎同色
+     ⇒ **同一层蒙层，只有书架显形**。官方写明「蒙层高度**不可设置为 0**」⇒ 唯一关法是
+     `gradientMask: { maskColor: Color.Transparent }`（只传颜色、不传高度），见 `pages/Index.ets`
+     的 `hdsFloatingStyle()`。
+  2. **滚动容器盒子自己的底部 `margin`/`padding`** 会把内容截在屏幕底以上（`BookContent` 的 List 曾带
+     `.margin({ bottom: 20 })`，2025-12-23 首次导入时的老代码）⇒ 最后一行书永远画不进那一条。
+     悬浮 dock 时代**避让一律走 `contentEndOffset`**（只偏移内容末尾、不动盒子），盒子不要再留底部外边距。
+  ⚠️ 曾一度误判成"`linearGradient` 0.2 之后重复着色"—— **错**：`repeating` 默认 `false`
+  （官方 `…/视效与模糊/颜色渐变/ts-universal-attributes-gradient-color`），实测 y=660 以下恒为第二色。
+- **组件换代（ArkUI 原生 → HDS）时必须逐条复查旧代码里"显式关掉的系统默认效果"**（2026-10-09
+  `Tabs` → `HdsTabs` 时漏迁 `maskColor: Color.Transparent` ⇒ 底部蒙层静默回归，两天后才被用户发现）。
+  老实现 `ImmersiveMaterialUtil.tabsFloatingStyle()` 关了什么（遮罩），新实现
+  `Index.ets hdsFloatingStyle()` 就要一一对照；**字段改名 + 默认值变化**都要查 API 参考的"默认值"列，
+  不要以为"没写=没效果"。
 - **Web 服务产物新鲜度闸门**（2026-10-06 新增）：`node scripts/check-web-artifacts.mjs` 比对
   `web/src/*` 与 `rawfile/*_v3.html` 的 mtime，旧了就非零退出；`.githooks/pre-commit` 会在
   提交含 `web/` 改动时自动 `node web/build.mjs` 并 `git add` 产物。**没挂 hvigor hook**：
