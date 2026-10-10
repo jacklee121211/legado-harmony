@@ -236,4 +236,6 @@ export class RouteName {
   static readonly PRIVACY: string = 'PrivacyPage';
   /** 开源许可（`pages/view/myCenter/about/LicensePage`） */
   static readonly LICENSE: string = 'LicensePage';
+  /** 联系我们（应用内 Web 组件打开远程联系页，2026-10-07 新增） */
+  static readonly CONTACT: string = 'ContactPage';
 }

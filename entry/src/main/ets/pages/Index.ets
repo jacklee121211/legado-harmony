@@ -39,6 +39,7 @@ import AboutPage from './view/myCenter/about/AboutPage'
 import VersionLogPage from './view/myCenter/about/VersionLogPage'
 import PrivacyPage from './view/myCenter/about/PrivacyPage'
 import LicensePage from './view/myCenter/about/LicensePage'
+import ContactPage from './view/myCenter/about/ContactPage'
 import { common } from '@kit.AbilityKit'
 import { NightMode, ShelfColors } from '../common/utils/NightMode'
 import CommonConstants from '../common/constants/CommonConstants'
@@ -1642,6 +1643,13 @@ struct Main {
       // ── 开源许可 ──────────────────────────────────────────────────────
       NavDestination() {
         LicensePage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.CONTACT) {
+      // ── 联系我们（2026-10-07 新增，应用内 Web 组件）──────────────────
+      NavDestination() {
+        ContactPage()
       }
       .hideTitleBar(true)
       .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
