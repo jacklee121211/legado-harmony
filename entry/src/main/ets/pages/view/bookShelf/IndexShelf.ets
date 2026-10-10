@@ -275,17 +275,28 @@ export default struct IndexShelf {
         console.log('index:' + index)
         this.currentIndex = index
       })
-      // ★ 2026-10-11 曾试过去掉 Tabs 的 `pageBg()` 兜底白底让渐变贯通 ⇒ 真机回归：
-      //   底部手势条区出现"白条蒙版"（渐变 0.2 后重复着色，尾段周期性露浅色）。
-      //   git 定位：该改动来自 35ee995（V2.1.4），去掉后白条出现；此处恢复兜底。
-      //   判断依据：设置页 MySetPage 底部"透"是因为它根 Column 有实色 page_bg_alt 铺底，
-      //   而书架页渐变是重复着色段，去掉 Tabs 白底后列表盒子透出的是渐变重复段。
-      .backgroundColor(ShelfColors.pageBg())
+      // ★★ 2026-10-11 二修：**撤掉 pageBg 兜底白底**（上一版把它当成"白条"的修法，判断错了）★★
+      //
+      // 上一版（HEAD 5a770c3）写道：「去掉 pageBg 兜底 ⇒ 底部手势条出现白条蒙版（渐变 0.2 后
+      // 重复着色）」——真凶不是这个，证据两条：
+      //   ① 官方对 `linearGradient.colors` 的原文（documentId
+      //      `API参考/…/通用属性/视效与模糊/颜色渐变/ts-universal-attributes-gradient-color`）：
+      //      「repeating7+ | boolean | 设置渐变颜色是否在组件范围内循环重复填充。**默认值：false**。
+      //        false：渐变效果**仅在指定范围内显示一次**。」
+      //      本组件**没有**设 `repeating: true` ⇒ 0.2 之后一路是 `secondColor`，**不存在重复着色段**。
+      //   ② 真机截图逐行采样（`screenshot_20261010_210433`，橙主题）：y=660 到 y=2460 恒为
+      //      (254,236,224)=#ffece0，2000+px 无任何周期性变化 ⇒ 实测与官方默认值一致。
+      //
+      // 真凶在 HDS 页签那一侧：悬浮页签**自带一层底部渐变蒙层**（`gradientMask`，浅色模式默认
+      // `#CCF1F3F5` 铺满屏幕最底 72vp），已在 `Index.ets` 的 `hdsFloatingStyle()` 里关掉
+      // （那里有完整证据链与像素验算）。所以这里恢复"渐变贯通"的观感 —— 也就是
+      // 35ee995 那一版（= 用户截图那一版）的样子，与"我的"页同款。
       .scrollable(this.APP_INDEX_SCROLLABLE)
     }
     .height('100%')
-    // 【已移除 2026-10-11】expandSafeArea 是多余改动（恢复 pageBg 兜底后不再需要）
-    // .expandSafeArea([SafeAreaType.SYSTEM])
+    // ★ 恢复（35ee995 那一版原本就有；上一版连带删掉时记的是"多余"）：让整页渐变（含底部
+    //   手势条区）一并铺进系统安全区。35ee995 之后它是与"无兜底底色"配套存在的 ⇒ 一起恢复。
+    .expandSafeArea([SafeAreaType.SYSTEM])
     // ── 页面主题渐变（书架整页的底色）────────────────────────────────────────
     // 日间：主题 mainColor → secondColor（用户可选 5 套浅色主题）。
     // 夜间：换成中性深灰渐变 —— `themeManager` 那 5 套**全是浅色**
@@ -293,10 +304,14 @@ export default struct IndexShelf {
     // 取值与规则见 `ShelfColors.gradientStart/End()`。
     .linearGradient({
       direction: GradientDirection.Bottom, // 渐变方向
+      // ⚠️ 这里**不是**重复着色（旧注释抄自官方示例片段，那段示例同时设了 `repeating: true`）：
+      //    官方原文「repeating7+ … 默认值：false。false：渐变效果只在指定范围内显示一次」
+      //    ⇒ 0 → 0.2 之间是 mainColor → secondColor 的渐变，0.2 以下**恒为 secondColor**。
+      //    真机实测吻合（截图 y=660 起恒为 #ffece0，见上方"二修"注释的采样数字）。
       colors: [[ShelfColors.gradientStart(this.theme.mainColor), 0],
-        [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]] // 数组末尾元素占比小于1时满足重复着色效果
+        [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]]
     })
-    // ★ 恢复（git 35ee995^ 旧版原本就有）：底部圆角与 pageBg 兜底配套
+    // ★ 底部圆角（35ee995 那一版起就有，与上面的 expandSafeArea 配套）
     .borderRadius({ bottomRight: 5, bottomLeft: 5 })
   }
 

@@ -572,7 +572,40 @@ struct Main {
     }
     const st: HdsTabsFloatingStyle = {
       barSideMargin: 16,
-      barBottomMargin: this.bottomRectHeight + 8
+      barBottomMargin: this.bottomRectHeight + 8,
+      // ★★ 2026-10-11 修「书架底部手势条那条白条蒙版」（用户真机截图对比设置页）★★
+      //
+      // ── 那条白条是什么 ────────────────────────────────────────────────────
+      // HDS 悬浮页签**自带一层底部渐变蒙层**（`gradientMask` = 背板蒙层，
+      // SDK `@hms.hds.hdsBaseComponent.d.ets:5416` 原文注释：
+      // 「Sets gradient mask for bottom of tabs.」）。官方 API 参考
+      // （documentId `API参考/UI_Design_Kit_UI设计套件/ArkTS组件/HdsTabs_底部页签/ui-design-hdstabs`）
+      // 对它的默认值原文：
+      //   「默认值：蒙层颜色浅色模式是 #CCF1F3F5，深色模式是 #99000000。
+      //     蒙层高度等于页签栏默认高度加 16vp。说明：**蒙层高度不可设置为 0**。」
+      // ⇒ 浅色下 = 80% 不透明的浅灰 #F1F3F5 渐变，**全宽**铺满屏幕最底 72vp
+      //   （56vp 默认条高 + 16vp）；深色下换成 60% 黑。
+      //
+      // ── 为什么只有书架看得出来 ─────────────────────────────────────────────
+      // 蒙层是全局的（挂在 HdsTabs 上，四个页签都有），但它只是给内容"压一层灰白"：
+      //   · 设置/主题/我的：底色本来就是 `page_bg_alt` #F5F5F5 ≈ 蒙层色 #F1F3F5 ⇒ 压上去看不出；
+      //   · 书架：底色是主题色（#ffece0 之类）⇒ 压上去就是一条**白条**（用户截图反馈）。
+      // 真机截图像素验证（`screenshot_20261010_210433`，橙主题）：屏幕最底实测
+      //   (243,242,240) ≈ 0.8×#F1F3F5 + 0.2×#ffece0 = (243.6,241.6,240.8) ✓
+      //   同屏 y≈2600 处仍是纯主题色 (254,236,224) ⇒ 蒙层上边界正落在 72vp 处 ✓
+      // 设置页对比截图（`…_210552`）底部 (243,244,246) ≈ 0.8×#F1F3F5 + 0.2×#F5F5F5 ✓
+      // —— 同一层蒙层，两个页面观感却不同，根因就在这里。
+      //
+      // ── 怎么关 ────────────────────────────────────────────────────────────
+      // 官方明确「蒙层高度**不可设置为 0**」⇒ 唯一关法是**把颜色设成全透明**
+      // （只传颜色、不传高度：高度留默认，反正全透明不可见）。
+      // 这也是 HdsTabs 之前那套 `FloatingTabBarStyle` 的老关法 —— 见
+      // `common/utils/ImmersiveMaterialUtil.ets:144-151`（`maskColor: Color.Transparent,
+      // maskHeight: 0`），当时的注释已经记着"系统默认遮罩在真机上是屏幕底部一大片灰色渐变"。
+      // 迁 HdsTabs 时字段改名成 `gradientMask`、并禁止 0 高度，这层蒙层就**又回来了**。
+      //
+      // ⚠️ 回退：删掉下面这行 ⇒ 恢复官方默认蒙层（书架底部重新出现白条）。
+      gradientMask: { maskColor: Color.Transparent }
     };
     // ★ 一键回退点：`ImmersiveMaterialUtil.ENABLED = false`（或设备不支持沉浸光感）时
     //   **一个材质字段都不设** ⇒ 页签条回到普通悬浮/贴底形态，与改造前一致。
