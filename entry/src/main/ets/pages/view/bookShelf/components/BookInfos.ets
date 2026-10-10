@@ -314,13 +314,9 @@ export default struct BookInfos {
       // 这里用比官方默认（0.90）更克制的 0.96，降低官方 NOTE 里那条
       // 「the touch point may fall outside the control」的风险。
       .clickEffect(UiMotion.CLICK)
-      // ── 渐次入场（2026-09-24 新增）：只动图形变换属性，不触发重新布局 ──────────
-      // `.animation()` 必须放在被动画属性**之后**（顺序依据见 `BookInfoGrids.ets` 同处注释）。
-      .opacity(this.entered ? 1 : 0)
-      .scale({
-        x: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
-        y: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
-      })
+      // ── 渐次入场（2026-09-24 新增）：只动 translate，不触发重新布局）。
+      // 2026-10-12 优化「闪」感：去掉 opacity/scale，只保留从下方浮上来的平移。
+      // 曲线改为 EaseOut（起步柔和、落位减速停稳）。
       .translate({ y: this.entered ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
       .animation(UiMotion.itemEnterParam())
   }

@@ -52,6 +52,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '重构dock栏，新增听书圆形按钮',
       '新增AI听书接口，适配主流TTS模型',
       '优化UI显示效果',
+      '新增动画速率调整开关以及优化动画实现效果',
     ]
   },
 ]
