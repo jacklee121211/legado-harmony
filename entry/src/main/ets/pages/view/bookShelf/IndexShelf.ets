@@ -215,14 +215,15 @@ export default struct IndexShelf {
         }
 
         // ── 个性化插件屏 · 书架区（2026-10-10 新增）────────────────────────────
+        // 【已隐藏 2026-10-11】效果待优化，暂时隐藏入口
         // 占据书架标题右侧的剩余空间。无配置时不占位（width:0 height:0）。
         // 搜索/更多图标已下移到"最近阅读"行尾（2026-09-29），本区域不再承载功能按钮。
-        PlugboardZone({ zone: PlugZone.SHELF_TOP, zoneLabel: '1区·书架' })
-          // 2026-10-10 标定反馈：1区左侧太靠近"书架"两字
-          // ⇒ 与"书架"两字之间多留（≈12vp）
-          .margin({ left: 12 })
-          // 让 Zone 在 Flex 剩余空间里撑开
-          .layoutWeight(1)
+        // PlugboardZone({ zone: PlugZone.SHELF_TOP, zoneLabel: '1区·书架' })
+        //   // 2026-10-10 标定反馈：1区左侧太靠近"书架"两字
+        //   // ⇒ 与"书架"两字之间多留（≈12vp）
+        //   .margin({ left: 12 })
+        //   // 让 Zone 在 Flex 剩余空间里撑开
+        //   .layoutWeight(1)
 
         // ── 网盘导入弹窗绑定宿主（2026-09-29）───────────────────────────────────
         // bindSheet 需要一个可见节点作为绑定锚点。这里用一个零尺寸的 Flex 占位。
@@ -274,15 +275,17 @@ export default struct IndexShelf {
         console.log('index:' + index)
         this.currentIndex = index
       })
-      // ★ 2026-10-11 试一下：去掉 Tabs 的 `pageBg()` 兜底白底，让外层 Column 的
-      //   `linearGradient` 贯通下来（与"我的"页同款观感）。
-      //   原行：`.backgroundColor(ShelfColors.pageBg())`。
-      //   二次遮挡（顶部胶囊 surface 0.92 / 卡片 card #FFFFFF）保留——它们是设计上有意
-      //   保留的层次，渐变只露在它们之间的空隙。
-      //   回退：把 `.backgroundColor(ShelfColors.pageBg())` 加回去即恢复。
+      // ★ 2026-10-11 曾试过去掉 Tabs 的 `pageBg()` 兜底白底让渐变贯通 ⇒ 真机回归：
+      //   底部手势条区出现"白条蒙版"（渐变 0.2 后重复着色，尾段周期性露浅色）。
+      //   git 定位：该改动来自 35ee995（V2.1.4），去掉后白条出现；此处恢复兜底。
+      //   判断依据：设置页 MySetPage 底部"透"是因为它根 Column 有实色 page_bg_alt 铺底，
+      //   而书架页渐变是重复着色段，去掉 Tabs 白底后列表盒子透出的是渐变重复段。
+      .backgroundColor(ShelfColors.pageBg())
       .scrollable(this.APP_INDEX_SCROLLABLE)
     }
     .height('100%')
+    // 【已移除 2026-10-11】expandSafeArea 是多余改动（恢复 pageBg 兜底后不再需要）
+    // .expandSafeArea([SafeAreaType.SYSTEM])
     // ── 页面主题渐变（书架整页的底色）────────────────────────────────────────
     // 日间：主题 mainColor → secondColor（用户可选 5 套浅色主题）。
     // 夜间：换成中性深灰渐变 —— `themeManager` 那 5 套**全是浅色**
@@ -293,6 +296,7 @@ export default struct IndexShelf {
       colors: [[ShelfColors.gradientStart(this.theme.mainColor), 0],
         [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]] // 数组末尾元素占比小于1时满足重复着色效果
     })
+    // ★ 恢复（git 35ee995^ 旧版原本就有）：底部圆角与 pageBg 兜底配套
     .borderRadius({ bottomRight: 5, bottomLeft: 5 })
   }
 
