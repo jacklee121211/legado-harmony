@@ -26,6 +26,8 @@ import { ReaderKeyTurn, KEY_KEY_VOL_TURN, KEY_KEY_FP_TURN } from '../../../commo
 import { AntiPeep, KEY_ANTI_PEEP_CAPTURE, KEY_ANTI_PEEP_DLP } from '../../../common/utils/AntiPeep'
 import { VipManager } from '../../../common/utils/VipManager'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
+// ── 书架动画速度（2026-10-12）─────────────────────────────────────────────────
+import { EntranceWave } from '../../../common/utils/EntranceWave'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -102,6 +104,9 @@ export default struct MySetPage{
     // 书架拓展名开关初值（2026-09-27，默认关=隐藏后缀）
     this.setExtName = PreferencesUtil.getSync('setExtName', false) as boolean
     this.bookSetList[0].toggleStatus = this.setExtName
+    // 书架动画速度初值（2026-10-12，默认 0=标准速度）
+    this.shelfAnimSpeed = PreferencesUtil.getSync('shelfAnimSpeed', 0) as number
+    AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
     // 按键翻页开关初值（2026-10-07，默认关；Preferences 持久化，订阅调度在 ReaderKeyTurn）
     this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) as boolean
     this.setKeyFpTurn = PreferencesUtil.getSync(KEY_KEY_FP_TURN, false) as boolean
@@ -174,6 +179,15 @@ export default struct MySetPage{
   }
 
   /**
+   * 书架动画速度档位 → 显示标签（2026-10-12）。
+   */
+  private animSpeedLabel(): string {
+    // shelfAnimSpeed: -2 → 0.5x, -1 → 0.75x, 0 → 1x, 1 → 1.5x, 2 → 2x
+    const mult = EntranceWave.speedMultiplier()
+    return `${mult.toFixed(mult < 1 ? 2 : 1)}x`
+  }
+
+  /**
    * 标定模式（开发者）标志读写 —— 与 `ReaderPage3` 的 `saveCalib()/loadCalib()` 共用
    * 同一个键（`TtsHlCalibV3`，HL_CALIB_KEY），**读改写**保留 topPx/widthRatio 等其他字段。
    * ⚠️ 键为字面量重复（ReaderPage3.ets 的模块常量不跨页导出），改键时两处必须同步。
@@ -222,6 +236,10 @@ export default struct MySetPage{
     // 书架显示 + `TtsEngine.ets:3068` 听书标题）；其余 4 项假开关已删。
     new SetList(false,'显示文件拓展名',this.setExtName,'','书架上书名是否显示 .txt 等后缀',MySetConstants.SET_EXT_NAME)
   ]
+
+  // ── 书架动画速度（2026-10-12）：滑块 -2~+2，0=标准速度 ─────────────────
+  /** 动画速度档位（-2~+2，0=标准）；持久化到 Preferences，滑块一动就写 AppStorage 立即生效 */
+  @State shelfAnimSpeed: number = 0
 
   @State otherSetList: SetList[]=[
     // 阅读器信息窗（2026-10-07 新增，默认关）：全屏阅读时右上角的防窥/定时实时信息
@@ -361,6 +379,43 @@ export default struct MySetPage{
                   }
                 }.padding({left:20,right:20})
               }, (item: SetList): string => item.value)
+
+              // ── 书架动画速度滑块（2026-10-12）────────────────────────────────
+              // 在书架组"显示文件拓展名"下方，拼成一张卡片（上圆角=开关行，下圆角=本行）。
+              if (group.groupValue === '书架') {
+                ListItem() {
+                  Column({ space: 4 }) {
+                    Row() {
+                      Text('书架动画速度').fontSize(FontConstants.ITEM)
+                      Blank()
+                      Text(this.animSpeedLabel())
+                        .fontSize(FontConstants.CAPTION)
+                        .fontColor($r('app.color.text_tertiary'))
+                    }.width('100%')
+                    Slider({
+                      value: this.shelfAnimSpeed,
+                      min: -2,
+                      max: 2,
+                      step: 1,
+                      style: SliderStyle.InSet
+                    })
+                      .width('100%')
+                      .onChange((value: number, mode: SliderChangeMode) => {
+                        this.shelfAnimSpeed = Math.round(value)
+                        // 立即写入 AppStorage ⇒ EntranceWave.speedMultiplier() 实时读新值
+                        AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
+                        // 持久化仅在松手/点击时落盘，避免拖动频繁写
+                        if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                          PreferencesUtil.putSync('shelfAnimSpeed', this.shelfAnimSpeed)
+                        }
+                      })
+                  }
+                  .width('100%')
+                  .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                  .backgroundColor($r('app.color.card_bg'))
+                  .borderRadius({ bottomLeft: 20, bottomRight: 20 })
+                }.padding({ left: 20, right: 20 })
+              }
 
               // ── 震动强度滑块行（2026-09-25 新增）──────────────────────────────
               // 用户需求：「0-500 无极调整滑块（每 50 一个档，自由调节震动强度）」。

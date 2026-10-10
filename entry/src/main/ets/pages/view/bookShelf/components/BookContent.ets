@@ -57,6 +57,13 @@ export default struct BookContent {
   //更新数据累加刷新数据页面
   @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch("isRefresh")isBookRefreshing: number = 0
   /**
+   * dock 切回书架信号（2026-10-12）：Index.ets 的 onAnimationStart 在切到
+   * 书架 tab（targetIndex=0 ∧ index≠0）时自增本值 ⇒ @Watch 触发动画波次。
+   * 为什么不走 isRefresh：isRefresh 是所有数据变更的公共信号，触发它会导致
+   * getBookList() 重查数据库；而 dock 切回书架只要动画不需要重查。
+   */
+  @StorageLink('shelfDockReturn') @Watch('onDockReturn') dockReturnCount: number = 0
+  /**
    * 「本次加载是否要开一波入场动画」（2026-09-24）。
    *
    * 需求第 5 点只点名了两个复现时机：**冷启动**、**点分组标签切换**（外加切列表↔宫格）。
@@ -79,6 +86,18 @@ export default struct BookContent {
       // 新书只能看到第一页 21 本，重启应用（重取 count）才恢复。
       this.getBookCount()
       this.getBookList()
+    }
+  }
+
+  /**
+   * dock 切回书架时触发（2026-10-12）。
+   * 只开动画波次、不重查数据库 —— 数据还是同一份，只是给一次"陆续出现"的视觉反馈。
+   */
+  onDockReturn(): void {
+    if (this.booksDataSource.totalCount() > 0) {
+      this.animateOnNextLoad = true
+      shelfEntrance.begin()
+      this.entranceWaveId++
     }
   }
 

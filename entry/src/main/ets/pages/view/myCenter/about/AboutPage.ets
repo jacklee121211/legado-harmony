@@ -67,11 +67,6 @@ export default struct AboutPage {
 
             // ── 第二组：用户隐私与协议 / 开源许可 / 联系我们 ─────────────────
             Column() {
-              this.row('用户隐私与协议', (): void => {
-                AppRouter.push(RouteName.PRIVACY)
-              })
-              Divider().color(this.nightOn ? '#2A2A2C' : '#F0F0F0')
-                .margin({ left: 20, right: 20 })
               this.row('开源许可', (): void => {
                 AppRouter.push(RouteName.LICENSE)
               })
@@ -80,6 +75,11 @@ export default struct AboutPage {
               this.row('联系我们', (): void => {
                 AppRouter.push(RouteName.CONTACT)
               })
+              this.row('用户隐私与协议', (): void => {
+                AppRouter.push(RouteName.PRIVACY)
+              })
+              Divider().color(this.nightOn ? '#2A2A2C' : '#F0F0F0')
+                .margin({ left: 20, right: 20 })
             }
             .backgroundColor($r('app.color.card_bg'))
             .borderRadius(10)

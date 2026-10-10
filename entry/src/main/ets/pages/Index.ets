@@ -823,6 +823,11 @@ struct Main {
         // 左右滑动已被禁，不存在"滑动切页也震"的误触。
         Haptics.tap();
         this.currentTabIndex = targetIndex
+        // ★ 切回书架时开一波渐次入场（2026-10-12）：自增 dockReturnCount → BookContent
+        //   的 @Watch 收到后 shelfEntrance.begin() + entranceWaveId++。
+        if (targetIndex === 0 && index !== 0) {
+          AppStorage.setOrCreate('shelfDockReturn', (AppStorage.get<number>('shelfDockReturn') ?? 0) + 1)
+        }
         // ★ 换页签 ⇒ 听书 dock 一律收回圆形（它只在书架页签可见）。
         //   不停播：听书是后台会话（用户拍板"全 app 都继续，仅书架显示控制入口"）。
         ListenSession.setExpanded(false)

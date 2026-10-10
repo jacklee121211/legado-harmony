@@ -290,10 +290,21 @@ export default class UiMotion {
   }
 
   /**
-   * 单项入场动画时长（ms）。与 `EntranceWave.DUR_MS` **必须保持一致**（波次总时长按它算）。
-   * ⚠️ 2026-09-24 调参：用户真机反馈「波浪动画非常好，就是太快了，稍微调慢一点」⇒ **280 → 380**。
+   * 单项入场动画时长（ms）。
+   * ⚠️ 2026-09-24 调参：**280 → 380**。
+   * ⚠️ 必须与 `EntranceWave.DUR_MS` **保持一致**（波次总时长按它算）。
+   * ⚠️ 2026-10-12：不再写死，跟随 `EntranceWave.speedMultiplier()` 动态缩放。
+   *     这样做是因为列表项侧的 `.animation({duration: ...})` 需要在 build 时取到实时的时长，
+   *     否则动画时长和波次窗口会脱节（项侧用旧时长播、总窗按新时长算 ⇒ 尾项被腰斩）。
    */
-  static readonly ITEM_ENTER_DUR: number = 380
+  static get ITEM_ENTER_DUR(): number {
+    if (!UiMotion.MOTION_ENABLED) {
+      return 0;
+    }
+    return Math.round(380 / (AppStorage.get<number>('shelfAnimSpeed') !== undefined
+      ? (1.0 + (AppStorage.get<number>('shelfAnimSpeed') ?? 0) * 0.5)
+      : 1.0));
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // 一镜到底（书架 → 阅读器）令牌 —— 2026-09-23
