@@ -501,7 +501,7 @@ struct Main {
    * 全部保持一致」）⇒ **不再按页签区分**，只要解锁就显示。
    */
   private listenEntryVisible(): boolean {
-    return this.listenUnlocked
+    return true  // 2026-10-12：MiniBar 默认可见，不再锁在口令后面
   }
 
   @Builder
@@ -823,8 +823,7 @@ struct Main {
         // 左右滑动已被禁，不存在"滑动切页也震"的误触。
         Haptics.tap();
         this.currentTabIndex = targetIndex
-        // ★ 切回书架时开一波渐次入场（2026-10-12）：自增 dockReturnCount → BookContent
-        //   的 @Watch 收到后 shelfEntrance.begin() + entranceWaveId++。
+        // ★ 切回书架时清空 dataSource 重查 = 和冷启动同款干净动画
         if (targetIndex === 0 && index !== 0) {
           AppStorage.setOrCreate('shelfDockReturn', (AppStorage.get<number>('shelfDockReturn') ?? 0) + 1)
         }

@@ -270,10 +270,10 @@ export default class UiMotion {
   // 而列表入场需要"可预期的结束时刻"，否则波次窗口没法收口。
 
   /** 单项入场：Y 方向位移初值（vp，正值 = 从下方浮上来）。 */
-  static readonly ITEM_ENTER_TRANSLATE_Y: number = 20;
+  static readonly ITEM_ENTER_TRANSLATE_Y: number = 12;
 
-  /** 单项入场：缩放初值。**已弃用**（2026-10-12：入场动画改为纯平移，不再缩放）。 */
-  static readonly ITEM_ENTER_SCALE_FROM: number = 1;
+  /** 单项入场：缩放初值。 */
+  static readonly ITEM_ENTER_SCALE_FROM: number = 0.98;
 
   /**
    * 单项入场的动画参数（挂在列表项的 `.animation()` 上）。
@@ -281,34 +281,26 @@ export default class UiMotion {
    * ⚠️ 调用约定：**只有当 `EntranceWave.delayFor()` 返回 `>= 0` 时才需要它**。
    *    返回 `-1` 时调用方应把已入场标记**在首次 build 之前**就置为 `true`，
    *    这样属性从未处于"未入场"状态 ⇒ 即使挂了本参数也**不会产生任何动画帧**。
-   *
-   * ⚠️ 2026-10-12 优化「闪」感：曲线从 `Curve.Friction`（起步极快 → opacity 骤亮）
-   *    改为 `Curve.EaseOut`（起步柔和 → 渐渐加速落位），只保留 translate 位移，
-   *    去掉 opacity/scale —— 书始终可见，从下方浮上来落位。
    */
   static itemEnterParam(): AnimateParam {
     if (!UiMotion.MOTION_ENABLED) {
       return { duration: 0 };
     }
-    // EaseOut = cubic-bezier(0, 0, 0.58, 1)：起步斜率=0 → 渐渐加速 → 落位减速
-    return { duration: UiMotion.ITEM_ENTER_DUR, curve: Curve.EaseOut };
+    return { duration: UiMotion.ITEM_ENTER_DUR, curve: Curve.Friction };
   }
 
   /**
-   * 单项入场动画时长（ms）。
+   * 单项入场动画时长（ms）。与 `EntranceWave.DUR_MS` **必须保持一致**（波次总时长按它算）。
    * ⚠️ 2026-09-24 调参：**280 → 380**。
-   * ⚠️ 必须与 `EntranceWave.DUR_MS` **保持一致**（波次总时长按它算）。
    * ⚠️ 2026-10-12：不再写死，跟随 `EntranceWave.speedMultiplier()` 动态缩放。
-   *     这样做是因为列表项侧的 `.animation({duration: ...})` 需要在 build 时取到实时的时长，
-   *     否则动画时长和波次窗口会脱节（项侧用旧时长播、总窗按新时长算 ⇒ 尾项被腰斩）。
    */
   static get ITEM_ENTER_DUR(): number {
     if (!UiMotion.MOTION_ENABLED) {
       return 0;
     }
-    return Math.round(380 / (AppStorage.get<number>('shelfAnimSpeed') !== undefined
-      ? (1.0 + (AppStorage.get<number>('shelfAnimSpeed') ?? 0) * 0.5)
-      : 1.0));
+    const level: number = AppStorage.get<number>('shelfAnimSpeed') ?? 3;
+    const mult = level * 0.25;
+    return mult <= 0 ? 0 : Math.round(380 / mult);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

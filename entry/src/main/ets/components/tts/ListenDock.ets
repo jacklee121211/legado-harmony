@@ -220,13 +220,11 @@ export struct ListenDock {
   build() {
     // ⚠️ 不能用 `ListenSession.isActive()` 做条件：那是普通静态读，**不驱动重绘**
     //    （`expanded` / `playing` 才是本组件的响应式源）。
-    //    未解锁时 `.miniBar` 根本不会被挂上（见 `Index.hdsFloatingStyle()`）。
-    if (this.unlocked) {
-      if (this.expanded) {
-        this.controls()
-      } else {
-        this.circle()
-      }
+    //    2026-10-12：MiniBar 默认可见，不再锁在口令后面。
+    if (this.expanded) {
+      this.controls()
+    } else {
+      this.circle()
     }
   }
 }

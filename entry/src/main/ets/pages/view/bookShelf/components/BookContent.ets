@@ -28,9 +28,6 @@ export default struct BookContent {
   @State entranceWaveId: number = 0
 
   async aboutToAppear(): Promise<void> {
-    // 种子书（2026-09-27）：首次启动把内置《默认协议》以"用户导入"同款流程入库。
-    // ⚠️ 必须 await 串行 ⇒ 必然先于下方书架查询（幂等：Preferences 标志 + FileHandler
-    //   静态去重，重复调用直接复用同一个 Promise）。
     await FileHandler.seedDefaultBook()
     this.getBookCount()
     if (this.bookList.length === 0) {
@@ -91,7 +88,9 @@ export default struct BookContent {
 
   /**
    * dock 切回书架时触发（2026-10-12）。
-   * 只开动画波次、不重查数据库 —— 数据还是同一份，只是给一次"陆续出现"的视觉反馈。
+   *
+   * 目标：给切回来的书单一次干净的入场动画。不能走清空+重查（冷启动那条路），
+   * 因为冷启动时 dataSource 本来就是空的。切回来时书在且已渲染在终态。
    */
   onDockReturn(): void {
     if (this.booksDataSource.totalCount() > 0) {

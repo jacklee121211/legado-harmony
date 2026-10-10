@@ -138,8 +138,13 @@ export default struct WorksBookLists {
                 })
             }
           }
-          // ── 渐次入场（2026-09-24，需求第 5 / 7 点）──────────────────────────
-          // 只动 translate（不触发重新布局），曲线 EaseOut。
+          // ── 渐次入场（2026-09-24，需求第 5 / 7 点）
+          // 只动图形变换属性，不触发重新布局。`.animation()` 放最后。
+          .opacity(this.isEntered(index) ? 1 : 0)
+          .scale({
+            x: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
+            y: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
+          })
           .translate({ y: this.isEntered(index) ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
           .animation(UiMotion.itemEnterParam())
         })
