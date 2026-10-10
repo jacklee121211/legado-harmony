@@ -3,7 +3,8 @@
  *
  * ── 它解决什么问题 ────────────────────────────────────────────────────────
  * 需求有两面，且互相牵制：
- *   ① **视觉**：冷启动 / 切分组标签 / 切列表↔宫格 时，书本要「陆续出现」（渐次入场）。
+ *   ① **视觉**：冷启动 / 切分组标签 / 切列表↔宫格 / 从其他 dock 回到书架 时，
+ *      书本要「陆续出现」（渐次入场）。
  *   ② **性能**：书架可能有上百本。用户没看完的、波次已经结束之后才滚进屏幕的书，
  *      **不应该**再走一遍入场动画（否则每滑一下都"闪一下"，还白烧 GPU）。
  *
@@ -31,39 +32,61 @@
  * 而它**此刻根本不在屏幕上**（LazyForEach 还没创建它），等到用户滚到它时波次早结束了。
  * 所以延迟按"一屏槽位"封顶：`min(index, CAP)`。一屏约 15 项（列表 6~7 项 + 预加载，
  * 宫格 3 列 5 行），超过这个数就与第 CAP 项同时入场。
+ *
+ * ── 速度倍率（2026-10-12）─────────────────────────────────────────────────
+ * 用户可从设置页调节动画速度：AppStorage 键 `shelfAnimSpeed`，值 -2~+2。
+ *   0 = 标准速度（BASE=90, STEP=48, DUR=380）；
+ *   +2 = 2x 快（所有时长 ÷ 2）；-2 = 0.5x 慢（所有时长 × 2）。
+ * `speedMultiplier()` 把 -2~+2 映射到 0.5~2.0，线性插值。
  */
 export class EntranceWave {
-  /**
-   * 错峰步长（ms）。
-   * ⚠️ 2026-09-24 调参：用户真机反馈「书架的波浪动画非常好，就是太快了，稍微调慢一点」
-   *    ⇒ 由 **30 → 48**（对齐官方示例只是初值，手感以真机为准）。
-   */
-  static readonly STEP_MS: number = 48;
-  /**
-   * 首项延迟（ms）。
-   * ⚠️ 2026-09-24 调参：**60 → 90**，让首帧先画完再起波，避免第一本被"吃掉"。
-   */
-  static readonly BASE_MS: number = 90;
-  /** 一屏内的错峰槽位数（超过就与最后一槽同时入场）。 */
+  /** AppStorage 键：动画速度档位（-2~+2，0=标准） */
+  static readonly SPEED_KEY: string = 'shelfAnimSpeed';
+
+  /** 基准参数（标准速度下的值，会被 speedMultiplier 缩放） */
+  static readonly STEP_MS_BASE: number = 48;
+  static readonly BASE_MS_BASE: number = 90;
   static readonly CAP: number = 15;
+  static readonly DUR_MS_BASE: number = 380;
+
   /**
-   * 单项入场动画时长（ms）。
-   * ⚠️ 2026-09-24 调参：**280 → 380**。
-   * ⚠️ 必须与 `UiMotion.ITEM_ENTER_DUR` **保持一致** —— `totalMs()` 用它算波次窗口，
-   *    若实际动画比它长，波次会在最后几项还在播动画时就判定"已结束"。
+   * 当前错峰步长（ms），已应用速度倍率。
+   * 2026-09-24 调参：用户真机反馈「太快了，稍微调慢一点」⇒ 30 → 48。
    */
-  static readonly DUR_MS: number = 380;
+  get STEP_MS(): number {
+    return Math.round(EntranceWave.STEP_MS_BASE / EntranceWave.speedMultiplier());
+  }
+  /** 当前首项延迟（ms），已应用速度倍率 */
+  get BASE_MS(): number {
+    return Math.round(EntranceWave.BASE_MS_BASE / EntranceWave.speedMultiplier());
+  }
+  /** 当前单项入场动画时长（ms），已应用速度倍率 */
+  get DUR_MS(): number {
+    return Math.round(EntranceWave.DUR_MS_BASE / EntranceWave.speedMultiplier());
+  }
+
+  /**
+   * 从 AppStorage 读动画速度档位（-2~+2），映射为倍率（0.5~2.0）。
+   * 线性插值：0 → 1.0, +2 → 2.0, -2 → 0.5。
+   * @returns 倍率（0.5~2.0），默认 1.0
+   */
+  static speedMultiplier(): number {
+    const level: number = AppStorage.get<number>(EntranceWave.SPEED_KEY) ?? 0;
+    const clamped = Math.max(-2, Math.min(2, level));
+    // -2 → 0.5, 0 → 1.0, +2 → 2.0  线性: 1.0 + clamped * 0.5
+    return 1.0 + clamped * 0.5;
+  }
 
   private startTs: number = 0;
   private running: boolean = false;
 
   /**
    * 一整波的总时长（ms）：首项延迟 + 错峰 + 单项动画。
-   * 当前参数下 = 90 + 15×48 + 380 = **1190ms**（调参前是 60 + 15×30 + 280 = 790ms）。
-   * 想要更快/更慢，**只改上面四个常量**，本方法自动跟随。
+   * 当前参数下 = BASE_MS + 15×STEP_MS + DUR_MS。
+   * 想要更快/更慢，设置页滑块调整速度档位即可，本方法自动跟随。
    */
   private totalMs(): number {
-    return EntranceWave.BASE_MS + EntranceWave.CAP * EntranceWave.STEP_MS + EntranceWave.DUR_MS;
+    return this.BASE_MS + EntranceWave.CAP * this.STEP_MS + this.DUR_MS;
   }
 
   /**
@@ -96,8 +119,8 @@ export class EntranceWave {
       return -1;
     }
     const elapsed: number = Date.now() - this.startTs;
-    const target: number = EntranceWave.BASE_MS
-      + Math.min(index, EntranceWave.CAP) * EntranceWave.STEP_MS;
+    const target: number = this.BASE_MS
+      + Math.min(index, EntranceWave.CAP) * this.STEP_MS;
     const remain: number = target - elapsed;
     return remain > 0 ? remain : 0;
   }
