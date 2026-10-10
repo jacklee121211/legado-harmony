@@ -139,13 +139,7 @@ export default struct WorksBookLists {
             }
           }
           // ── 渐次入场（2026-09-24，需求第 5 / 7 点）──────────────────────────
-          // 只动图形变换属性（opacity / scale / translate），不触发重新布局；
-          // `.animation()` 放最后（它作用于**它之前**的属性）。
-          .opacity(this.isEntered(index) ? 1 : 0)
-          .scale({
-            x: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
-            y: this.isEntered(index) ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
-          })
+          // 只动 translate（不触发重新布局），曲线 EaseOut。
           .translate({ y: this.isEntered(index) ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
           .animation(UiMotion.itemEnterParam())
         })

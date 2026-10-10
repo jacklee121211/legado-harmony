@@ -272,17 +272,10 @@ export default struct BookInfoGrids{
     // 官方 NOTE 的「触摸点可能落到控件外」风险。
     .clickEffect(UiMotion.CLICK)
     // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────
-    // 只动图形变换属性（opacity / scale / translate），不触发重新布局 ——
-    // 官方最佳实践《动画帧率优化》原文：「使用图形变换属性变化组件，而不是直接修改布局属性，
-    // 减少布局计算和重绘，降低丢帧率」。
-    // ⚠️ `.animation()` 必须放在这三个属性**之后**：官方《出现/消失转场》说明
-    //   「TransitionEffect 中 animation 的调用顺序是从上往下，上面 TransitionEffect 的
-    //     animation 也会作用到下面 TransitionEffect」—— 属性动画同理，它作用于**它之前**的属性。
-    .opacity(this.entered ? 1 : 0)
-    .scale({
-      x: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
-      y: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
-    })
+    // 只动图形变换属性（translate），不触发重新布局。
+    // ⚠️ `.animation()` 必须放在被动画属性**之后**。
+    // 2026-10-12 优化「闪」感：去掉 opacity/scale，只保留从下方浮上来的平移。
+    // 曲线改为 EaseOut（起步柔和、落位减速停稳）。
     .translate({ y: this.entered ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
     .animation(UiMotion.itemEnterParam())
   }

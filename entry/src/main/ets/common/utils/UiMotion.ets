@@ -270,10 +270,10 @@ export default class UiMotion {
   // 而列表入场需要"可预期的结束时刻"，否则波次窗口没法收口。
 
   /** 单项入场：Y 方向位移初值（vp，正值 = 从下方浮上来）。 */
-  static readonly ITEM_ENTER_TRANSLATE_Y: number = 12;
+  static readonly ITEM_ENTER_TRANSLATE_Y: number = 20;
 
-  /** 单项入场：缩放初值。 */
-  static readonly ITEM_ENTER_SCALE_FROM: number = 0.98;
+  /** 单项入场：缩放初值。**已弃用**（2026-10-12：入场动画改为纯平移，不再缩放）。 */
+  static readonly ITEM_ENTER_SCALE_FROM: number = 1;
 
   /**
    * 单项入场的动画参数（挂在列表项的 `.animation()` 上）。
@@ -281,12 +281,17 @@ export default class UiMotion {
    * ⚠️ 调用约定：**只有当 `EntranceWave.delayFor()` 返回 `>= 0` 时才需要它**。
    *    返回 `-1` 时调用方应把已入场标记**在首次 build 之前**就置为 `true`，
    *    这样属性从未处于"未入场"状态 ⇒ 即使挂了本参数也**不会产生任何动画帧**。
+   *
+   * ⚠️ 2026-10-12 优化「闪」感：曲线从 `Curve.Friction`（起步极快 → opacity 骤亮）
+   *    改为 `Curve.EaseOut`（起步柔和 → 渐渐加速落位），只保留 translate 位移，
+   *    去掉 opacity/scale —— 书始终可见，从下方浮上来落位。
    */
   static itemEnterParam(): AnimateParam {
     if (!UiMotion.MOTION_ENABLED) {
       return { duration: 0 };
     }
-    return { duration: UiMotion.ITEM_ENTER_DUR, curve: Curve.Friction };
+    // EaseOut = cubic-bezier(0, 0, 0.58, 1)：起步斜率=0 → 渐渐加速 → 落位减速
+    return { duration: UiMotion.ITEM_ENTER_DUR, curve: Curve.EaseOut };
   }
 
   /**

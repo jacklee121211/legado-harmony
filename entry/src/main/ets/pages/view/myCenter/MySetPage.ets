@@ -360,10 +360,12 @@ export default struct MySetPage{
             if(group.setList){
               ForEach(group.setList,(item:SetList)=>{
                 ListItem(){//设置内容，首尾裁剪
-                  // 2026-10-08：单行分组（如删剩一项的「书架」）要**四角全圆**；
-                  // 「震动反馈」例外 —— 它下面还接一条自绘滑块行（占下圆角，见下），
+                  // 2026-10-08：单行分组（如删剩一项且无后续自绘滑块的）要**四角全圆**；
+                  // 「书架」/「震动反馈」例外 —— 它们下面还接一条自绘滑块行（占下圆角），
                   // 这里必须只给上圆角，否则两块拼不出完整卡片。
-                  if (group.setList.length === 1 && group.groupValue !== '震动反馈'){
+                  if (group.setList.length === 1
+                    && group.groupValue !== '震动反馈'
+                    && group.groupValue !== '书架'){
                     SetListView({setList:item,topLeft:20,topRight:20,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
                   }else if (group.setList.indexOf(item) == 0){
