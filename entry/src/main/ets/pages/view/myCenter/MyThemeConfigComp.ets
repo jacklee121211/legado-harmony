@@ -9,6 +9,8 @@ import ThemeCustomEditorDialog from './ThemeCustomEditorDialog'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { NightMode } from '../../../common/utils/NightMode'
+// ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
+import { PlugboardConfigDialog } from '../../../componets/plugboard/PlugboardConfigDialog'
 
 // 个性主题组件模块
 @Component
@@ -30,6 +32,35 @@ export struct MyThemeConfigComp {
   private themeEditorDialog: CustomDialogController | null = null
   /** 「VIP 购买」弹窗（嵌套打开，与 ReaderFontDialog.openVip 同款） */
   private vipDialog: CustomDialogController | null = null
+
+  /** 个性化配置弹窗（2026-10-10 新增） */
+  private plugboardDialog: CustomDialogController | null = null
+
+  private openPlugboard(): void {
+    this.plugboardDialog = new CustomDialogController({
+      builder: PlugboardConfigDialog({
+        onClose: (): void => {
+          this.plugboardDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Bottom,
+      // 2026-10-10 改造：按 docs/标准-弹窗与按钮统一规范.md 套规范
+      //  - 材质生效的必要条件：customStyle: false
+      //  - systemMaterial 必须是 ImmersiveMaterialUtil.sheetMaterial()
+      //  - 短确认/输入类：不给 height（自适应）
+      width: '94%',
+      cornerRadius: 24,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.plugboardDialog = null
+      }
+    })
+    this.plugboardDialog?.open()
+  }
 
   private openVip(): void {
     this.vipDialog = new CustomDialogController({
@@ -101,6 +132,42 @@ export struct MyThemeConfigComp {
           .padding({ left: 5, right: 5, top: 1, bottom: 1 })
           .borderRadius(4)
           .fontWeight(600)
+      }
+      .width('100%')
+      .height(77)
+      .justifyContent(FlexAlign.Center)
+      .border({
+        width: 1,
+        color: 'rgba(0,0,0,0.15)',
+        style: BorderStyle.Dashed,
+        radius: 8
+      })
+
+      Text(' ')
+        .fontSize(14)
+        .height(22)
+        .lineHeight(22)
+        .width('100%')
+    }
+    .width('100%')
+    .height(107)
+  }
+
+  /** 个性化配置入口瓦片（2026-10-10 新增） */
+  @Builder
+  plugboardTile() {
+    Column({ space: 8 }) {
+      Column({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.rectangle_3_group'))
+          .fontSize(26)
+          .fontColor([this.theme.mainColor])
+        Text('个性化')
+          .fontSize(11)
+          .fontColor(this.theme.mainColor)
+        Text('插件屏')
+          .fontSize(8)
+          .fontColor('#888')
+          .fontWeight(400)
       }
       .width('100%')
       .height(77)
@@ -224,6 +291,15 @@ export struct MyThemeConfigComp {
         .onClick(() => {
           Haptics.tap();
           this.openThemeEditor()
+        })
+
+        // ── 个性化配置入口（2026-10-10 新增）─────────────────────────────────
+        GridItem() {
+          this.plugboardTile()
+        }
+        .onClick(() => {
+          Haptics.tap();
+          this.openPlugboard()
         })
 
         ForEach(this.themeList, (item: ThemeItem, index) => {

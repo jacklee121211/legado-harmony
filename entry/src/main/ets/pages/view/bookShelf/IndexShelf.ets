@@ -20,6 +20,9 @@ import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 // ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
 import { Haptics } from '../../../common/utils/Haptics'
+// ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
+import { PlugboardZone } from '../../../componets/plugboard/PlugboardZone'
+import { PlugZone } from '../../../componets/plugboard/PlugboardTypes'
 
 @Component
 export default struct IndexShelf {
@@ -211,27 +214,30 @@ export default struct IndexShelf {
           //   「最近阅读/浏览历史…」和「分组/全部/未分组…」那两处的胶囊保留（用户没反对）。
         }
 
-        // ── 搜索 / 更多已下移（2026-09-29 用户裁定）────────────────────────────
-        // 用户原话：摘掉「浏览历史」后「最近阅读这一行后面空了，和下面这一行不对齐，
-        //   上面这一行还有一个搜索和一个更多的图标，放在下面是不是非常完美」。
-        // ⇒ 两个图标挪进「最近阅读」行的尾部（本组件顶部只留「书架」一行），
-        //   全部交互逻辑（搜索浮窗 / ⋯菜单 / Q弹动效）仍在 IndexShelf，
-        //   经 `BookBodyContent.trailingActions`（@BuilderParam）注入渲染，
-        //   与设置 sheet 复用页面 @Builder 是同一官方模式（faqs-arkui-826）。
+        // ── 个性化插件屏 · 书架区（2026-10-10 新增）────────────────────────────
+        // 占据书架标题右侧的剩余空间。无配置时不占位（width:0 height:0）。
+        // 搜索/更多图标已下移到"最近阅读"行尾（2026-09-29），本区域不再承载功能按钮。
+        PlugboardZone({ zone: PlugZone.SHELF_TOP, zoneLabel: '1区·书架' })
+          // 2026-10-10 标定反馈：1区左侧太靠近"书架"两字
+          // ⇒ 与"书架"两字之间多留（≈12vp）
+          .margin({ left: 12 })
+          // 让 Zone 在 Flex 剩余空间里撑开
+          .layoutWeight(1)
+
+        // ── 网盘导入弹窗绑定宿主（2026-09-29）───────────────────────────────────
+        // bindSheet 需要一个可见节点作为绑定锚点。这里用一个零尺寸的 Flex 占位。
         Row() {
           Flex() {
           }
           .width(0)
           .height(0)
           .bindSheet($$this.isShowCloudImport, this.CloudImportDialog(), {
-            // 网盘导入弹窗绑定元素
             height: 240,
             showClose: false,
             dragBar: false,
             backgroundColor: ShelfColors.card(),
             blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
             onDisappear: () => {
-              // this.clickBookType = ''
             }
           })
         }

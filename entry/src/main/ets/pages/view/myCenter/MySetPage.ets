@@ -11,6 +11,7 @@ import { PreferencesUtil } from '@pura/harmony-utils'
 import { ListenUnlock } from '../../../common/utils/ListenUnlock'
 import { loadTtsPrefs, saveTtsPrefs } from '../../../tts/TtsPrefs'
 import { NightMode } from '../../../common/utils/NightMode'
+import { CalibMode } from '../../../common/utils/CalibMode'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 // ── 测试账号（2026-09-28 迁入）：登录下线后，测试登录+彩蛋解锁入口迁到本页顶部 ──
@@ -586,9 +587,11 @@ export default struct MySetPage{
       case MySetConstants.SET_CALIB_DEV:
         // 标定模式（2026-09-26 从阅读器-设置迁来）：写 TtsHlCalibV3 的 dev 字段，
         // 阅读页 loadCalib 打开时照读 ⇒ 开 = 阅读器-设置出现标定功能区。
+        // 2026-10-10 改造：走 CalibMode 工具类，同时同步广播 AppStorage('devMode')，
+        // 书架/我的/PlugboardZone 订阅后即可画经纬线 + 红边。
         this.calibDevOn = !this.calibDevOn
         this.engineSetList[1].toggleStatus = this.calibDevOn
-        this.calibDevWrite(this.calibDevOn)
+        CalibMode.setOn(this.calibDevOn)
         break;
     }
   }
