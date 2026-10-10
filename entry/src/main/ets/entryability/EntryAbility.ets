@@ -16,6 +16,8 @@ import BrightnessUtil from '../../common/utils/BrightnessUtil';
 import { NightMode } from '../common/utils/NightMode';
 // 防窥两层（2026-10-08）：启动即按已存开关应用（全局生效，见 utils/AntiPeep.ets 文件头）
 import { AntiPeep } from '../common/utils/AntiPeep';
+// 标定模式全局信号（2026-10-10）：冷启动回填到 AppStorage
+import { CalibMode } from '../common/utils/CalibMode';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -123,6 +125,9 @@ export default class EntryAbility extends UIAbility {
     AppUtil.init(this.context);
     WindowAbility.getInstance().initContext(this.context)
     this.captureQuickAction(want);
+    // 标定模式全局信号（2026-10-10）：从 Preferences 回填到 AppStorage，
+    // 让书架/我的/PlugboardZone 在冷启动时也能感知到用户开过标定模式。
+    CalibMode.bootstrap()
   }
 
   /**
