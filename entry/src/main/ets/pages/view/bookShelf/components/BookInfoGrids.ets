@@ -26,16 +26,14 @@ export default struct BookInfoGrids{
   //      ③ 本组件不整体赋值 this.book、不写 this.book.* 属性；④ 非 @Entry 组件。
   @ObjectLink book:Books
 
-  // ── 渐次入场（2026-09-24 新增）──────────────────────────────────────────────
+  // ── 渐次入场（2026-09-24 新增，2026-10-12 回到属性动画方案）────────────────
   /** 本项在列表里的下标，由 `BookContent` 的 `LazyForEach` 传入（决定错峰延迟）。 */
   @Prop itemIndex: number = 0
   /**
-   * 波次编号。父组件每开一波（冷启动 / 切分类 / 切分组 / 切列表↔宫格 / 下拉刷新）就 +1。
-   * ⚠️ 为什么不能只靠 `aboutToAppear`：切换分组时 `LazyForEach` 收到 `RELOAD` 后
-   *   **不保证销毁重建**已存在的项（键值相同的项会被复用），那样"已入场"标记会残留成 true
-   *   ⇒ 动画只播第一次。用 `@Watch` 监听波次编号，可以让**已存在**的项也重置并重播。
+   * 波次编号。父组件每开一波就 +1 ⇒ @Watch 触发 resetEntrance()，
+   * 重置 entered=false 然后按 delayFor() 延迟置回 true ⇒ 属性动画重播。
    */
-  @Prop @Watch('onWaveChanged') waveId: number = 0
+  @Prop @Watch('resetEntrance') waveId: number = 0
   /**
    * 一镜到底（2026-09-23）：封面卡片的组件 id（`LongTakeFlightData.capture()` 按它拍几何）。
    * 由 `BookContent` 传 `'ltCoverG' + index`。
@@ -46,22 +44,42 @@ export default struct BookInfoGrids{
   @Prop longtakeId: string = ''
   /** 数据变更广播（规范 §5.1）：改名完成后自增 ⇒ 书架列表重查重建 */
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
-  /** 是否已经入场（false = 停在动画初态：透明 + 略小 + 略靠下） */
+  /** 是否已经入场（false = 停在初态：scale 0.5 + opacity 0） */
   @State private entered: boolean = false
-  /** 入场定时器句柄，卸载时要清掉，避免回调打到已销毁的组件上 */
+  /** 入场定时器句柄 */
   private enterTimer: number = -1
-  /** 本项的入场延迟；`-1` = 波次已结束，**不播动画** */
-  private enterDelay: number = -1
 
-  /**
-   * 应用入场策略。
-   *
-   * 语义（需求第 7 点）：
-   *   · `delayFor()` 返回 `-1`（波次已结束）⇒ **同步**把 `entered` 置 true。
-   *     此时 `aboutToAppear` 还没走到首次 `build()`，属性压根没经历过"未入场"状态，
-   *     ⇒ 即使 `.animation()` 挂着也**一帧动画都不会产生**，等于"直接渲染"。
-   *   · 返回 `>= 0`（波次进行中）⇒ 先停在初态，等够延迟再入场 ⇒ 错峰"陆续出现"。
-   */
+  private scheduleEnter(delayMs: number): void {
+    if (this.enterTimer !== -1) {
+      clearTimeout(this.enterTimer)
+      this.enterTimer = -1
+    }
+    if (delayMs < 0) {
+      this.entered = true
+      return
+    }
+    this.entered = false
+    this.enterTimer = setTimeout(() => {
+      this.enterTimer = -1
+      this.entered = true
+    }, delayMs)
+  }
+
+  resetEntrance(): void {
+    this.scheduleEnter(shelfEntrance.delayFor(this.itemIndex))
+  }
+
+  aboutToAppear(): void {
+    this.resetEntrance()
+  }
+
+  aboutToDisappear(): void {
+    if (this.enterTimer !== -1) {
+      clearTimeout(this.enterTimer)
+      this.enterTimer = -1
+    }
+  }
+
   /**
    * 一镜到底「转场进行中」闸：转场没收尾就先等，收尾后再推阅读页。
    * 依据见 `onClick` 里那段注释（真机日志定位的"纯黑阅读器"）。
@@ -75,38 +93,6 @@ export default struct BookInfoGrids{
       return
     }
     AppRouter.push(RouteName.READER, rp)
-  }
-
-  private applyEntrance(): void {
-    if (this.enterTimer !== -1) {
-      clearTimeout(this.enterTimer)
-      this.enterTimer = -1
-    }
-    this.enterDelay = shelfEntrance.delayFor(this.itemIndex)
-    if (this.enterDelay < 0) {
-      this.entered = true
-      return
-    }
-    this.entered = false
-    this.enterTimer = setTimeout(() => {
-      this.enterTimer = -1
-      this.entered = true
-    }, this.enterDelay)
-  }
-
-  aboutToAppear(): void {
-    this.applyEntrance()
-  }
-
-  aboutToDisappear(): void {
-    if (this.enterTimer !== -1) {
-      clearTimeout(this.enterTimer)
-      this.enterTimer = -1
-    }
-  }
-
-  onWaveChanged(): void {
-    this.applyEntrance()
   }
   onDelete: () => void = () => {
 
@@ -272,10 +258,13 @@ export default struct BookInfoGrids{
     // 官方 NOTE 的「触摸点可能落到控件外」风险。
     .clickEffect(UiMotion.CLICK)
     // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────
-    // 只动图形变换属性（translate），不触发重新布局。
+    // 只动图形变换属性（opacity / scale / translate），不触发重新布局。
     // ⚠️ `.animation()` 必须放在被动画属性**之后**。
-    // 2026-10-12 优化「闪」感：去掉 opacity/scale，只保留从下方浮上来的平移。
-    // 曲线改为 EaseOut（起步柔和、落位减速停稳）。
+    .opacity(this.entered ? 1 : 0)
+    .scale({
+      x: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
+      y: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
+    })
     .translate({ y: this.entered ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
     .animation(UiMotion.itemEnterParam())
   }

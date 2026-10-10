@@ -38,29 +38,57 @@ export default struct BookInfos {
   }
 
   // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────────
-  // 与 `BookInfoGrids.ets` 里那一份**逐行同构**（同一个列表的两种展示形态，
-  // 手感必须一致）；详细依据与 `.animation()` 的调用顺序要求见那边的注释。
   /** 本项在列表里的下标，由 `BookContent` 的 `LazyForEach` 传入（决定错峰延迟）。 */
   @Prop itemIndex: number = 0
-  /** 波次编号：父组件每开一波就 +1 ⇒ 已存在的项也会重置并重播动画。 */
-  @Prop @Watch('onWaveChanged') waveId: number = 0
+  /**
+   * 波次编号：父组件每开一波就 +1 ⇒ `@Watch` 触发 `resetEntrance()`，
+   * 重置 `entered = false` 然后按 `shelfEntrance.delayFor()` 的延迟置回 true
+   * ⇒ 属性动画（scale + opacity）重播。
+   */
+  @Prop @Watch('resetEntrance') waveId: number = 0
   /**
    * 一镜到底（2026-09-23）：封面节点的组件 id（`LongTakeFlightData.capture()` 按它拍几何）。
    * 由 `BookContent` 传 `'ltCoverL' + index`；空串 = 不参与（当前列表模式恒有值）。
    */
   @Prop longtakeId: string = ''
-  /** 是否已经入场（false = 停在动画初态：透明 + 略小 + 略靠下） */
+  /** 是否已经入场（false = 停在初态：scale 0.5 + opacity 0） */
   @State private entered: boolean = false
-  /** 入场定时器句柄，卸载时要清掉，避免回调打到已销毁的组件上 */
+  /** 入场定时器句柄 */
   private enterTimer: number = -1
-  /** 本项的入场延迟；`-1` = 波次已结束，**不播动画**（直接以终态渲染） */
-  private enterDelay: number = -1
 
   /**
-   * 应用入场策略。语义见 `EntranceWave.delayFor()`：
-   * 返回 `-1` ⇒ 同步置 true（首次 build 前就已是终态 ⇒ 零动画帧，等于直接渲染）；
-   * 返回 `>= 0` ⇒ 先停在初态，等够延迟再入场。
+   * 带延迟的入场——在 `delayMs` 后将 `entered` 置 true ⇒ 触发属性动画。
    */
+  private scheduleEnter(delayMs: number): void {
+    if (this.enterTimer !== -1) {
+      clearTimeout(this.enterTimer)
+      this.enterTimer = -1
+    }
+    if (delayMs < 0) {
+      this.entered = true
+      return
+    }
+    this.entered = false
+    this.enterTimer = setTimeout(() => {
+      this.enterTimer = -1
+      this.entered = true
+    }, delayMs)
+  }
+
+  resetEntrance(): void {
+    this.scheduleEnter(shelfEntrance.delayFor(this.itemIndex))
+  }
+
+  aboutToAppear(): void {
+    this.resetEntrance()
+  }
+
+  aboutToDisappear(): void {
+    if (this.enterTimer !== -1) {
+      clearTimeout(this.enterTimer)
+      this.enterTimer = -1
+    }
+  }
   /**
    * 一镜到底「转场进行中」闸：转场没收尾就先等，收尾后再推阅读页。
    * 依据见 `onClick` 里那段注释（真机日志定位的"纯黑阅读器"）。
@@ -74,38 +102,6 @@ export default struct BookInfos {
       return
     }
     AppRouter.push(RouteName.READER, rp)
-  }
-
-  private applyEntrance(): void {
-    if (this.enterTimer !== -1) {
-      clearTimeout(this.enterTimer)
-      this.enterTimer = -1
-    }
-    this.enterDelay = shelfEntrance.delayFor(this.itemIndex)
-    if (this.enterDelay < 0) {
-      this.entered = true
-      return
-    }
-    this.entered = false
-    this.enterTimer = setTimeout(() => {
-      this.enterTimer = -1
-      this.entered = true
-    }, this.enterDelay)
-  }
-
-  aboutToAppear(): void {
-    this.applyEntrance()
-  }
-
-  aboutToDisappear(): void {
-    if (this.enterTimer !== -1) {
-      clearTimeout(this.enterTimer)
-      this.enterTimer = -1
-    }
-  }
-
-  onWaveChanged(): void {
-    this.applyEntrance()
   }
   bookInfoDialog: CustomDialogController | null = new CustomDialogController({
     builder: BookInfoDialogs({
@@ -314,9 +310,13 @@ export default struct BookInfos {
       // 这里用比官方默认（0.90）更克制的 0.96，降低官方 NOTE 里那条
       // 「the touch point may fall outside the control」的风险。
       .clickEffect(UiMotion.CLICK)
-      // ── 渐次入场（2026-09-24 新增）：只动 translate，不触发重新布局）。
-      // 2026-10-12 优化「闪」感：去掉 opacity/scale，只保留从下方浮上来的平移。
-      // 曲线改为 EaseOut（起步柔和、落位减速停稳）。
+      // ── 渐次入场（2026-09-24 新增）：只动图形变换属性，不触发重新布局。
+      // `.animation()` 必须放在被动画属性**之后**（作用于它之前的属性）。
+      .opacity(this.entered ? 1 : 0)
+      .scale({
+        x: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM,
+        y: this.entered ? 1 : UiMotion.ITEM_ENTER_SCALE_FROM
+      })
       .translate({ y: this.entered ? 0 : UiMotion.ITEM_ENTER_TRANSLATE_Y })
       .animation(UiMotion.itemEnterParam())
   }

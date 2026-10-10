@@ -105,7 +105,7 @@ export default struct MySetPage{
     this.setExtName = PreferencesUtil.getSync('setExtName', false) as boolean
     this.bookSetList[0].toggleStatus = this.setExtName
     // 书架动画速度初值（2026-10-12，默认 0=标准速度）
-    this.shelfAnimSpeed = PreferencesUtil.getSync('shelfAnimSpeed', 0) as number
+    this.shelfAnimSpeed = PreferencesUtil.getSync('shelfAnimSpeed', 3) as number
     AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
     // 按键翻页开关初值（2026-10-07，默认关；Preferences 持久化，订阅调度在 ReaderKeyTurn）
     this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) as boolean
@@ -182,9 +182,9 @@ export default struct MySetPage{
    * 书架动画速度档位 → 显示标签（2026-10-12）。
    */
   private animSpeedLabel(): string {
-    // shelfAnimSpeed: -2 → 0.5x, -1 → 0.75x, 0 → 1x, 1 → 1.5x, 2 → 2x
-    const mult = EntranceWave.speedMultiplier()
-    return `${mult.toFixed(mult < 1 ? 2 : 1)}x`
+    // 0→0(关), 1→0.25x, 2→0.5x, 3→0.75x, 4→1x, 5→1.25x, 6→1.5x
+    const mult = this.shelfAnimSpeed * 0.25
+    return mult === 0 ? '关闭' : `${mult.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x`
   }
 
   /**
@@ -239,7 +239,7 @@ export default struct MySetPage{
 
   // ── 书架动画速度（2026-10-12）：滑块 -2~+2，0=标准速度 ─────────────────
   /** 动画速度档位（-2~+2，0=标准）；持久化到 Preferences，滑块一动就写 AppStorage 立即生效 */
-  @State shelfAnimSpeed: number = 0
+  @State shelfAnimSpeed: number = 3
 
   @State otherSetList: SetList[]=[
     // 阅读器信息窗（2026-10-07 新增，默认关）：全屏阅读时右上角的防窥/定时实时信息
@@ -396,17 +396,15 @@ export default struct MySetPage{
                     }.width('100%')
                     Slider({
                       value: this.shelfAnimSpeed,
-                      min: -2,
-                      max: 2,
+                      min: 0,
+                      max: 6,
                       step: 1,
                       style: SliderStyle.InSet
                     })
                       .width('100%')
                       .onChange((value: number, mode: SliderChangeMode) => {
                         this.shelfAnimSpeed = Math.round(value)
-                        // 立即写入 AppStorage ⇒ EntranceWave.speedMultiplier() 实时读新值
                         AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
-                        // 持久化仅在松手/点击时落盘，避免拖动频繁写
                         if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
                           PreferencesUtil.putSync('shelfAnimSpeed', this.shelfAnimSpeed)
                         }

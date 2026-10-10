@@ -28,6 +28,7 @@
  * 回退后要验证：离开阅读页 → 朗读立即停止、书架不出现听书 dock。
  */
 import { TtsCallbacks, TtsState } from './TtsEngine';
+import { PreferencesUtil } from '@pura/harmony-utils';
 
 export class ListenSession {
   /**
@@ -77,9 +78,12 @@ export class ListenSession {
     }
   }
 
-  /** 开播前登记会话（书名 + url + 书 id 一起落，UI 首帧就能显示） */
+  /** 开播前登记会话（书名 + url + 书 id 一起落，UI 首帧就能显示）。
+   * 2026-10-12：书名联动"显示文件拓展名"开关——关时剥掉书名末尾的 .txt/.epub 等后缀。 */
   static begin(title: string, url: string, bookId: number): void {
-    AppStorage.setOrCreate(ListenSession.KEY_TITLE, title);
+    const showExt: boolean = PreferencesUtil.getSync('setExtName', false) as boolean;
+    const displayTitle: string = showExt ? title : title.replace(/\.[a-zA-Z0-9]{1,5}$/, '');
+    AppStorage.setOrCreate(ListenSession.KEY_TITLE, displayTitle);
     AppStorage.setOrCreate(ListenSession.KEY_URL, url);
     AppStorage.setOrCreate(ListenSession.KEY_ID, bookId);
     AppStorage.setOrCreate(ListenSession.KEY_CHAPTER, '');

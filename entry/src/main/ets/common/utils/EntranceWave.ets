@@ -54,27 +54,30 @@ export class EntranceWave {
    * 2026-09-24 调参：用户真机反馈「太快了，稍微调慢一点」⇒ 30 → 48。
    */
   get STEP_MS(): number {
-    return Math.round(EntranceWave.STEP_MS_BASE / EntranceWave.speedMultiplier());
+    const m = EntranceWave.speedMultiplier();
+    return m <= 0 ? 999999 : Math.round(EntranceWave.STEP_MS_BASE / m);
   }
   /** 当前首项延迟（ms），已应用速度倍率 */
   get BASE_MS(): number {
-    return Math.round(EntranceWave.BASE_MS_BASE / EntranceWave.speedMultiplier());
+    const m = EntranceWave.speedMultiplier();
+    return m <= 0 ? 999999 : Math.round(EntranceWave.BASE_MS_BASE / m);
   }
   /** 当前单项入场动画时长（ms），已应用速度倍率 */
   get DUR_MS(): number {
-    return Math.round(EntranceWave.DUR_MS_BASE / EntranceWave.speedMultiplier());
+    const m = EntranceWave.speedMultiplier();
+    return m <= 0 ? 999999 : Math.round(EntranceWave.DUR_MS_BASE / m);
   }
 
   /**
-   * 从 AppStorage 读动画速度档位（-2~+2），映射为倍率（0.5~2.0）。
-   * 线性插值：0 → 1.0, +2 → 2.0, -2 → 0.5。
-   * @returns 倍率（0.5~2.0），默认 1.0
+   * 从 AppStorage 读动画速度档位（0~6），映射为倍率（0~1.5）。
+   *   0: 关闭动画  |  1: 0.25x  |  2: 0.5x  |  3: 0.75x（默认）
+   *   4: 1.0x      |  5: 1.25x  |  6: 1.5x
+   * @returns 倍率（0~1.5），默认 0.75（档位 3）
    */
   static speedMultiplier(): number {
-    const level: number = AppStorage.get<number>(EntranceWave.SPEED_KEY) ?? 0;
-    const clamped = Math.max(-2, Math.min(2, level));
-    // -2 → 0.5, 0 → 1.0, +2 → 2.0  线性: 1.0 + clamped * 0.5
-    return 1.0 + clamped * 0.5;
+    const level: number = AppStorage.get<number>(EntranceWave.SPEED_KEY) ?? 3;
+    const clamped = Math.max(0, Math.min(6, level));
+    return clamped * 0.25;
   }
 
   private startTs: number = 0;
@@ -104,6 +107,9 @@ export class EntranceWave {
 
   /** 当前是否处于有效波次时间窗内。 */
   isRunning(): boolean {
+    if (EntranceWave.speedMultiplier() <= 0) {
+      return false;
+    }
     return this.running && (Date.now() - this.startTs) < this.totalMs();
   }
 
@@ -115,6 +121,9 @@ export class EntranceWave {
    *   `-1`  ：**这一波已经结束** ⇒ 调用方应当**完全不播动画**，直接以终态渲染。
    */
   delayFor(index: number): number {
+    if (EntranceWave.speedMultiplier() <= 0) {
+      return -1;
+    }
     if (!this.isRunning()) {
       return -1;
     }
