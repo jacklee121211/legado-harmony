@@ -11,6 +11,7 @@ import { ShelfColors } from '../../../../common/utils/NightMode'
 //   @ohos/hamock 1.0.0       → Apache License, Version 2.0（LICENSE 文件原文）
 // ⚠️ Apache-2.0 与 GPL-3.0 兼容，但要求保留其 NOTICE/许可证文本 ⇒ 见仓库根
 //    `THIRD_PARTY_NOTICES.md`。后续新增三方库时，两处都要追加。
+//   ssnangua/ColorTxt（设计参考）→ MPL-2.0（带 Exhibit B），无代码复制，仅思想借鉴不受 MPL 约束。
 interface LicenseEntry {
   name: string
   desc: string
@@ -20,8 +21,13 @@ interface LicenseEntry {
 const LICENSES: LicenseEntry[] = [
   {
     name: '喵阅（本应用）',
-    desc: '基于开源项目 Legado（开源阅读）HarmonyOS 移植版本重构打磨。上游致谢：gedoor/legado（安卓原版）、yongfengnice/legado-harmony（HarmonyOS 移植）',
+    desc: '基于开源项目 Legado（开源阅读）HarmonyOS 移植版本重构打磨。上游致谢：gedoor/legado（安卓原版）、yongfengnice/legado-harmony（HarmonyOS 移植）。',
     license: 'GPL-3.0',
+  },
+  {
+    name: 'ssnangua/ColorTxt（设计参考）',
+    desc: 'AI 阅读 / 多引擎 TTS 听书的架构与思路借鉴了 ColorTxt 的成熟设计（引擎分派、provider 注册表、LLM 说话人识别、配置方案等）。本应用未复制任何 MPL-2.0 代码，所有实现均为自研。感谢 ColorTxt 作者的探索与验证。',
+    license: 'MPL-2.0（仅思想借鉴）',
   },
   {
     name: '@ohos/axios',
