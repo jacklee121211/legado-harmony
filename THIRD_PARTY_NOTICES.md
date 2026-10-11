@@ -20,6 +20,7 @@
 |---|---|---|---|---|
 | [gedoor/legado](https://github.com/gedoor/legado) | — | **上游项目**（本项目由其衍生） | GPL-3.0 | — （同许可） |
 | [yongfengnice/legado-harmony](https://github.com/yongfengnice/legado-harmony) | — | **直接上游**（HarmonyOS 移植基座） | GPL-3.0 | — （同许可） |
+| [ssnangua/ColorTxt](https://github.com/ssnangua/ColorTxt) | — | **设计参考**（AI 阅读 / 多引擎 TTS 架构思路与接口设计范式；**无代码复制**，所有实现自研） | MPL-2.0（带 Exhibit B） | ⚠️ 不兼容（Exhibit B 关闭了 GPL 通道，但本项目不包含任何 MPL 代码，仅思想借鉴，不受 MPL 约束） |
 | [@ohos/axios](https://gitcode.com/openharmony-sig/ohos_axios) | 2.2.0 | 三方 HTTP 客户端 | MIT（`"license": "MIT"`） | ✅ |
 | [dayjs](https://github.com/iamkun/dayjs) | 1.11.7 | 日期时间处理 | MIT（`"license": "MIT"`） | ✅ |
 | [@pura/harmony-utils](https://gitee.com/tongyuyan/harmony-utils) | 1.3.2 | HarmonyOS 工具集（PreferencesUtil 等） | **Apache-2.0**（`"license":"Apache-2.0"`） | ✅ |
