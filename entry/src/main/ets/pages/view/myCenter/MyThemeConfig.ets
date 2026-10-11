@@ -2,7 +2,7 @@ import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { Haptics } from '../../../common/utils/Haptics';
 import { ThemeItem } from '../../../common/model/Theme'
 import { MyThemeConfigComp } from './MyThemeConfigComp'
-import { NightMode } from '../../../common/utils/NightMode'
+import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 import { common } from '@kit.AbilityKit'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import { TabHeader } from '../../../componets/common/TabHeader'
@@ -94,7 +94,11 @@ export default struct MyThemeConfig {
     .height('100%')
     .width('100%')
     .padding({top: this.topRectHeight})
-    .backgroundColor($r('app.color.page_bg_alt'))
+    .linearGradient({
+      direction: GradientDirection.Bottom,
+      colors: [[ShelfColors.gradientStart(this.theme.mainColor), 0],
+        [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]]
+    })
 
   }
 }

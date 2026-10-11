@@ -1,7 +1,7 @@
 import { SetList } from '../dataList/SetListGroup'
 import ImmersiveMaterialUtil from '../../common/utils/ImmersiveMaterialUtil'
-// 字号阶梯（唯一标准处，见其文件头「语义阶梯」段与 docs/标准-弹窗与按钮统一规范.md 第 6 节）
 import FontConstants from '../../common/constants/FontConstants'
+import { ShelfColors } from '../../common/utils/NightMode'
 
 @Component
 export struct SetListView{
@@ -82,7 +82,8 @@ export struct SetListView{
 
 
     }.width("100%")
-    .backgroundColor($r('app.color.card_bg'))
+    .backgroundColor(ShelfColors.surface())
+    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
     .padding({ left:20,right:20,top:12,bottom:12 })
     .justifyContent(FlexAlign.SpaceBetween)
     .alignItems(VerticalAlign.Center)

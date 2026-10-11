@@ -10,7 +10,7 @@ import { PreferencesUtil } from '@pura/harmony-utils'
 // 默认=系统本地引擎（Core Speech Kit，离线可用）；Edge TTS 仅暗门解锁后出现在此切换。
 import { ListenUnlock } from '../../../common/utils/ListenUnlock'
 import { loadTtsPrefs, saveTtsPrefs } from '../../../tts/TtsPrefs'
-import { NightMode } from '../../../common/utils/NightMode'
+import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 import { CalibMode } from '../../../common/utils/CalibMode'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
@@ -105,7 +105,7 @@ export default struct MySetPage{
     this.setExtName = PreferencesUtil.getSync('setExtName', false) as boolean
     this.bookSetList[0].toggleStatus = this.setExtName
     // 书架动画速度初值（2026-10-12，默认 0=标准速度）
-    this.shelfAnimSpeed = PreferencesUtil.getSync('shelfAnimSpeed', 3) as number
+    this.shelfAnimSpeed = PreferencesUtil.getSync('shelfAnimSpeed', 0) as number
     AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
     // 按键翻页开关初值（2026-10-07，默认关；Preferences 持久化，订阅调度在 ReaderKeyTurn）
     this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) as boolean
@@ -280,11 +280,9 @@ export default struct MySetPage{
 
   // 定义分组设置头部（**说明级** 12 号：小标题不跟条目抢视觉，见 FontConstants 语义阶梯）
   @Builder itemHead(text: string) {
-    // 分组设置头部组件
     Text(text)
       .fontSize(FontConstants.CAPTION)
       .fontColor($r('app.color.text_tertiary'))
-      .backgroundColor($r('app.color.page_bg_alt'))
       .width('100%')
       .padding({left:40,right:40,top:16,bottom:8})
   }
@@ -412,7 +410,8 @@ export default struct MySetPage{
                   }
                   .width('100%')
                   .padding({ left: 20, right: 20, top: 12, bottom: 12 })
-                  .backgroundColor($r('app.color.card_bg'))
+                  .backgroundColor(ShelfColors.surface())
+                  .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
                   .borderRadius({ bottomLeft: 20, bottomRight: 20 })
                 }.padding({ left: 20, right: 20 })
               }
@@ -491,7 +490,8 @@ export default struct MySetPage{
                   }
                   .width('100%')
                   .padding({ left: 20, right: 20, top: 12, bottom: 12 })
-                  .backgroundColor($r('app.color.card_bg'))
+                  .backgroundColor(ShelfColors.surface())
+                  .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
                   .borderRadius({ bottomLeft: 20, bottomRight: 20 })
                   .opacity(this.setHaptics ? 1 : 0.55)
                 }.padding({left:20,right:20})
@@ -545,7 +545,11 @@ export default struct MySetPage{
     .padding({ top: this.topRectHeight })
     .height('100%')
     .width('100%')
-    .backgroundColor($r('app.color.page_bg_alt'))
+    .linearGradient({
+      direction: GradientDirection.Bottom,
+      colors: [[ShelfColors.gradientStart(this.theme.mainColor), 0],
+        [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]]
+    })
   }
 
 
