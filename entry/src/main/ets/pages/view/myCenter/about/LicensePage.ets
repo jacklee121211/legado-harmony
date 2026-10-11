@@ -95,11 +95,13 @@ export default struct LicensePage {
           Column({ space: 12 }) {
             ForEach(LICENSES, (entry: LicenseEntry) => {
               Column({ space: 6 }) {
-                Row({ space: 8 }) {
+                Row() {
                   Text(entry.name)
                     .fontSize(15).fontWeight(600)
                     .fontColor($r('app.color.text_primary'))
-                  Blank(8)
+                    .layoutWeight(1)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
                   Text(entry.license)
                     .fontSize(12)
                     .fontColor('#0A84FF')
