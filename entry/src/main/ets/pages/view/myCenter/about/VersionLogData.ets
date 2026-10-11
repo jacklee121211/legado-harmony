@@ -14,12 +14,12 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V2.1.4'
+export const APP_VERSION_FALLBACK: string = 'V2.1.5'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.1.4',
+    version: 'V2.1.5',
     date: '2026-10-11',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
@@ -53,6 +53,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '新增AI听书接口，适配主流TTS模型',
       '优化UI显示效果',
       '新增动画速率调整开关以及优化动画实现效果',
+      '新增鸣谢开源项目思路',
     ]
   },
 ]
