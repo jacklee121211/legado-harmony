@@ -154,9 +154,22 @@ export default  struct BookManageDialog {
         currentIndex: this.currentIndex,
         ids: this.checkListNumber,
         bookOrFolder: this.bookOrFolder,
+        // ══════════════════════════════════════════════════════════════════════
+        // 2026-10-12 九修：**「取消」不再清除勾选**（与 `BookManagePage` 同批发现）
+        // ══════════════════════════════════════════════════════════════════════
+        //   `AddToBookListDialog` 点「取消」会回调这里 + 自己 close。
+        //   原来这里除了清引用，还调了 `refreshData()` —— 而 `refreshData()` 末尾有
+        //   **`this.dataMoveCheckList(false)`**（本文件 `:668`）⇒ 勾选被全部清空。
+        //   ⇒ 表现就是"点加入书单的取消，选中的书全没了"。
+        //
+        //   修法：取消 = 只清引用（关闭由子组件自己做，见 `AddToBookListDialog:51-53`），
+        //   **不刷新列表、不碰勾选**。取消没有改任何数据，没有刷新的必要。
+        //   父弹窗（本弹窗）此时**本来就还在**（`onChildDialogOpen/Close` 只用于
+        //   材质与层级协调），取消后无需"恢复"动作。
+        //
+        //   ⚠️ 回退：把 `this.refreshData()` 加回来即恢复"取消也清空勾选"。
         cancel: () => {
           this.addToBookListDialog = null
-          this.refreshData()
           this.onChildDialogClose()
         }
       }),
@@ -605,6 +618,33 @@ export default  struct BookManageDialog {
         },500)
         this.bookMoveGroup?.close()
       },
+      // ══════════════════════════════════════════════════════════════════════
+      // 2026-10-12 九修：「取消」按钮点了没反应（与 `BookManagePage` 同批发现的**第三处**）
+      // ══════════════════════════════════════════════════════════════════════
+      // ── 根因 ──────────────────────────────────────────────────────────────
+      //   `BookSelectGroupDialog` 的「取消」按钮**只调 `this.onClose()`**，
+      //   自己不 close（`BookSelectGroupDialog.ets:180-185`；`this.controller?.close()`
+      //   在 `@CustomDialog` 子组件里是空操作）。
+      //   ⇒ 关闭动作**完全依赖调用方传 `onClose`**。
+      //   这里原来**既没传 `onClose`、也没传 `cancel`** ⇒ 两者都取默认空实现
+      //   ⇒ 点「取消」什么都不发生、点遮罩也不会关（`autoCancel` 走 options 的 `cancel`）。
+      //
+      // ── 为什么它是"漏网"的 ────────────────────────────────────────────────
+      //   2026-10-12 那轮修「取消键」时，改的是 `BookInfoDialogs` / `FolderInfoDialog`
+      //   这两处（都传了 `onClose`），**漏了本处与 `BookManagePage`**。
+      //   三处用的是**同一个子弹窗**（`BookSelectGroupDialog`），所以是同一个坑的三份拷贝。
+      //
+      // ── 修法 ──────────────────────────────────────────────────────────────
+      //   本弹窗（`BookManageDialog`）是书架里"长按书籍 → 管理"的弹窗，它**没有父弹窗**
+      //   要恢复 ⇒ 只需真正 close 子弹窗 + 清引用。
+      //   （对比 `FolderInfoDialog` 的 `onClose` 要 `closeChildAndReopen()`
+      //     —— 那个场景子弹窗退出后父弹窗要回来，属于"子退父进"，不适用这里。）
+      //
+      //   ⚠️ 顺序不能反：先 `close()` 再置空，否则引用没了就再没人能关它。
+      onClose: ()=> {
+        this.bookMoveGroup?.close()
+        this.bookMoveGroup = null
+      },
       oldGroupId:this.bookTypeNumber,
       currentIndex:this.currentIndex,
       Ids:this.checkListNumber,
@@ -616,6 +656,11 @@ export default  struct BookManageDialog {
     gridCount: 4,
     customStyle: false,
     cornerRadius: 25,
+    // 遮罩 / 返回键：与「取消」按钮同一条收尾路径
+    cancel: (): void => {
+      this.bookMoveGroup?.close()
+      this.bookMoveGroup = null
+    }
   })
 
   //刷新数据方法

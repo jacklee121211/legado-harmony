@@ -16,7 +16,7 @@
 import { AiCancelToken, AiProviderMeta, AiSynthReq, AiSynthRes, AiTtsConfig, AiTtsProvider,
   AiVoiceOption, AI_PERMANENT_PREFIX } from '../AiTtsTypes';
 import { aiHttpPost, decodeAudioSmart, shortErrorBody } from '../AiTtsHttp';
-import { baseUrlOf, bearerHeaders, clampNum, v1Join } from './AiProviderCommon';
+import { baseUrlOf, bearerHeaders, clampNum, v1Join, applyExtraHeaders, appendExtraBody } from './AiProviderCommon';
 
 export const MINIMAX_META: AiProviderMeta = {
   id: 'minimax',
@@ -65,16 +65,20 @@ export class MiniMaxTtsProvider implements AiTtsProvider {
     const cfg: AiTtsConfig = req.cfg;
     const url: string = v1Join(baseUrlOf(cfg, MINIMAX_META), '/t2a_v2');
     const headers: Record<string, string> = bearerHeaders(cfg);
+    // 用户自定义请求头（2026-10-11 修复：旧版这一家不读 extraHeaders ⇒ 假控件）
+    applyExtraHeaders(cfg, headers);
     const model: string = cfg.model.trim().length > 0 ? cfg.model.trim() : DEFAULT_MODEL;
     const voice: string = req.voiceId.trim().length > 0 ? req.voiceId.trim() : MINIMAX_META.voiceHint;
     const speed: number = clampNum(req.rate, 0.5, 2.0);
-    const body: string = '{' +
+    let body: string = '{' +
       '"model":' + JSON.stringify(model) + ',' +
       '"text":' + JSON.stringify(req.text) + ',' +
       '"stream":false,' +
       '"voice_setting":{"voice_id":' + JSON.stringify(voice) + ',"speed":' + speed.toFixed(2) + '},' +
       '"audio_setting":{"sample_rate":' + SAMPLE_RATE + ',"format":"mp3","channel":1}' +
       '}';
+    // 用户附加请求体（2026-10-11 修复：旧版这一家不读 extraBody ⇒ 假控件）
+    body = appendExtraBody(body, cfg.extraBody);
 
     const res = await aiHttpPost(url, headers, body, false, cancel);
     if (res.code < 200 || res.code >= 300) {
@@ -106,7 +110,9 @@ export class MiniMaxTtsProvider implements AiTtsProvider {
   }
 
   async listVoices(cfg: AiTtsConfig, cancel: AiCancelToken): Promise<AiVoiceOption[]> {    const url: string = v1Join(baseUrlOf(cfg, MINIMAX_META), '/get_voice');
-    const res = await aiHttpPost(url, bearerHeaders(cfg), '{"voice_type":"all"}', false, cancel);
+    const h: Record<string, string> = bearerHeaders(cfg);
+    applyExtraHeaders(cfg, h);
+    const res = await aiHttpPost(url, h, '{"voice_type":"all"}', false, cancel);
     if (res.code < 200 || res.code >= 300) {
       throw new Error(`MiniMax 查询音色返回 ${res.code}：` + shortErrorBody(res));
     }

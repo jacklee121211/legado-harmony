@@ -99,7 +99,20 @@ export interface AiVoiceOption {
   description: string;
   /** 'male' | 'female' | ''（未知） */
   gender: string;
+  /**
+   * 分组名（UI 用它做分节标题，如「旁白」「男声」「女声」）。
+   * 空串 = 不分组（UI 平铺）。
+   * 2026-10-11 新增：为「内置完整音色表 + 分组渲染」做准备；老数据不带此字段仍可用。
+   */
+  group?: string;
 }
+
+/**
+ * 音色清单来源（合规留痕）。
+ * 「厂商公开的接口事实」与「本工程自写表达」必须可区分，避免再次出现
+ * 「自己编描述结果编错」（详见 dashscope Jennifer 那次教训）。
+ */
+export type AiVoiceSource = 'official' | 'builtin' | 'pulled';
 
 /** 一个 AI TTS 服务商 */
 export interface AiTtsProvider {

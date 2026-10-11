@@ -14,11 +14,13 @@
  */
 import {
   AiCancelToken, AiProviderMeta, AiSynthReq, AiSynthRes, AiTtsConfig, AiTtsProvider,
-  AiVoiceOption, AI_PERMANENT_PREFIX, aiErrorText
+  AiVoiceOption, AI_PERMANENT_PREFIX
 } from './AiTtsTypes';
-import { aiHttpPost, joinUrl, parseHeaderLines, safeUrlForLog, shortErrorBody,
+import { aiHttpPost, joinUrl, safeUrlForLog, shortErrorBody,
   sniffAudioFormat } from './AiTtsHttp';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+// ── 厂商共享工具（2026-10-11：逃生口收敛到公共模块，五家统一行为）─────────────
+import { appendExtraBody, applyExtraHeaders } from './providers/AiProviderCommon';
 // ── 厂商 provider（每家一个文件，改一家不影响其他家）─────────────────────────
 import { MiniMaxTtsProvider, MINIMAX_META } from './providers/MiniMaxTts';
 import { DashscopeTtsProvider, DASHSCOPE_META } from './providers/DashscopeTts';
@@ -153,36 +155,11 @@ function normalizeFormat(cfg: AiTtsConfig): string {
 }
 
 /**
- * 把「附加请求体 JSON」合并进基础 body。
- * 做法：字符串级合并（去掉外层花括号后追加），最后用 JSON.parse 做一次**强校验**——
- * 避免 ArkTS 下动态对象合并的类型限制，同时保证不把非法 JSON 发出去。
- * ⚠️ 同名 key 会重复出现，JSON 语义为"后者生效"（用户可借此覆盖我们的字段）。
+ * ⚠️ 2026-10-11：`appendExtraBody` / 附加请求头解析**已上移到** `providers/AiProviderCommon.ets`，
+ * 因为四家厂商 provider 也要用同一个逃生口（旧版只有本文件的 OpenAI 兼容实现用它，
+ * 导致其余四家的「附加请求体/头」输入框是假控件）。此处改为 re-export，保持向后兼容，
+ * **不要再在本文件新写一份**。
  */
-function appendExtraBody(baseBody: string, extra: string): string {
-  const t: string = extra.trim();
-  if (t.length === 0) {
-    return baseBody;
-  }
-  let inner: string = t;
-  if (inner.startsWith('{')) {
-    if (!inner.endsWith('}')) {
-      throw new Error('附加请求体 JSON 不完整（缺少右花括号）');
-    }
-    inner = inner.substring(1, inner.length - 1).trim();
-  }
-  while (inner.endsWith(',')) {
-    inner = inner.substring(0, inner.length - 1).trim();
-  }
-  const merged: string = inner.length === 0
-    ? baseBody
-    : baseBody.substring(0, baseBody.length - 1) + ',' + inner + '}';
-  try {
-    JSON.parse(merged);
-  } catch (e) {
-    throw new Error(AI_PERMANENT_PREFIX + '附加请求体 JSON 解析失败：' + aiErrorText(e));
-  }
-  return merged;
-}
 
 /**
  * OpenAI 兼容 `/v1/audio/speech` 实现。
@@ -205,7 +182,7 @@ class OpenAiCompatProvider implements AiTtsProvider {
       headers['Authorization'] = 'Bearer ' + key;
     }
     // 用户附加请求头（行式）：可覆盖上面两项，也可新增
-    parseHeaderLines(cfg.extraHeaders, headers);
+    applyExtraHeaders(cfg, headers);
 
     const voice: string = req.voiceId.trim().length > 0 ? req.voiceId.trim() : meta.voiceHint;
     const fmt: string = normalizeFormat(cfg);

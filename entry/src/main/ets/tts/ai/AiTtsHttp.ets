@@ -87,7 +87,13 @@ function emptyBuf(): ArrayBuffer {
   return new ArrayBuffer(0);
 }
 
-/** 行式请求头：一行 `Key: Value`；空行与 `#` 开头的行忽略 */
+/**
+ * 行式请求头：一行 `Key: Value`；空行与 `#` 开头的行忽略。
+ *
+ * @deprecated 2026-10-11：已由 `providers/AiProviderCommon.ets` 的
+ *   {@link applyExtraHeaders} 取代（那边直接接收 `AiTtsConfig`，五家 provider 统一调用）。
+ *   保留本函数仅为兼容旧调用点；**新代码不要再使用**。
+ */
 export function parseHeaderLines(raw: string, into: Record<string, string>): void {
   const lines: string[] = raw.split('\n');
   for (let i = 0; i < lines.length; i++) {

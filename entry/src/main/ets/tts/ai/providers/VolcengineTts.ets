@@ -17,7 +17,7 @@
 import { AiCancelToken, AiProviderMeta, AiSynthReq, AiSynthRes, AiTtsConfig, AiTtsProvider,
   AiVoiceOption } from '../AiTtsTypes';
 import { aiHttpPost, concatBytes, decodeBase64, shortErrorBody } from '../AiTtsHttp';
-import { baseUrlOf, clampNum, uuidLike } from './AiProviderCommon';
+import { baseUrlOf, clampNum, uuidLike, applyExtraHeaders, appendExtraBody } from './AiProviderCommon';
 
 export const VOLCENGINE_META: AiProviderMeta = {
   id: 'volcengine',
@@ -27,7 +27,11 @@ export const VOLCENGINE_META: AiProviderMeta = {
   defaultBaseUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
   needsApiKey: true,
   modelHint: 'seed-tts-2.0',
-  voiceHint: 'zh_male_ruyayichen_uranus_bigtts',
+  // 2026-10-11 改：默认音色由 `zh_male_ruyayichen`（儒雅逸辰·视频配音）
+  //   改为 `zh_male_ruyaqingnian`（儒雅青年）——官方场景标注为「通用场景」，
+  //   且**与参考项目默认值一致**（ColorTxt-main/src/shared/voiceReadEngineDefaults.ts:79）。
+  //   两者都在官方音色表内，仅听感取向不同。
+  voiceHint: 'zh_male_ruyaqingnian_uranus_bigtts',
   supportsRate: true,
   rateMin: 0.5,
   rateMax: 2.0,
@@ -56,6 +60,9 @@ export class VolcengineTtsProvider implements AiTtsProvider {
     headers['X-Api-Key'] = cfg.apiKey.trim();
     headers['X-Api-Resource-Id'] = RESOURCE_ID;
     headers['X-Api-Request-Id'] = uuidLike();
+    // 用户自定义请求头（2026-10-11 修复：旧版这一家不读 extraHeaders ⇒ 假控件）
+    // 逃生口：可覆盖 `X-Api-Resource-Id`（例如换成 1.0 资源 `seed-tts-1.0`）
+    applyExtraHeaders(cfg, headers);
 
     const speaker: string = req.voiceId.trim().length > 0 ? req.voiceId.trim() : VOLCENGINE_META.voiceHint;
     const speechRate: number = Math.round((clampNum(req.rate, 0.5, 2.0) - 1) * 100);
@@ -70,7 +77,9 @@ export class VolcengineTtsProvider implements AiTtsProvider {
       reqParams += ',"additions":' + JSON.stringify(additionsObj);
     }
     reqParams += '}';
-    const body: string = '{"req_params":' + reqParams + '}';
+    let body: string = '{"req_params":' + reqParams + '}';
+    // 用户附加请求体（2026-10-11 修复：旧版这一家不读 extraBody ⇒ 假控件）
+    body = appendExtraBody(body, cfg.extraBody);
 
     const res = await aiHttpPost(url, headers, body, false, cancel);
     if (res.code < 200 || res.code >= 300) {

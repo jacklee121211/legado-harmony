@@ -405,7 +405,12 @@ export default struct groupTypePanel {
     this.worksCoverDialog = new CustomDialogController({
       builder: coverInfoDialog({
         itemData: item,
+        // ⚠️ 2026-10-12：**必须真的 close**。旧写法只 `= null` 把引用丢掉，
+        //   而 coverInfoDialog 内部自己的 `controller.close()` 在 @CustomDialog
+        //   子组件里不可靠 ⇒ 弹窗留在屏幕上无法关闭（本项目真机两次验证，
+        //   见 `ReaderSaveSchemeDialog.ets:205-208`）。
         cancel: (): void => {
+          this.worksCoverDialog?.close()
           this.worksCoverDialog = null
         }
       }),
@@ -417,7 +422,9 @@ export default struct groupTypePanel {
       systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 遮罩/返回键：同一条收尾路径（2026-10-12）
       cancel: (): void => {
+        this.worksCoverDialog?.close()
         this.worksCoverDialog = null
       }
     })

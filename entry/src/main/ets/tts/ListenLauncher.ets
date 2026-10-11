@@ -68,6 +68,13 @@ export class ListenLauncher {
     }
     // `Books` 实体里书名只有 `bookName`（`name` 属同文件另一个类，别混用）
     const title: string = book.bookName;
+    // ★ 诊断打点（2026-10-12）：书名条显示旧名时，这一行是关键分界点 ——
+    //   它打出**即将登记为会话书名**的值。若这里是旧名，说明 `getLastReadBook()`
+    //   返回的 `Books` 行本身带着旧名（那就是 DB 改名没落库，或按名回查取到了另一行）；
+    //   若这里是新名而界面仍显示旧名，则问题在 UI 层（见 `ListenTitleBar` 的注释）。
+    hilog.info(DOMAIN, TAG,
+      'startBook: bookName=%{public}s id=%{public}d url=%{public}s',
+      title, book.id ?? -1, path);
     const prefs: TtsPrefs = loadTtsPrefs();
     TtsEngine.init(context);
     // 记录路径：解析器被阅读页 releaseBook 作废后，TtsEngine.tryHealHandler() 靠它重开
@@ -76,7 +83,11 @@ export class ListenLauncher {
     TtsEngine.setCallbacks(ListenSession.headless());
     // 位置提供者也要清掉：可能残留着上一个已销毁阅读页的闭包
     TtsEngine.clearReaderPositionProvider();
-    ListenSession.begin(title, path, book.id ?? -1);
+    // ⚠️ 用 `beginExclusive` 而不是 `begin`（2026-10-12）：听书具备**唯一性**，
+    //   若当前正在听的是**另一本**，这里会先把旧会话干净停掉再登记新的。
+    //   背景与根因链见 `ListenSession.beginExclusive()` 的注释（含两处开播入口
+    //   无条件覆盖会话身份、而 `TtsEngine.start` 的 stop 回调被压制那一段）。
+    ListenSession.beginExclusive(title, path, book.id ?? -1);
     bookParser.getDefaultHandler(path).then((h: bookParser.BookParserHandler) => {
       const pos = book.localBookDurChapterPos;
       let spine: number = 0;

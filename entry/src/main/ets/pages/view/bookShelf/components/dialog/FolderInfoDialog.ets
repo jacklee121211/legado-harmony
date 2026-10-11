@@ -93,6 +93,51 @@ export default struct FolderInfoDialog{
     this.controller?.close()
     controller?.open()
   }
+
+  /**
+   * **子退父进的标准收尾**（2026-10-12 新增，修「取消按钮点了循环」）。
+   *
+   * ── 为什么必须走这一个方法 ────────────────────────────────────────────────
+   * 用户原话：「点击移动分组弹窗的取消，子弹窗没取消，父弹窗回来了，循环。
+   *   点击其他区域可以关闭弹窗，手势可以关闭弹窗，**就是点击取消按钮不行**」。
+   *
+   * 真机日志（`docs/日志.md`）把因果链钉死了 —— 点「取消」那一次：
+   * ```
+   * 4422: TTHRTI: T ClickRecognizer info: { T: Column }; { T: Dialog };   ← 确实点到了按钮
+   * 4429: Click try accept Column
+   * 4435-4443: 新 Dialog APPEARING，Controller/17 create dialog node/1749  ← 父弹窗被召回
+   * 4445: view: Dialog/1749 show
+   * 4446: View: Dialog/1715 lost focus                                    ← 子弹窗 1715 **仍在**
+   * ```
+   * 根因是旧写法只做了"恢复父弹窗"，**没有关闭子弹窗**：
+   * ```
+   * cancel: () => { this.childDialogClosed() }     // 父弹窗回来了，子弹窗还在
+   * ```
+   * 而子弹窗**内部**自己的 `this.controller?.close()` 在 `@CustomDialog` 子组件里
+   * **不可靠** —— 这条本项目已用真机日志独立验证过两次：
+   *   · `ReaderSaveSchemeDialog.ets:205-208`：「点取消时点击识别成功（CLK RACC T: Button）、
+   *     onClick 也执行了（Haptics 探测日志都在），但 `this.controller?.close()` 没有关掉弹窗；
+   *     而**页面侧**持有的 controller 调 close() 一直可靠 ⇒ **关闭权收回页面**」；
+   *   · `RenameBookDialog` 同类（其类注释有完整记录）。
+   *
+   * ⇒ **关闭权必须归持有 controller 的调用方**。本方法就是这个唯一出口：
+   *   先 `close()` 子弹窗（调用方才有引用）→ 再决定是否恢复父弹窗。
+   *
+   * @param child  要关闭的子弹窗 controller（本组件字段）
+   * @param reopenParent 是否恢复父弹窗。默认 true（入规则）；移动至/删除/解散这类
+   *        「对象已不存在」的路径传 false（规范 §4.2 例外：直接全关）
+   */
+  private closeChildAndReopen(child: CustomDialogController | null,
+    reopenParent: boolean = true): void {
+    child?.close()
+    if (reopenParent) {
+      this.childDialogClosed()
+    } else {
+      // 规范 §4.2：确认后父弹窗不恢复 ⇒ 整条链全关（回调给创建者）
+      this.cancel()
+    }
+  }
+
   private async childDialogClosed(): Promise<void> {
     if (this.reopen) {
       this.reopen()
@@ -122,7 +167,7 @@ export default struct FolderInfoDialog{
       ids: this.itemData.groupId ? [this.itemData.groupId] : [],
       bookOrFolder: 1,
       cancel: () => {
-        this.childDialogClosed()
+        this.closeChildAndReopen(this.catalogAddShelfDialog)
       }
     }),
     autoCancel: true,
@@ -136,8 +181,9 @@ export default struct FolderInfoDialog{
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
     openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    // 遮罩/返回键：同一条收尾路径（2026-10-12）
     cancel: (): void => {
-      this.childDialogClosed()
+      this.closeChildAndReopen(this.catalogAddShelfDialog)
     }
   })
 
@@ -279,15 +325,19 @@ export default struct FolderInfoDialog{
     // 弹窗材质走官方 options 渠道（依据见 BookInfos.ets 同处注释）
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
     // 子退父进：遮罩/返回关闭本子弹窗 ⇒ 父弹窗恢复
+    // 2026-10-12：同样必须真的 close（子组件内自己 close 不可靠）
     cancel: (): void => {
-      this.childDialogClosed()
+      this.closeChildAndReopen(this.restTitleDialog)
     }
   })
 
   restTitleCancel(){
-    // commonInputDialog 的取消按钮先自己 close 再回调本方法 ⇒ 这里只需恢复父弹窗
+    // ⚠️ 2026-10-12：旧注释假设「commonInputDialog 的取消按钮先自己 close 再回调本方法」，
+    //   但**子组件内 `controller.close()` 不可靠**（真机两次验证，见
+    //   `ReaderSaveSchemeDialog.ets:205-208`）⇒ 这里必须由**持有 controller 的调用方**
+    //   真正关闭它，否则弹窗留在屏幕上而父弹窗被召回（用户报的"循环"）。
     this.inputValue = ''
-    this.childDialogClosed()
+    this.closeChildAndReopen(this.restTitleDialog)
   }
 
   async restTitleConfirm(){
@@ -302,8 +352,8 @@ export default struct FolderInfoDialog{
       showMessage('已存在其它相同分组名')
     }
     this.inputValue = ''
-    // commonInputDialog 的确认按钮先自己 close 再回调 ⇒ 无论成败都恢复父弹窗
-    this.childDialogClosed()
+    // 2026-10-12：同上 —— 关闭权归调用方（持有 controller 的这一侧）
+    this.closeChildAndReopen(this.restTitleDialog)
   }
 
   //移动分组弹窗
@@ -316,9 +366,11 @@ export default struct FolderInfoDialog{
         },500)
         this.bookMoveGroup?.close()
       },
-      // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ 本弹窗恢复
+      // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ **关闭子弹窗** + 本弹窗恢复
+      // ⚠️ 2026-10-12：旧写法只 `childDialogClosed()`，子弹窗留在屏幕上 ⇒ 双弹窗叠加
+      //    （真机日志 4446 行 `View: Dialog/1715 lost focus` 但 1715 未 close）。
       onClose: ()=> {
-        this.childDialogClosed()
+        this.closeChildAndReopen(this.bookMoveGroup)
       },
       oldGroupId:this.itemData.groupId,
       currentIndex:this.itemData.groupType,
@@ -331,8 +383,9 @@ export default struct FolderInfoDialog{
     gridCount: 4,
     customStyle: false,
     cornerRadius: 25,
+    // 遮罩/返回键：同一条收尾路径（2026-10-12 一并修）
     cancel: (): void => {
-      this.childDialogClosed()
+      this.closeChildAndReopen(this.bookMoveGroup)
     }
   })
 
@@ -342,7 +395,8 @@ export default struct FolderInfoDialog{
     builder: confirmDialogExample({
       confirm: ()=> { this.deleteGroup() },
       delCache:this.delCache,
-      cancel: ()=> { this.childDialogClosed() }
+      // 2026-10-12：取消路径必须**真的 close**（同 bookMoveGroup 那个坑）
+      cancel: ()=> { this.closeChildAndReopen(this.groupDelDialog) }
     }),
     autoCancel: true,
     alignment: DialogAlignment.Center,
@@ -350,7 +404,7 @@ export default struct FolderInfoDialog{
     customStyle: false,
     cornerRadius: 25,
     cancel: (): void => {
-      this.childDialogClosed()
+      this.closeChildAndReopen(this.groupDelDialog)
     }
   })
   //删除分组
@@ -379,7 +433,8 @@ export default struct FolderInfoDialog{
       confirm: ()=> { this.hideOrDisband() },
       title:this.dialogTitle,
       content:this.dialogContent,
-      cancel: ()=> { this.childDialogClosed() }
+      // 2026-10-12：取消路径必须真的 close（同 bookMoveGroup 那个坑）
+      cancel: ()=> { this.closeChildAndReopen(this.hideDisbandDelDialog) }
     }),
     autoCancel: true,
     alignment: DialogAlignment.Center,
@@ -387,7 +442,7 @@ export default struct FolderInfoDialog{
     customStyle: false,
     cornerRadius: 25,
     cancel: (): void => {
-      this.childDialogClosed()
+      this.closeChildAndReopen(this.hideDisbandDelDialog)
     }
   })
   //显示/隐藏
@@ -424,8 +479,9 @@ export default struct FolderInfoDialog{
   coverDialog: CustomDialogController | null = new CustomDialogController({
     builder: coverInfoDialog({
       itemData:this.itemData,
+      // 2026-10-12：必须真的 close 封面弹窗（同 bookMoveGroup 那个坑）
       cancel:()=>{
-        this.childDialogClosed()
+        this.closeChildAndReopen(this.coverDialog)
       }
     }),
     autoCancel: true,
@@ -437,7 +493,7 @@ export default struct FolderInfoDialog{
     openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     cancel: (): void => {
-      this.childDialogClosed()
+      this.closeChildAndReopen(this.coverDialog)
     }
   })
 

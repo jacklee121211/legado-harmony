@@ -67,3 +67,71 @@ export function uuidLike(): string {
     return 'ai' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
   }
 }
+
+/**
+ * 把「附加请求体 JSON」合并进基础 body（**所有厂商统一走这里**）。
+ *
+ * 做法：字符串级合并（去掉外层花括号后追加），最后用 `JSON.parse` 做一次**强校验**——
+ * 避开 ArkTS 下动态对象合并的类型限制，同时保证不把非法 JSON 发出去。
+ * ⚠️ 同名 key 会重复出现，JSON 语义为"后者生效"⇒ 用户可借此**覆盖我们生成的字段**
+ *    （例如把 `language_type` 改成 `English`，或补中转站特有字段）。
+ *
+ * 历史（2026-10-11）：旧版这个函数只被 OpenAI 兼容 provider 使用，
+ * 通义/火山/MiniMax/MiMo **完全不读** `cfg.extraBody`，
+ * 但 UI 对五家都渲染「附加请求体」输入框 ⇒ **假控件**（填了没用）。
+ * 现在收敛到本函数，四家 provider 在构造完 body 后统一调用。
+ */
+export function appendExtraBody(baseBody: string, extra: string): string {
+  const t: string = extra.trim();
+  if (t.length === 0) {
+    return baseBody;
+  }
+  let inner: string = t;
+  if (inner.startsWith('{')) {
+    if (!inner.endsWith('}')) {
+      throw new Error('附加请求体 JSON 不完整（缺少右花括号）');
+    }
+    inner = inner.substring(1, inner.length - 1).trim();
+  }
+  while (inner.endsWith(',')) {
+    inner = inner.substring(0, inner.length - 1).trim();
+  }
+  const merged: string = inner.length === 0
+    ? baseBody
+    : baseBody.substring(0, baseBody.length - 1) + ',' + inner + '}';
+  try {
+    JSON.parse(merged);
+  } catch (e) {
+    throw new Error('附加请求体 JSON 解析失败：' + (e instanceof Error ? e.message : String(e)));
+  }
+  return merged;
+}
+
+/**
+ * 追加用户自定义请求头（行式 `Key: Value`）。**所有厂商统一走这里**。
+ * 空行与 `#` 开头的行忽略；可覆盖已有的同名头（如换鉴权方式）。
+ *
+ * 历史（2026-10-11）：旧版只被 OpenAI 兼容 provider 使用，其余四家是假控件（同 appendExtraBody）。
+ */
+export function applyExtraHeaders(cfg: AiTtsConfig, into: Record<string, string>): void {
+  const raw: string = cfg.extraHeaders;
+  if (raw.trim().length === 0) {
+    return;
+  }
+  const lines: string[] = raw.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line: string = lines[i].trim();
+    if (line.length === 0 || line.startsWith('#')) {
+      continue;
+    }
+    const idx: number = line.indexOf(':');
+    if (idx <= 0) {
+      continue;
+    }
+    const k: string = line.substring(0, idx).trim();
+    const v: string = line.substring(idx + 1).trim();
+    if (k.length > 0) {
+      into[k] = v;
+    }
+  }
+}

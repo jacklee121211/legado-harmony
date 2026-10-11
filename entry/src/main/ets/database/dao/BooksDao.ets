@@ -6,6 +6,8 @@ import { Books } from '../entities/Books';
 import { BooksTypeSearchParams } from '../types/BooksType';
 import { ColumnInfo, ColumnType } from '../types/ColumnInfo';
 import { PreferencesUtil } from '@pura/harmony-utils';
+// 诊断打点（2026-10-12）：`getLastReadBook()` 的书名键/命中行
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 /**
  * 「分类页签合并」迁移的一次性标志（Preferences 键）。
@@ -545,6 +547,14 @@ class BooksDao {
     try {
       const name = PreferencesUtil.getSync('LastReadBookName', '') as string;
       const url = PreferencesUtil.getSync('LastReadBookUrl', '') as string;
+      // ★ 诊断打点（2026-10-12）：本方法是「书架听书圆形按钮」定位目标书的唯一入口，
+      //   而它用的是 **Preferences 里的 `LastReadBookName`** 去 `books` 表按名回查
+      //   （不是按 id）⇒ **改名后这个键必须已经迁到新名**，否则有两种失败形态：
+      //     ① 查不到 ⇒ 返回 null（用户点圆形"没反应"）；
+      //     ② 查到了**同名另一行** ⇒ 书名条显示的是那一行的名字（用户报的"名字不统一"）。
+      //   这两行日志把键值与命中行一起打出来，一次复现就能定性。
+      hilog.info(0x0000, 'listenSession',
+        'getLastReadBook: key name=%{public}s url=%{public}s', name, url);
       if (typeof name !== 'string' || name.length === 0) {
         return null;
       }
@@ -555,6 +565,10 @@ class BooksDao {
         predicates.equalTo('bookUrl', url);
       }
       const books = await DbUtil.queryForList<Books>(predicates, column);
+      hilog.info(0x0000, 'listenSession',
+        'getLastReadBook: hit=%{public}d firstId=%{public}d firstName=%{public}s',
+        books.length, books.length > 0 ? (books[0].id ?? -1) : -1,
+        books.length > 0 ? (books[0].bookName ?? '') : '');
       if (books.length === 0) {
         return null;
       }

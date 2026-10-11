@@ -1,0 +1,282 @@
+10-11 15:17:13.617 10766 10766 I C015B0/com.jk.reader/NETSTACK: [websocket_module.cpp:48] IsAtomicService  bundleName is com.jk.reader, isAtomicService is 0
+10-11 15:17:13.619 10766 10766 I C015B0/com.jk.reader/NETSTACK: [napi_utils.cpp:759] newId = 1, id = 2
+10-11 15:17:13.620 10766 10766 I C015B0/com.jk.reader/NETSTACK: [http_module.cpp:81] IsAtomicService bundleName is com.jk.reader, isAtomicService is 0
+10-11 15:17:13.851 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:13.851 10766 10766 I A03D00/com.jk.reader/JSAPP: Succeeded in setting the window layout to full-screen mode.
+10-11 15:17:13.851 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo Error: Error: SQLite: Generic error. Possible causes: Insert failed or the updated data does not exist.
+10-11 15:17:13.903 10766 10766 I A03D00/com.jk.reader/JSAPP: setinitPreferences SYSTEM_UA 0
+10-11 15:17:13.917 10766 10766 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:17:13.919 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:13.919 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:13.920 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:17:13.920 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:13.921 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:13.922 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:13.922 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo migrateBookTypeToShelf: already done, skip
+10-11 15:17:13.950 10766 10766 I A03D00/com.jk.reader/JSAPP: seedDefaultBook: already seeded, skip
+10-11 15:17:13.968 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:17:13.969 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:17:13.972 10766 10766 I A03D00/com.jk.reader/JSAPP: add listener
+10-11 15:17:15.091 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:17:15.092 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:17:15.098 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:17:15.098 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:17:15.098 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:17:15.098 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:17:15.347 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:15.353 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:17:24.199 10766 10766 I A00001/com.jk.reader/TtsEngine: bg task started notificationId=-1 taskId=60
+10-11 15:17:24.330 10766 10766 I A00001/com.jk.reader/TtsEngine: speak filter: masked=69 chars rules=4 chunks=67
+10-11 15:17:24.330 10766 10766 I A00001/com.jk.reader/TtsEngine: chapter: spine=0 nodes=67 chunks=67
+10-11 15:17:24.332 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=17302 out=24000Hz
+10-11 15:17:24.332 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=17302 out=17302 sent=700 comm=540 rate=1.00
+10-11 15:17:24.332 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.00] last=[00:00.00]
+10-11 15:17:24.369 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: create rate=24000 ch=1 fmt=1 enc=0 usage=1 flags=0
+10-11 15:17:24.375 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: probe[actual] rate=24000 ch=1 -> offload=N direct=N fast=N
+10-11 15:17:24.380 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: probe[48k/mono] rate=48000 ch=1 -> offload=N direct=N fast=N
+10-11 15:17:24.385 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: probe[48k/stereo] rate=48000 ch=2 -> offload=N direct=N fast=N
+10-11 15:17:24.390 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: probe[44.1k/stereo] rate=44100 ch=2 -> offload=N direct=N fast=N
+10-11 15:17:24.395 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: probe[16k/mono] rate=16000 ch=1 -> offload=N direct=N fast=N
+10-11 15:17:25.050 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=721 writeMs=556 slack=165 bufSize=960 writes=37 state=2
+10-11 15:17:25.197 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=165142 out=24000Hz
+10-11 15:17:25.197 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=165142 out=165142 sent=700 comm=540 rate=1.00
+10-11 15:17:25.198 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.32] last=[00:00.32]
+10-11 15:17:31.988 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=6881 writeMs=6778 slack=103 bufSize=960 writes=345 state=2
+10-11 15:17:32.140 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=119062 out=24000Hz
+10-11 15:17:32.140 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=119062 out=119062 sent=700 comm=540 rate=1.00
+10-11 15:17:32.141 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:07.20] last=[00:07.20]
+10-11 15:17:36.956 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=4961 writeMs=4802 slack=159 bufSize=960 writes=249 state=2
+10-11 15:17:37.105 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=8
+10-11 15:17:37.113 10766 10766 I C015B0/com.jk.reader/NETSTACK: [hi_app_event_report.cpp:75] AddProcessor enter
+10-11 15:17:37.127 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=96022 out=24000Hz
+10-11 15:17:37.128 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=96022 out=96022 sent=700 comm=540 rate=1.00
+10-11 15:17:37.128 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:12.16] last=[00:12.16]
+10-11 15:17:37.132 10766 11537 E C015B0/com.jk.reader/NETSTACK: [http_handover_handler.cpp:163] http handover manager init fail
+10-11 15:17:38.030 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483648, size:80, dns:16.709, connect:51.546, tls:60.317, firstSend:1.204, firstRecv:279.453, total:891.648, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:17:38.034 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=171772 model=qwen3-tts-flash voice=Serena reqChars=8
+10-11 15:17:38.104 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=171772 dataLines=11 jsonLines=11 audioLines=9 b64Chars=169020 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,3840] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7//v///wAAAQABAAIAAgADAAMAAwADAAMAAwABAAAAAQABAAEAAQAB
+10-11 15:17:38.104 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=9 bytes=126764 ms=2641 chars=8 msPerChar=330
+10-11 15:17:40.996 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=4001 writeMs=3856 slack=145 bufSize=960 writes=201 state=2
+10-11 15:17:41.144 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=6
+10-11 15:17:41.149 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=84502 out=24000Hz
+10-11 15:17:41.149 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=84502 out=84502 sent=700 comm=540 rate=1.00
+10-11 15:17:41.149 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:16.16] last=[00:16.16]
+10-11 15:17:42.554 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483647, size:74, dns:0.111, connect:0.000, tls:0.000, firstSend:0.366, firstRecv:276.509, total:1401.390, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:17:42.561 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=321820 model=qwen3-tts-flash voice=Serena reqChars=6
+10-11 15:17:42.684 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=321820 dataLines=18 jsonLines=18 audioLines=16 b64Chars=317500 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,7680] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7///8AAAAAAAABAAIAAgADAAMAAwADAAMAAgABAAEAAgACAAAAAAAB
+10-11 15:17:42.684 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=16 bytes=238124 ms=4961 chars=6 msPerChar=827
+10-11 15:17:44.517 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=3521 writeMs=3350 slack=171 bufSize=960 writes=177 state=2
+10-11 15:17:44.665 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=7
+10-11 15:17:44.674 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=63382 out=24000Hz
+10-11 15:17:44.674 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=63382 out=63382 sent=700 comm=540 rate=1.00
+10-11 15:17:44.674 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:19.68] last=[00:19.68]
+10-11 15:17:45.632 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483646, size:75, dns:0.114, connect:0.000, tls:0.000, firstSend:0.392, firstRecv:259.052, total:959.053, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:17:45.637 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=213180 model=qwen3-tts-flash voice=Serena reqChars=7
+10-11 15:17:45.699 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=213180 dataLines=13 jsonLines=13 audioLines=11 b64Chars=209980 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,15360,15360,3840] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7///8AAAAAAAABAAIAAgADAAMAAwADAAMAAgABAAEAAgACAAAAAAAB
+10-11 15:17:45.699 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=11 bytes=157484 ms=3281 chars=7 msPerChar=469
+10-11 15:17:47.139 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=2641 writeMs=2453 slack=188 bufSize=960 writes=133 state=2
+10-11 15:17:47.287 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=31
+10-11 15:17:47.296 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=119062 out=24000Hz
+10-11 15:17:47.296 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=119062 out=119062 sent=700 comm=540 rate=1.00
+10-11 15:17:47.297 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:22.32] last=[00:22.32]
+10-11 15:17:48.648 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483645, size:99, dns:0.144, connect:0.000, tls:0.000, firstSend:0.422, firstRecv:270.909, total:1349.482, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:17:48.654 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=383714 model=qwen3-tts-flash voice=Serena reqChars=31
+10-11 15:17:48.715 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=383714 dataLines=20 jsonLines=20 audioLines=18 b64Chars=378940 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,23040,15360] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7///8AAAAAAAABAAIAAgADAAMAAwADAAMAAgABAAEAAgACAAAAAAAB
+10-11 15:17:48.715 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=18 bytes=284204 ms=5921 chars=31 msPerChar=191
+10-11 15:17:52.145 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=4961 writeMs=4837 slack=124 bufSize=960 writes=249 state=2
+10-11 15:17:52.290 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=22
+10-11 15:17:52.296 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=78742 out=24000Hz
+10-11 15:17:52.296 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=78742 out=78742 sent=700 comm=540 rate=1.00
+10-11 15:17:52.296 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:27.28] last=[00:27.28]
+10-11 15:17:53.775 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483644, size:94, dns:0.135, connect:0.000, tls:0.000, firstSend:0.527, firstRecv:257.942, total:1476.529, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:17:53.782 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=419772 model=qwen3-tts-flash voice=Serena reqChars=22
+10-11 15:17:53.914 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=419772 dataLines=21 jsonLines=21 audioLines=19 b64Chars=414780 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,23040,23040,19200] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7///8AAAAAAAABAAIAAgADAAMAAwADAAMAAgABAAEAAgACAAAAAAAB
+10-11 15:17:53.914 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=19 bytes=311084 ms=6481 chars=22 msPerChar=295
+10-11 15:17:55.488 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=3281 writeMs=3178 slack=103 bufSize=960 writes=165 state=2
+10-11 15:17:55.634 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=13
+10-11 15:17:55.644 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=142102 out=24000Hz
+10-11 15:17:55.644 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=142102 out=142102 sent=700 comm=540 rate=1.00
+10-11 15:17:55.645 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:30.56] last=[00:30.56]
+10-11 15:17:56.582 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483643, size:81, dns:0.255, connect:0.000, tls:0.000, firstSend:0.951, firstRecv:273.225, total:938.374, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:17:56.588 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=244128 model=qwen3-tts-flash voice=Serena reqChars=13
+10-11 15:17:56.681 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=244128 dataLines=14 jsonLines=14 audioLines=12 b64Chars=240700 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,11520] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7///8AAAAAAAABAAIAAgADAAMAAwADAAMAAgABAAEAAgACAAAAAAAB
+10-11 15:17:56.681 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=12 bytes=180524 ms=3761 chars=13 msPerChar=289
+10-11 15:18:01.427 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=5921 writeMs=5772 slack=149 bufSize=960 writes=297 state=2
+10-11 15:18:01.574 10766 10766 I A00001/com.jk.reader/TtsEngine: ai synth req role=zh-CN-YunjianNeural voice=Serena chars=12
+10-11 15:18:01.582 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=155542 out=24000Hz
+10-11 15:18:01.582 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=155542 out=155542 sent=700 comm=540 rate=1.00
+10-11 15:18:01.582 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:36.48] last=[00:36.48]
+10-11 15:18:03.051 10766 11537 I C015B0/com.jk.reader/NETSTACK: [http_exec.cpp:882] taskid=-2147483642, size:80, dns:0.126, connect:0.000, tls:0.000, firstSend:0.672, firstRecv:299.699, total:1468.353, redirect:0.000, reuse:1, inactivityMs:0, no handover, errCode:0, RespCode:200, httpVer:3, method:POST, osErr:0, saddr:192.168.*.***, sport:43630, daddr:39.96.***.***, dport:443
+10-11 15:18:03.057 10766 10766 I A00001/com.jk.reader/AiTts: dashscope resp: code=200 textLen=321820 model=qwen3-tts-flash voice=Serena reqChars=12
+10-11 15:18:03.158 10766 10766 I A00001/com.jk.reader/AiTts: dashscope sse: textLen=321820 dataLines=18 jsonLines=18 audioLines=16 b64Chars=317500 partBytes=[15404,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,15360,7680] firstEvt={"output":{"audio":{"data":"UklGRr///39XQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YZv//3/+//3//f/+//3//v/+//7///8AAAAAAAABAAIAAgADAAMAAwADAAMAAgABAAEAAgACAAAAAAAB
+10-11 15:18:03.158 10766 10766 I A00001/com.jk.reader/AiTts: dashscope pcm: parts=16 bytes=238124 ms=4961 chars=12 msPerChar=413
+10-11 15:18:07.539 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:07.546 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:18.717 10766 10766 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:18:18.724 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:21.961 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:21.961 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:21.962 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:21.962 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:21.962 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:21.962 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:22.050 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:22.050 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:23.661 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:23.662 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:28.223 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:28.228 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:28.229 10766 10766 I A03D00/com.jk.reader/JSAPP: BookRename renamed -> 小李1.txt, broadcast BOOK_IS_BOOK_REFRESHING
+10-11 15:18:28.231 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:28.998 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:30.552 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:30.552 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:30.553 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:30.553 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:30.553 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:30.553 10766 10766 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:30.693 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:30.693 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:32.273 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=6481 writeMs=3903 slack=2578 bufSize=960 writes=202 state=3
+10-11 15:18:33.959 10766 10766 I A00001/com.jk.reader/TtsEngine: bg restart deferred 13224 ms (last stop 1776 ms ago)
+10-11 15:18:34.108 10766 10766 I A00001/com.jk.reader/TtsEngine: speak filter: masked=69 chars rules=4 chunks=67
+10-11 15:18:34.108 10766 10766 I A00001/com.jk.reader/TtsEngine: chapter: spine=0 nodes=67 chunks=67
+10-11 15:18:34.110 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=17302 out=24000Hz
+10-11 15:18:34.110 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=17302 out=17302 sent=700 comm=540 rate=1.00
+10-11 15:18:34.110 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.00] last=[00:00.00]
+10-11 15:18:34.828 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=721 writeMs=667 slack=54 bufSize=960 writes=37 state=2
+10-11 15:18:34.978 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=165142 out=24000Hz
+10-11 15:18:34.978 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=165142 out=165142 sent=700 comm=540 rate=1.00
+10-11 15:18:34.978 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.32] last=[00:00.32]
+10-11 15:18:35.955 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:35.956 10766 10766 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:41.740 10766 10766 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=6881 writeMs=6756 slack=125 bufSize=960 writes=345 state=2
+10-11 15:18:41.884 10766 10766 I A00001/com.jk.reader/TtsEngine: ai pcm: fmt=pcm in=24000Hz/1ch samples=119062 out=24000Hz
+10-11 15:18:41.885 10766 10766 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=119062 out=119062 sent=700 comm=540 rate=1.00
+10-11 15:18:41.885 10766 10766 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:07.20] last=[00:07.20]
+10-11 15:18:47.204 10766 10766 I A00001/com.jk.reader/TtsEngine: bg task started notificationId=-1 taskId=61
+10-11 15:18:49.987 10766 10766 I A03D00/com.jk.reader/JSAPP: remove listener
+10-11 15:18:51.281 13973 13973 I C015B0/com.jk.reader/NETSTACK: [websocket_module.cpp:48] IsAtomicService  bundleName is com.jk.reader, isAtomicService is 0
+10-11 15:18:51.283 13973 13973 I C015B0/com.jk.reader/NETSTACK: [napi_utils.cpp:759] newId = 1, id = 2
+10-11 15:18:51.284 13973 13973 I C015B0/com.jk.reader/NETSTACK: [http_module.cpp:81] IsAtomicService bundleName is com.jk.reader, isAtomicService is 0
+10-11 15:18:51.511 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:51.511 13973 13973 I A03D00/com.jk.reader/JSAPP: Succeeded in setting the window layout to full-screen mode.
+10-11 15:18:51.512 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo Error: Error: SQLite: Generic error. Possible causes: Insert failed or the updated data does not exist.
+10-11 15:18:51.563 13973 13973 I A03D00/com.jk.reader/JSAPP: setinitPreferences SYSTEM_UA 0
+10-11 15:18:51.576 13973 13973 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:18:51.577 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:51.578 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:51.579 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:18:51.580 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:51.581 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:51.581 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:51.581 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo migrateBookTypeToShelf: already done, skip
+10-11 15:18:51.608 13973 13973 I A03D00/com.jk.reader/JSAPP: seedDefaultBook: already seeded, skip
+10-11 15:18:51.624 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:18:51.625 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:18:51.628 13973 13973 I A03D00/com.jk.reader/JSAPP: add listener
+10-11 15:18:56.627 13973 13973 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:56.628 13973 13973 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:56.634 13973 13973 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:56.634 13973 13973 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:56.634 13973 13973 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:18:56.634 13973 13973 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:18:56.834 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:18:56.839 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:00.498 13973 13973 I A00001/com.jk.reader/TtsEngine: bg task started notificationId=-1 taskId=62
+10-11 15:19:00.523 13973 13973 I A00001/com.jk.reader/TtsEngine: speak filter: masked=69 chars rules=4 chunks=67
+10-11 15:19:00.523 13973 13973 I A00001/com.jk.reader/TtsEngine: chapter: spine=0 nodes=67 chunks=67
+10-11 15:19:00.526 13973 13973 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=16640 out=16640 sent=700 comm=540 rate=1.00
+10-11 15:19:00.526 13973 13973 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.00] last=[00:00.00]
+10-11 15:19:00.545 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: create rate=16000 ch=1 fmt=1 enc=0 usage=1 flags=0
+10-11 15:19:00.552 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: probe[actual] rate=16000 ch=1 -> offload=N direct=N fast=N
+10-11 15:19:00.557 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: probe[48k/mono] rate=48000 ch=1 -> offload=N direct=N fast=N
+10-11 15:19:00.562 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: probe[48k/stereo] rate=48000 ch=2 -> offload=N direct=N fast=N
+10-11 15:19:00.567 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: probe[44.1k/stereo] rate=44100 ch=2 -> offload=N direct=N fast=N
+10-11 15:19:00.572 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: probe[16k/mono] rate=16000 ch=1 -> offload=N direct=N fast=N
+10-11 15:19:01.592 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=1040 writeMs=819 slack=221 bufSize=640 writes=52 state=2
+10-11 15:19:01.735 13973 13973 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=79680 out=79680 sent=700 comm=540 rate=1.00
+10-11 15:19:01.735 13973 13973 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.64] last=[00:00.64]
+10-11 15:19:02.508 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:02.509 13973 13973 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:19:06.585 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=4980 writeMs=4843 slack=137 bufSize=640 writes=249 state=2
+10-11 15:19:06.733 13973 13973 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=45920 out=45920 sent=700 comm=540 rate=1.00
+10-11 15:19:06.734 13973 13973 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:05.62] last=[00:05.62]
+10-11 15:19:09.431 13973 13973 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=2870 writeMs=2672 slack=198 bufSize=640 writes=144 state=2
+10-11 15:19:09.578 13973 13973 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=56960 out=56960 sent=700 comm=540 rate=1.00
+10-11 15:19:09.579 13973 13973 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:08.49] last=[00:08.49]
+10-11 15:19:10.265 13973 13973 I A03D00/com.jk.reader/JSAPP: remove listener
+10-11 15:19:13.309 14517 14517 I C015B0/com.jk.reader/NETSTACK: [websocket_module.cpp:48] IsAtomicService  bundleName is com.jk.reader, isAtomicService is 0
+10-11 15:19:13.310 14517 14517 I C015B0/com.jk.reader/NETSTACK: [napi_utils.cpp:759] newId = 1, id = 2
+10-11 15:19:13.311 14517 14517 I C015B0/com.jk.reader/NETSTACK: [http_module.cpp:81] IsAtomicService bundleName is com.jk.reader, isAtomicService is 0
+10-11 15:19:13.534 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:13.534 14517 14517 I A03D00/com.jk.reader/JSAPP: Succeeded in setting the window layout to full-screen mode.
+10-11 15:19:13.534 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo Error: Error: SQLite: Generic error. Possible causes: Insert failed or the updated data does not exist.
+10-11 15:19:13.586 14517 14517 I A03D00/com.jk.reader/JSAPP: setinitPreferences SYSTEM_UA 0
+10-11 15:19:13.599 14517 14517 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:19:13.599 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:13.600 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:13.601 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:19:13.601 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:13.602 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:13.602 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:13.602 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo migrateBookTypeToShelf: already done, skip
+10-11 15:19:13.630 14517 14517 I A03D00/com.jk.reader/JSAPP: seedDefaultBook: already seeded, skip
+10-11 15:19:13.647 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:19:13.648 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:19:13.650 14517 14517 I A03D00/com.jk.reader/JSAPP: add listener
+10-11 15:19:17.615 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:17.619 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:19:17.620 14517 14517 I A03D00/com.jk.reader/JSAPP: BookRename renamed -> 小李.txt, broadcast BOOK_IS_BOOK_REFRESHING
+10-11 15:19:17.621 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:19:21.869 14517 14517 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:19:21.869 14517 14517 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:19:21.876 14517 14517 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:19:21.876 14517 14517 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:19:21.876 14517 14517 I A03D00/com.jk.reader/JSAPP: SettingManager set device info width is 391.1111111111111; height is 843.8518518518518
+10-11 15:19:21.876 14517 14517 I A03D00/com.jk.reader/JSAPP: SettingManager set paddings: paddingTop: 92; paddingBottom: 59; paddingLeft: 30.040404040404038; paddingRight: 30.040404040404038
+10-11 15:19:22.080 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:22.080 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:23.787 14517 14517 I A00001/com.jk.reader/TtsEngine: bg task started notificationId=-1 taskId=63
+10-11 15:19:23.907 14517 14517 I A00001/com.jk.reader/TtsEngine: speak filter: masked=69 chars rules=4 chunks=67
+10-11 15:19:23.907 14517 14517 I A00001/com.jk.reader/TtsEngine: chapter: spine=0 nodes=67 chunks=67
+10-11 15:19:23.909 14517 14517 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=16640 out=16640 sent=700 comm=540 rate=1.00
+10-11 15:19:23.909 14517 14517 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.00] last=[00:00.00]
+10-11 15:19:24.023 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: create rate=16000 ch=1 fmt=1 enc=0 usage=1 flags=0
+10-11 15:19:24.029 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: probe[actual] rate=16000 ch=1 -> offload=N direct=N fast=N
+10-11 15:19:24.034 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: probe[48k/mono] rate=48000 ch=1 -> offload=N direct=N fast=N
+10-11 15:19:24.039 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: probe[48k/stereo] rate=48000 ch=2 -> offload=N direct=N fast=N
+10-11 15:19:24.044 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: probe[44.1k/stereo] rate=44100 ch=2 -> offload=N direct=N fast=N
+10-11 15:19:24.049 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: probe[16k/mono] rate=16000 ch=1 -> offload=N direct=N fast=N
+10-11 15:19:24.909 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=1040 writeMs=806 slack=234 bufSize=640 writes=52 state=2
+10-11 15:19:25.054 14517 14517 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=79680 out=79680 sent=700 comm=540 rate=1.00
+10-11 15:19:25.055 14517 14517 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:00.64] last=[00:00.64]
+10-11 15:19:25.929 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 执行成功
+10-11 15:19:25.936 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:19:29.918 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=4980 writeMs=4852 slack=128 bufSize=640 writes=249 state=2
+10-11 15:19:30.063 14517 14517 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=45920 out=45920 sent=700 comm=540 rate=1.00
+10-11 15:19:30.065 14517 14517 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:05.62] last=[00:05.62]
+10-11 15:19:32.761 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=2870 writeMs=2687 slack=183 bufSize=640 writes=144 state=2
+10-11 15:19:32.903 14517 14517 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=56960 out=56960 sent=700 comm=540 rate=1.00
+10-11 15:19:32.904 14517 14517 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:08.49] last=[00:08.49]
+10-11 15:19:36.322 14517 14517 I A00001/com.jk.reader/PcmPlayer: power: chunk pcmMs=3560 writeMs=3412 slack=148 bufSize=640 writes=178 state=2
+10-11 15:19:36.470 14517 14517 I A00001/com.jk.reader/TtsEngine: splice: words=0 pts=0 src=60640 out=60640 sent=700 comm=540 rate=1.00
+10-11 15:19:36.470 14517 14517 I A00001/com.jk.reader/TtsEngine: lrc: lead=400 clause=true sents=1 lines=1 first=[00:12.05] last=[00:12.05]
+10-11 15:20:02.588 14517 14517 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:20:02.597 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:20:04.756 14517 14517 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:20:04.761 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:20:08.172 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：5
+10-11 15:20:11.083 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 创建成功
+10-11 15:20:11.579 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：6
+10-11 15:20:11.580 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：6
+10-11 15:20:22.518 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：6
+10-11 15:21:40.494 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：6
+10-11 15:22:46.253 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:22:49.403 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:22:51.135 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:22:57.727 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:22:59.618 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
+10-11 15:24:42.328 14517 14517 I A00001/com.jk.reader/TtsEngine: pause bg release: paused >= 300000 ms -> stopBackground
+10-11 15:25:26.103 14517 14517 D A03D00/com.jk.reader/JSAPP: res1 27.85185185185185
+10-11 15:25:26.114 14517 14517 I A03D00/com.jk.reader/JSAPP: TagInfo 书籍：16
