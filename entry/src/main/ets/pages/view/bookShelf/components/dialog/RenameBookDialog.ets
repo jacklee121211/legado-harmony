@@ -22,19 +22,28 @@ import { ShelfColors } from '../../../../../common/utils/NightMode'
  *
  * 改名本身**不在这里拼 SQL**：全链路（4 张表事务 + 4 类 Preferences 键迁移）都在
  * `common/utils/BookRename.ets`，那里有唯一清单与逐条证据。
+ *
+ * ⚠️ 2026-10-12 修复（重大问题：死循环 + 改名无效）：
+ *  ① `this.controller?.close()` 在 @CustomDialog 子组件内**无效**（SDK 原文：只能由
+ *     创建 controller 的父组件关）——原来在这里调用它是空操作，所以点取消后重命名弹窗
+ *     不消失，点确定后也不消失、且 BookInfoDialogs 的 renameDialog 从未被 close。
+ *  ② 修法：本弹窗**不自己关**，只做"请求关闭 + 回调"。调用方（`BookInfoDialogs`）
+ *     在 options.cancel / builder.cancel 里拿引用关掉它并恢复父弹窗。
+ *  ③ 同时将预填书名改为**不显示拓展名**（用户只管书名部分，拓展名由系统保留），
+ *     保存时自动拼回原始拓展名。
  */
 @CustomDialog
 export default struct RenameBookDialog {
   controller?: CustomDialogController
   @Prop bookData: Books
-  /** 取消（含遮罩/返回键）：本弹窗已关自己，父级据此决定是否恢复 */
+  /** 取消/遮罩/返回键：本弹窗需要被关闭，通知父级执行关闭 + 恢复父弹窗 */
   cancel: () => void = (): void => {
   }
   /** 改名成功：父级据此**整条链关闭**（对象已改名，旧弹窗快照作废）并通知列表刷新 */
   onRenamed: (newName: string) => void = (): void => {
   }
 
-  /** 输入框当前值（打开时预填书名） */
+  /** 输入框当前值（打开时预填去拓展名的书名） */
   @State inputName: string = ''
   /** 行内错误提示（空名/重名/写库失败） */
   @State errMsg: string = ''
@@ -43,6 +52,8 @@ export default struct RenameBookDialog {
   /** 数据变更广播（规范 §5.1，书架列表监听到后重查） */
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** 原始拓展名（改名时保留） */
+  private origExt: string = ''
 
   /** 背板：调用方 options 已给 systemMaterial ⇒ 让出背景（§2.3），材质不可用时回落白实底 */
   private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
@@ -50,7 +61,16 @@ export default struct RenameBookDialog {
   aboutToAppear(): void {
     // @Prop 是创建瞬间快照；本弹窗由调用方**每次打开都新建 controller**（§4.4 地雷表），
     // 所以这里预填的一定是当前书名。
-    this.inputName = this.bookData.bookName ?? ''
+    const rawName: string = this.bookData.bookName ?? ''
+    // 拆出拓展名（.txt/.epub 等，最后一段 .xxx）
+    const m = rawName.match(/^(.*?)(\.[a-zA-Z0-9]{1,5})$/)
+    if (m) {
+      this.inputName = m[1]
+      this.origExt = m[2]
+    } else {
+      this.inputName = rawName
+      this.origExt = ''
+    }
     this.errMsg = ''
     this.busy = false
   }
@@ -81,8 +101,6 @@ export default struct RenameBookDialog {
       if (this.errMsg !== '') {
         Text(this.errMsg)
           .fontSize(12)
-          // 系统分层色（不用硬编码色值，etsLint `colorConsistentWarning` 的建议做法）：
-          // 深/浅色模式自动切换，且随主题分层。
           .fontColor($r('sys.color.warning'))
           .width('100%')
           .margin({ top: 8 })
@@ -92,7 +110,8 @@ export default struct RenameBookDialog {
         Text('取消')
           .onClick((): void => {
             Haptics.tap()
-            this.closeSelfAndCancel()
+            // ⚠️ 不自己关（无效）：只回调父级，由父级关弹窗
+            this.cancel()
           })
           .borderRadius(15)
           .padding({ left: 30, right: 30, top: 10, bottom: 10 })
@@ -115,12 +134,6 @@ export default struct RenameBookDialog {
     .attributeModifier(this.surface)
   }
 
-  /** 关自己 → 回调父级（关自己归子弹窗，恢复父弹窗归父级；§4.1） */
-  private closeSelfAndCancel(): void {
-    this.controller?.close()
-    this.cancel()
-  }
-
   private async doRename(): Promise<void> {
     if (this.busy) {
       return
@@ -128,8 +141,10 @@ export default struct RenameBookDialog {
     Haptics.tap()
     const oldName: string = this.bookData.bookName ?? ''
     const id: number = this.bookData.id ?? 0
+    // 最终书名 = 用户输入 + 保留拓展名
+    const newName: string = (this.inputName ?? '').trim() + this.origExt
     this.busy = true
-    const res: RenameBookResult = await bookRename.rename(id, oldName, this.inputName, this.bookData.author ?? '')
+    const res: RenameBookResult = await bookRename.rename(id, oldName, newName, this.bookData.author ?? '')
     this.busy = false
     if (!res.ok) {
       this.errMsg = res.message
@@ -137,8 +152,8 @@ export default struct RenameBookDialog {
     }
     // DB 事务已提交（BookRename 内部 await 过）⇒ 现在广播，列表重查才读到新名字（规范 §5.2）
     this.isBookRefreshing++
-    showMessage('已重命名为「' + this.inputName.trim() + '」')
-    this.controller?.close()
-    this.onRenamed(this.inputName.trim())
+    showMessage('已重命名为「' + newName + '」')
+    // ⚠️ 不自己关（无效）：只回调父级，由父级关弹窗
+    this.onRenamed(newName)
   }
 }

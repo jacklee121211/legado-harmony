@@ -1,0 +1,114 @@
+[
+  {
+    "id": "Eldric Sage",
+    "nameZh": "沧明子",
+    "desc": "沉稳睿智的老者，沧桑如松却心明如镜",
+    "gender": "male",
+    "cat": "旁白"
+  },
+  {
+    "id": "Neil",
+    "nameZh": "阿闻",
+    "desc": "平直的基线语调，字正腔圆的咬字发音，这就是最专业的新闻主持人",
+    "gender": "male",
+    "cat": "旁白"
+  },
+  {
+    "id": "Kai",
+    "nameZh": "凯",
+    "desc": "耳朵的一场 SPA",
+    "gender": "male",
+    "cat": "旁白"
+  },
+  {
+    "id": "Ethan",
+    "nameZh": "晨煦",
+    "desc": "标准普通话，带部分北方口音。阳光、温暖、活力、朝气",
+    "gender": "male",
+    "cat": "男声"
+  },
+  {
+    "id": "Moon",
+    "nameZh": "月白",
+    "desc": "率性帅气的月白",
+    "gender": "male",
+    "cat": "男声"
+  },
+  {
+    "id": "Ryan",
+    "nameZh": "甜茶",
+    "desc": "节奏拉满，戏感炸裂，真实与张力共舞",
+    "gender": "male",
+    "cat": "男声"
+  },
+  {
+    "id": "Vincent",
+    "nameZh": "田叔",
+    "desc": "一口独特的沙哑烟嗓，一开口便道尽了千军万马与江湖豪情",
+    "gender": "male",
+    "cat": "男声"
+  },
+  {
+    "id": "Arthur",
+    "nameZh": "徐大爷",
+    "desc": "被岁月和旱烟浸泡过的质朴嗓音，不疾不徐地摇开了满村的奇闻异事",
+    "gender": "male",
+    "cat": "男声"
+  },
+  {
+    "id": "Mochi",
+    "nameZh": "沙小弥",
+    "desc": "聪明伶俐的小大人，童真未泯却早慧如禅",
+    "gender": "male",
+    "cat": "男声"
+  },
+  {
+    "id": "Serena",
+    "nameZh": "苏瑶",
+    "desc": "温柔小姐姐",
+    "gender": "female",
+    "cat": "女声"
+  },
+  {
+    "id": "Cherry",
+    "nameZh": "芊悦",
+    "desc": "阳光积极、亲切自然小姐姐",
+    "gender": "female",
+    "cat": "女声"
+  },
+  {
+    "id": "Maia",
+    "nameZh": "四月",
+    "desc": "知性与温柔的碰撞",
+    "gender": "female",
+    "cat": "女声"
+  },
+  {
+    "id": "Seren",
+    "nameZh": "小婉",
+    "desc": "温和舒缓的声线，助你更快地进入睡眠，晚安，好梦",
+    "gender": "female",
+    "cat": "女声"
+  },
+  {
+    "id": "Katerina",
+    "nameZh": "卡捷琳娜",
+    "desc": "御姐音色，韵律回味十足",
+    "gender": "female",
+    "cat": "女声"
+  },
+  {
+    "id": "Bellona",
+    "nameZh": "燕铮莺",
+    "desc": "声音洪亮，吐字清晰，人物鲜活，听得人热血沸腾；金戈铁马入梦来，字正腔圆间尽显千面人声的江湖",
+    "gender": "female",
+    "cat": "女声"
+  },
+  {
+    "id": "Elias",
+    "nameZh": "墨讲师",
+    "desc": "既保持学科严谨性，又通过叙事技巧将复杂知识转化为可消化的认知模块",
+    "gender": "female",
+    "cat": "女声"
+  }
+]

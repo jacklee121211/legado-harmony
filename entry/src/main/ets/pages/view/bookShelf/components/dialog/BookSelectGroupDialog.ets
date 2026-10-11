@@ -37,6 +37,37 @@ export default struct BookSelectGroupDialog{
 
   }
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+  /** 书架书列表重查信号（2026-10-12）：自动解散分组时同时广播，让书的 bookGroup 变化落到界面 */
+  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
+  /**
+   * **父级预取好的分组列表**（2026-10-12 新增，修用户反馈的"未分组过一会儿才刷新出来"）。
+   *
+   * ── 症状与根因 ────────────────────────────────────────────────────────────
+   * 用户原话：「用户把111放在自定义分组1之后，进入自定义分组1，长按菜单-移动至，
+   *   此时未分组还没被刷新出来，过一会儿才刷新出来」。
+   * 根因是本弹窗的内容靠 `aboutToAppear()` 里的**异步** `getGroupList()` 填充：
+   * ```
+   * aboutToAppear(): void {
+   *   this.getGroupList()          // 异步，不 await
+   * }
+   * getGroupList(){
+   *   BookGroupsDao.search({...}).then((val)=>{ this.groupList = val })   // 几百 ms 后才到
+   * }
+   * ```
+   * ⇒ 弹窗**打开的瞬间 `groupList` 是空的**，网格里只剩「未分组」和「+」两个格子，
+   *   其余分组要等查询回来才"跳"出来 —— 这就是用户看到的"脱节"。
+   *
+   * ── 修法 ──────────────────────────────────────────────────────────────────
+   * 调用方（`BookInfoDialogs.openMoveGroupDialog()` / `BookManagePage.openMoveGroup()`）
+   * 在 `controller.open()` **之前** `await` 把分组查好，经本字段传入
+   * ⇒ 弹窗首帧就拿到完整列表，不再有异步空窗期。
+   * `aboutToAppear` 保留 `getGroupList()` 只作为**兜底**（未传时仍能工作）。
+   *
+   * ⚠️ 传的是**创建瞬间的数组引用**；弹窗内只读不写（本弹窗不改分组数据）。
+   *    这与规范 §4.4「参数动态更新无效 ⇒ 打开瞬间 new 一个新 controller」一致 ——
+   *    调用方本来就是"每次打开都新建"，所以快照天然是当次最新。
+   */
+  presetGroups: BookGroups[] | null = null
   /**
    * 卡片背板：**调用方已通过 `CustomDialogControllerOptions.systemMaterial` 提供材质**
    * ⇒ 第二个参数传 `true`，内容层让出背景把材质透出来（2026-09-22）。
@@ -44,6 +75,12 @@ export default struct BookSelectGroupDialog{
    */
   private surface: MaterialColumnModifier = new MaterialColumnModifier(NightMode.isDarkSurface() ? ShelfColors.card() : Color.White, true)
   aboutToAppear(): void {
+    // ★ 2026-10-12：优先用**父级预取好的列表**（首帧就有内容，不再"过一会儿才刷出来"）。
+    //   未传（null）才回落到异步现查 —— 保证这个弹窗被别处单独使用时行为不变。
+    if (this.presetGroups !== null) {
+      this.groupList = this.presetGroups
+      return
+    }
     this.getGroupList()
   }
 
@@ -71,6 +108,14 @@ export default struct BookSelectGroupDialog{
         GridRow({
           columns:3
         }){
+          // ★ 「未分组」选项（第一格，锁定在列表最前面；2026-10-12 新增）
+          //   只在当前有分组（oldGroupId 已指向自定义分组）时才显示——
+          //   如果书本身就在未分组里，点"未分组"没有任何意义。
+          if (this.oldGroupId !== 3) {
+            GridCol(){
+              this.ungroupedTitle()
+            }
+          }
           GridCol(){
             this.title()
           }
@@ -87,20 +132,56 @@ export default struct BookSelectGroupDialog{
       .height('65%')
       .scrollBar(BarState.Off)
       Divider().strokeWidth(0.5)
+      // ══════════════════════════════════════════════════════════════════════
+      // 「取消」按钮（2026-10-12 修：点它没反应 / 弹窗不消失 / 父弹窗被召回）
+      // ══════════════════════════════════════════════════════════════════════
+      // ── 真机症状（用户原话）──────────────────────────────────────────────────
+      //   「点击移动分组弹窗的取消，子弹窗没取消，父弹窗回来了，循环。
+      //     点击其他区域可以关闭弹窗，手势可以关闭弹窗，**就是点击取消按钮不行**」。
+      //
+      // ── 日志证据（`docs/日志.md`，点"取消"那一次）────────────────────────────
+      // ```
+      // 4256: ITK Id:316698, TTHNI:fId: 0{ T: Dialog, D: 2 };
+      // 4257: ITK Id:316698, TTHRTI: T ClickRecognizer info: { T: Dialog };   ← 命中链里**只有 Dialog**
+      // 4263: Click try accept Dialog
+      // 4265: The current state of the dialog is DISAPPEARING.
+      // 4272: on dialog/1611 close event enter
+      // ```
+      // 对照**点到 Column** 的那一次（同文件 4349-4350）：
+      // ```
+      // 4350: TTHRTI: T ClickRecognizer info: { T: Column }; { T: Dialog };
+      // ```
+      // ⇒ 点"取消"时落点**根本没进任何子节点**，而是打在弹窗根容器的空白处
+      //   ⇒ 被 `autoCancel: true` 当成"点遮罩"⇒ 关弹窗 ⇒ 走 options 的 `cancel`
+      //   ⇒ `childDialogClosed()` 把**父弹窗**恢复 ⇒ 父弹窗回来、子弹窗却没了
+      //   ⇒ 用户看到"取消没生效、父弹窗冒出来"，反复操作就是"循环"。
+      //
+      // ── 为什么会落空 ─────────────────────────────────────────────────────────
+      // 旧写法是 `Column(){ Text('取消') }` —— **高度完全由 Text 撑开**（约 24vp 文字
+      // + padding top 16），且是一个**窄的自适应宽度**（没有 `.width('100%')`）。
+      // 用户在按钮**文字附近但不在文字上**的位置点，就落到根 Column 的空白里。
+      //
+      // ── 修法（两条，缺一不可）──────────────────────────────────────────────────
+      // ① **命中区做实**：`.width('100%')` + `.height(56)` + 垂直居中 ⇒ 整条都是按钮，
+      //    不再有"看着像按钮、点着是空白"的死区；
+      // ② **弹窗不由自己 close**：`this.controller?.close()` 在 `@CustomDialog`
+      //    子组件里**无效**（这条已在 `RenameBookDialog` 上真机确认并修过）。
+      //    原来"先 onClose() 恢复父弹窗、再 close() 自己"⇒ 父弹窗回来了、子弹窗还在
+      //    ⇒ **正是用户说的循环**。现在只回调，关闭由调用方（持有 controller 的那一侧）做。
       Column() {
         Text('取消').fontSize(16).fontWeight(400)
           .lineHeight(24)
+          .textAlign(TextAlign.Center)
+          .width('100%')
       }
-      .onClick(()=>{
-        Haptics.tap();
+      .width('100%')
+      .height(56)
+      .justifyContent(FlexAlign.Center)
+      .onClick((): void => {
+        Haptics.tap()
+        // 只通知调用方「用户点了取消」；**关自己 + 恢复父弹窗**都由调用方执行
+        // （它才持有两个 controller，`BookSelectGroupDialog.onClose` 的注释同此口径）
         this.onClose()
-        this.controller?.close()
-      })
-      .alignItems(HorizontalAlign.Center)
-      .padding({
-        left: 32,
-        right:32,
-        top: 16
       })
     }
     .width(CommonConstants.FULL_WIDTH)
@@ -117,6 +198,29 @@ export default struct BookSelectGroupDialog{
   }
   @State moveGroupId:number = 0
   @State moveTitle:string = ''
+  /** 「未分组」按钮（2026-10-12 新增）；点后把书/分组移到 bookGroup=3（未分组状态） */
+  @Builder ungroupedTitle() {
+    Column() {
+      Text('未分组').fontSize(14).maxLines(1)
+    }
+    .onClick(()=>{
+      Haptics.tap();
+      this.moveGroupId = 3
+      this.moveTitle = '未分组'
+      this.clickBookTypeDialog?.open()
+    })
+    .margin({
+      bottom:PaddingConstants.PADDING_16
+    })
+    .width(85).height(36)
+    .backgroundColor(ShelfColors.chip())
+    .padding({
+      left:16,
+      right:16,
+      top:8,
+      bottom:8
+    })
+  }
   @Builder title(item?:BookGroups) {
     Column() {
       if (item){
@@ -244,7 +348,9 @@ export default struct BookSelectGroupDialog{
     switch (this.isMoveStatus){
       //0标识书籍
       case 0:
-        booksUtils.updateBooks(this.Ids,this.moveGroupId);
+        await booksUtils.updateBooks(this.Ids,this.moveGroupId);
+        // 2026-10-12：书移走后，检查原分组是否还有书，若无则自动解散
+        await this.cleanupOldGroup()
         break
       //1标识分组
       case 1:
@@ -252,6 +358,35 @@ export default struct BookSelectGroupDialog{
         break
     }
     showMessage(`已移动到${this.moveTitle}`)
+  }
+
+  /**
+   * 书被移走后，检查原分组是否还有书；若无则自动解散（2026-10-12）。
+   *
+   * ⚠️ 两条实现要点，都是上一版**没用起来**的原因：
+   *  ① **判据必须用 `queryBooksByGroupId`（精准 `bookGroup IN (…)`）**，
+   *     不能用 `searchPage({bookGroup, type})` —— 后者会叠加 `bookType` 过滤，
+   *     原分组里的书若 bookType 与本页 `currentIndex` 不同就会被漏掉/误判；
+   *  ② **解散后必须广播** `BOOK_IS_BOOK_GROUPS_REFRESHING`，否则管理页的分组列表
+   *     （`BookManagePage.getGroupList()` 只在 `@Watch` 上重跑）不会重查，
+   *     用户看到的就是"分组还在"。
+   *
+   * 逻辑收敛在 `bookGroupUtils.dissolveIfEmpty()`，把"空分组自动解散"做成**通用能力**，
+   * 而不是散落在各个弹窗里（管理页删书 / 移动分组等路径将来也要复用）。
+   */
+  private async cleanupOldGroup(): Promise<void> {
+    const oldGid: number = this.oldGroupId ?? -1
+    if (oldGid <= 0 || oldGid === 3) {
+      return
+    }
+    const dissolved: boolean = await bookGroupUtils.dissolveIfEmpty([oldGid])
+    if (dissolved) {
+      // 广播：管理页 `@Watch('getGroupList')` 据此重查分组列表（分组卡片消失）
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      // 同时让书架的书列表也重查（书的 bookGroup 已经变成未分组）
+      this.isBookRefreshing++
+      showMessage('该分组已无书籍，已自动解散')
+    }
   }
 
 }

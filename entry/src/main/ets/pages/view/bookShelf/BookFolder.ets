@@ -450,7 +450,10 @@ export default struct BookFolder {
     this.worksCoverDialog = new CustomDialogController({
       builder: coverInfoDialog({
         itemData: item,
+        // 2026-10-12：必须真的 close（旧写法只置 null ⇒ 弹窗关不掉；
+        // 子组件内自己 close 不可靠，真机两次验证见 `ReaderSaveSchemeDialog.ets:205-208`）
         cancel: (): void => {
+          this.worksCoverDialog?.close()
           this.worksCoverDialog = null
         }
       }),
@@ -462,7 +465,9 @@ export default struct BookFolder {
       systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 遮罩/返回键：同一条收尾路径（2026-10-12）
       cancel: (): void => {
+        this.worksCoverDialog?.close()
         this.worksCoverDialog = null
       }
     })

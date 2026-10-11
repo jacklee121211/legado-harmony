@@ -15,6 +15,7 @@ import booksDao from '../../database/dao/BooksDao'
 import { resolveCoverSource, coverCorners } from '../../common/utils/CoverSource'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
+import { ShelfColors } from '../../common/utils/NightMode'
 import { bookParser } from '@kit.ReaderKit'
 
 /**
@@ -446,7 +447,7 @@ export default struct BookDetailPage {
             ListItem() {
               Text(`${item.catalogName}`.replace(new RegExp('\\s{1,}', 'g'), ' ').replaceAll('=', ''))
                 .fontSize(14)
-                .fontColor('#333333')
+                .fontColor(ShelfColors.textMain())
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')

@@ -41,6 +41,80 @@ class bookGroupUtils{
     BooksDao.queryBookByGroup(Ids, 3)
   }
 
+  /**
+   * **空分组自动解散**（2026-10-12 新增，用户需求原文：
+   * 「自定义分组空了之后没有自动解散并更新刷新」「自定义分组没有书籍会自动解散」）。
+   *
+   * 用法：在**任何可能让分组变空的写操作之后**调用 ——
+   * `BookSelectGroupDialog.clickBookAccept()`（单本/批量移出）已接；
+   * 管理页删书、其它移动路径将来也应接这里，别各写一份。
+   *
+   * ── 为什么必须有它（而不是散在各处的 `if (count === 0) delGroupById()`）────
+   * ① 判据统一：用 `BooksDao.queryBooksByGroupId`（精准 `bookGroup IN (…)`），
+   *    **不叠加** `bookType` 过滤 —— 分组里的书 bookType 可能与当前页签不同，
+   *    用 `searchPage({bookGroup, type})` 会误判成"空"（上一版就是这么漏的）；
+   * ② 系统分组**永不**解散（`isSystem`，即「全部/分组/书单」那些聚合条目）；
+   * ③ 「未分组」不是一个真分组（`bookGroup = 3` 是 `books` 表里的特殊值，
+   *    `book_groups` 里没有对应行），传 3 会被跳过；
+   * ④ 返回是否**真的解散了**，让调用方据此决定要不要广播刷新
+   *    （刷新是调用方的职责：不同页面对键的依赖不同）。
+   *
+   * @param groupIds 候选分组 id（通常就一个：刚被移空的那个）
+   * @returns true = 至少解散了一个分组（调用方应广播分组刷新）
+   */
+  async dissolveIfEmpty(groupIds: number | number[]): Promise<boolean> {
+    const ids: number[] = toolsUtils.numberArrays(groupIds)
+      .filter((g: number): boolean => g > 0 && g !== 3)  // ③ 跳过「未分组」
+    if (ids.length === 0) {
+      return false
+    }
+    let dissolved: boolean = false
+    for (const gid of ids) {
+      try {
+        // ② 系统分组永不解散
+        const groups: BookGroups[] = await BookGroupsDao.search()
+        const hit: BookGroups | undefined = groups.find((g: BookGroups): boolean => g.groupId === gid)
+        if (hit === undefined || hit.isSystem) {
+          continue
+        }
+        // ① 精准判空
+        const bookIds: number[] = await BooksDao.queryBooksByGroupId([gid])
+        if (bookIds.length > 0) {
+          continue
+        }
+        // 空 ⇒ 解散（delGroupById 内部同时把组内书置 3，此处组已为空，属幂等）
+        await this.delGroupById(gid)
+        dissolved = true
+      } catch (err) {
+        console.error(`bookGroupUtils.dissolveIfEmpty failed at ${gid}: ` + JSON.stringify(err))
+      }
+    }
+    return dissolved
+  }
+
+  /**
+   * **预取分组列表**（2026-10-12 新增，配合 `BookSelectGroupDialog.presetGroups`）。
+   *
+   * 为什么需要：`BookSelectGroupDialog` 的列表原本在 `aboutToAppear()` 里**异步**查库，
+   * 弹窗打开的瞬间 `groupList` 还是空的 ⇒ 用户看到"分组要过一会儿才出现"
+   * （用户原话：「此时未分组还没被刷新出来，过一会儿才刷新出来」）。
+   * 调用方在 `controller.open()` **之前** await 本方法，把结果传进弹窗即可首帧成型。
+   *
+   * ⚠️ **不要**在这里调 `fillRealBookIds`：那是给"要显示共 N 本"的卡片用的，
+   *    按分组逐条查库（N 次）。本弹窗只显示分组名，不需要计数
+   *    （方法自己的注释也写明「别放进高频路径」）。
+   *
+   * @param type 分组类型（= 书架页签 `currentIndex`）
+   */
+  async prefetchGroups(type: number): Promise<BookGroups[]> {
+    try {
+      return await BookGroupsDao.search({ type: type })
+    } catch (err) {
+      console.error('bookGroupUtils.prefetchGroups failed: ' + JSON.stringify(err))
+      return []
+    }
+  }
+
   //管理页面批量移动分组
   /**
    * @author 2008

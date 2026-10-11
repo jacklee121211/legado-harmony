@@ -235,11 +235,50 @@ export struct ListenDock {
  * 为什么单独一个组件、由迷你栏 builder 用 `offset` 叠放：
  * MiniBar 官方约束是「跟页签栏高度相等且水平对齐」⇒ builder 的高度就是页签栏那 56vp，
  * 装不下它**上方**这条，只能在同一个 builder 里向上溢出绘制。
+ *
+ * 2026-10-12 修复实时联动：同时监听 `listenTitleRaw`（原始书名，始终带拓展名）和
+ * `setExtName`（显示文件拓展名开关）。开关变化时从原始书名重新计算显示值，
+ * 不再依赖 `ListenSession.begin()` 重新调用。
  */
 @Component
 export struct ListenTitleBar {
-  @StorageLink('listenTitle') title: string = '';
+  /**
+   * 原始书名（**单一真相源**，始终带拓展名）。
+   *
+   * ⚠️ 2026-10-12 二修（用户反馈「改名后 minibar 显示旧名，这次我着重在哪个显示名字的
+   *   位置高频点击了几次还是不行」）：
+   *   上一版让本组件**同时** `@StorageLink('listenTitle')` 与监听 `listenTitleRaw`，
+   *   用 `@Watch` 在"原始名或开关变化"时重算 `title`。这套有个致命缺口 ——
+   *   **`@Watch` 只在值"发生变化"时触发**。而 `ListenDock` / 本组件是 HDS
+   *   `miniBarBuilder` 构建的，**切页签/父组件重渲染时会销毁重建**
+   *   （`ListenDock` 类注释里那条 `dock node rebuilt` 打点证据）。
+   *   重建出来的**新实例**，`rawTitle` 的初值**就是当前值** ⇒ `@Watch` **不会触发**
+   *   ⇒ `title` 只能用 `@StorageLink('listenTitle')` 的初值。
+   *   于是只要 AppStorage 里 `listenTitle` 与 `listenTitleRaw` 有一瞬不同步
+   *   （例如 `updateTitle()` 里那个"值没变就不写"的差值判断挡住了写入），
+   *   重建后就会显示**旧名**。
+   *
+   *   ⇒ 现在**彻底去掉 `listenTitle` 这个中间状态**：显示值一律由 `rawTitle` +
+   *     `showFileExt` **即时计算**（`displayTitle()`），不再有第二份可漂移的数据。
+   *     `ListenSession.KEY_TITLE` 仍保留写入（`ListenSession.bookTitle()` 的消费者
+   *     `ReaderPage3.listeningThisBook()` 在用），但**不再作为本组件的显示来源**。
+   */
+  @StorageLink('listenTitleRaw') rawTitle: string = '';
+  /** 书架书名是否显示文件拓展名（我的-设置） */
+  @StorageLink('setExtName') showFileExt: boolean = false;
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem;
+
+  /**
+   * 显示用书名：由**原始书名 + 开关**即时算出（纯函数，无中间状态）。
+   * 剥拓展名的规则与 `BookInfos.bookDisplayName()` / `ListenSession.begin()`
+   * 保持同一正则 `\.[a-zA-Z0-9]{1,5}$`（三处必须同源，改一处要一起改）。
+   */
+  private displayTitle(): string {
+    if (this.showFileExt) {
+      return this.rawTitle;
+    }
+    return this.rawTitle.replace(/\.[a-zA-Z0-9]{1,5}$/, '');
+  }
 
   build() {
     Row() {
@@ -247,7 +286,7 @@ export struct ListenTitleBar {
         .fontSize(14)
         .fontColor([this.theme.mainColor])
         .margin({ right: 6 })
-      Text(this.title)
+      Text(this.displayTitle())
         .fontSize(13)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })

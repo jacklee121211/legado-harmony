@@ -10,6 +10,8 @@ import { PreferencesUtil } from '@pura/harmony-utils'
 // 默认=系统本地引擎（Core Speech Kit，离线可用）；Edge TTS 仅暗门解锁后出现在此切换。
 import { ListenUnlock } from '../../../common/utils/ListenUnlock'
 import { loadTtsPrefs, saveTtsPrefs } from '../../../tts/TtsPrefs'
+// 听书会话（2026-10-12）：「显示文件拓展名」开关一变就强制刷新迷你栏书名
+import { ListenSession } from '../../../tts/ListenSession'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 import { CalibMode } from '../../../common/utils/CalibMode'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
@@ -310,6 +312,11 @@ export default struct MySetPage{
           this.testAccountDialog?.close()
           this.testAccountDialog = null
           this.getUIContext().getPromptAction().showToast({ message: '测试账号登录成功' })
+        },
+        onInviteRedeemed: (): void => {
+          this.testAccountDialog?.close()
+          this.testAccountDialog = null
+          this.getUIContext().getPromptAction().showToast({ message: '邀请码激活成功，VIP 已解锁！' })
         }
       }),
       autoCancel: true,
@@ -642,6 +649,14 @@ export default struct MySetPage{
         this.setExtName = !this.setExtName
         this.bookSetList[0].toggleStatus = this.setExtName
         PreferencesUtil.putSync('setExtName', this.setExtName)
+        // ★ 2026-10-12：**开关一变就强制刷新听书迷你栏的书名**。
+        //   背景：`ListenSession.begin()` 只在起播那一刻算过一次显示名，
+        //   听书进行中去设置页拨开关时，`listenTitle` 不会自己重算 ⇒ 用户看到旧文件名。
+        //   `refreshTitle()` 从 `listenTitleRaw`（始终带拓展名的原始书名）重算并写回
+        //   `listenTitle`，`ListenTitleBar` 的 @StorageLink 随即重绘。
+        //   ⚠️ 必须传**刚落盘的新值**，不能让它自己再读一次 Preferences
+        //   （putSync 与 getSync 之间存在时序窗口，读到的可能还是旧值）。
+        ListenSession.refreshTitle(this.setExtName)
         break;
       case MySetConstants.SET_CALIB_DEV:
         // 标定模式（2026-09-26 从阅读器-设置迁来）：写 TtsHlCalibV3 的 dev 字段，

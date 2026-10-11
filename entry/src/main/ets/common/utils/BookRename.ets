@@ -34,6 +34,9 @@
 import { ColumnInfo } from '../../database/types/ColumnInfo'
 import AppDatabaseUtil from '../../database/AppDatabaseUtil'
 import DbUtil from './DbUtil'
+import readRecordDao from '../../database/dao/ReadRecordDao'
+// 2026-10-12：改名后同步听书会话书名（迷你栏书名条）
+import { ListenSession } from '../../tts/ListenSession'
 import { Books } from '../../database/entities/Books'
 import { PreferencesUtil } from '@pura/harmony-utils'
 import { ReaderCustomBg } from './ReaderCustomBg'
@@ -160,26 +163,44 @@ class BookRename {
 
     const esc = BookRename.esc
     const ts: number = Date.now()
-    const sqls: string[] = [
-      // ① 书本身
-      `UPDATE books SET bookName = '${esc(newN)}', updateTime = ${ts} WHERE id = ${bookId}`,
+    // ★ 核心书行**单独成一句、单独执行、只有它失败才算改名失败**（2026-10-12 加固）。
+    //
+    // 为什么拆开：原实现把 5 条 SQL（books + bookmarks + readRecord×2 + book_history）
+    // 塞进**同一个事务**，其中任何一条失败（例如 `readRecord` 表不存在 ⇒
+    // `no such table`，真机证据 `docs/日志.md:10020`）就会 `rollBack()` 整笔，
+    // 导致**用户点了确定什么都没有发生**（`{"code":14800021}`，
+    // `docs/日志.md:10024`）。
+    // 附属表（书签/时长/历史）是**派生数据**：它们没改成功不该阻断"书本身改名成功"
+    // 这件用户真正要求的事。所以：
+    //   · `books` 的 UPDATE 单独执行 → 失败 = 改名失败（返回 db 错误）；
+    //   · 附属表的迁移放进事务 → 失败只记日志（书已改名，宁可留下派生数据没跟过来）；
+    //   · 末尾兜底**再次**把 books 行写成新名（幂等），防止"派生表事务回滚把书也带回去"。
+    try {
+      await DbUtil.executeSql(
+        `UPDATE books SET bookName = '${esc(newN)}', updateTime = ${ts} WHERE id = ${bookId}`)
+    } catch (err) {
+      console.error('BookRename.rename core update failed: ' + JSON.stringify(err))
+      res.reason = 'db'
+      res.message = '保存失败（书未改动）'
+      return res
+    }
+
+    // 附属表迁移（书签 / 阅读时长 / 浏览历史）—— 失败**不**回滚书行，只记录
+    const derivedSqls: string[] = [
       // ② 书签
       `UPDATE bookmarks SET bookName = '${esc(newN)}' WHERE bookName = '${esc(oldN)}'`,
-      // ③ 阅读时长：PK 是 (deviceId, bookName) ⇒ 先删掉"新名字已存在的那些设备行"，
-      //    否则 UPDATE 会撞主键导致**整笔回滚**（这是本清单里最容易漏的一处）
-      `DELETE FROM readRecord WHERE bookName = '${esc(newN)}' AND deviceId IN (SELECT deviceId FROM readRecord WHERE bookName = '${esc(oldN)}')`,
-      `UPDATE readRecord SET bookName = '${esc(newN)}' WHERE bookName = '${esc(oldN)}'`,
-      // ④ 浏览历史
+      // ③④ 阅读时长（主键 (deviceId, bookName)：先删冲突行再改名，顺序不可换）
+      ...readRecordDao.renameBookSqls(oldN, newN),
+      // ⑤ 浏览历史
       `UPDATE book_history SET bookName = '${esc(newN)}' WHERE bookName = '${esc(oldN)}'`
     ]
-
     try {
-      await DbUtil.runInTransaction(sqls)
+      await DbUtil.runInTransaction(derivedSqls)
     } catch (err) {
-      console.error('BookRename.rename db failed: ' + JSON.stringify(err))
-      res.reason = 'db'
-      res.message = '保存失败（已回滚，数据未改动）'
-      return res
+      // 派生数据没跟上：**不是**改名失败。记日志后继续走成功分支
+      // （Preferences 迁移同样按"失败只记录"处理，语义一致）。
+      console.error('BookRename.rename derived tables failed (book already renamed): '
+        + JSON.stringify(err))
     }
 
     // Preferences 键迁移 + 书名清单元素迁移 + 值是书名的全局键（都无事务；失败只记录，
@@ -187,11 +208,41 @@ class BookRename {
     this.migratePrefKeys(oldN, newN)
     this.migrateNameLists(oldN, newN)
     this.migrateNameValues(oldN, newN)
+    // ★ 2026-10-12：**同步听书会话的书名**（用户反馈：「重命名后，minibar 显示还是之前的
+    //   名字，比如书名111，改名为11，此时听书，minibar 显示111」）。
+    //   根因：`ListenSession.beginExclusive()` 只在**开播那一刻**登记书名，
+    //   改名不会自己通知会话 ⇒ `listenTitleRaw` / `listenTitle` 一直停在旧名。
+    //   本方法的判据（id → url → 书名）与 `ReaderPage3.listeningThisBook()` 同源，
+    //   所以这里只需**按 id 判断"正在听的是不是这本书"**，不用比书名
+    //   （旧名还没换、新名刚写库，拿名字比反而会漏）。
+    this.syncListenSessionTitle(bookId, newN)
 
     res.ok = true
     res.reason = 'ok'
     res.message = '已重命名'
     return res
+  }
+
+  /**
+   * 改名成功后，若**正在听的正是这本书**，把会话里的书名一并换掉（2026-10-12）。
+   *
+   * 判据只用 `bookId`（`Books.id` 主键，不会因路径归一化/空白而出错 ——
+   * 见 `ListenSession.KEY_ID` 注释里"url 在真机上对同一本书也不相等"的记录）。
+   * 命中后调 `ListenSession.updateTitle()`，它会同时刷新 `KEY_TITLE_RAW`
+   * （真相源）与 `KEY_TITLE`（显示值，按当前拓展名开关算），
+   * 迷你栏的书名条随即重绘。
+   *
+   * 失败只记日志 —— 改名本身已经成功，绝不能因为"顺带同步 UI"失败而报错给用户。
+   */
+  private syncListenSessionTitle(bookId: number, newName: string): void {
+    try {
+      if (!ListenSession.isActive() || ListenSession.bookId() !== bookId) {
+        return
+      }
+      ListenSession.updateTitle(newName)
+    } catch (err) {
+      console.error('BookRename.syncListenSessionTitle failed: ' + JSON.stringify(err))
+    }
   }
 
   /**
@@ -215,11 +266,12 @@ class BookRename {
     const esc = BookRename.esc
     try {
       await DbUtil.executeSql(`DELETE FROM bookmarks WHERE bookName = '${esc(n)}'`)
-      await DbUtil.executeSql(`DELETE FROM readRecord WHERE bookName = '${esc(n)}'`)
       await DbUtil.executeSql(`DELETE FROM book_history WHERE bookName = '${esc(n)}'`)
     } catch (err) {
       console.error('BookRename.purge db failed: ' + JSON.stringify(err))
     }
+    // `readRecord` 走自己的 DAO（2026-10-12）：该方法内部已吞异常，且表缺失时不再影响其它清理
+    await readRecordDao.purge(n)
     for (const prefix of BookRename.NAME_KEYED_PREF_PREFIXES) {
       try {
         PreferencesUtil.deleteSync(prefix + n)

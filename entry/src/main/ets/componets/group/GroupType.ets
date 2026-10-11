@@ -49,6 +49,8 @@ export default struct groupTypeComponent {
         // 全新实例=全新 @Prop 快照，天然刷新；不再复用旧实例（其快照不具备刷新能力）。
         reopen: (): void => { this.reopenChipEditDialog() },
         cancel: (): void => {
+          // 2026-10-12：**先真的 close**（旧写法只置 null ⇒ 弹窗留在屏幕上）
+          this.chipEditDialog?.close()
           this.chipEditDialog = null
           this.getGroupList()
         }
@@ -61,6 +63,13 @@ export default struct groupTypeComponent {
       systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 2026-10-12：遮罩/返回键路径同样**必须真的 close**（子组件内自己 close 不可靠，
+      // 真机两次验证见 `ReaderSaveSchemeDialog.ets:205-208`）
+      cancel: (): void => {
+        this.chipEditDialog?.close()
+        this.chipEditDialog = null
+        this.getGroupList()
+      },
     })
     this.chipEditDialog?.open()
   }
@@ -87,7 +96,9 @@ export default struct groupTypeComponent {
     this.worksCoverDialog = new CustomDialogController({
       builder: coverInfoDialog({
         itemData: item,
+        // 2026-10-12：必须真的 close（旧写法只置 null ⇒ 弹窗关不掉）
         cancel: (): void => {
+          this.worksCoverDialog?.close()
           this.worksCoverDialog = null
         }
       }),
@@ -99,7 +110,9 @@ export default struct groupTypeComponent {
       systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 遮罩/返回键：同一条收尾路径（2026-10-12）
       cancel: (): void => {
+        this.worksCoverDialog?.close()
         this.worksCoverDialog = null
       }
     })

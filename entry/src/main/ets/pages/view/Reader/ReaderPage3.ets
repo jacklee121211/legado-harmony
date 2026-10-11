@@ -3181,6 +3181,12 @@ export default struct ReaderPage3 {
   async aboutToAppear() {
     // ★ 组件重新进入 ⇒ 清掉"已销毁"标志（同一次进入里的异步链据此判断是否该继续）。
     this.disposed = false;
+    // ★ 2026-10-12：把本页书名与 DB 对齐（改名后 `bookData` 快照是旧名，
+    //   而 `pageShow` 会用它写 `LastReadBookName` / `BookCurrentData_` 等按名存储的键）。
+    //   不 await：解析失败/慢都不该拖住进页；`resolvedBookName` 为空时调用方回落旧逻辑。
+    this.refreshResolvedBookName().catch((e: Error): void => {
+      hilog.warn(0x0000, 'testTag', 'refreshResolvedBookName(aboutToAppear) err %{public}s', e.message)
+    });
     // 听书入口解锁位（2026-09-25）：AppStorage 里还没有这个键（冷启动）时从 Preferences 回填。
     this.listenUnlocked = ListenUnlock.isUnlocked()
     // 睡眠定时：进页先回读一次引擎真实状态（闹钟图标实心/空心、剩余量文案），
@@ -4100,6 +4106,37 @@ export default struct ReaderPage3 {
     display.on('change', this.screenDensityCallBack);
   }
 
+  /**
+   * **本页当前书名与 DB 对齐后的真值**（2026-10-12 新增）。
+   *
+   * 背景：`this.bookData` 是路由传入的 `@Prop` 快照，用户在书架**改名后它仍是旧名**。
+   * 而 `pageShow` 会把这个名字写进多个"以书名为键"的 Preferences
+   * （`BookCurrentData_` / `ReaderSetting_` / `LastReadBookName`）——
+   * 写回旧名会让「书架听书圆形按钮」查不到书（`BooksDao.getLastReadBook()` 用
+   * `LastReadBookName` 回查 `books` 表），迷你栏就显示旧名（用户反馈的现象）。
+   *
+   * `pageShow` 是**同步回调不能 await** ⇒ 这里做**缓存**：进页时异步查一次，
+   * 广播刷新时再对账。查不到（书还没入库等）时保持空串，调用方回落旧逻辑。
+   */
+  private resolvedBookName: string = ''
+
+  /** 异步把 `resolvedBookName` 与 DB 对齐（按 id 查，id 是主键不受改名影响） */
+  private async refreshResolvedBookName(): Promise<void> {
+    const id: number = this.bookData.id ?? -1
+    if (id < 0) {
+      return
+    }
+    try {
+      const rows: Books[] = await BooksDao.getBookByIds([id])
+      if (rows.length > 0 && (rows[0].bookName ?? '') !== '') {
+        this.resolvedBookName = rows[0].bookName
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'refreshResolvedBookName err %{public}s',
+        e instanceof Error ? e.message : String(e))
+    }
+  }
+
   private registerPageShow(): void {
     this.readerComponentController.on('pageShow', (data: readerCore.PageDataInfo): void => {
       this.bookData.localBookDurChapterPos = data;
@@ -4119,10 +4156,28 @@ export default struct ReaderPage3 {
         //   （本文件对 durChapterTime 的引用数为 0，只有旧阅读页 ReaderPage2 会写），
         //   实测导致快捷方式永远取不到书。这里在每次翻页时顺手记两个键，读的时候回查 books 表。
         //   同时记 name + url，避免同名不同源的书串台。
-        PreferencesUtil.putSync('LastReadBookName', bkName)
+        //
+        // ⚠️ 2026-10-12：**不在本页改名后把旧名写回去**。
+        //   本页的 `bookData` 是路由传入的 `@Prop` 快照，用户在书架改名后它**仍是旧名**；
+        //   而 `BooksDao.getLastReadBook()` 是拿这个键去 `books` 表 `equalTo('bookName', …)`
+        //   回查的（`BooksDao.ets:546-553`）⇒ 写回旧名会让"书架听书圆形按钮"查不到书
+        //   （或取到名字与实际不符的记录，迷你栏就显示旧名 —— 用户反馈
+        //   「改名后 minibar 显示旧名」正是这条链）。
+        //   ⇒ 改用**预先对账好的缓存**（`resolvedBookName`，见 `refreshResolvedBookName()`）：
+        //     `pageShow` 是**同步回调**，不能在这里 await 查库；所以在
+        //     `aboutToAppear` / `onPageShow` 以及广播刷新时异步查一次并缓存。
+        const writeName: string = this.resolvedBookName !== '' ? this.resolvedBookName : bkName
+        if (writeName !== bkName) {
+          hilog.info(0x0000, 'testTag',
+            'pageShow: book renamed, use fresh name %{public}s (page snapshot was %{public}s)',
+            writeName, bkName)
+          this.bookData.bookName = writeName
+        }
+        PreferencesUtil.putSync(`BookCurrentData_${writeName}`, this.bookData)
+        PreferencesUtil.putSync('LastReadBookName', writeName)
         PreferencesUtil.putSync('LastReadBookUrl', this.bookData.bookUrl ?? '')
         //  保存阅读器设置。
-        PreferencesUtil.putSync(`ReaderSetting_${bkName}`, this.readerSetting)
+        PreferencesUtil.putSync(`ReaderSetting_${writeName}`, this.readerSetting)
       } else {
         hilog.warn(0x0000, 'testTag', 'pageShow: bookName is empty, skip per-book persist')
       }
@@ -5345,7 +5400,11 @@ export default struct ReaderPage3 {
     // 2026-10-09：改走 `startStandalone`（TtsEngine **自开**解析器），理由见该方法注释
     //   —— 本页 `aboutToDisappear` 的 `releaseBook()` 不再影响听书续播。
     // 一键回退：改回 `TtsEngine.start(context, this.BookHandler, …)`（旧签名原样保留）。
-    ListenSession.begin(this.bookData.bookName, this.bookData.bookUrl ?? '', this.bookData.id ?? -1);
+    // ⚠️ 用 `beginExclusive` 而不是 `begin`（2026-10-12，用户反馈"可以同时读多本书"）：
+    //   在听 A 时进 B 点听书 ⇒ 这里会**先显式停掉 A** 再登记 B，杜绝"旧会话被静默
+    //   替换、音频却还在走"的中间态。根因链与判据见 `ListenSession.beginExclusive()`。
+    ListenSession.beginExclusive(this.bookData.bookName, this.bookData.bookUrl ?? '',
+      this.bookData.id ?? -1);
     // ── 提前进沉浸（2026-10-10）──────────────────────────────────────────────
     // 点击即置"准备中"并记下起始块节点；真正的沉浸页锚定放在 `onChapter`
     // （那时 `buildQueue` 已完成、节点表才存在）。

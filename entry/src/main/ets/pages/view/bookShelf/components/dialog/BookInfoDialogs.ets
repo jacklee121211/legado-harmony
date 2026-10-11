@@ -6,6 +6,9 @@ import AppRouter, { RouteName } from '../../../../../common/router/AppRouter'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
+// 2026-10-12：「移动至」打开前预取分组，避免弹窗首帧空白
+import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
+import { BookGroups } from '../../../../../database/entities/BookGroups'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import AddToBookListDialog from './AddToBookListDialog'
@@ -104,15 +107,26 @@ export default struct BookInfoDialogs{
    *  · §4.1 子进父退：先 `openChildDialog`（父退 + 子进）；
    *  · 取消/遮罩 ⇒ `childDialogClosed()` 恢复父弹窗（入规则）；
    *  · 改名成功 ⇒ **不恢复父弹窗**（对象已改名，快照作废）+ 通知创建者刷新列表（§4.2 同类）。
+   *
+   * ⚠️ 2026-10-12 修复：子组件 `RenameBookDialog` 内 `this.controller?.close()` 无效
+   * （SDK 限定只能由创建 controller 的父组件关），所以**本方法持有 renameDialog 引用**，
+   * 在 cancel/onRenamed/options.cancel 回调里**主动 close** 它，再决定是否恢复父弹窗。
    */
+  private renameDialogCtrl: CustomDialogController | null = null
   private openRenameDialog(): void {
     const renameDialog = new CustomDialogController({
       builder: RenameBookDialog({
         bookData: this.bookData,
         cancel: (): void => {
+          // 先关子，再恢复父
+          this.renameDialogCtrl?.close()
+          this.renameDialogCtrl = null
           this.childDialogClosed()
         },
         onRenamed: (newName: string): void => {
+          // 先关子，再通知刷新（不恢复父弹窗：对象已改名，快照作废）
+          this.renameDialogCtrl?.close()
+          this.renameDialogCtrl = null
           if (this.onBookRenamed) {
             this.onBookRenamed(newName)
           }
@@ -127,10 +141,13 @@ export default struct BookInfoDialogs{
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        // 遮罩/返回键：入规则（子弹窗已自行 close）
+        // 遮罩/返回键：先关子，再恢复父
+        this.renameDialogCtrl?.close()
+        this.renameDialogCtrl = null
         this.childDialogClosed()
       }
     })
+    this.renameDialogCtrl = renameDialog
     this.openChildDialog(renameDialog)
   }
 
@@ -215,6 +232,12 @@ export default struct BookInfoDialogs{
               builder: CoverStyleDialog({
                 bookData: this.bookData,
                 onClose: (): void => {
+                  // ⚠️ 2026-10-12：**先真的 close 封面弹窗**。
+                  //   `CoverStyleDialog` 内部自己也会 `controller.close()`，但**子组件内
+                  //   close() 不可靠**（真机两次验证，见 `ReaderSaveSchemeDialog.ets:205-208`）
+                  //   ⇒ 这里由持有引用的调用方补一道，确保它真的关掉；
+                  //   否则父弹窗被 `reopenSelf()` 召回、封面弹窗还留着 ⇒ 双弹窗叠加。
+                  this.coverStyleDialog?.close()
                   this.coverStyleDialog = null
                   // 子弹窗退出 ⇒ 父弹窗出现（入规则）
                   this.reopenSelf()
@@ -229,6 +252,9 @@ export default struct BookInfoDialogs{
               openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
               closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
               cancel: (): void => {
+                // ⚠️ 2026-10-12：遮罩/返回键路径同样**必须真的 close**，
+                //   只置空引用会让子弹窗留在屏幕上而父弹窗被召回（同 bookMoveGroup 那个坑）。
+                this.coverStyleDialog?.close()
                 this.coverStyleDialog = null
                 this.reopenSelf()
               }
@@ -325,7 +351,14 @@ export default struct BookInfoDialogs{
       ids: this.bookData.id ? [this.bookData.id] : [],
       bookOrFolder: 0,
       cancel: () => {
-        // 子退父进：加入书单弹窗取消 ⇒ 本弹窗恢复
+        // 子退父进：加入书单弹窗取消 ⇒ 关闭子弹窗 + 父弹窗恢复
+        //
+        // ⚠️ 2026-10-12：**必须先真的 close 子弹窗**。旧写法只调 `childDialogClosed()`
+        //   把父弹窗召回来，子弹窗却还留在屏幕上 ⇒ 与「移动分组」完全同款的双弹窗叠加。
+        //   （`AddToBookListDialog` 内部自己的 `controller.close()` 在 @CustomDialog
+        //    子组件里不可靠 —— 真机两次独立验证，见 `ReaderSaveSchemeDialog.ets:205-208`
+        //    与 `RenameBookDialog` 的类注释。）
+        this.catalogAddShelfDialog?.close()
         this.childDialogClosed()
       }
     }),
@@ -343,7 +376,9 @@ export default struct BookInfoDialogs{
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
     openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    // 遮罩/返回键：同一条收尾路径，一样要 close 子弹窗（2026-10-12 一并修）
     cancel: (): void => {
+      this.catalogAddShelfDialog?.close()
       this.childDialogClosed()
     }
   })
@@ -353,7 +388,10 @@ export default struct BookInfoDialogs{
       case 1 :
         this.isTopBook(); break;
       case 2 :
-        this.openChildDialog(this.bookMoveGroup); break;
+        // 「移动至」：打开前先预取分组（2026-10-12），避免弹窗首帧空白
+        this.openMoveGroupDialog().catch((e: Error): void => {
+          console.error('openMoveGroupDialog failed: ' + e.message)
+        }); break;
       case 3 :
         this.openChildDialog(this.catalogAddShelfDialog); break;
       case 4 :
@@ -406,14 +444,20 @@ export default struct BookInfoDialogs{
     builder: confirmDialogExample({
       confirm: ()=> { this.deleteGroup() },
       delCache:this.delCache,
-      cancel: ()=> { this.childDialogClosed() }
+      // 2026-10-12：取消路径**必须真的 close** 删除确认弹窗，否则它留在屏幕上而长按弹窗被召回
+      cancel: ()=> {
+        this.bookDelDialog?.close()
+        this.childDialogClosed()
+      }
     }),
     autoCancel: true,
     alignment: DialogAlignment.Center,
     gridCount: 4,
     customStyle: false,
     cornerRadius: 25,
+    // 遮罩/返回键：同上（2026-10-12 一并修）
     cancel: (): void => {
+      this.bookDelDialog?.close()
       this.childDialogClosed()
     }
   })
@@ -466,46 +510,79 @@ export default struct BookInfoDialogs{
   //  @Consume booksDataSource 正是 140112 闪退源头。）
 
   //移动分组
-  //弹窗
-  bookMoveGroup: CustomDialogController | null = new CustomDialogController({
-    builder: BookSelectGroupDialog({
-      moveGroup: ()=> {
-        // setTimeout(()=>{
-        //   // this.booksDataSource.deleteData(this.bookData)
-        // },500)
-        setTimeout(()=>{
+  /**
+   * 「移动至」弹窗（2026-10-12 改为**打开时新建 controller + 预取分组**）。
+   *
+   * ── 为什么要改 ────────────────────────────────────────────────────────────
+   * 旧实现是**字段初始化器**里 new 一个 controller 并 `open()` 它（参数在组件构造
+   * 那一刻就固化了）。而 `BookSelectGroupDialog` 的分组列表是在自己的
+   * `aboutToAppear()` 里**异步**查库的 ⇒ 弹窗打开瞬间列表是空的，几百 ms 后
+   * 分组才"跳"出来。用户原话：
+   *   「进入自定义分组1，长按菜单-移动至，此时未分组还没被刷新出来，过一会儿才刷新出来」。
+   *
+   * 修法（与 `openRenameDialog()` 同款，符合规范 §4.4「参数动态更新无效 ⇒
+   * 打开瞬间 new 一个新 controller」）：
+   *   ① **先 `await` 预取分组**（`bookGroupUtils.prefetchGroups`）；
+   *   ② 再把结果经 `presetGroups` 传给弹窗 ⇒ 首帧就有完整列表；
+   *   ③ 每次打开都 new controller，参数天然是当次最新。
+   */
+  private bookMoveGroup: CustomDialogController | null = null
+  private async openMoveGroupDialog(): Promise<void> {
+    // ① 预取（失败返回空数组，弹窗退回自己的异步兜底路径，不会卡住打开动作）
+    const groups: BookGroups[] = await bookGroupUtils.prefetchGroups(this.bookData.bookType)
+    const dlg = new CustomDialogController({
+      builder: BookSelectGroupDialog({
+        moveGroup: (): void => {
+          setTimeout((): void => {
+            this.bookMoveGroup?.close()
+            this.bookMoveGroup = null
+            this.controller?.close()
+            this.isBookRefreshing++
+          }, 200)
+        },
+        // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ 本弹窗恢复
+        //
+        // ⚠️ 2026-10-12 修「取消按钮点了循环」：**必须先真正 close 子弹窗**。
+        //   旧写法这里是 `this.bookMoveGroup = null; this.childDialogClosed()` ——
+        //   **只把引用置空、根本没关**，而 `BookSelectGroupDialog` 内部自己的
+        //   `this.controller?.close()` 在 `@CustomDialog` 子组件里又是空操作
+        //   ⇒ 子弹窗一直留在屏幕上，父弹窗却被 `childDialogClosed()` 召回来了
+        //   ⇒ 两个弹窗叠着，再操作就是用户说的"循环"。
+        //   现在：关闭子弹窗（唯一持有引用的地方）→ 清引用 → 恢复父弹窗。
+        onClose: (): void => {
           this.bookMoveGroup?.close()
-          this.controller?.close()
-          this.isBookRefreshing++
-        },200)
-      },
-      // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ 本弹窗恢复
-      onClose: ()=> {
+          this.bookMoveGroup = null
+          this.childDialogClosed()
+        },
+        oldGroupId: this.bookData.bookGroup,
+        currentIndex: this.bookData.bookType,
+        Ids: this.bookData.id,
+        // ② 预取好的快照 ⇒ 弹窗首帧就成型
+        presetGroups: groups
+      }),
+      height: 400,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      // ── 沉浸光感材质（2026-09-22 用户要求）─────────────────────────────────
+      // 走官方对弹窗的正规渠道 `CustomDialogControllerOptions.systemMaterial`
+      // （`custom_dialog_controller.d.ts:681`，@since 26.0.0）。
+      // 配套：`BookSelectGroupDialog` 的根 Column 用 `MaterialColumnModifier(Color.White, true)`
+      // 让出背景（否则白底会挡住材质）。
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // 遮罩 / 返回键：与取消按钮同一条收尾路径 —— **必须真的 close 子弹窗**，
+      // 否则同样会出现"子弹窗还在、父弹窗冒出来"（2026-10-12 一并修）。
+      cancel: (): void => {
+        this.bookMoveGroup?.close()
+        this.bookMoveGroup = null
         this.childDialogClosed()
-      },
-      oldGroupId:this.bookData.bookGroup,
-      currentIndex:this.bookData.bookType,
-      Ids:this.bookData.id
-    }),
-    height: 400,
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-    // ── 沉浸光感材质（2026-09-22 用户要求）─────────────────────────────────
-    // 用户：「加入书单的材质应该和**移动分组**的材质对齐，这几个 sheet 都应该和
-    //       移动分组的材质对齐」。
-    // 但移动分组此前**并没有**材质 ⇒ 先在这里给它加上，作为"有材质"的基准。
-    // 走的是官方对弹窗的正规渠道（`CustomDialogControllerOptions.systemMaterial`，
-    // `custom_dialog_controller.d.ts:681`，@since 26.0.0）。
-    // 配套：`BookSelectGroupDialog` 的根 Column 已用 `MaterialColumnModifier(Color.White, true)`
-    // 让出背景（否则白底会挡住材质）。
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-    cancel: (): void => {
-      this.childDialogClosed()
-    }
-  })
+      }
+    })
+    this.bookMoveGroup = dlg
+    this.openChildDialog(dlg)
+  }
 
   //刷新懒加载数据
   async refreshLazyData(){

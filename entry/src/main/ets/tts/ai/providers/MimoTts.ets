@@ -17,7 +17,7 @@
 import { AiCancelToken, AiProviderMeta, AiSynthReq, AiSynthRes, AiTtsConfig, AiTtsProvider,
   AiVoiceOption } from '../AiTtsTypes';
 import { aiHttpPost, decodeBase64, shortErrorBody } from '../AiTtsHttp';
-import { apiKeyHeader, baseUrlOf, v1Join } from './AiProviderCommon';
+import { apiKeyHeader, baseUrlOf, v1Join, applyExtraHeaders, appendExtraBody } from './AiProviderCommon';
 
 export const MIMO_META: AiProviderMeta = {
   id: 'mimo',
@@ -49,6 +49,8 @@ export class MimoTtsProvider implements AiTtsProvider {
     const cfg: AiTtsConfig = req.cfg;
     const url: string = v1Join(baseUrlOf(cfg, MIMO_META), '/chat/completions');
     const headers: Record<string, string> = apiKeyHeader(cfg, 'api-key');
+    // 用户自定义请求头（2026-10-11 修复：旧版这一家不读 extraHeaders ⇒ 假控件）
+    applyExtraHeaders(cfg, headers);
     const model: string = cfg.model.trim().length > 0 ? cfg.model.trim() : DEFAULT_MODEL;
     const voice: string = req.voiceId.trim().length > 0 ? req.voiceId.trim() : MIMO_META.voiceHint;
 
@@ -59,8 +61,10 @@ export class MimoTtsProvider implements AiTtsProvider {
     }
     // ⚠️ 待朗读文本放 assistant（该协议的怪点，照参考实现）
     messages += '{"role":"assistant","content":' + JSON.stringify(req.text) + '}]';
-    const body: string = '{"model":' + JSON.stringify(model) + ',"messages":' + messages +
+    let body: string = '{"model":' + JSON.stringify(model) + ',"messages":' + messages +
       ',"audio":{"format":"wav","voice":' + JSON.stringify(voice) + '}}';
+    // 用户附加请求体（2026-10-11 修复：旧版这一家不读 extraBody ⇒ 假控件）
+    body = appendExtraBody(body, cfg.extraBody);
 
     const res = await aiHttpPost(url, headers, body, false, cancel);
     if (res.code < 200 || res.code >= 300) {
