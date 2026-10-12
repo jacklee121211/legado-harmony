@@ -71,11 +71,16 @@ function readRoot(): CatalogRoot {
         const lb = v['label'];
         const ds = v['description'];
         const gd = v['gender'];
+        const gp = v['group'];
         const item: AiVoiceOption = {
           id: id as string,
           label: typeof lb === 'string' ? (lb as string) : (id as string),
           description: typeof ds === 'string' ? (ds as string) : '',
-          gender: typeof gd === 'string' ? (gd as string) : ''
+          gender: typeof gd === 'string' ? (gd as string) : '',
+          // ⚠️ 2026-10-11 补：`group` 必须一并往返，否则拉取到的音色存盘后**丢分组**
+          //   （UI 分节标题会全部塌成"其它"）。老缓存里没有该字段 ⇒ 缺失时留空串，
+          //   由 aiVoiceGroupsFor() 归入"其它"，行为与新增该字段前一致。
+          group: typeof gp === 'string' ? (gp as string) : ''
         };
         voices.push(item);
       }

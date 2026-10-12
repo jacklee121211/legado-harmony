@@ -137,28 +137,44 @@ export default struct BookManagePage {
     }
   }
   //书单
-  getWorkLists() {
-    worksListsDao.search({
+  /**
+   * 重查书单列表。
+   *
+   * ⚠️ 2026-10-12 十一修：**改为返回 Promise 并 `await` 到底**。
+   *   旧写法是 `.then((val)=>{ this.worksLists = val })` 之后**直接返回** ——
+   *   调用方 await 不到、也不知道列表何时就绪。
+   *   在 `manageTop()` 那种「写库 → 重查 → 按新数据判定按钮文字」的链路里，
+   *   重查还没回来就判定 ⇒ **拿旧数据判定** ⇒ 按钮文字/列表不刷新
+   *   （用户反馈①「点击置顶或者取消置顶，没有即刻刷新」的根因之一）。
+   */
+  async getWorkLists(): Promise<void> {
+    const val: WorksLists[] = await worksListsDao.search({
       type:this.currentIndex
-    }).then((val)=>{
-      this.worksLists = val
     })
+    this.worksLists = val
   }
   //书籍
-  getBookList(){
-    // pageSize=0 ⇒ 全量（BooksDao.searchPage 约定）：管理页必须列出全部书籍，
-    // 旧实现 (1,100) 在批量导入超过 100 本时只显示前 100 本。
-    booksDao.searchPage({
+  /**
+   * 重查书籍列表（`isTop DESC` 排序，见 `BooksDao.searchPage:220-234`）。
+   *
+   * ⚠️ 2026-10-12 十一修：同 `getWorkLists()` —— 改为可 await。
+   *   `pageSize=0` ⇒ 全量（`BooksDao.searchPage` 约定）：管理页必须列出全部书籍，
+   *   旧实现 (1,100) 在批量导入超过 100 本时只显示前 100 本。
+   */
+  async getBookList(): Promise<void> {
+    const val: Books[] = await booksDao.searchPage({
       type:this.currentIndex,
       bookGroup:this.bookTypeNumber
-    },1,0).then((val)=>{
-      this.bookList = val
-    })
+    },1,0)
+    this.bookList = val
   }
   //分组
   // 2026-10-06：「共N本」按 books.bookGroup 现算（book_groups.bookIds 是陈旧冗余列，
   // 真机实测自建分组恒显示"共0本"，证据见 bookGroupUtil.fillRealBookIds 注释）。
-  async getGroupList(){
+  //
+  // ⚠️ 2026-10-12 十一修：本方法**本来就是 async 且 await 到底**（正确样板），
+  //    本次只把调用处补上 await（旧调用处裸调 `this.getGroupList()` 同样不等待）。
+  async getGroupList(): Promise<void>{
     const val: BookGroups[] = await BookGroupsDao.search({
       type: this.currentIndex
     })
@@ -423,6 +439,75 @@ export default struct BookManagePage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Off)
+        // ════════════════════════════════════════════════════════════════════
+        // 2026-10-12 十一修（用户：「书距离左侧太近了，完全没有边距，
+        //   增加一些边距，最好和书架的边距一样」）
+        // ════════════════════════════════════════════════════════════════════
+        // ── 真机实测（1320×2848px，密度 3.375，两侧 dump 对比）──────────────
+        //   书架   ：封面 `Image` x = **100**..303
+        //            祖先 `ListItem` x = 67..1253（W=1186）
+        //            ⇒ 67 来自书架 List 的 `.margin({ left: 20, right: 20 })`
+        //              （`BookContent.ets:316-319`，20vp × 3.375 = **67.5px** ✓）
+        //            ⇒ 100 再叠 `BookInfos` 根 Flex 的 `.padding(10)`（33.75px）
+        //              67.5 + 33.75 = 101.25 ≈ 实测 100 ✓
+        //   管理页 ：封面 `Image` x = **33**..236
+        //            ⇒ 只有 `BookInfoManage` 根 Flex 的 `.padding(10)`（33.75px），
+        //              **外面没有任何左右边距** ⇒ 比书架少 67px，看着"贴死左边"。
+        //
+        // ── 为什么不能直接照抄书架的写法 ─────────────────────────────────────
+        //   两者**层数不同**（用户的直觉是对的）：
+        //     书架   ：List > ListItem > BookInfos(Flex.padding(10))
+        //     管理页 ：Scroll > bookListManage(Column) > BookInfoManage(Flex.padding(10))
+        //   书架那 20vp 挂在 **List** 上；本页没有 List 这一层，
+        //   对应位置是 **`Scroll`**（它才是滚动盒子）⇒ 就加在这里。
+        //   `Scroll` 是满宽（x=0..1320）的滚动容器，给它左右 margin 等价于书架 List 的做法。
+        //
+        //   ⚠️ 只补 **left/right**，**不留 bottom** —— 底部让位由悬浮 dock 的
+        //      `contentEndOffset` / `barBottomMargin` 负责；给滚动盒子加底部
+        //      margin 会把内容截在屏幕底以上（本文件 `BookContent.ets:312-315`
+        //      记过这条通用规则，别再踩）。
+        //
+        //   ⚠️ 回退：删掉本行 ⇒ 恢复"封面贴左边缘 33px"的旧观感。
+        .margin({ left: 20, right: 20 })
+        // ════════════════════════════════════════════════════════════════════
+        // 2026-10-12 十二修（用户：「管理页底部也没有留白，最后一本书会被 dock 挡住」）
+        // ════════════════════════════════════════════════════════════════════
+        // ── 真机证据（1320×2848px，密度 3.375）──────────────────────────────
+        //   Scroll  : y 300 -> **2848**（贴屏幕底，内容可一直排到最底）
+        //   TabBar  : y 2538 -> 2727（悬浮 dock，**叠在内容之上**）
+        //   最后一张封面：y 2552 -> 2822  ⇒ 与 dock 区间 2538..2727 **完全重叠**
+        //   ⇒ 滚到底时最后一本书被 dock 压住（用户看到的就是这个）。
+        //
+        // ── 为什么书架不挡、只有管理页挡 ────────────────────────────────────
+        //   书架 `BookContent.ets:295` 有一行：
+        //     `.contentEndOffset(ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight))`
+        //   而**管理页的 `Scroll` 从来没有这一行** —— 与左右边距那次是同一类遗漏
+        //   （照抄了布局、漏了"悬浮 dock 的让位"）。
+        //
+        // ── 官方依据（本次取证）────────────────────────────────────────────
+        //   ① `contentEndOffset` **`Scroll` 组件支持**：
+        //      SDK `component/common.d.ts:25382` 原文
+        //        `contentEndOffset(offset: number | Resource): T;`
+        //      声明在 `ScrollableCommonMethod<T>`（同文件 `:25187`），
+        //      而 `ScrollAttribute extends ScrollableCommonMethod<ScrollAttribute>`
+        //      （`component/scroll.d.ts:918`）⇒ 可用于 `Scroll`。
+        //      `@since 22`；官方说明 `:25369` 原文：
+        //        「Sets the offset from the end of the content to the boundary of the
+        //          scrollable display area.」默认值 0，单位 vp。
+        //   ② **必须用 `contentEndOffset`、不能给盒子加底部 padding/margin**：
+        //      后者会把内容截在屏幕底以上（本工程 `BookContent.ets:312-315` 记过这条
+        //      通用规则）；前者只偏移**内容末尾**、不动盒子。
+        //      本次十一修加的是 `.margin({left,right})`（**故意不含 bottom**）就是这个原因。
+        //
+        // ── 取值 ──────────────────────────────────────────────────────────
+        //   复用书架同一个工具 `ImmersiveMaterialUtil.dockContentEndOffset()`：
+        //     = TAB_BAR_HEIGHT(56) + 8 + bottomRectHeight(系统实时下发) + 12
+        //   `bottomRectHeight` 已由本页 `@StorageLink('bottomRectHeight')` 订阅
+        //   ⇒ 与 dock 的 `barBottomMargin: bottomRectHeight + 8` 同源，天然自适应
+        //     手势条 / 三键导航 / 平板，不会各算各的。
+        //
+        //   ⚠️ 回退：删掉本行 ⇒ 恢复"最后一本书被 dock 压住"。
+        .contentEndOffset(ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight))
       }
       // ⚠️ 2026-10-12 四修：**不要把 `tabBar` 指向一个"再嵌套调用别的 @Builder"的
       //   中转 builder**。上一版是 `.tabBar(this.manageTabBar())`，而
@@ -983,11 +1068,14 @@ export default struct BookManagePage {
     } else {
       await booksUtil.isTopBook(this.checkListNumber, top)
     }
-    // 写库已完成 ⇒ 本页列表立即按新 isTop 重排（查询本身按 `isTop DESC` 排序）
-    //
-    // ⚠️ `refreshData()` 内部会 `dataMoveCheckList(false)`（清勾选）+ `dataCheckList()`。
-    //   但**本方法要求保留勾选** ⇒ 这里不能直接用它，见下方"保留勾选"处理。
-    this.reloadListKeepSelection()
+    // ⚠️ 2026-10-12 十一修（用户反馈①「点击置顶/取消置顶没有即刻刷新」）：
+    //   **必须 await** 重查完成，再去判定按钮文字。
+    //   旧写法是裸调 `this.reloadListKeepSelection()`（同步返回）⇒ 紧接着的
+    //   `selectIsAllTop()` 读到的还是**旧的** `bookList` / `groupList` / `worksLists`
+    //   ⇒ 按钮文字与实际状态对不上、列表也没换新排序
+    //   （写库已 await、查询却没 await —— 半条链路等待）。
+    //   现在：写库 await → 重查 await → 判定，全链路串行，点击即刻生效。
+    await this.reloadListKeepSelection()
     // ① 广播给身后的书架 —— 按类型发**对应**的键（十修 A）
     if (this.bookTypeNumber === 1) {
       // 分组：书架看的是 BOOK_IS_BOOK_GROUPS_REFRESHING（BookFolder / GroupType）
@@ -997,6 +1085,7 @@ export default struct BookManagePage {
       this.isBookRefreshing++
     }
     // ③ 不清空勾选 ⇒ 按钮文字按选中项的真实状态**重新判定**（十修 B/C）
+    //    ⚠️ 必须在 `await reloadListKeepSelection()` **之后**，否则判的是旧数据。
     this.selectIsAllTop()
     showMessage('操作成功')
   }
@@ -1011,17 +1100,25 @@ export default struct BookManagePage {
    * ⚠️ 重查会重建列表（`bookList` 等被整体替换）。勾选状态**独立存在**
    *    `checkLists: Record<number, boolean>` 里，只要 id 没变，
    *    重建后 `Checkbox().select(this.checkGroup[id])` 仍能正确回显 ⇒ 勾选视觉保留。
+   *
+   * ⚠️ 2026-10-12 十一修：**本方法改为 async 并 await 到底**。
+   *    旧版内部裸调 `this.getBookList()`（不 await）就立刻返回 ⇒ 调用方
+   *    `await this.reloadListKeepSelection()` 也等不到新数据，
+   *    紧接着的 `selectIsAllTop()` 仍按**旧 `bookList`** 判定按钮文字
+   *    ⇒ 「点了置顶，按钮文字/列表没即刻刷新」。
+   *    现在：`await` 三个 getter（它们十一修后都返回 Promise）后再 `dataCheckList()`，
+   *    保证方法 resolve 时列表已是**新数据**。
    */
-  reloadListKeepSelection(){
+  async reloadListKeepSelection(): Promise<void> {
     switch (this.bookTypeNumber){
       case 1:
-        this.getGroupList();
+        await this.getGroupList();
         break;
       case 5:
-        this.getWorkLists();
+        await this.getWorkLists();
         break;
       default:
-        this.getBookList();
+        await this.getBookList();
         break;
     }
     // 只重算"选中 id 列表"，不动 checkLists 本身
@@ -1162,17 +1259,24 @@ export default struct BookManagePage {
   }
 
   //刷新数据方法
-  refreshData(){
+  //
+  // ⚠️ 2026-10-12 十一修：**改为 async 并 await 三个 getter**。
+  //   旧版裸调（不 await）⇒ 本方法同步返回时列表还是旧数据，调用方若紧接着读
+  //   `bookList` 判定状态就会拿到旧值（`manageTop` 已改为走 `reloadListKeepSelection()`，
+  //   本方法主要供删除/隐藏/取消等路径使用；这里同样 await 以保持一致语义）。
+  //   ⚠️ 注意末尾 `dataMoveCheckList(false)` 会**清空勾选** —— 这是本方法的既定语义，
+  //     "操作后要保留勾选"的路径请改用 `reloadListKeepSelection()`。
+  async refreshData(): Promise<void> {
    switch (this.bookTypeNumber){
      case 1:
-       this.getGroupList();
+       await this.getGroupList();
        this.BOOK_IS_BOOK_GROUPS_REFRESHING++
        break;
      case 5:
-       this.getWorkLists();
+       await this.getWorkLists();
        break;
        default:
-         this.getBookList();
+         await this.getBookList();
          // this.isBookRefreshing++
          break;
    }
