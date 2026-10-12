@@ -7922,9 +7922,16 @@ export default struct ReaderPage3 {
         })
 
       // 退出听书：停止朗读 → 沉浸层消失，回到普通阅读模式
+      // ── 触控区放大（2026-10-12 用户反馈：「X 关闭按钮点击区域太小了，放大一些」）──
+      // 旧实现只有 `fontSize(16)` 的图标本体（约 16×16vp），远低于可用性下限；
+      // 用户实测"不好点击"。这里**保持视觉不变**（图标仍 16fp），
+      // 用 `padding` 把**命中区**撑到约 32×32vp（图标 16 + 上下左右各 8）。
+      // ⚠️ 不用 `.width/.height` 直接写死：padding 方案在视觉上不影响布局重心，
+      //    且 SpacingUtility 的默认间距仍由外层 `space: 10` 控制。
       SymbolGlyph($r('sys.symbol.xmark'))
         .fontSize(16)
         .fontColor(['rgba(255,255,255,0.85)'])
+        .padding({ left: 8, right: 8, top: 8, bottom: 8 })
         .onClick(() => {
           Haptics.tap();
           this.exitListening();

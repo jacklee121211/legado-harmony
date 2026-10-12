@@ -18,16 +18,26 @@ import {
 } from '../../tts/LocalTtsClient';
 import { ListenUnlock } from '../../common/utils/ListenUnlock';
 // ── AI 听书（2026-10-09 新增）：用户自接入 TTS 的配置面板 ─────────────────────
-import { AiProviderMeta, AiTtsConfig, AiVoiceOption, AiCancelToken, aiErrorText
+import { AiProviderMeta, AiTtsConfig, AiVoiceOption, AiCancelToken, aiErrorText,
+  AiModelOption
 } from '../../tts/ai/AiTtsTypes';
 import { aiConfigReady, aiListVoices, aiProviderMetaList } from '../../tts/ai/AiTtsProviders';
 import { aiVoiceLabel, aiVoiceOptionsFor } from '../../tts/ai/AiTtsVoices';
+// 模型表（2026-10-12）：下拉候选 + 按模型判「风格提示词」可见性 + 官方音色页链接
+import { AiModelGroup, aiModelGroupsFor, aiModelSupportsInstructions,
+  aiVoiceListUrlFor } from '../../tts/ai/AiTtsModels';
 import { aiCatalogAgeText, aiCatalogStale, loadAiCatalog, saveAiCatalog
 } from '../../tts/ai/AiVoiceCatalog';
-import { AiProfile, applyAiProfile, parseAiProfiles, removeAiProfile, serializeAiProfiles,
-  snapshotAiProfile, upsertAiProfile } from '../../tts/ai/AiProfile';
+import { AiProfile, AiSpeakerProfile, applyAiProfile, applyAiSpeakerProfile,
+  parseAiProfiles, parseAiSpeakerProfiles, removeAiProfile, removeAiSpeakerProfile,
+  serializeAiProfiles, serializeAiSpeakerProfiles, snapshotAiProfile,
+  snapshotAiSpeakerProfile, upsertAiProfile, upsertAiSpeakerProfile
+} from '../../tts/ai/AiProfile';
 import { DEFAULT_SPEAK_FILTER_TEXT } from '../../tts/SpeakFilter';
 import { audio } from '@kit.AudioKit';
+import { common } from '@kit.AbilityKit';
+// 朗读中切引擎的确认弹窗（2026-10-12）；`ShowDialogSuccessResponse` 类型也来自它
+import { promptAction } from '@kit.ArkUI';
 import vibrator from '@ohos.vibrator';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -225,6 +235,22 @@ export struct TtsControlPanel {
   //    AI 也走同一条路（applyVoice → applyAiVoiceToPrefs）。此前 AI 音色用的是草稿
   //    且藏在「AI 语音」块里，造成"两处音色、两种提交语义"的冲突。
   @State aiVoiceCustomDraft: string = '';   // 手填音色 id（AI 引擎；本工程允许手填）
+  /**
+   * 音色列表里的**双击试听**状态（2026-10-12 新增）。
+   * `aiVoicePreviewing`：是否有一次音色试听在飞（用于"双击停止"）；
+   * `aiPreviewBusy`：**是否显示「合成中，请稍后…」遮罩** —— 双击后立即置 true
+   *   （不等网络，给即时反馈），出声或失败时置 false。
+   */
+  @State aiVoicePreviewing: boolean = false;
+  @State aiPreviewBusy: boolean = false;
+  /**
+   * 顶栏 AI 开关的**强制重绘计数器**（2026-10-12 新增）。
+   * 用途：朗读中切引擎会先弹确认框；用户点「取消」时 `prefs` 未变，
+   *   但 Toggle 的内部 UI 已随拨动改变 ⇒ 需要一次重绘把开关**弹回**实际值。
+   * 自增本计数器即触发 `build()` 重跑（`@State` 变化），Toggle 按 `aiSwitchOn()` 重绘。
+   * 详见 `onAiSwitchChange()` 的注释（为什么不用 `$$`）。
+   */
+  @State aiSwitchNonce: number = 0;
   // AI 音色清单：从服务商拉取后缓存到 Preferences（见 AiVoiceCatalog.ets）
   @State aiCatalogVoices: AiVoiceOption[] = [];
   @State aiVoiceFetching: boolean = false;
@@ -232,6 +258,14 @@ export struct TtsControlPanel {
   // AI 配置方案（见 tts/ai/AiProfile.ets）
   @State aiProfiles: AiProfile[] = [];
   @State aiProfileNameDraft: string = '';
+  /**
+   * AI 男女声（说话人识别）方案 —— 2026-10-12 新增。
+   * ⚠️ 与 `aiProfiles` **分开存**：识别方案**只有三要素**（地址/Key/模型），
+   *    **不含音色**。切它绝不触碰任何音色槽（用户拍板的冲突场景见
+   *    `AiProfile.ets` 的 `AiSpeakerProfile` 注释）。
+   */
+  @State aiSpeakerProfiles: AiSpeakerProfile[] = [];
+  @State aiSpeakerProfileNameDraft: string = '';
   // 朗读过滤（见 tts/SpeakFilter.ets）
   @State showFilterRules: boolean = false;
   @State speakFilterDraft: string = '';
@@ -483,9 +517,96 @@ export struct TtsControlPanel {
     return ListenUnlock.isUnlocked() && this.prefs.ttsEngine === 'edge';
   }
 
-  /** 顶栏 AI 开关能否操作：① 必须处于停止态（暂停也算未停止）② Edge 未接管 */
+  /**
+   * 顶栏 AI 开关能否操作。
+   *
+   * ── 2026-10-12 放宽（用户要求）──────────────────────────────────────────
+   * 旧实现 = `ttsState === 'stopped' && !aiEdgeTakeover()`（朗读中一律置灰）。
+   * 用户原话：「我们在听书模式下，ai 听书按钮是灰色的无法点击，本质上我们是限制用户在
+   *   tts 之间切换的误触，现在我觉得需要你开放，但是增加个确定弹窗」。
+   * ⇒ 现在**只剩 Edge 接管**这一个硬性禁used（那种情况下切换无意义，
+   *    引擎优先级里 Edge 恒高于 AI，见 `activeEngineId()`）。
+   *    朗读中的"误触防护"改由**确认弹窗**承担（见 `onAiSwitchChange`）。
+   */
   private aiSwitchEnabled(): boolean {
-    return this.ttsState === 'stopped' && !this.aiEdgeTakeover();
+    return !this.aiEdgeTakeover();
+  }
+
+  /**
+   * 顶栏 AI 开关的变更入口（2026-10-12 新增）。
+   *
+   * 分两种情况：
+   *  · **未在朗读**（`stopped`）⇒ 维持旧行为：直接切，失败给提示（`toggleAiTts`）；
+   *  · **正在朗读/暂停** ⇒ **先弹确认框**。用户点「切换」才真正切，并由引擎
+   *    原地接管（保留进度与各项会话状态）；点「取消」则开关**回弹**到原值。
+   *
+   * ── 关于"回弹" ────────────────────────────────────────────────────────
+   * ArkUI 的 `Toggle` 在用户拨动后**其内部 UI 状态立即改变**，而 `isOn` 传的是
+   * `aiSwitchOn()`（普通函数，非状态变量）⇒ 组件不会因为 `prefs` 没变而自动弹回。
+   * 卡片原文（`quick-apis/02-basic-components.md`）：`isOn` "支持 `$$`"（双向绑定）。
+   * 但 `$$` 需要一个**可写变量**，本工程此处是函数（`aiSwitchOn()` 还含 Edge 接管逻辑），
+   * 不能直接 `$$`。
+   * ⇒ 用 `aiSwitchNonce` 这个 **@State 计数器**做强制刷新：取消/失败时自增，
+   *    触发 `build()` 重跑 ⇒ Toggle 按最新的 `aiSwitchOn()` 重绘（= 回弹到实际值）。
+   *    为什么不用 `aiTtsEnabled`：它是 `prefs` 的字段，取消时**本就不该改它**。
+   */
+  private onAiSwitchChange(value: boolean): void {
+    if (this.ttsState === 'stopped') {
+      this.toggleAiTts(value);
+      return;
+    }
+    // 朗读中：先判配置（开 AI 才需要）；不满足则提示 + 回弹，不弹确认框
+    if (value && !this.aiTtsReady()) {
+      this.showAiTts = true;
+      this.aiTtsHint = this.aiDraftsReady()
+        ? '请先点【保存】把配置落盘，再切换到 AI 听书'
+        : '请先填写接口地址与 API Key，再切换到 AI 听书';
+      this.aiSwitchNonce = this.aiSwitchNonce + 1;
+      return;
+    }
+    const currentName: string = this.prefs.aiTtsEnabled ? 'AI 听书' : '华为本地 TTS';
+    const target: string = value ? 'AI 听书' : '华为本地 TTS';
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '切换听书引擎',
+        message: '当前正在用「' + currentName + '」朗读。\n'
+          + '切换后将立即改用「' + target + '」从当前进度继续播放，'
+          + '睡眠定时与后台播放不受影响。\n\n确定切换吗？',
+        buttons: [
+          { text: '取消', color: this.fgSub() },
+          { text: '切换', color: this.accent() }
+        ]
+      }).then((r: promptAction.ShowDialogSuccessResponse) => {
+        if (r.index === 1) {
+          this.doSwitchEngineWhilePlaying(value);
+        } else {
+          // 用户取消：强制重绘，让开关弹回实际值
+          this.aiSwitchNonce = this.aiSwitchNonce + 1;
+        }
+      }).catch(() => {
+        this.aiSwitchNonce = this.aiSwitchNonce + 1;
+      });
+    } catch (e) {
+      this.aiSwitchNonce = this.aiSwitchNonce + 1;
+    }
+  }
+
+  /**
+   * 朗读中确认切换：改配置 → 引擎原地接管。
+   *
+   * ⚠️ 顺序不能反：必须**先**把 `prefs.aiTtsEnabled` 改好并 `commitPrefs()`，
+   *    再调 `switchEnginePreservingPosition()` —— 后者触发的重启会立刻读 prefs
+   *    决定用哪个引擎（`activeEngineId()`）；配置没落盘就会又按旧引擎跑一遍。
+   */
+  private doSwitchEngineWhilePlaying(toAi: boolean): void {
+    this.prefs.aiTtsEnabled = toAi;
+    this.commitPrefs();
+    // 原地接管：保留章/块/进度、睡眠定时、后台任务、播控会话
+    TtsEngine.switchEnginePreservingPosition();
+    this.aiTtsHint = toAi
+      ? '已切换到 AI 听书，从当前进度继续'
+      : '已切换回华为本地 TTS，从当前进度继续';
+    this.aiSwitchNonce = this.aiSwitchNonce + 1;
   }
 
   /** 顶栏 AI 开关的当前值：Edge 接管时显示为"关"（实际走 Edge） */
@@ -531,6 +652,7 @@ export struct TtsControlPanel {
     // 音色清单：从本地缓存回填（同步、不联网）
     this.reloadAiCatalog();
     this.reloadAiProfiles();
+    this.reloadAiSpeakerProfiles();
     // 朗读过滤规则草稿（已保存值优先；空则填默认，避免用户面对空白框）
     this.speakFilterDraft = this.prefs.speakFilterText.length > 0
       ? this.prefs.speakFilterText : DEFAULT_SPEAK_FILTER_TEXT;
@@ -631,28 +753,39 @@ export struct TtsControlPanel {
   }
 
   /**
-   * 音色区是否按 **AI** 显示（2026-10-10 二次修正）。
+   * 音色区是否按 **AI** 显示 —— **已删除**（2026-10-12）。
    *
-   * 上一版只用 `isAiEngine()`（= 开关已开且配置就绪）⇒ 造成死锁：
-   * **要配 AI 音色就必须先打开 AI 开关，可没配音色又听不出男女声效果**（用户实测反馈：
-   * 「音色里面还是华为 tts 的音色，而且 ai 男女声似乎没用」）。
-   * ⇒ 改为：**当前生效是 AI** 或 **用户正在配置 AI（AI 块展开且配置已就绪）** 都显示 AI 音色。
-   *    这样"填完接口地址与 Key（草稿即算就绪）→ 音色区自动切 AI → 配四个槽位"一气呵成。
+   * 原实现 = `isAiEngine() || (showAiTts && aiDraftsReady())`，
+   * 其唯一调用者是 `voiceKind()` 的"自动"兜底。由于第二项依赖 `showAiTts`
+   * （面板展开状态），导致"AI 已开启但面板收起时，自动落到华为 TTS"的 bug
+   * （用户实测反馈，见 `voiceKind` 的修正注释）。
+   *
+   * ⇒ 判定收敛到 `voiceKind()` 一个入口：
+   *    「当前音色区是否 AI」= `voiceKind() === 'ai'`。
+   *    不再保留第二个语义相近的谓词，避免今后被误用。
    */
-  private isAiVoiceUi(): boolean {
-    if (this.isAiEngine()) {
-      return true;
-    }
-    return this.showAiTts && this.aiDraftsReady();
-  }
 
   /**
-   * 音色区**当前在为哪个引擎配音色**（三修，2026-10-10）。
+   * 音色区**当前在为哪个引擎配音色**。
    *
    * 判定顺序：
    *  ① 用户显式选的来源（`voiceSourceExplicit`）优先，但做可用性校验
    *     （AI 未配置就忽略、Edge 未解锁就忽略）；
-   *  ② 否则跟随"当前生效引擎"，或"正在展开配置 AI"（`isAiVoiceUi()`）。
+   *  ② 否则跟随"当前生效引擎"。
+   *
+   * ── 2026-10-12 修正「自动」落到华为 TTS（用户实测反馈）────────────────────
+   * 旧实现第 ② 步调的是 `isAiVoiceUi()`，而它的第二个条件是
+   *   `showAiTts && aiDraftsReady()` —— **依赖「AI 语音」块是否展开**。
+   * 于是：AI 已开启且配置完整，但只要用户**没展开那个折叠块**，
+   * `isAiVoiceUi()` 就返回 false ⇒ 「自动」落到 `local`（华为 TTS）。
+   * 这与用户预期完全相反（用户原话："我发现现在自动主要显示都是华为tts，
+   * 不是真的自动"）。
+   *
+   * ⇒ 根因是**视图状态（showAiTts）污染了业务判定**。修正为：
+   *   ② 只看**真实生效状态**（`isAiEngine()`：开关开 + 配置就绪）；
+   *   ③ 展开配置块只作为**最后的兜底**（让"正在配 AI、还没开开关"的用户
+   *      也能看到 AI 音色列表，这是 2026-10-10 那次修复的本意，必须保留）。
+   * 这样"自动"= 真的自动，与面板折叠状态无关。
    *
    * @returns `'ai'` | `'local'` | `'edge'`
    */
@@ -666,9 +799,15 @@ export struct TtsControlPanel {
     if (this.voiceSourceExplicit === 'edge' && !this.isLocal()) {
       return 'edge';
     }
-    // ⚠️ 这里必须调 `isAiVoiceUi()`，**不能**调 `voiceKind()`（会自我递归 ⇒ 爆栈）。
-    //    2026-10-10 踩过：一次批量替换把本行也换成了 `voiceKind()`。
-    if (this.isAiVoiceUi()) {
+    // ② 真实生效的 AI（开关开 + 配置就绪）—— **不再看 showAiTts**
+    if (this.isAiEngine()) {
+      return 'ai';
+    }
+    // ③ 兜底：用户正在配置 AI（块展开 + 草稿就绪但开关还没开）
+    //    复用 `isAiVoiceUi()` 的前半段语义，但**显式展开写**，避免以后再被误改回
+    //    "整个 isAiVoiceUi()"（那正是本次 bug 的来源）。
+    //    ⚠️ 不能调 `voiceKind()`（自我递归 ⇒ 爆栈，2026-10-10 踩过）。
+    if (this.showAiTts && this.aiDraftsReady()) {
       return 'ai';
     }
     return this.isLocal() ? 'local' : 'edge';
@@ -721,6 +860,89 @@ export struct TtsControlPanel {
   private aiMetaSupportsEmotion(): boolean {
     const m: AiProviderMeta | null = this.aiMeta();
     return m !== null && m.supportsEmotion;
+  }
+
+  // ── 模型下拉（2026-10-12 新增，用户要求「下拉可选与手动输入并存」）────────────
+
+  /**
+   * 「选择模型」菜单项：把官方模型表按 `group` 摊平成 `MenuElement[]`。
+   *
+   * 数据源 {@link aiModelGroupsFor}（分「推荐 / 本工程不支持 / 其它」）。
+   * 不支持的模型**仍然列出**（用户可能自填自用），但标签带「（本工程不支持）」，
+   * 让用户点之前就知道会发生什么，而不是点了报错。
+   */
+  private aiModelMenuItems(): MenuElement[] {
+    const pid: string = this.prefs.aiProviderId;
+    const groups: AiModelGroup[] = aiModelGroupsFor(pid);
+    const items: MenuElement[] = [];
+    for (let g = 0; g < groups.length; g++) {
+      const grp: AiModelGroup = groups[g];
+      for (let i = 0; i < grp.items.length; i++) {
+        const m: AiModelOption = grp.items[i];
+        const unsupported: boolean = grp.title === '本工程不支持';
+        items.push({
+          value: (this.aiTtsModelDraft.trim() === m.id ? '✓ ' : '') + m.label
+            + (unsupported ? '（' + grp.title + '）' : ''),
+          action: (): void => {
+            this.aiTtsModelDraft = m.id;
+            this.aiTtsDirty = true;
+            this.aiTtsHint = '已选模型「' + m.label + '」，记得点【保存】';
+          }
+        });
+      }
+    }
+    return items;
+  }
+
+  /**
+   * 「风格提示词」行是否该显示。
+   *
+   * 判据 = **服务商支持**（`AiProviderMeta.supportsInstructions`）
+   *      **且** 当前模型支持（`aiModelSupportsInstructions`，按官方白名单）。
+   *
+   * ⚠️ 为什么必须判到"模型"这一层：同一次服务商下，模型能力不同 ——
+   *    通义只有 `qwen-audio-3.0-tts-*` 等白名单模型支持 `instructions`，
+   *    `qwen3-tts-flash` **不支持**（官方原文，见 `AiTtsModels.ets`）。
+   *    旧实现只看服务商 ⇒ 选到不支持的模型时**仍然显示输入框**，
+   *    用户填了不起作用 = 假控件（本工程已修过多处同类问题）。
+   *
+   * 表里查不到的模型（用户手填）返回 false —— **宁可不显示**，也不给假控件。
+   * 用户仍可用「高级 → 附加请求体」自行注入该字段。
+   */
+  private aiModelShowsInstructions(): boolean {
+    if (!this.aiMetaSupportsInstructions()) {
+      return false;
+    }
+    return aiModelSupportsInstructions(this.prefs.aiProviderId, this.aiTtsModelDraft.trim());
+  }
+
+  /** 当前服务商的官方音色列表页（空串 = 无公开页面，见 `aiVoiceListUrlFor`） */
+  private aiVoiceListUrl(): string {
+    return aiVoiceListUrlFor(this.prefs.aiProviderId);
+  }
+
+  /**
+   * 用**系统浏览器**打开官方音色列表页。
+   *
+   * 为什么用系统浏览器而不是 App 内 Web：用户 2026-10-12 拍板选 A 方案 ——
+   * 「这玩意儿越简单越好……只能说我们有，但是不主要」。
+   * App 内嵌 Web 要额外处理加载态/返回/权限，成本与收益不匹配。
+   *
+   * 失败（无浏览器/URL 非法）只提示，不抛 —— 它只是个可选入口。
+   */
+  private openAiVoiceListUrl(): void {
+    const url: string = this.aiVoiceListUrl();
+    if (url.length === 0) {
+      return;
+    }
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      ctx.openLink(url).catch((e: BusinessError) => {
+        this.aiCatalogInfo = '打开失败：' + (e.message !== undefined ? e.message : '');
+      });
+    } catch (e) {
+      this.aiCatalogInfo = '打开失败，请手动访问：' + url;
+    }
   }
 
   /**
@@ -823,7 +1045,19 @@ export struct TtsControlPanel {
       this.aiTtsHint = '请先填方案名';
       return;
     }
-    // 快照的是**用户当前看到的值**（草稿），不要求先点【保存】——避免"存的不是看到的"
+    // ⚠️ 门禁（2026-10-12 用户要求）：
+    //    「用户输入完接口地址、api key、模型名，点击保存，此时存为方案的按钮才会生效」
+    //    未点【保存】时草稿可能与已生效配置不一致 ⇒ 存出来的方案语义含糊
+    //    （究竟存"看到的"还是"在用的"？）。⇒ 显式要求先落盘。
+    if (this.aiTtsDirty) {
+      this.aiTtsHint = '请先点【保存】把当前配置落盘，再存为方案';
+      return;
+    }
+    if (!this.aiTtsReady()) {
+      this.aiTtsHint = '配置不完整（需填齐接口地址与 API Key），无法存为方案';
+      return;
+    }
+    // 快照的是**已保存并生效的配置**（此时草稿与 prefs 一致，不会"存的不是看到的"）
     const p: AiProfile = snapshotAiProfile('p' + Date.now(), name,
       this.prefs.aiProviderId, this.aiTtsBaseUrlDraft.trim(), this.aiTtsApiKeyDraft,
       this.aiTtsModelDraft.trim(), this.aiInstructionsDraft, this.prefs);
@@ -832,18 +1066,106 @@ export struct TtsControlPanel {
     this.aiTtsHint = '已保存方案「' + name + '」（含密钥，仅存本机）';
   }
 
+  /**
+   * 套用方案 = **覆盖填充 + 直接应用**（2026-10-12 用户要求）。
+   *
+   * 用户原话：「如果用户选择某个方案，则对应三个输入栏接口地址、api key、模型名
+   *   则瞬间被覆盖填充该方案的信息……覆盖填充的同时要直接应用，也就是相当于
+   *   覆盖填充之后自动点了保存并使用」。
+   *
+   * 故这里做三件事（顺序不能变）：
+   *  ① `applyAiProfile` 把方案写进 prefs（含音色槽 —— TTS 方案含音色，见 AiProfile 注释）；
+   *  ② `fillAiTtsDrafts` 同步草稿，否则界面还显示旧值（"点了没反应"观感）；
+   *  ③ **顺手打开 AI 听书开关** —— 这就是"使用"。不打开的话用户还要再点一次开关，
+   *     与"自动应用"的语义不符（且 `aiConfigReady` 已就绪，打开是安全的）。
+   *     ⚠️ 只在当前是 `stopped` 时开：播放中切开关会被引擎拒绝（顶栏开关同样限制），
+   *        那种情况下只保证配置已落盘，提示用户"停止后可切换生效"。
+   */
   private onApplyAiProfile(p: AiProfile): void {
     applyAiProfile(this.prefs, p);
+    // ③ 自动开启 AI 听书（"使用"）
+    const canToggleNow: boolean = this.ttsState === 'stopped';
+    if (canToggleNow) {
+      this.prefs.aiTtsEnabled = true;
+    }
     this.commitPrefs();
-    // 同步草稿，否则界面还显示旧值（"点了没反应"观感）
+    // ② 同步草稿
     this.fillAiTtsDrafts();
     this.reloadAiCatalog();
-    this.aiTtsHint = '已套用方案「' + p.name + '」';
+    if (canToggleNow) {
+      this.aiTtsHint = '已套用方案「' + p.name + '」并开启 AI 听书';
+    } else {
+      this.aiTtsHint = '已套用方案「' + p.name + '」（朗读中不能切换开关，停止后生效）';
+    }
   }
 
   private onDeleteAiProfile(id: string): void {
     this.persistAiProfiles(removeAiProfile(this.aiProfiles, id));
     this.aiTtsHint = '已删除方案';
+  }
+
+  // ── AI 男女声（说话人识别）方案 —— 2026-10-12 新增 ────────────────────────
+  // ⚠️ 与上面 TTS 方案**完全独立**：本套方案**只有三要素**，不含音色。
+  //    切它**绝不触碰** `aiTts*` 与任何音色槽（用户拍板的冲突场景见 AiProfile 注释）。
+
+  private reloadAiSpeakerProfiles(): void {
+    this.aiSpeakerProfiles = parseAiSpeakerProfiles(this.prefs.aiSpeakerProfiles);
+  }
+
+  private persistAiSpeakerProfiles(list: AiSpeakerProfile[]): void {
+    this.aiSpeakerProfiles = list;
+    this.prefs.aiSpeakerProfiles = serializeAiSpeakerProfiles(list);
+    this.commitPrefs();
+  }
+
+  /** 当前识别三要素是否就是某个方案（用于高亮） */
+  private isActiveAiSpeakerProfile(p: AiSpeakerProfile): boolean {
+    return this.aiBaseUrlDraft.trim() === p.baseUrl
+      && this.aiApiKeyDraft === p.apiKey
+      && this.aiModelDraft.trim() === p.model;
+  }
+
+  /** 存为方案：同样要求"先落盘"（与 TTS 方案一致的门禁语义） */
+  private onSaveAiSpeakerProfile(): void {
+    const name: string = this.aiSpeakerProfileNameDraft.trim();
+    if (name.length === 0) {
+      this.aiHint = '请先填方案名';
+      return;
+    }
+    if (this.aiDirty) {
+      this.aiHint = '请先点【保存】把当前配置落盘，再存为方案';
+      return;
+    }
+    if (this.aiBaseUrlDraft.trim().length === 0 || this.aiApiKeyDraft.trim().length === 0) {
+      this.aiHint = '配置不完整（需填齐接口地址与 API Key），无法存为方案';
+      return;
+    }
+    const p: AiSpeakerProfile = snapshotAiSpeakerProfile('sp' + Date.now(), name,
+      this.aiBaseUrlDraft.trim(), this.aiApiKeyDraft, this.aiModelDraft.trim());
+    this.persistAiSpeakerProfiles(upsertAiSpeakerProfile(this.aiSpeakerProfiles, p));
+    this.aiSpeakerProfileNameDraft = '';
+    this.aiHint = '已保存识别方案「' + name + '」（含密钥，仅存本机）';
+  }
+
+  /**
+   * 套用识别方案 = 覆盖填充三栏 + 直接应用。
+   * ⚠️ 只写 `aiBaseUrl/aiApiKey/aiModel`（见 `applyAiSpeakerProfile`），
+   *    **不碰音色、不碰 TTS 配置** —— 这就是它与 TTS 方案分开的全部意义。
+   */
+  private onApplyAiSpeakerProfile(p: AiSpeakerProfile): void {
+    applyAiSpeakerProfile(this.prefs, p);
+    this.commitPrefs();
+    // 同步草稿，否则界面还显示旧值
+    this.aiBaseUrlDraft = p.baseUrl;
+    this.aiApiKeyDraft = p.apiKey;
+    this.aiModelDraft = p.model;
+    this.aiDirty = false;
+    this.aiHint = '已套用识别方案「' + p.name + '」（音色不受影响）';
+  }
+
+  private onDeleteAiSpeakerProfile(id: string): void {
+    this.persistAiSpeakerProfiles(removeAiSpeakerProfile(this.aiSpeakerProfiles, id));
+    this.aiHint = '已删除识别方案';
   }
 
   /** 从本地缓存回填音色清单（同步、不联网） */
@@ -1005,6 +1327,69 @@ export struct TtsControlPanel {
       return '停止';
     }
     return '试听';
+  }
+
+  /**
+   * **双击音色试听**（2026-10-12 用户要求）。
+   *
+   * 用户原话：「双击音色进行试听，用户双击，则出现合成中，请稍后弹窗，
+   *   并且有合成失败等失败告知。确保用户能够直观感受试听……简单一点就行，
+   *   不用太长，主要是给用户感受参考选择而已。」
+   *
+   * 流程：
+   *   ① 双击 → 立刻弹「合成中，请稍后…」（不等网络，给即时反馈）；
+   *   ② 合成+播放成功 → 弹窗自动消失，顶部提示「播放中」；
+   *   ③ 失败 → 弹窗消失，**用 Toast 原文告知失败原因**（不静默）。
+   *
+   * ⚠️ 复用 `TtsEngine.previewAiSpeech`（与「AI 语音」块里的试听按钮同一实现），
+   *    不另起一套播放链路。
+   * ⚠️ 试听**不要求**「AI 听书」开关已打开（与现有试听按钮同口径：先测再开）。
+   *    但要保证配置已就绪，否则给明确提示。
+   */
+  private async onPreviewVoice(voiceId: string): Promise<void> {
+    // 正在播上一次试听 ⇒ 先停掉（双击视为"重听这个音色"）
+    if (this.aiVoicePreviewing) {
+      TtsEngine.stopAiPreview();
+      this.aiVoicePreviewing = false;
+      return;
+    }
+    if (!this.aiTtsReady()) {
+      this.showToast('请先填好接口地址与 API Key，并点【保存】后再试听');
+      return;
+    }
+    if (voiceId.trim().length === 0) {
+      return;
+    }
+    this.aiVoicePreviewing = true;
+    // ① 即时反馈：不等网络，先弹"合成中"
+    this.aiPreviewBusy = true;
+    try {
+      await TtsEngine.previewAiSpeech(this.aiPreviewText(), voiceId, (): void => {
+        // ② 开始出声 ⇒ 关掉"合成中"弹窗
+        this.aiPreviewBusy = false;
+        this.aiTtsHint = '正在试听…（双击可停止）';
+      });
+      if (this.aiVoicePreviewing) {
+        this.aiVoicePreviewing = false;
+        this.aiTtsHint = '试听结束';
+      }
+    } catch (e) {
+      // ③ 失败必须告知（用户要求「有合成失败等失败告知」）
+      this.aiTtsHint = '试听失败：' + aiErrorText(e);
+      this.showToast('试听失败：' + aiErrorText(e));
+    } finally {
+      this.aiPreviewBusy = false;
+      this.aiVoicePreviewing = false;
+    }
+  }
+
+  /** Toast 统一入口（`getUIContext().getPromptAction()`；异常只吞不抛） */
+  private showToast(msg: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 });
+    } catch (e) {
+      // Toast 失败不影响主流程
+    }
   }
 
   /**
@@ -1426,7 +1811,11 @@ export struct TtsControlPanel {
           .clickEffect(UiMotion.CLICK)
         Blank()
         // ── AI 听书开关（2026-10-09 新增）──
-        // 只在 ttsState==='stopped' 时可切（暂停也算未停止）；Edge 接管时置灰并提示。
+        // ── 2026-10-12 改为「朗读中也可切，但先弹确认」（用户要求）──────────────
+        // 旧实现只在 `stopped` 时可点（播放/暂停一律置灰）—— 用户反馈"想中途换 AI 还得先停"。
+        // 新口径：**只要 Edge 未接管就能点**；若正在朗读，则先弹确认框，
+        //   确认后由 `TtsEngine.switchEnginePreservingPosition()` **原地接管**
+        //   （保留进度/睡眠定时/后台任务/播控会话，见该方法的注释）。
         Text('AI 听书')
           .fontSize(14)
           .fontColor(this.aiSwitchEnabled() ? this.fg() : this.fgSub())
@@ -1437,7 +1826,7 @@ export struct TtsControlPanel {
           .opacity(this.aiSwitchEnabled() ? 1 : 0.4)
           .onChange((value: boolean) => {
             Haptics.tap();
-            this.toggleAiTts(value);
+            this.onAiSwitchChange(value);
           })
         Text('完成')
           .fontSize(16)
@@ -1894,10 +2283,32 @@ export struct TtsControlPanel {
                     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
                     .borderRadius(10)
                     .backgroundColor(this.aiVoiceSelected(v.id) ? this.chipBg() : Color.Transparent)
-                    .onClick(() => {
-                      Haptics.tap();
-                      this.applyAiVoiceToPrefs(v.id);
-                    })
+                    // ── 单击选中 / 双击试听（2026-10-12 用户要求）──────────────────
+                    // 用户原话：「单击选择音色之后，出现弹窗提醒，双击音色进行试听；
+                    //   用户双击，则出现合成中，请稍后弹窗，并且有合成失败等失败告知。」
+                    //
+                    // 用 `GestureGroup(GestureMode.Exclusive)` 组合两种点按：
+                    //   · 双击优先（Exclusive = 竞争，双击成立则单击不触发）；
+                    //   · 代价是单击有 ~300ms 判定延迟（系统需等第二击窗口关闭），
+                    //     用户 2026-10-12 明确表示**可接受**。
+                    // ⚠️ 为什么不用 `onClick` + `TapGesture(count:2)` 各绑一处：
+                    //    两者会**同时**触发（单击一次就既选中又试听），语义冲突。
+                    .gesture(
+                      GestureGroup(GestureMode.Exclusive,
+                        TapGesture({ count: 2 })
+                          .onAction(() => {
+                            Haptics.tap();
+                            this.onPreviewVoice(v.id);
+                          }),
+                        TapGesture({ count: 1 })
+                          .onAction(() => {
+                            Haptics.tap();
+                            // 单击 = 选中并落盘；同时给一句提醒，让用户知道还能双击试听
+                            this.applyAiVoiceToPrefs(v.id);
+                            this.aiTtsHint = '已选「' + v.label + '」（双击可试听）';
+                          })
+                      )
+                    )
                   }
                 }, (v: AiVoiceOption) => v.id)
               } else if (this.voiceKind() === 'local') {
@@ -2002,6 +2413,44 @@ export struct TtsControlPanel {
                 Text('该服务商没有「列音色」接口 ⇒ 请手填音色 id（下面那行）')
                   .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
               }
+              // ── 试听状态行（2026-10-12，双击试听的即时反馈）────────────────
+              // 用户要求「双击，则出现合成中，请稍后弹窗，并且有合成失败等失败告知」。
+              // 这里用**列表下方的常驻状态行**而不是全屏遮罩：
+              //   · 用户只需"直观看一眼"，不需要挡住界面（面板本身小，遮罩会盖住音色列表
+              //     导致"看不到自己在试哪个"）；
+              //   · 失败原因较长（服务端原文），状态行能完整显示多行。
+              if (this.aiPreviewBusy) {
+                Row({ space: 6 }) {
+                  LoadingProgress()
+                    .width(14)
+                    .height(14)
+                    .color(this.accent())
+                  Text('合成中，请稍后…').fontSize(11).fontColor(this.accent())
+                }.width('100%')
+              }
+              // ── 更多音色（2026-10-12 新增）────────────────────────────────
+              // 设计取舍（用户拍板）：「这个更多音色，不如给用户一个链接……
+              //   这玩意儿越简单越好，基本上不属于我们主要提供的功能……
+              //   只能说我们有，但是不主要。」
+              // ⇒ **不自建音色浏览器**（433 条渲染/搜索/分组全是维护成本），
+              //    只给一个跳转入口，用**系统浏览器**打开官方音色列表页。
+              // 无公开页面的服务商（MiMo / MiniMax）分别给出替代提示。
+              if (this.aiVoiceListUrl().length > 0) {
+                Text('更多音色 → 打开官方音色列表（浏览器）')
+                  .fontSize(11)
+                  .fontColor(this.accent())
+                  .width('100%')
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.openAiVoiceListUrl();
+                  })
+              } else if (this.aiMetaSupportsListVoices()) {
+                Text('更多音色 → 点上方「拉取音色」，拿到的就是该账号全部可用音色')
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
+              } else {
+                Text('更多音色 → 该服务商无公开音色列表页，请到其官方控制台查看')
+                  .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
+              }
               // AI 音色允许手填（内置表只是建议值）；填完点「填入」即落盘
               Row({ space: 8 }) {
                 TextInput({ text: this.aiVoiceCustomDraft, placeholder: '或直接填音色 id（本服务商支持的任意值）' })
@@ -2068,127 +2517,6 @@ export struct TtsControlPanel {
             })
           }
 
-          // AI 男女声识别（多角色方案）—— 收起档不渲染（细节行，展开档才看）
-          if (this.prefs.scheme === 'multi' && !this.compactMode) {
-            Row({ space: 10 }) {
-              Text('AI 男女声').fontSize(14).fontColor(this.fg())
-              Toggle({ type: ToggleType.Switch, isOn: this.prefs.aiSpeakerRecognitionEnabled })
-                .selectedColor(this.accent())
-                .onChange((value: boolean) => {
-                  Haptics.tap();
-                  this.prefs.aiSpeakerRecognitionEnabled = value;
-                  this.commitPrefs();
-                  this.normalizeVoiceSlot(); // D4：关掉 AI 时把「男生/女生」槽位归一
-                })
-              Text('识别对白说话人性别并分音色')
-                .fontSize(11)
-                .fontColor(this.fgSub())
-                .layoutWeight(1)
-              Text(this.showAiConfig ? '收起接口' : '接口设置')
-                .fontSize(13)
-                .fontColor(this.accent())
-                .onClick(() => {
-                  Haptics.tap();
-                  this.showAiConfig = !this.showAiConfig;
-                })
-            }.width('100%')
-
-            // AI 情绪/语气（2026-10-10 新增）—— 与男女声**同一次 LLM 调用**返回，
-            // 不额外增加请求数；⚠️ 只在**该服务商真支持自然语言语气**时显示
-            // （MiniMax 只吃固定枚举，显示=假控件，见 AiProviderMeta.supportsEmotion）。
-            if (this.aiMetaSupportsEmotion()) {
-              Row({ space: 10 }) {
-                Text('AI 语气').fontSize(14).fontColor(this.fg())
-                Toggle({ type: ToggleType.Switch, isOn: this.prefs.aiEmotionEnabled })
-                  .selectedColor(this.accent())
-                  .onChange((value: boolean) => {
-                    Haptics.tap();
-                    this.prefs.aiEmotionEnabled = value;
-                    this.commitPrefs();
-                  })
-                Text('按剧情给语气（需先开「AI 男女声」）')
-                  .fontSize(11)
-                  .fontColor(this.fgSub())
-                  .layoutWeight(1)
-              }.width('100%')
-            }
-
-            if (this.showAiConfig) {
-              Column({ space: 8 }) {
-                // D2：输入框绑定**草稿**，不直接改 prefs —— 只有点【保存】才落盘
-                TextInput({ text: this.aiBaseUrlDraft, placeholder: '接口地址（OpenAI 兼容），如 https://api.deepseek.com/v1' })
-                  .fontSize(13)
-                  .backgroundColor(this.chipBg())
-                  .fontColor(this.fg())
-                  .placeholderColor(this.fgSub())
-                  .onChange((v: string) => {
-                    this.aiBaseUrlDraft = v;
-                    this.aiDirty = true;
-                    this.aiHint = '';
-                  })
-                TextInput({ text: this.aiApiKeyDraft, placeholder: 'API Key' })
-                  .fontSize(13)
-                  .type(InputType.Password)
-                  .backgroundColor(this.chipBg())
-                  .fontColor(this.fg())
-                  .placeholderColor(this.fgSub())
-                  .onChange((v: string) => {
-                    this.aiApiKeyDraft = v;
-                    this.aiDirty = true;
-                    this.aiHint = '';
-                  })
-                TextInput({ text: this.aiModelDraft, placeholder: '模型名，如 deepseek-chat' })
-                  .fontSize(13)
-                  .backgroundColor(this.chipBg())
-                  .fontColor(this.fg())
-                  .placeholderColor(this.fgSub())
-                  .onChange((v: string) => {
-                    this.aiModelDraft = v;
-                    this.aiDirty = true;
-                    this.aiHint = '';
-                  })
-                // D2：显式保存 / 清空
-                Row({ space: 10 }) {
-                  Text('保存')
-                    .fontSize(13)
-                    .fontColor(Color.White)
-                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
-                    .borderRadius(14)
-                    .backgroundColor(this.accent())
-                    .onClick(() => {
-                      Haptics.tap();
-                      this.saveAiConfig();
-                    })
-                  Text('清空')
-                    .fontSize(13)
-                    .fontColor(this.fgSub())
-                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
-                    .borderRadius(14)
-                    .borderWidth(1)
-                    .borderColor(this.fgSub())
-                    .onClick(() => {
-                      Haptics.tap();
-                      this.clearAiConfig();
-                    })
-                  Text(this.aiHint.length > 0 ? this.aiHint : (this.aiDirty ? '有未保存的修改' : ''))
-                    .fontSize(11)
-                    .fontColor(this.aiDirty ? '#E6A23C' : this.fgSub())
-                    .layoutWeight(1)
-                    .maxLines(2)
-                }.width('100%')
-                Text('每章批量识别一次对白性别；未配置或失败时回落到统一对白音色。修改后请点【保存】，否则重启后丢失。')
-                  .fontSize(11)
-                  .fontColor(this.fgSub())
-                  .width('100%')
-                  .maxLines(3)
-              }
-              .width('100%')
-              .padding(10)
-              .borderRadius(10)
-              .backgroundColor(this.chipBg())
-            }
-          }
-
           // ══ AI 语音（用户自接入 TTS，2026-10-09 新增）══════════════════════════
           // ⚠️ 与上面「AI 男女声」是**两套配置**：上面填对话大模型（说话人识别），
           //    这里填语音合成接口。分块 + 文案写清，避免用户填串（方案 §5.8）。
@@ -2213,7 +2541,11 @@ export struct TtsControlPanel {
               Text('Edge TTS 已开启并优先接管。如需 AI 听书，请先到「我的-设置」关闭 Edge TTS。')
                 .fontSize(11).fontColor('#E6A23C').width('100%').maxLines(2)
             } else if (this.ttsState !== 'stopped') {
-              Text('朗读进行中不可切换引擎：请先停止听书，再开/关 AI 听书。')
+              // ── 2026-10-12：朗读中**允许**切换（用户要求「开放，但增加确定弹窗」）──
+              // 旧文案是"朗读进行中不可切换引擎：请先停止听书"（配合当时置灰的开关）。
+              // 现在开关可点，这里改为说明弹窗行为，避免文案与功能自相矛盾。
+              Text('朗读中也可切换引擎：拨动顶部「AI 听书」开关后会先确认，'
+                + '确认即从当前进度无缝接管。')
                 .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(2)
             }
 
@@ -2337,7 +2669,29 @@ export struct TtsControlPanel {
                       this.aiTtsHint = '有未保存的修改';
                     })
                 }
-                TextInput({ text: this.aiTtsModelDraft, placeholder: '模型名，如 tts-1' })
+                // ── 模型名：下拉可选 + 手动输入（2026-10-12，用户要求）────────────
+                // 数据源 = `AiTtsModels.ets` 的官方模型表（分「推荐 / 本工程不支持 / 其它」）；
+                // 用户**始终可手输**任意模型名（表里没有的自定义/私有部署模型）。
+                // ⚠️ 选中模型后要刷新「风格提示词」行的可见性 —— 它由
+                //    `aiModelSupportsInstructions()` 决定（不支持还显示 = 假控件）。
+                Row({ space: 8 }) {
+                  Text('模型').fontSize(13).fontColor(this.fg())
+                  Text(this.aiTtsModelDraft.trim().length > 0 ? this.aiTtsModelDraft : '未指定')
+                    .fontSize(13)
+                    .fontColor(this.aiTtsModelDraft.trim().length > 0 ? this.fg() : this.fgSub())
+                    .layoutWeight(1)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text('选择')
+                    .fontSize(13)
+                    .fontColor(this.accent())
+                    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.accent())
+                    .bindMenu(this.aiModelMenuItems())
+                }.width('100%')
+                TextInput({ text: this.aiTtsModelDraft, placeholder: '也可手动输入模型名' })
                   .fontSize(13)
                   .backgroundColor(this.chipBg())
                   .fontColor(this.fg())
@@ -2373,7 +2727,7 @@ export struct TtsControlPanel {
                 }
 
                 // ── 风格提示词（能力位支持才渲染）────────────────────────────
-                if (this.aiMetaSupportsInstructions()) {
+                if (this.aiModelShowsInstructions()) {
                   TextInput({ text: this.aiInstructionsDraft, placeholder: '风格提示词（可选），如：语气温和、语速平缓' })
                     .fontSize(13)
                     .backgroundColor(this.chipBg())
@@ -2482,6 +2836,185 @@ export struct TtsControlPanel {
                   + '只有你手动打开上方开关后，正文才会发送到你自己填写的接口。'
                   + '密钥仅保存在本机。')
                   .fontSize(11).fontColor(this.fgSub()).width('100%').maxLines(3)
+              }
+              .width('100%')
+              .padding(10)
+              .borderRadius(10)
+              .backgroundColor(this.chipBg())
+            }
+          }
+
+          // AI 男女声识别（多角色方案）—— 收起档不渲染（细节行，展开档才看）
+          if (this.prefs.scheme === 'multi' && !this.compactMode) {
+            // ── AI 语气（2026-10-10 新增；2026-10-12 提到「AI 男女声」之前）──────
+            // 顺序依据（用户 2026-10-12 拍板）：**AI 语音 → AI 语气 → AI 男女声**。
+            // 与男女声**同一次 LLM 调用**返回，不额外增加请求数；
+            // ⚠️ 只在**该服务商真支持自然语言语气**时显示
+            // （MiniMax 只吃固定枚举，显示=假控件，见 AiProviderMeta.supportsEmotion）。
+            if (this.aiMetaSupportsEmotion()) {
+              Row({ space: 10 }) {
+                Text('AI 语气').fontSize(14).fontColor(this.fg())
+                Toggle({ type: ToggleType.Switch, isOn: this.prefs.aiEmotionEnabled })
+                  .selectedColor(this.accent())
+                  .onChange((value: boolean) => {
+                    Haptics.tap();
+                    this.prefs.aiEmotionEnabled = value;
+                    this.commitPrefs();
+                  })
+                Text('按剧情给语气（需先开「AI 男女声」）')
+                  .fontSize(11)
+                  .fontColor(this.fgSub())
+                  .layoutWeight(1)
+              }.width('100%')
+            }
+
+            Row({ space: 10 }) {
+              Text('AI 男女声').fontSize(14).fontColor(this.fg())
+              Toggle({ type: ToggleType.Switch, isOn: this.prefs.aiSpeakerRecognitionEnabled })
+                .selectedColor(this.accent())
+                .onChange((value: boolean) => {
+                  Haptics.tap();
+                  this.prefs.aiSpeakerRecognitionEnabled = value;
+                  this.commitPrefs();
+                  this.normalizeVoiceSlot(); // D4：关掉 AI 时把「男生/女生」槽位归一
+                })
+              Text('识别对白说话人性别并分音色')
+                .fontSize(11)
+                .fontColor(this.fgSub())
+                .layoutWeight(1)
+              Text(this.showAiConfig ? '收起接口' : '接口设置')
+                .fontSize(13)
+                .fontColor(this.accent())
+                .onClick(() => {
+                  Haptics.tap();
+                  this.showAiConfig = !this.showAiConfig;
+                })
+            }.width('100%')
+
+            if (this.showAiConfig) {
+              Column({ space: 8 }) {
+                // D2：输入框绑定**草稿**，不直接改 prefs —— 只有点【保存】才落盘
+                TextInput({ text: this.aiBaseUrlDraft, placeholder: '接口地址（OpenAI 兼容），如 https://api.deepseek.com/v1' })
+                  .fontSize(13)
+                  .backgroundColor(this.chipBg())
+                  .fontColor(this.fg())
+                  .placeholderColor(this.fgSub())
+                  .onChange((v: string) => {
+                    this.aiBaseUrlDraft = v;
+                    this.aiDirty = true;
+                    this.aiHint = '';
+                  })
+                TextInput({ text: this.aiApiKeyDraft, placeholder: 'API Key' })
+                  .fontSize(13)
+                  .type(InputType.Password)
+                  .backgroundColor(this.chipBg())
+                  .fontColor(this.fg())
+                  .placeholderColor(this.fgSub())
+                  .onChange((v: string) => {
+                    this.aiApiKeyDraft = v;
+                    this.aiDirty = true;
+                    this.aiHint = '';
+                  })
+                TextInput({ text: this.aiModelDraft, placeholder: '模型名，如 deepseek-chat' })
+                  .fontSize(13)
+                  .backgroundColor(this.chipBg())
+                  .fontColor(this.fg())
+                  .placeholderColor(this.fgSub())
+                  .onChange((v: string) => {
+                    this.aiModelDraft = v;
+                    this.aiDirty = true;
+                    this.aiHint = '';
+                  })
+                // ── 识别方案（2026-10-12 新增）────────────────────────────────
+                // ⚠️ 与「AI 语音」的方案**互相独立**：本方案**只有三要素**，
+                //    **不含音色** ⇒ 切它不会改掉 TTS 音色（用户拍板的冲突场景见
+                //    `AiProfile.ets` 的 `AiSpeakerProfile` 注释）。
+                //    门禁与 TTS 方案一致：先点【保存】落盘，才能存为方案。
+                Row({ space: 8 }) {
+                  Text('方案').fontSize(13).fontColor(this.fg())
+                  ForEach(this.aiSpeakerProfiles, (p: AiSpeakerProfile) => {
+                    Row({ space: 4 }) {
+                      Text(p.name)
+                        .fontSize(13)
+                        .fontColor(this.isActiveAiSpeakerProfile(p) ? this.accent() : this.fgSub())
+                        .onClick(() => {
+                          Haptics.tap();
+                          this.onApplyAiSpeakerProfile(p);
+                        })
+                      SymbolGlyph($r('sys.symbol.xmark'))
+                        .fontSize(11)
+                        .fontColor([this.fgSub()])
+                        .onClick(() => {
+                          Haptics.tap();
+                          this.onDeleteAiSpeakerProfile(p.id);
+                        })
+                    }
+                    .padding({ left: 10, right: 8, top: 5, bottom: 5 })
+                    .borderRadius(14)
+                    .backgroundColor(this.isActiveAiSpeakerProfile(p) ? this.chipBg() : Color.Transparent)
+                  }, (p: AiSpeakerProfile) => p.id)
+                  if (this.aiSpeakerProfiles.length === 0) {
+                    Text('暂无方案').fontSize(11).fontColor(this.fgSub())
+                  }
+                }.width('100%')
+
+                Row({ space: 8 }) {
+                  TextInput({ text: this.aiSpeakerProfileNameDraft, placeholder: '方案名，如「识别·DeepSeek」' })
+                    .fontSize(13)
+                    .layoutWeight(1)
+                    .backgroundColor(this.chipBg())
+                    .fontColor(this.fg())
+                    .placeholderColor(this.fgSub())
+                    .onChange((v: string) => {
+                      this.aiSpeakerProfileNameDraft = v;
+                    })
+                  Text('存为方案')
+                    .fontSize(13)
+                    .fontColor(this.accent())
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.onSaveAiSpeakerProfile();
+                    })
+                }.width('100%')
+
+                // D2：显式保存 / 清空
+                Row({ space: 10 }) {
+                  Text('保存')
+                    .fontSize(13)
+                    .fontColor(Color.White)
+                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
+                    .borderRadius(14)
+                    .backgroundColor(this.accent())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.saveAiConfig();
+                    })
+                  Text('清空')
+                    .fontSize(13)
+                    .fontColor(this.fgSub())
+                    .padding({ left: 16, right: 16, top: 7, bottom: 7 })
+                    .borderRadius(14)
+                    .borderWidth(1)
+                    .borderColor(this.fgSub())
+                    .onClick(() => {
+                      Haptics.tap();
+                      this.clearAiConfig();
+                    })
+                  Text(this.aiHint.length > 0 ? this.aiHint : (this.aiDirty ? '有未保存的修改' : ''))
+                    .fontSize(11)
+                    .fontColor(this.aiDirty ? '#E6A23C' : this.fgSub())
+                    .layoutWeight(1)
+                    .maxLines(2)
+                }.width('100%')
+                Text('每章批量识别一次对白性别；未配置或失败时回落到统一对白音色。修改后请点【保存】，否则重启后丢失。')
+                  .fontSize(11)
+                  .fontColor(this.fgSub())
+                  .width('100%')
+                  .maxLines(3)
               }
               .width('100%')
               .padding(10)

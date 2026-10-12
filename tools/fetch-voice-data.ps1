@@ -37,7 +37,7 @@ function Get-PlainText([string]$html) {
 }
 
 # ── 1. 阿里通义 DashScope ───────────────────────────────────────────────────
-Write-Host '=== [1/2] 阿里通义 DashScope ===' -ForegroundColor Cyan
+Write-Host '=== [1/3] 阿里通义 DashScope ===' -ForegroundColor Cyan
 $qwenUrl = 'https://help.aliyun.com/zh/model-studio/qwen-tts-voice-list'
 $r = Invoke-WebRequest -Uri $qwenUrl -TimeoutSec 30 -SkipHttpErrorCheck
 if ($r.StatusCode -ne 200) {
@@ -67,7 +67,7 @@ if ($r.StatusCode -ne 200) {
 
 # ── 2. 火山引擎 ─────────────────────────────────────────────────────────────
 Write-Host ''
-Write-Host '=== [2/2] 火山引擎（豆包语音合成）===' -ForegroundColor Cyan
+Write-Host '=== [2/3] 火山引擎（豆包语音合成）===' -ForegroundColor Cyan
 
 # 第一步：把 URL 里的数字 id 换成官方 API 要的 Code
 $libId = '6561'
@@ -120,6 +120,45 @@ if (-not $libCode -or -not $docCode) {
   $uniq = $real | Sort-Object type -Unique
   $uniq | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $outDir 'volcengine-voices-full.json') -Encoding utf8
   Write-Host "  ✓ 解析 $($rows.Count) 条，剔除情感表后 $($real.Count) 条，去重后 $($uniq.Count) 条 -> volcengine-voices-full.json" -ForegroundColor Green
+
+  # 顺带抓「模型列表」文档（火山的模型 = X-Api-Resource-Id 头）
+  $mlApi = "https://docs.volcengine.com/api/doc/getDocDetail?LibraryCode=$libCode&DocumentCode=model-list"
+  try {
+    $ml = (Invoke-WebRequest -Uri $mlApi -TimeoutSec 25 -SkipHttpErrorCheck).Content | ConvertFrom-Json
+    $mlmd = $ml.Result.MDContent
+    if ($mlmd) {
+      $mlmd | Set-Content (Join-Path $outDir 'volcengine-models-official.md') -Encoding utf8
+      Write-Host "  ✓ 模型列表文档 ($($mlmd.Length) 字符) -> volcengine-models-official.md"
+    }
+  } catch {
+    Write-Host '  ⚠ 模型列表文档抓取失败（不影响音色表）' -ForegroundColor Yellow
+  }
+}
+
+# ── 3. 通义：模型列表 ───────────────────────────────────────────────────────
+Write-Host ''
+Write-Host '=== [3/3] 阿里通义 模型列表 ===' -ForegroundColor Cyan
+try {
+  $murl = 'https://help.aliyun.com/zh/model-studio/tts-model'
+  $mr = Invoke-WebRequest -Uri $murl -TimeoutSec 30 -SkipHttpErrorCheck
+  $models = @()
+  foreach ($tb in [regex]::Matches($mr.Content, '<table[\s\S]*?</table>')) {
+    foreach ($row in [regex]::Matches($tb.Value, '<tr[\s\S]*?</tr>')) {
+      $cells = [regex]::Matches($row.Value, '<t[dh][^>]*>([\s\S]*?)</t[dh]>')
+      $vals = @($cells | ForEach-Object { ($_.Groups[1].Value -replace '<[^>]+>', '' -replace '\s+', ' ').Trim() })
+      if ($vals.Count -ge 4 -and $vals[0] -match '^[a-zA-Z][a-zA-Z0-9\-\./]+$') {
+        $models += [pscustomobject]@{
+          id = $vals[0]; api = $vals[1]; clone = $vals[2]; design = $vals[3]
+          instruct = $(if ($vals.Count -ge 5) { $vals[4] } else { '' })
+        }
+      }
+    }
+  }
+  $mu = $models | Sort-Object id -Unique
+  $mu | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $outDir 'dashscope-models.json') -Encoding utf8
+  Write-Host "  ✓ 解析 $($mu.Count) 个模型 -> dashscope-models.json" -ForegroundColor Green
+} catch {
+  Write-Host "  ✗ 通义模型列表抓取失败：$($_.Exception.Message)" -ForegroundColor Red
 }
 
 # ── 未覆盖的服务商提示 ──────────────────────────────────────────────────────
@@ -131,4 +170,5 @@ Write-Host '  MiniMax   : 有官方列音色接口 /v1/get_voice，由 App 运�
 Write-Host '  OpenAI兼容: 音色名极少，直接内置在 AiTtsVoices.ets。'
 Write-Host ''
 Write-Host '完成。' -ForegroundColor Cyan
+
 

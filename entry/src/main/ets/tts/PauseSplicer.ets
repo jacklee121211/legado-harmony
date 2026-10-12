@@ -14,6 +14,89 @@ const MAX_SCALED_PAUSE_MS = 10000;
 const FADE_SEC = 0.002;
 const END_OF_AUDIO_MS = 1e9;
 
+/**
+ * ── 块边界淡入淡出（2026-10-11 新增，治「块间咔哒声」）──────────────────────
+ *
+ * **默认 true = 启用新行为**；设为 false 即完全回退到旧行为（无其它副作用）。
+ *
+ * 为什么需要（真机日志驱动）：
+ *   AI 引擎**每块独立合成**，块与块之间要等下一次网络返回；而系统给我们的
+ *   播放缓冲**只有 20~40ms**（证据：`PcmPlayer.ets:156-158` 真机 162/162 次
+ *   `[GetBufferSize]Buffer size is 960` ⇒ 960B÷2÷24000Hz ≈ 20ms），
+ *   所以块播放完、下一块还没到时会**缓冲欠载（underrun）**。
+ *   欠载时硬件停在**最后一个采样值**上，下一块头部又是**非零起跳**
+ *   ⇒ 波形突变 ⇒ **咔哒爆音**（用户 2026-10-12 实测描述："使用中咔哒声"）。
+ *
+ * 为什么改在这里：
+ *   `applyPauses` 的输出**就是最终送去播放的 PCM**（`TtsEngine.ets:3034`）。
+ *   旧实现在 `points.length === 0` 时**直接 return**（不淡入淡出），
+ *   而"无停顿点"恰恰是短块的常态 ⇒ **块边界完全没有处理**。
+ *   块内切分（有停顿点时）本来就有 2ms 淡入淡出，此处补齐**块首尾**。
+ *
+ * ── 斜坡时长取值（2026-10-12 一轮调参）────────────────────────────────────
+ *  v1 = 2ms：真机反馈「还有咔的一声，但好像好多了」⇒ 未彻底消除，加大。
+ *  v2 = **5ms（当前）**：真机 `docs/日志.md` 实测 `WriteUnderrunEvent` **0 次**
+ *      （修复前同场景为 3 次），但用户仍能听到残余咔声 ⇒ 继续加斜坡。
+ *  为什么独立于块内的 `FADE_SEC`：两者的听感约束不同 ——
+ *      块内斜坡作用在**停顿静音的边缘**（静音本身无能量，2ms 足够且更自然）；
+ *      块边界斜坡作用在**有声段的首尾**（需更缓的包络才能压住爆音）。
+ *      若共用一个常量，调块边界会误伤块内停顿的自然度。
+ */
+const EDGE_FADE_ENABLED: boolean = true;
+
+/**
+ * 块边界斜坡时长（秒）。
+ *
+ * ⚠️ 调参注意（用真机日志的块大小核算过，`docs/日志.md` 的 `ai pcm: samples=`）：
+ *   最短块 1361ms ⇒ 首尾各 5ms 共占 **0.73%**，仍听不出吃字；
+ *   若继续加到 10ms 则占 1.47%，短块上开始有"字头发闷"的风险。
+ */
+const EDGE_FADE_SEC: number = 0.008;
+
+/**
+ * 对整段 PCM 的首尾施加淡入淡出（块边界去咔哒）。
+ *
+ * - **只改极短的头部与尾部**（各 {@link EDGE_FADE_SEC}），中段逐样本不变；
+ * - 原地修改，不产生新数组（大块 PCM 下避免多一次拷贝）；
+ * - 斜坡用**升余弦**而非线性：线性斜坡的**一阶导数在两端突变**，听感上仍可能
+ *   留下轻微「嗒」；升余弦包络两端导数为 0，更干净（v2 从线性改为余弦）。
+ *
+ * @param pcm S16LE 单声道样本
+ * @param sampleRate 采样率（用于把 EDGE_FADE_SEC 换算成样本数）
+ */
+export function applyEdgeFade(pcm: Int16Array, sampleRate: number): void {
+  if (!EDGE_FADE_ENABLED) {
+    return;
+  }
+  const len: number = pcm.length;
+  if (len <= 1) {
+    return;
+  }
+  const n: number = Math.max(1, Math.round(EDGE_FADE_SEC * sampleRate));
+  if (len < n * 2) {
+    // 极短块（比两段斜坡还短）：整块做成一个三角包络，避免中间出现突跳
+    for (let k = 0; k < len; k++) {
+      const pos: number = len === 1 ? 1 : k / (len - 1);
+      pcm[k] = Math.round(pcm[k] * pos);
+    }
+    return;
+  }
+  // 淡入：升余弦 g = 0.5 - 0.5*cos(pi*t)，t 从 0 到 1（两端导数均为 0）
+  for (let k = 0; k < n; k++) {
+    const t: number = k / n;
+    const g: number = 0.5 - 0.5 * Math.cos(Math.PI * t);
+    pcm[k] = Math.round(pcm[k] * g);
+  }
+  // 淡出：与淡入对称
+  for (let k = 0; k < n; k++) {
+    const i: number = len - 1 - k;
+    const t: number = k / n;
+    const g: number = 0.5 - 0.5 * Math.cos(Math.PI * t);
+    pcm[i] = Math.round(pcm[i] * g);
+  }
+}
+
+
 export interface PauseRun {
   start: number;
   end: number;
@@ -256,6 +339,9 @@ export function applyPauses(pcm: Int16Array, sampleRate: number, points: PausePo
     if (vol < 1) {
       applyVolume(pcm, vol);
     }
+    // ⚠️ 2026-10-11：「无停顿点」是短块常态，旧代码在此**直接返回、不做任何边缘处理**
+    //   ⇒ 块首尾是非零起跳/截断 ⇒ 块间欠载时产生咔哒爆音。这里补上。
+    applyEdgeFade(pcm, sampleRate);
     const r0: SpliceResult = { pcm: pcm, sampleRate: sampleRate, timeMap: timeMap };
     return r0;
   }
@@ -266,6 +352,7 @@ export function applyPauses(pcm: Int16Array, sampleRate: number, points: PausePo
     newLen += merged[i].durationSamples - (merged[i].toSample - merged[i].fromSample);
   }
   if (newLen <= 0) {
+    applyEdgeFade(pcm, sampleRate);
     const r1: SpliceResult = { pcm: pcm, sampleRate: sampleRate, timeMap: timeMap };
     return r1;
   }
@@ -292,6 +379,9 @@ export function applyPauses(pcm: Int16Array, sampleRate: number, points: PausePo
   }
   const tailLen = srcLen - srcPos;
   copySegment(out, dstPos, pcm, srcPos, tailLen, dstPos > 0, false, fade, vol);
+  // ⚠️ 2026-10-11：`copySegment` 的 fadeIn 依赖 `dstPos > 0`，**首段不淡入**；
+  //   末尾段 fadeOut=false。这两处正是**块的首尾边界** ⇒ 在此统一补齐淡入淡出。
+  applyEdgeFade(out, sampleRate);
   const result: SpliceResult = { pcm: out, sampleRate: sampleRate, timeMap: timeMap };
   return result;
 }

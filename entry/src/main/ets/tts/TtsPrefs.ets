@@ -77,6 +77,13 @@ export interface TtsPrefs {
   aiBaseUrl: string;       // OpenAI 兼容接口，如 https://api.deepseek.com/v1
   aiApiKey: string;
   aiModel: string;         // 如 deepseek-chat
+  /**
+   * AI 男女声（说话人识别）**方案列表**（JSON 数组，见 `tts/ai/AiProfile.ets`
+   * 的 `AiSpeakerProfile`）。空串 = 没有方案。
+   * ⚠️ 与 `aiProfiles`（TTS 方案）**分开存**：识别方案**不含音色**，
+   *    切换它不触碰任何音色槽（用户 2026-10-12 拍板，理由见该接口注释）。
+   */
+  aiSpeakerProfiles: string;
   // ── AI 听书（用户自接入 TTS，2026-10-09 新增；与上面的大模型接口是**两套配置**）──────
   // ⚠️ 上面 aiBaseUrl/aiApiKey/aiModel 服务「AI 男女声识别」（对话大模型）；
   //    下面 aiTts* 服务「AI 语音合成」（TTS）。UI 必须分块显示，否则用户必然填串。
@@ -140,6 +147,7 @@ export function defaultTtsPrefs(): TtsPrefs {
     aiBaseUrl: '',
     aiApiKey: '',
     aiModel: '',
+    aiSpeakerProfiles: '',
     // ── AI 听书默认值（全部"关/空"，老用户升级后行为与今天完全一致）──────────
     aiTtsEnabled: false,
     aiProviderId: 'openai',
@@ -259,6 +267,7 @@ export function normalizeTtsPrefs(raw: object): TtsPrefs {
     aiBaseUrl: asString(o['aiBaseUrl'], d.aiBaseUrl),
     aiApiKey: asString(o['aiApiKey'], d.aiApiKey),
     aiModel: asString(o['aiModel'], d.aiModel),
+    aiSpeakerProfiles: asString(o['aiSpeakerProfiles'], d.aiSpeakerProfiles),
     // ── AI 听书（宽松读取：允许空串）────────────────────────────────────────
     aiTtsEnabled: asBool(o['aiTtsEnabled'], d.aiTtsEnabled),
     aiProviderId: asString(o['aiProviderId'], d.aiProviderId),

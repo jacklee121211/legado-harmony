@@ -1,20 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-「同一页 · 三段材质」拼图生成器（2026-10-07）
-==============================================
-需求（用户原话）：
+「同一页 · 三段材质」拼接模块（2026-10-07；2026-10-12 改为**仅供复用**）
+======================================================================
+需求（用户原话，2026-10-07）：
     「整个一个图片，比如说我们找到其中一张，这一张分三份，上三分之一、中三分之一、
       下三分之一；我们三张图片都是一样的内容、一样的布局，那么**图1 是上、图2 是中、
       图3 是下**，拼在一起是**一个完整的页面**。」
     「不要顶部状态栏，但是内容要显示全。」
-    「文字按我的来，不用你瞎弄。」⇒ 文案 = 用户 6 条文案里的材质那条（原文照抄）。
 
 做法：
   ① 三张截图同内容同版式 ⇒ 取**同一个正文区**（顶栏整条去掉），按 y 三等分；
   ② 三个切点**吸附到正文行间隙**（`probe_lines.py` 实测：行高 56px、行间隙 56~118px），
      避免把某一行汉字切成两半 —— 三段拼起来的仍然是一页**完整可读**的正文；
   ③ 第 1 段取图1、第 2 段取图2、第 3 段取图3，上下相接 = 一整页，
-     页面上三分之一/中三分之一/下三分之一分别是三种材质 ⇒「同样位置、不同材质」。
+      页面上三分之一/中三分之一/下三分之一分别是三种材质 ⇒「同样位置、不同材质」。
+
+⚠️ 2026-10-12 变更（用户指示）：
+   独立海报「同一页-三段材质」**不再单独出图** —— 它并入了「超多材质」那张，
+   改为**双层倾斜叠加**：上层 = 更多材质弹窗（选择窗），下层 = 这一页（效果）。
+   ⇒ 本模块**只保留 `stitched_page()` 供 `make_posters.material_stack()` 调用**。
 
 实测边界（源图 1320×2848，脚本 `probe_chrome.py` / `probe_lines.py`）：
   · 阅读器顶栏（'< preface' 白色圆角条）y ≈ 155..320 ⇒ 正文从 **322** 起
@@ -24,8 +28,7 @@
   ⇒ 切点 1 取 **964**（落在行4与行5之间）、切点 2 取 **1600**（落在行9与行10之间）
 
 用法：
-    python promo/make_material_stitch.py                 # 1080x1920
-    python promo/make_material_stitch.py --size 1080x1440
+    python promo/make_material_stitch.py --size 1080x1440   # 只导出拼好的那一页（调试用）
 """
 
 import argparse
@@ -67,7 +70,6 @@ C1 = (16, 12, 8)
 C2 = (74, 59, 44)
 ACCENT = (232, 199, 155)
 
-
 def stitched_page():
     """把三张截图各取一段拼成**一整页**（同一内容、同一版式，三段三种材质）
 
@@ -82,7 +84,6 @@ def stitched_page():
         page.paste(shot, (0, top - CONTENT_TOP))
     return page
 
-
 def base_canvas(size):
     canvas = P.diagonal_gradient(size, C1, C2).convert('RGBA')
     canvas = Image.alpha_composite(canvas, P.top_shade(size))
@@ -93,7 +94,6 @@ def base_canvas(size):
     bd.ellipse((-W * 0.30, H * 0.42, W * 0.40, H * 0.92), fill=ACCENT + (52,))
     canvas = Image.alpha_composite(canvas, blobs.filter(ImageFilter.GaussianBlur(int(W * 0.14))))
     return Image.alpha_composite(canvas, P.noise_layer(size))
-
 
 def header_block(canvas, size, scale):
     """品牌胶囊 + 主标题 + 强调条 + 副标题（与第一套海报同款排版；文案用用户原文）"""
@@ -130,7 +130,6 @@ def header_block(canvas, size, scale):
 
     return Image.alpha_composite(canvas, layer), sy + P.text_wh(d, SUB, sub_f)[1]
 
-
 def compose(size):
     W, H = size
     scale = W / 1080.0
@@ -166,26 +165,19 @@ def compose(size):
                                            width=max(2, s(3)))
     return Image.alpha_composite(canvas, edge).convert('RGB')
 
-
 def main():
+    """**不再产出海报**，只把拼好的那一页导出到 out/<W>x<H>/ 供人工核对。"""
     ap = argparse.ArgumentParser()
-    ap.add_argument('--size', default='1080x1920')
+    ap.add_argument('--size', default='1080x1440')
     args = ap.parse_args()
     W, H = (int(v) for v in args.size.lower().split('x'))
 
     out_dir = os.path.join(OUT, f'{W}x{H}')
     os.makedirs(out_dir, exist_ok=True)
-    img = compose((W, H))
-    base = os.path.join(out_dir, '同一页-三段材质')
-    img.save(base + '.png')
-    img.save(base + '.jpg', quality=94, subsampling=1, optimize=True)
-    print(f'同一页-三段材质  {W}x{H}  PNG {os.path.getsize(base + ".png") // 1024}KB  '
-          f'JPG {os.path.getsize(base + ".jpg") // 1024}KB')
-    # 顺带把"拼好的那一页"单独存一份（真机对比用/二次加工用）
     page = stitched_page()
-    page.save(os.path.join(out_dir, '同一页-三段材质_原图.jpg'), quality=95, subsampling=1)
-    print(f'同一页-三段材质_原图  {page.size[0]}x{page.size[1]}')
-
+    path = os.path.join(out_dir, '同一页-三段材质_原图.jpg')
+    page.save(path, quality=95, subsampling=1)
+    print(f'同一页-三段材质_原图  {page.size[0]}x{page.size[1]}  -> {path}')
 
 if __name__ == '__main__':
     main()

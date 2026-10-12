@@ -37,7 +37,7 @@ import { aiVoiceOptionsFor } from './ai/AiTtsVoices';import { AI_CANCELLED_MSG }
 import { AI_TARGET_SAMPLE_RATE, parseWavPcm, shapePcmToTarget } from './PcmShape';
 import { ListenUnlock } from '../common/utils/ListenUnlock';
 import { computePausePoints, applyPauses, buildSentenceTimeline, buildLyricTimeline, lookupOrigMs,
-  SentenceMark } from './PauseSplicer';
+  SentenceMark, SpliceResult, TimeMapEntry } from './PauseSplicer';
 import { PcmPlayer, INTERRUPT_REBUILD_WHEN_STUCK } from './PcmPlayer';
 import { loadAppIconCover } from './SessionCover';
 import { PreferencesUtil } from '@pura/harmony-utils';
@@ -286,6 +286,36 @@ function netRetryBackoffMs(attempt: number): number {
  */
 const AI_PREFETCH_AHEAD: number = 2;
 const AI_RETRY_ATTEMPTS: number = 2;
+
+/**
+ * ── 预解码（把播放点的本地开销前移到预取阶段）2026-10-12 ────────────────────
+ *
+ * **true = 启用**（治「块间咔哒声」）；false = 完全回退到"播放点即时解码"旧行为。
+ *
+ * 问题（真机日志驱动，`docs/日志.md` 10:32:15~35）：
+ *   预取原本**只做网络合成 + 落盘**，而「读盘 → 解码 → PcmShape 归一化 →
+ *   computePausePoints → applyPauses 拼接 → 建时间轴」全部挤在**播放点**串行做。
+ *   实测这段耗时 ≈ **147~152ms**：
+ *     `10:32:17.965 chunk writeMs=1236`（第 1 块 1.36s 播完）
+ *     `10:32:18.112 ai pcm samples=63382`（下一块 147ms 后才就绪）
+ *   而系统播放缓冲**只有 20ms**（`PcmPlayer.ets:156-158`，真机 162/162 次
+ *   `[GetBufferSize]Buffer size is 960`）⇒ 缓冲被抽干 ⇒ 硬件停在末采样值、
+ *   下一块非零起跳 ⇒ **咔哒**。
+ *
+ * 为什么不是"加长淡入淡出"：淡入淡出只能让**起跳变缓**，消除不了 150ms 的
+ *   **静默空档**本身。用户实测把斜坡从 2ms 加到 8ms 后"咔变小但仍在" —— 印证了
+ *   这是**机制问题**（衔接时序），不是波形整形问题。
+ *
+ * 参考项目为何无此问题：它用 Web Audio **排播**（`src.start(startAt)`，
+ *   `ColorTxt-main/src/renderer/src/services/voiceRead/voiceReadLinePlayer.ts:1826-1839`），
+ *   `dashScheduledEnd` 累加 ⇒ 接缝采样级精确、空档结构上不存在。
+ *   鸿蒙**没有** `AudioContext`（SDK `@ohos.multimedia.audio.d.ts` 仅推模式 `write()` /
+ *   拉模式 `writeData`，且拉模式已被本工程实测否决，`PcmPlayer.ets:8-13`）
+ *   ⇒ 无法照搬排播，只能靠「提前备好」逼近同样效果。
+ *
+ * 回退：改 false 即回到旧行为，无其它残留。
+ */
+const PREDECODE_AHEAD: boolean = true;
 /**
  * AI 引擎的**单块上限**（单位制：CJK=2）——800 → 500（2026-10-10，真机延迟驱动）。
  * 依据：① 参考项目对非 Edge 引擎用的就是 500（`voiceReadTextChunks.ts:23-27`）；
@@ -704,6 +734,46 @@ interface QueueChunk {
    */
   emotion: string;
   voiceDirect: string;
+  /**
+   * ── 预解码产物（2026-10-12，治「块间咔哒声」）──────────────────────────
+   *
+   * 由来：预取（{@link TtsEngine.prefetch}）原本**只做网络合成 + 落盘**，
+   *   而「读盘 → 解码 → PcmShape 归一化 → computePausePoints → applyPauses 拼接」
+   *   全部挤在**播放点**串行完成。真机日志实测这段耗时 ≈ **147~152ms**
+   *   （`docs/日志.md` 10:32:17.965 块播完 → 10:32:18.112 下一块才 `ai pcm` 就绪），
+   *   而系统给我们的播放缓冲**只有 20ms**（见 `PcmPlayer.ets:156-158`）
+   *   ⇒ 缓冲必然被抽干 ⇒ 硬件停在最后一个采样值、下一块非零起跳 ⇒ **咔哒**。
+   *
+   * 修法：把这段本地处理**提前到预取阶段**，播放点直接取用（命中即 0 等待）。
+   * 参考项目之所以无此问题，是因为它用 Web Audio 的**排播**（`src.start(startAt)`，
+   *   `voiceReadLinePlayer.ts:1826-1839`）让接缝采样级精确；鸿蒙无 `AudioContext`
+   *   （SDK `@ohos.multimedia.audio.d.ts` 只有推模式 `write()` / 拉模式 `writeData`，
+   *   且拉模式已被本工程实测否决，见 `PcmPlayer.ets:8-13`）
+   *   ⇒ 只能靠「提前备好」达到同一效果。
+   *
+   * 三者必须**同生同灭**（同一次预解码产出），否则会出现"PCM 是新的、时间轴是旧的"
+   * 这类错位；因此用一个对象整体挂载，`null` = 未预解码（播放点自行计算）。
+   */
+  prepared: PreparedChunk | null;
+}
+
+/**
+ * 预解码产物：播放点所需的全部本地计算原料。
+ * ⚠️ 与 `QueueChunk.text` **强绑定** —— 文本变了（如说话人识别改写音色后重新合成）
+ *    必须整体丢弃重建，不能只更新其中一项。
+ */
+interface PreparedChunk {
+  /** 已拼接完成的最终 PCM（S16LE 单声道） */
+  pcm: Int16Array;
+  sampleRate: number;
+  /** 原始时间轴 → 拼接后时间轴的映射（句内字符进度用，`TtsEngine.ets:3167`） */
+  timeMap: TimeMapEntry[];
+  /** 句级时间轴（进度条/浮条用） */
+  timeline: SentenceMark[];
+  /** 歌词行时间轴（LRC 用，粒度可能更小） */
+  lyricMarks: SentenceMark[];
+  /** 预解码所依据的缓存文件路径（换音色/换配置后路径变 ⇒ 自动失效） */
+  fromPath: string;
 }
 
 /** 当前朗读位置（ReaderKit 坐标系：spine / 块节点 / 节点内字符） */
@@ -776,6 +846,14 @@ export class TtsEngine {
   private static player: PcmPlayer | null = null;
 
   private static synthInFlight: Map<string, Promise<number>> = new Map();
+
+  /**
+   * 在飞的**预解码**任务（键 = 缓存文件路径），2026-10-12 新增。
+   * 为什么需要：`prepareChunk` 有 4 个调用点，同一块可能被同时发起 ⇒ 重复解码。
+   * 键用缓存路径（已含配置指纹）⇒ 换音色/换模型自动换键，不会误等旧任务。
+   * 生命周期：任务 settle 即删（见 `prepareChunk` 的 finally）。
+   */
+  private static prepInFlight: Map<string, Promise<void>> = new Map();
   /**
    * 在飞的 AI 合成取消令牌（键 = 缓存文件路径），2026-10-09 新增。
    * 为什么需要：AI 合成走 HTTP，失败会被上层当成"网络故障"进静音垫片；
@@ -1612,7 +1690,9 @@ export class TtsEngine {
     TtsEngine.deactivateSession();
   }
 
-  /** 朗读中跳章（UI 目录/上一章/下一章），可带章内起始位置（ReaderKit 坐标） */
+  /**
+   * 朗读中跳章（UI 目录/上一章/下一章），可带章内起始位置（ReaderKit 坐标）
+   */
   static seekToChapter(spineIndex: number, startNode: number = -1, startChar: number = 0): void {
     if (TtsEngine.state === 'stopped' || TtsEngine.handler === null) {
       return;
@@ -1623,6 +1703,65 @@ export class TtsEngine {
     TtsEngine.run(gen, spineIndex, startNode, startChar).catch((e: Error): void => {
       hilog.error(DOMAIN, TAG, 'seek run err %{public}s', e.message);
     });
+  }
+
+  /**
+   * ── 朗读中**切换 TTS 引擎**（2026-10-12 用户要求）─────────────────────────
+   *
+   * 用户原话：
+   *   「我们在听书模式下，ai 听书按钮是灰色的无法点击，本质上我们是限制用户在 tts 之间
+   *     切换的误触，现在我觉得需要你开放，但是增加个确定弹窗，比如用户用华为 tts 听书，
+   *     然后突然想用 ai 听说，点击这个开启，弹窗，是否切换之 ai 听书模式，用户选择是，
+   *     则关闭华为 tts，ai 听书接管，直接进入 ai 听书模式，做好持续化管理。反之亦是相同」
+   *
+   * **调用前提**：UI 已弹确认框、用户已点「是」；且 `prefs` 里的引擎选择**已经改好**
+   *   （本方法只负责"让正在跑的播放跟着改"，不负责改配置）。
+   *
+   * ── 为什么能无缝（关键设计）─────────────────────────────────────────────
+   * 缓存键 `cachePathFor` 的**首位就是 engineId**（`TtsEngine.ets:2427`）
+   *   ⇒ 换引擎后 `cachePathFor` 必然给出新路径，**绝不会命中上一引擎的音频**，
+   *     天然不会"华为的声音和 AI 的声音串在一起"。
+   * 故本方法只需把**运行中的播放**从当前位置重启一次：
+   *   ① 记下当前进度（章 + 块 + 节点 + 字符）；
+   *   ② 走既有的 `seekToChapter` 机制（同"跳章"路径，已被真机反复验证）；
+   *   ③ 从头重建队列（`run()` 内部 `buildQueue`）⇒ 新引擎的新缓存键。
+   *
+   * ── 为什么复用 `seekToChapter` 而不是自己写 ───────────────────────────
+   * 它已经处理好了：`sessionGen` 递增（作废旧回调）、`abortPlay`（停当前块）、
+   *   `setState('playing')`、`run()` 重入。自己再写一套必然漏掉某步。
+   *
+   * ── 持续化管理（用户明确要求）──────────────────────────────────────────
+   * 切换**不结束会话语义**：不调 `stop()`（那会 `clearSleepTimer` + 停后台任务 +
+   *   `deactivateSession`，等于"退出听书再重进"）。因此：
+   *   · 睡眠定时**保留**（用户设的 20 分钟不该因为换引擎而丢）；
+   *   · 后台长时任务**保留**；
+   *   · 播控中心会话**保留**（歌名/封面/进度条不闪断）。
+   *   ⇒ 对用户而言就是"声音换了个嗓子，书还在念"。
+   *
+   * ⚠️ 若处于 `stopped`（还没开播），本方法**什么都不做** ——
+   *    那种场景下 UI 只需改配置，下次开播自然是新引擎（无需重启播放）。
+   */
+  static switchEnginePreservingPosition(): void {
+    if (TtsEngine.state === 'stopped' || TtsEngine.handler === null) {
+      // 未开播：无需迁移，配置改动会在下次 start() 时生效
+      return;
+    }
+    // 记下当前位置：章 + 块内节点/字符（与 `seekToSegment` 用的是同一套锚点）
+    const spine: number = TtsEngine.chapterIndex;
+    const chunks = TtsEngine.currentChunks;
+    const seg: number = TtsEngine.playingSegIndex;
+    let node: number = TtsEngine.playingNode;
+    let char: number = TtsEngine.playingChar;
+    if (chunks !== null && seg >= 0 && seg < chunks.length) {
+      // 以**块**为准（比 playingNode/Char 更可靠：块本身就带 nodeIndex/charStart）
+      node = chunks[seg].nodeIndex;
+      char = chunks[seg].charStart;
+    }
+    hilog.info(DOMAIN, TAG,
+      'engine switch: spine=%{public}d seg=%{public}d node=%{public}d char=%{public}d',
+      spine, seg, node, char);
+    // 复用跳章路径重启（内部会 ++sessionGen / abortPlay / setState / run）
+    TtsEngine.seekToChapter(spine, node, char);
   }
 
   /**
@@ -1928,7 +2067,7 @@ export class TtsEngine {
         TtsEngine.playingNode = chunks[i].nodeIndex;
         TtsEngine.playingChar = chunks[i].charStart;
         TtsEngine.cb?.onSegment(i, chunks.length, chunks[i].text);
-        // 预取后续块的合成（只写缓存，不解码）
+        // 预取后续块的合成（网络 + 落盘）
         // T2 新路径：预取 2 → NET_PREFETCH_AHEAD(4) 块，加厚熄屏挂起期间的安全垫
         //（官方口径：连续 5 次失败才转 paused；underrun 即可能被系统冻结，见 TTS_NET_RESILIENCE 注释）
         const prefetchAhead: number = TtsEngine.activeEngineId() === 'ai'
@@ -1936,6 +2075,18 @@ export class TtsEngine {
           : (TTS_NET_RESILIENCE ? NET_PREFETCH_AHEAD : 2);
         for (let k = 1; k <= prefetchAhead; k++) {
           TtsEngine.prefetch(chunks, i + k);
+        }
+        // ── 预解码（2026-10-12，治「块间咔哒声」）────────────────────────────
+        // 上面 `prefetch` 只保证"网络产物已落盘"，播放点仍需 ~150ms 做
+        // 「读盘+解码+拼接+建时间轴」⇒ 缓冲(20ms)被抽干 ⇒ 咔哒。
+        // 这里把**下一块**的本地处理也提前做完，播放点直接命中（`prep-hit`）。
+        // ⚠️ 顺序要求：必须在 `TtsEngine.playChunk(chunks[i])` **之前**发起，
+        //    且**不 await**（否则反而阻塞当前块起播）；下一块通常要 1s+ 后才播，
+        //    这点时间足够解码完成，届时 `takePrepared` 自然命中。
+        //    若未及完成 ⇒ `takePrepared` 返回 null，播放点自行计算（正确性不变）。
+        if (PREDECODE_AHEAD && i + 1 < chunks.length) {
+          const nxt = chunks[i + 1];
+          void TtsEngine.prepareChunk(nxt);
         }
         try {
           // T2：断网在预取阶段已实锤（lastNetFailAt 新鲜）⇒ 播放点跳过 doSynth 的
@@ -2085,6 +2236,14 @@ export class TtsEngine {
           i++;
           continue;
         }
+        // ── 预解码当前块（2026-10-12）────────────────────────────────────────
+        // 走到这里说明"网络产物已就绪"。此时**同步等**预解码完成是**值得**的：
+        //  · 命中（预取阶段已做完）⇒ 0 开销，直接进 playChunk；
+        //  · 未命中（首块、跳转、刚合成完）⇒ 这 ~150ms 本来也要在 playChunk 里花，
+        //    提前到这里做**不增加总耗时**，而且能让 playChunk 走同一条快路径
+        //    （避免"这次没预解码、下次又预解码"的两套时序）。
+        // ⚠️ 必须 await：它是纯计算（无网络），await 只是让下面 playChunk 命中产物。
+        await TtsEngine.prepareChunk(chunk);
         // 3. 解码 + 停顿拼接 + PCM 播放（completed 或被打断时 resolve）
         try {
           await TtsEngine.playChunk(chunk, i, chunks.length);
@@ -2172,7 +2331,8 @@ export class TtsEngine {
             rate: 0,
             ch: 1,
             emotion: '',
-            voiceDirect: ''
+            voiceDirect: '',
+            prepared: null
           };          chunks.push(chunk);
         }
       }
@@ -2846,7 +3006,9 @@ export class TtsEngine {
       return;
     }
     const c = chunks[index];
+    // 已有缓存（含"上一次预取刚合成完"的情形）：仍要确保**预解码**跟上
     if (c.cachePath.length > 0) {
+      void TtsEngine.prepareChunk(c);
       return;
     }
     if (!hasSpeakableText(c.text)) {
@@ -2862,6 +3024,9 @@ export class TtsEngine {
       if (r === 1) {
         c.cachePath = path;
         TtsEngine.lastNetFailAt = 0; // 合成成功 ⇒ 网络在通，清除断网标记
+        // 合成产物已落盘 ⇒ 立刻做预解码（这是本次"治咔哒"的关键一环：
+        // 把本地处理也搬到预取阶段，播放点才能 0 等待）
+        void TtsEngine.prepareChunk(c);
       }
       return r;
     }).catch((e: Error): number => {
@@ -2883,6 +3048,135 @@ export class TtsEngine {
     task.finally((): void => {
       TtsEngine.synthInFlight.delete(path);
     });
+  }
+
+  /**
+   * 取用预解码产物（校验后返回；失效则返回 null 并顺手清空）。
+   *
+   * 失效条件（任一成立即作废）：
+   *  · 产物为空 / PCM 为空；
+   *  · `fromPath` 与当前 `chunk.cachePath` 不一致 —— 覆盖"换音色/换模型/换语速"
+   *    导致缓存键变化的情形（这些都进 `aiConfigFingerprint`）。
+   *
+   * ⚠️ 取用后**不清空** `chunk.prepared`：该块可能被重播/回退再次播放
+   *    （`playChunk` 可对同一块多次调用），保留可省一次重解码。
+   *    真正需要作废时由 {@link TtsEngine.prepareChunk} 覆盖写入。
+   */
+  private static takePrepared(chunk: QueueChunk): PreparedChunk | null {
+    if (!PREDECODE_AHEAD) {
+      return null;
+    }
+    const p: PreparedChunk | null = chunk.prepared;
+    if (p === null) {
+      return null;
+    }
+    if (p.pcm.length === 0 || p.fromPath !== chunk.cachePath) {
+      chunk.prepared = null;
+      return null;
+    }
+    return p;
+  }
+
+  /**
+   * 预解码一块（**在预取阶段调用**，把播放点的本地开销前移）。
+   *
+   * 做的事与 {@link TtsEngine.playChunk} 的"即时计算"分支**逐字相同**：
+   *   读缓存 → 按 fmt 解码归一化 → computePausePoints → applyPauses → 两条时间轴。
+   *
+   * 与 `playChunk` 的差异（刻意为之）：
+   *  · **只算不播**，产出挂到 `chunk.prepared`；
+   *  · 任何异常都**吞掉并返回**（预解码是纯优化，失败不该影响主流程 ——
+   *    播放点发现自己没产物时会自行算一遍，行为正确只是慢）；
+   *  · **不写 chunk.words**（sidecar 由播放点的 `loadWordsSidecar` 负责，
+   *    避免两处都写导致状态分裂）。
+   *
+   * 幂等：已存在有效产物则直接返回，不重复解码。
+   */
+  private static async prepareChunk(chunk: QueueChunk): Promise<void> {
+    if (!PREDECODE_AHEAD) {
+      return;
+    }
+    if (chunk.cachePath.length === 0) {
+      return;
+    }
+    const exist: PreparedChunk | null = chunk.prepared;
+    if (exist !== null && exist.fromPath === chunk.cachePath && exist.pcm.length > 0) {
+      return;
+    }
+    // ── 并发去重 ──────────────────────────────────────────────────────────
+    // `prepareChunk` 有 4 个调用点，同一块可能被**同时**发起多次
+    // （预取 `.then` / 播放循环的 `void prepareChunk(nxt)` / 播放点的 `await`）。
+    // 不去重会重复解码同一块（大块可达 13s 音频，纯浪费 CPU 与内存）。
+    // 键用 `cachePath`：它已含"服务商/模型/音色/语速/情绪/角色"指纹
+    // （见 `cachePathFor`）⇒ 配置一变键就变，不会误命中旧任务。
+    const inflightKey: string = chunk.cachePath;
+    const running: Promise<void> | undefined = TtsEngine.prepInFlight.get(inflightKey);
+    if (running !== undefined) {
+      // 已有同键任务在跑 ⇒ 等它，而不是再解一遍
+      await running;
+      return;
+    }
+    const task: Promise<void> = TtsEngine.doPrepareChunk(chunk);
+    TtsEngine.prepInFlight.set(inflightKey, task);
+    try {
+      await task;
+    } finally {
+      TtsEngine.prepInFlight.delete(inflightKey);
+    }
+  }
+
+  /** `prepareChunk` 的实际工作体（外层负责幂等、去重与异常兜底） */
+  private static async doPrepareChunk(chunk: QueueChunk): Promise<void> {
+    const prefs = TtsEngine.prefs;
+    if (prefs === null) {
+      return;
+    }
+    try {
+      if (!TtsEngine.fileExists(chunk.cachePath)) {
+        return;
+      }
+      // sidecar 里存着词表与 AI 音频规格，停顿拼接与时间轴都依赖它
+      TtsEngine.loadWordsSidecar(chunk);
+      const stat = fs.statSync(chunk.cachePath);
+      const raw = new ArrayBuffer(stat.size);
+      const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
+      fs.readSync(f.fd, raw);
+      fs.closeSync(f.fd);
+      let decoded: PcmDecodeResult;
+      if (chunk.fmt.length > 0) {
+        decoded = await TtsEngine.decodeAiAudio(raw, chunk);
+      } else if (chunk.cachePath.endsWith('.wav')) {
+        decoded = { pcm: raw.slice(44), sampleRate: LOCAL_TTS_SAMPLE_RATE, channels: 1 };
+      } else {
+        decoded = await decodeMp3ToPcm(raw);
+      }
+      if (decoded.pcm.byteLength === 0) {
+        return;
+      }
+      const pcm = new Int16Array(decoded.pcm);
+      const points = computePausePoints(chunk.text, chunk.words);
+      const spliced = applyPauses(pcm, decoded.sampleRate, points,
+        prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate, prefs.volume);
+      const timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
+      const lyricMarks = LRC_CLAUSE_SPLIT
+        ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap)
+        : timeline;
+      const out: PreparedChunk = {
+        pcm: spliced.pcm,
+        sampleRate: spliced.sampleRate,
+        timeMap: spliced.timeMap,
+        timeline: timeline,
+        lyricMarks: lyricMarks,
+        fromPath: chunk.cachePath
+      };
+      chunk.prepared = out;
+      hilog.info(DOMAIN, TAG, 'prep-done: samples=%{public}d ms=%{public}d',
+        out.pcm.length, Math.round(out.pcm.length / out.sampleRate * 1000));
+    } catch (e) {
+      // 预解码失败 = 放弃优化，播放点会自行计算（正确性不受影响）
+      hilog.warn(DOMAIN, TAG, 'prep-fail (fallback to inline): %{public}s',
+        e instanceof Error ? e.message : String(e));
+    }
   }
 
   // ---------- 解码 + 拼接 + 播放 ----------
@@ -3005,50 +3299,65 @@ export class TtsEngine {
     }
     // 缓存命中的块：从 sidecar 恢复词表（停顿拼接与句级显示的原料）+ AI 音频规格
     TtsEngine.loadWordsSidecar(chunk);
-    // 读缓存音频（三引擎：local=.wav 直读；edge=.mp3 解码；ai=按 sidecar 的 fmt 分派）
-    const stat = fs.statSync(chunk.cachePath);
-    const raw = new ArrayBuffer(stat.size);
-    const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
-    fs.readSync(f.fd, raw);
-    fs.closeSync(f.fd);
-    let decoded: PcmDecodeResult;
-    if (chunk.fmt.length > 0) {
-      // AI 产物：按 sidecar 记录的格式解码并归一化（方案 §5.4/§5.5）
-      decoded = await TtsEngine.decodeAiAudio(raw, chunk);
-    } else if (chunk.cachePath.endsWith('.wav')) {
-      // 老路径（本地引擎）：44 字节标准 WAV 头 + 固定 16k/单声道 —— 行为逐字不变
-      decoded = {
-        pcm: raw.slice(44),
-        sampleRate: LOCAL_TTS_SAMPLE_RATE,
-        channels: 1
-      };
+    // ── 2026-10-12：预解码产物优先（治「块间咔哒声」）─────────────────────────
+    // 预取阶段已把「读盘 → 解码 → 归一化 → 拼接 → 时间轴」全部做完 ⇒ 播放点 0 等待。
+    // 未命中（首次播放点、或产物因换音色失效）⇒ 走下面的即时计算，行为与改动前逐字一致。
+    const prep: PreparedChunk | null = TtsEngine.takePrepared(chunk);
+    let spliced: SpliceResult;
+    let timeline: SentenceMark[];
+    let lyricMarks: SentenceMark[];
+    if (prep !== null) {
+      hilog.info(DOMAIN, TAG, 'prep-hit: idx=%{public}d samples=%{public}d',
+        index, prep.pcm.length);
+      spliced = { pcm: prep.pcm, sampleRate: prep.sampleRate, timeMap: prep.timeMap };
+      timeline = prep.timeline;
+      lyricMarks = prep.lyricMarks;
     } else {
-      decoded = await decodeMp3ToPcm(raw);
+      // 读缓存音频（三引擎：local=.wav 直读；edge=.mp3 解码；ai=按 sidecar 的 fmt 分派）
+      const stat = fs.statSync(chunk.cachePath);
+      const raw = new ArrayBuffer(stat.size);
+      const f = fs.openSync(chunk.cachePath, fs.OpenMode.READ_ONLY);
+      fs.readSync(f.fd, raw);
+      fs.closeSync(f.fd);
+      let decoded: PcmDecodeResult;
+      if (chunk.fmt.length > 0) {
+        // AI 产物：按 sidecar 记录的格式解码并归一化（方案 §5.4/§5.5）
+        decoded = await TtsEngine.decodeAiAudio(raw, chunk);
+      } else if (chunk.cachePath.endsWith('.wav')) {
+        // 老路径（本地引擎）：44 字节标准 WAV 头 + 固定 16k/单声道 —— 行为逐字不变
+        decoded = {
+          pcm: raw.slice(44),
+          sampleRate: LOCAL_TTS_SAMPLE_RATE,
+          channels: 1
+        };
+      } else {
+        decoded = await decodeMp3ToPcm(raw);
+      }
+      if (decoded.pcm.byteLength === 0) {
+        return;
+      }
+      const pcm = new Int16Array(decoded.pcm);
+      // 停顿点 + 拼接（语速缩放 + 音量）
+      const points = computePausePoints(chunk.text, chunk.words);
+      spliced = applyPauses(pcm, decoded.sampleRate, points,
+        prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate, prefs.volume);
+      // 诊断：定位"停顿不生效"——若 words>0 而 points=0，必为词表与文本未对齐
+      hilog.info(DOMAIN, TAG,
+        'splice: words=%{public}d pts=%{public}d src=%{public}d out=%{public}d sent=%{public}d comm=%{public}d rate=%{public}s',
+        chunk.words.length, points.length, pcm.length, spliced.pcm.length,
+        prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate.toFixed(2));
+      if (points.length === 0 && chunk.words.length > 0) {
+        hilog.info(DOMAIN, TAG, 'splice-miss text[0..24]=%{public}s w0=%{public}s w1=%{public}s w2=%{public}s',
+          chunk.text.substring(0, 24),
+          chunk.words[0]?.text ?? '', chunk.words[1]?.text ?? '', chunk.words[2]?.text ?? '');
+      }
+      timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
+      // 歌词行时间线：默认**小句**粒度（见 LRC_CLAUSE_SPLIT），只服务 LRC 行；
+      // `timeline`（句级）仍然只服务播放进度/浮条，两者语义不许混用。
+      lyricMarks = LRC_CLAUSE_SPLIT
+        ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap)
+        : timeline;
     }
-    if (decoded.pcm.byteLength === 0) {
-      return;
-    }
-    const pcm = new Int16Array(decoded.pcm);
-    // 停顿点 + 拼接（语速缩放 + 音量）
-    const points = computePausePoints(chunk.text, chunk.words);
-    const spliced = applyPauses(pcm, decoded.sampleRate, points,
-      prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate, prefs.volume);
-    // 诊断：定位"停顿不生效"——若 words>0 而 points=0，必为词表与文本未对齐
-    hilog.info(DOMAIN, TAG,
-      'splice: words=%{public}d pts=%{public}d src=%{public}d out=%{public}d sent=%{public}d comm=%{public}d rate=%{public}s',
-      chunk.words.length, points.length, pcm.length, spliced.pcm.length,
-      prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate.toFixed(2));
-    if (points.length === 0 && chunk.words.length > 0) {
-      hilog.info(DOMAIN, TAG, 'splice-miss text[0..24]=%{public}s w0=%{public}s w1=%{public}s w2=%{public}s',
-        chunk.text.substring(0, 24),
-        chunk.words[0]?.text ?? '', chunk.words[1]?.text ?? '', chunk.words[2]?.text ?? '');
-    }
-    const timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
-    // 歌词行时间线：默认**小句**粒度（见 LRC_CLAUSE_SPLIT），只服务 LRC 行；
-    // `timeline`（句级）仍然只服务播放进度/浮条，两者语义不许混用。
-    const lyricMarks: SentenceMark[] = LRC_CLAUSE_SPLIT
-      ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap)
-      : timeline;
     // ── 增量 LRC（播控中心歌词页，2026-09-24）────────────────────────────────
     // 时间轴在块解码时才产生 ⇒ 按块增量追加：首播块把整块逐行写成 `[mm:ss.xx]文本`
     // 行（时间 = 本章时间轴绝对值），随 setAVMetadata 推给系统。
