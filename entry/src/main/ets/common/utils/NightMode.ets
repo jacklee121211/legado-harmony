@@ -355,4 +355,37 @@ export class ShelfColors {
   static subButtonFg(): string {
     return NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.88)' : 'rgba(0, 0, 0, 0.88)';
   }
+
+  /**
+   * **页面级主题渐变** —— 与书架 / 我的 / 设置 / 主题设置**逐字一致**的配色对。
+   *
+   * 2026-10-12 新增：此前「关于我们」下属 5 页 + 阅读统计 + 新建主题 + 书籍详情
+   * 各写各的底色（`ShelfColors.pageBg()` / `$r('app.color.page_bg')` / `Color.White` /
+   * `$r('app.color.book_detail_background')`），都不带主题渐变 ⇒ 从书架点进这些页
+   * 会"突然换成另一套底色"。本方法把那一对颜色收口，调用方只负责挂 `linearGradient`。
+   *
+   * 用法（与 `MyCenter.ets:344-350` / `IndexShelf.ets` 同款，三个要件缺一不可）：
+   * ```
+   * .linearGradient({
+   *   direction: GradientDirection.Bottom,
+   *   colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+   * })
+   * ```
+   * ⚠️ stop 固定 `0.0 → 0.2`（顶部 20% 内走完整条渐变，下方 80% 是纯终点色）——
+   *    这是书架/我的两页既定口径，**改动此比例会让所有已适配页面一起变样**。
+   *
+   * @param mainColor   主题主色（日间档渐变的起点）
+   * @param secondColor 主题辅色（日间档渐变的终点）
+   *
+   * ⚠️ 返回类型必须是**元组数组** `[ResourceColor, number][]`，不能写成 `(string|number)[][]`。
+   *    依据（SDK 原文）`…\ets\component\common.d.ts:3904-3907`：
+   *      `colors: Array<[ ResourceColor, number ]>;`
+   *    写成嵌套数组时编译器直接报 2769
+   *      `Type '(string | number)[][]' is not assignable to type '[ResourceColor, number][]'`
+   *      `Target requires 2 element(s) but source may have fewer.`
+   */
+  static pageGradient(mainColor: string, secondColor: string): [ResourceColor, number][] {
+    return [[ShelfColors.gradientStart(mainColor), 0.0],
+      [ShelfColors.gradientEnd(secondColor), 0.2]];
+  }
 }

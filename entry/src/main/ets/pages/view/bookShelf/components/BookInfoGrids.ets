@@ -12,7 +12,7 @@ import clickUtil from '../../../../common/utils/ClickUtils'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
-import { resolveCoverSource, coverCorners } from '../../../../common/utils/CoverSource'
+import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../common/utils/CoverSource'
 
 @Component
 /**
@@ -25,6 +25,15 @@ export default struct BookInfoGrids{
   //      ② `Books` 由 @Observed 装饰（database/entities/Books.ets:10）；
   //      ③ 本组件不整体赋值 this.book、不写 this.book.* 属性；④ 非 @Entry 组件。
   @ObjectLink book:Books
+
+  /**
+   * 书架书名是否显示文件拓展名（我的-设置；默认关=隐藏 .txt 等后缀）。
+   *
+   * ⚠️ 2026-10-12 补齐（用户实测）：本开关**此前只覆盖列表模式**（`BookInfos.ets:28`），
+   * 宫格是另一套组件、又是直接 `Text(this.book.bookName)`（本文件 :192 原文）
+   * ⇒ 关掉开关后宫格仍然显示 `.txt`。现在与列表同源同键。
+   */
+  @StorageLink('setExtName') showFileExt: boolean = false
 
   // ── 渐次入场（2026-09-24 新增，2026-10-12 回到属性动画方案）────────────────
   /** 本项在列表里的下标，由 `BookContent` 的 `LazyForEach` 传入（决定错峰延迟）。 */
@@ -48,6 +57,14 @@ export default struct BookInfoGrids{
   @State private entered: boolean = false
   /** 入场定时器句柄 */
   private enterTimer: number = -1
+
+  /**
+   * 书名显示：与列表模式（`BookInfos.bookDisplayName()`）**同一份实现**——
+   * 走 `CoverSource.stripBookExt` 这条唯一真源，规则正则只写一份。
+   */
+  private bookDisplayName(): string {
+    return stripBookExt(this.book.bookName, this.showFileExt)
+  }
 
   private scheduleEnter(delayMs: number): void {
     if (this.enterTimer !== -1) {
@@ -189,7 +206,7 @@ export default struct BookInfoGrids{
       Column({
         space:CommonConstants.SPACE_2
       }){
-        Text(this.book.bookName)
+        Text(this.bookDisplayName())
           .fontSize(15)
           .fontWeight(700)
           .textOverflow({

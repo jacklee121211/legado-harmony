@@ -1,4 +1,4 @@
-import { resolveCoverSource, coverCorners } from "../../../../common/utils/CoverSource"
+import { resolveCoverSource, coverCorners, stripBookExt } from "../../../../common/utils/CoverSource"
 
 import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
@@ -29,12 +29,15 @@ export default struct BookInfos {
   /** 数据变更广播（规范 §5.1）：改名完成后自增 ⇒ 书架列表重查重建 */
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
 
-  /** 书名显示：开关关闭时剥掉末尾拓展名（.txt/.epub 等，最多 5 位字母数字） */
+  /**
+   * 书名显示：开关关闭时剥掉末尾拓展名（.txt/.epub 等，最多 5 位字母数字）。
+   *
+   * ⚠️ 2026-10-12：规则本体已抽到 `CoverSource.stripBookExt()` —— 本开关的消费者
+   * **不止列表**（宫格 `BookInfoGrids` / 听书迷你栏 `ListenDock` / 系统播控 `TtsEngine`），
+   * 各写一份正则必然漏覆盖（宫格就是这么漏的）。这里只做一次转发，保证同源。
+   */
   private bookDisplayName(): string {
-    if (this.showFileExt) {
-      return this.book.bookName
-    }
-    return this.book.bookName.replace(/\.[a-zA-Z0-9]{1,5}$/, '')
+    return stripBookExt(this.book.bookName, this.showFileExt)
   }
 
   // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────────

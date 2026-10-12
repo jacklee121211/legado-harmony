@@ -15,6 +15,8 @@ import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { RouteName, ReaderRouteParam, ReadStatisticsRouteParam } from '../../../common/router/AppRouter';
 import { ShelfColors } from '../../../common/utils/NightMode';
 import { resolveCoverSource } from '../../../common/utils/CoverSource';
+import { ThemeStorageKey } from '../../../common/constants/Theme';
+import { ThemeItem } from '../../../common/model/Theme';
 
 /**
  * 「读过 / 读完 / 书签」三个统计的二级菜单（**同一个模板，三套数据源**）。
@@ -47,6 +49,8 @@ export default struct readStatistics {
   // ⇒ 暗色下整页发白。链式传入 ShelfColors.pageBg()（本页是 NavDestination，每次入栈
   // 都是新实例 ⇒ 构造时取色即为当次正确的深浅档）。
   Column = new ColumnModifier().backgroundColor(ShelfColors.pageBg())
+  /** 全局主题（2026-10-12：外层 Column 底色改为跟随主题渐变） */
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   @State type: number | string = 0
   /**
    * 「读过 / 读完」列表上方那个小页签条的内容。
@@ -264,6 +268,15 @@ export default struct readStatistics {
       }.attributeModifier(this.Column)
       .height(CommonConstants.FULL_HEIGHT)
       .width(CommonConstants.FULL_WIDTH)
+      // 2026-10-12 适配全局主题渐变（与书架/我的同源配色对与 stop）。
+      // ⚠️ 注意层次：`attributeModifier(this.Column)` 在**内层** Column 上给了
+      //    纯色 `ShelfColors.pageBg()`；渐变挂**外层** Column ⇒ 外层渐变铺满整页，
+      //    内层纯色被其自身内容（列表）遮挡的部分不可见，两者不冲突；
+      //    若把纯色留在最外层，渐变就永远被盖住 —— 这是本页必须挂外层的原因。
+      .linearGradient({
+        direction: GradientDirection.Bottom,
+        colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+      })
     }.overlay(this.delBottom(), {
       align: Alignment.Bottom,
       offset: { x: 0, y: 0 }

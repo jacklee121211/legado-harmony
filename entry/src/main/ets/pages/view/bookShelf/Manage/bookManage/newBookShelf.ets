@@ -17,7 +17,7 @@ import NewAddShelfDialog from '../../components/dialog/NewAddShelfDialog'
 import ImmersiveMaterialUtil from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
-import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
+import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 
 @Component
 export default struct newBookShelf{
@@ -25,6 +25,8 @@ export default struct newBookShelf{
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走资源 token / `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  /** 书架书名是否显示文件拓展名（我的-设置；与书架 `BookInfos`/`BookInfoGrids` 同键同源） */
+  @StorageLink('setExtName') showFileExt: boolean = false
   @Prop currentIndex:number
   @State TextRecommend:Record<number, string> = {}
   @State delCache:boolean = false
@@ -413,7 +415,7 @@ export default struct newBookShelf{
           space:5
         }) {
           Row(){
-            Text(book.bookName).fontSize(16).fontWeight(500).lineHeight(24)
+            Text(stripBookExt(book.bookName, this.showFileExt)).fontSize(16).fontWeight(500).lineHeight(24)
               .textOverflow({
                 overflow:TextOverflow.Ellipsis
               })

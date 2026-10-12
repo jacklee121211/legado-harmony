@@ -1,12 +1,79 @@
 /**
- * 封面源解析（v3.21，自定义封面真功能）：
+ * 封面源解析（v3.21，自定义封面真功能）+ 书名展示（v3.22，拓展名开关）：
  * 单本自定义封面存于 `Books.customCoverUrl`，三种形态：
  *   ① `default://cover_defaults/cN.svg` —— 内置 9 张装饰封面（rawfile，渲染端转 $rawfile）
  *   ② `datashare://...` / `file://...`  —— 用户自选图片（Image 原生可显）
  *   ③ 空                                 —— 回退书源封面/默认 alt
  * 渲染优先级（调用方组装）：customCoverUrl > coverUrl > alt。
+ *
+ * ⚠️ 本文件 2026-10-12 起**同时承载书名展示的唯一真源**（`stripBookExt()` / `BookNameDisplay`）：
+ * 那些函数与封面无关，只是因为本文件的导入面**已经覆盖全部书名渲染点**
+ * （工程内 14 处 import 本文件，恰好就是所有会显示书名的组件），
+ * 而剥拓展名的规则要能被每一个渲染点共用、只写一份 ⇒ 挂在这里。
  */
 export const DEFAULT_COVER_PREFIX: string = 'default://cover_defaults/'
+
+/**
+ * 书名末尾拓展名的**唯一真源**正则（`^` 锚点 + 非贪婪前缀，见 `bookExtMatch()`）。
+ * 只认「末尾一个点 + 1~5 位字母数字」⇒ `斗破苍穹.txt` 命中，`卷.2024.10` 不命中。
+ */
+export const BOOK_EXT_PATTERN: RegExp = /^(.*?)(\.[a-zA-Z0-9]{1,5})$/
+
+/** 拆名结果（`bookExtMatch` 的返回类型；ArkTS 禁匿名对象字面量 ⇒ 必须显式 interface） */
+export interface BookNameParts {
+  name: string
+  ext: string
+}
+
+/** 拆出书名与拓展名。无拓展名 ⇒ ext = ''，name 原样返回。 */
+export function bookExtMatch(rawName: string): BookNameParts {
+  const m: RegExpMatchArray | null = (rawName ?? '').match(BOOK_EXT_PATTERN)
+  return m !== null ? { name: m[1], ext: m[2] } : { name: rawName ?? '', ext: '' }
+}
+
+/** 剥掉末尾拓展名（`showExtName` 为真时原样返回）。 */
+export function stripBookExt(rawName: string, showExtName: boolean): string {
+  if (showExtName) {
+    return rawName ?? ''
+  }
+  const m: RegExpMatchArray | null = (rawName ?? '').match(BOOK_EXT_PATTERN)
+  return m !== null ? m[1] : (rawName ?? '')
+}
+
+
+/**
+ * 书架书名的**唯一显示出口**。所有显示「书名」的组件一律走这里 —— 不要再自己写正则、
+ * 也不要直接 `Text(x.bookName)`，否则「显示文件拓展名」开关必然漏覆盖。
+ */
+@Observed
+export class BookNameDisplay {
+  /**
+   * 是否显示文件拓展名（我的-设置，Preferences 键 `MySetConstants.SET_EXT_NAME` = 'setExtName'）。
+   *
+   * 为什么是 `@Observed` 类字段而不是组件里的 `@StorageLink`：
+   * `@StorageLink` **只能建在 @Component / @Entry 上**，
+   * 而工具类里既没有 `this` 也没有组件生命周期 ⇒ 只能由**调用方**把
+   * `@StorageLink('setExtName') showFileExt` 显式传进来。传进来的若是普通 string/bool，
+   * 类内部再订阅 AppStorage 也无从触发组件重绘 ⇒ 这里保留字段，重绘责任在组件侧的装饰器上。
+   * 依据（`docs/ArkTS-Language-Guide/**` AppStorage 章）：`@StorageLink` 的宿主是自定义组件实例。
+   */
+  showExt: boolean = false
+
+  /**
+   * 显示用书名：关开关 ⇒ 剥掉末尾拓展名。
+   * `raw` 传**原始书名**（带拓展名，`Books.bookName`），不要传已处理过的值。
+   */
+  display(raw: string): string {
+    return stripBookExt(raw, this.showExt)
+  }
+}
+
+/** 换一份只带开关的轻量实例，避免各组件重复 `new`（开关仍是逐实例字段，无共享状态） */
+export function bookNameDisplay(showExt: boolean): BookNameDisplay {
+  const d: BookNameDisplay = new BookNameDisplay()
+  d.showExt = showExt
+  return d
+}
 
 /**
  * 内置 9 张封面的 rawfile **完整路径字面量表**。

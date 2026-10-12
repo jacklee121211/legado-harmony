@@ -1,6 +1,8 @@
 import { SetHead } from '../../../../componets/myset/SetHead'
 import UiMotion from '../../../../common/utils/UiMotion'
 import { ShelfColors } from '../../../../common/utils/NightMode'
+import { ThemeStorageKey } from '../../../../common/constants/Theme'
+import { ThemeItem } from '../../../../common/model/Theme'
 
 // ── 开源许可（2026-10-06 按仓库元数据逐条复核）────────────────────────────
 // 事实源：各依赖 `oh_modules` 内 oh-package.json5 的 **license 字段原文**，不是凭印象：
@@ -85,6 +87,8 @@ const RESTRICTIONS: string[] = [
 export default struct LicensePage {
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
+  /** 全局主题（2026-10-12：本页底色改为跟随主题渐变） */
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
 
   build() {
     NavDestination() {
@@ -183,7 +187,11 @@ export default struct LicensePage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(ShelfColors.pageBg())
+      // 2026-10-12 适配全局主题渐变（与书架/我的同款配色对与 stop）
+      .linearGradient({
+        direction: GradientDirection.Bottom,
+        colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+      })
     }
     .hideTitleBar(true)
     .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))

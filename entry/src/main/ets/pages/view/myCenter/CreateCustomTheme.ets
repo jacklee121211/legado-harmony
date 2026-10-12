@@ -7,6 +7,7 @@ import { ThemeColorItem, ThemeItem } from '../../../common/model/Theme'
 import { themeManager } from '../../../common/utils/ThemeManager'
 import { sleep } from '../../../common/utils/utils'
 import AppRouter from '../../../common/router/AppRouter'
+import { ShelfColors } from '../../../common/utils/NightMode'
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -177,6 +178,11 @@ export default struct CreateCustomTheme {
     .width('100%')
     .height('100%')
     .padding({top: this.topRectHeight, bottom: this.bottomRectHeight})
-    .backgroundColor($r('app.color.page_bg'))
+    // 2026-10-12 适配全局主题渐变（此前是 `$r('app.color.page_bg')` 纯色资源，
+    // 既不带主题色、也不跟深浅档的渐变对 ⇒ 从设置/主题页点进来会"突然换底色"）。
+    .linearGradient({
+      direction: GradientDirection.Bottom,
+      colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+    })
   }
 }
