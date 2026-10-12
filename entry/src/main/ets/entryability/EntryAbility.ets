@@ -18,6 +18,8 @@ import { NightMode } from '../common/utils/NightMode';
 import { AntiPeep } from '../common/utils/AntiPeep';
 // 标定模式全局信号（2026-10-10）：冷启动回填到 AppStorage
 import { CalibMode } from '../common/utils/CalibMode';
+// VIP 启动自愈（2026-10-14）：付费用户卸载重装/换机后，把 IAP 已购记录查回来
+import { IapManager } from '../common/utils/IapManager';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -128,6 +130,20 @@ export default class EntryAbility extends UIAbility {
     // 标定模式全局信号（2026-10-10）：从 Preferences 回填到 AppStorage，
     // 让书架/我的/PlugboardZone 在冷启动时也能感知到用户开过标定模式。
     CalibMode.bootstrap()
+
+    // ── VIP 启动自愈（2026-10-14）────────────────────────────────────────────
+    // 缺口：`IapManager.refreshVip` 原先**只在「我的」页**（MyCenter.ets:69）调用 ⇒
+    //   付费用户卸载重装/换机后，缓存位 `VipUnlocked` 随沙箱一起没了，而 IAP 查询
+    //   要等用户**手动翻到「我的」页**才发生；在那之前书城所有 VIP 门控
+    //   （自定义主题/导入下载字体/更多材质/更多方案/防窥两层）都按免费用户处理，
+    //   付费用户点一下就被弹「去买 VIP」⇒ 误以为权益丢失。
+    // 修法：启动最早时机补一次查询，与「我的」页那处并存。
+    // · 安全性：`refreshVip` **只升不降**（IapManager.ets:41-43）——查到已购才置 true，
+    //   查不到（未登录/网络异常/沙盒查不到已发货订单）绝不清本地位，重复调用幂等无副作用。
+    // · 不阻塞启动：不 await（IAP 是网络调用，await 会拖慢首帧）。
+    // · 失败自吞：refreshVip 内部整个 try/catch，不抛给启动流程。
+    // 回退方式：删掉下面这一行即可，行为退回 2026-10-14 之前（仅「我的」页恢复）。
+    IapManager.refreshVip(this.context)
   }
 
   /**
