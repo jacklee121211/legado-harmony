@@ -139,77 +139,31 @@ export default struct MyCenter {
       // ── 页签标题头（2026-10-01 用户需求）：与主题/设置两页同一标准 TabHeader ──
       TabHeader({ title: '我的' })
 
+      // ── 顶部 Row（2026-10-13 已清空 VIP 标记）────────────────────────────
+      // VIP 金标原在此行右端（2026-09-28，真机实测 高 67px），2026-10-13 按用户要求
+      // 搬进「Web服务」标题行。本行**保留为空壳**并收窄到 8vp。
+      // 目的：消掉「我的 ↔ 设置」两页切换的**顶端撕裂感**（用户 2026-10-13 反馈）。
+      //   实测依据（Mate 80 Pro Max，屏宽 1320px，scale 3.35）：
+      //     设置页首行「显示文件拓展名」文字上沿 y = 461
+      //     我的页首行「Web服务」   文字上沿 y = 495  ⇒ 差 34px
+      //   本行原高 67px（=20vp 内容撑开），收窄至 8vp：
+      //     实测 10vp 时 Web服务 上沿 = 468；再收 2vp(6.7px) ⇒ 461.3，与设置页 461 对齐（残差 0.3px）。
+      //   ⚠️ 残差 0.3px 属**结构差异**（设置行 `SetListView.ets:87` 自带 padding 12 且内容垂直居中，
+      //      本页是卡片 padding 16 + 顶部起排），不再继续追平，避免破坏本页卡片设计。
+      //   ⚠️ 若删除本空壳行，Web服务 会上移 67px 直接贴住页头 ⇒ 必须保留。
       Row({ space: 10 }) {
-        // VIP 金标（2026-09-28 用户要求：已开通时放在设置按钮左侧旁边）
-        // 2026-10-07：点击 = 打开 VIP 权益弹窗（复用开通弹窗，vipOwned=true 时按钮呈"已开通"）
-        if (this.vipOn) {
-          Text('VIP')
-            .fontSize(12)
-            .fontWeight(700)
-            .fontColor(Color.White)
-            .backgroundColor('#F5A623')
-            .borderRadius(8)
-            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-            .onClick(() => {
-              Haptics.tap();
-              this.openVipDialog()
-            })
-            .clickEffect(UiMotion.CLICK)
-        }
-        // （2026-10-01 已删除顶部「主题 / 设置」两个 symbol 按钮：用户反馈顶部太难点击，
-        //  两页提级为底部 dock 页签（书架、主题、设置、我的），见 Index.ets nav 注释。）
       }.justifyContent(FlexAlign.End).width("100%")
+      .height(8)
 
       Scroll() {
         // 整页**向上对齐**（用户要求）：内层 Column 显式撑满高度 + Start 对齐，
         // 并去掉原来垫在最上面的 `Blank(24)`，内容直接从顶部开始排。
         Column() {
 
-          // ── Web服务卡片（2026-09-30 回填，用户需求）────────────────────────
-          // wifi传书 / 电脑阅读 / 隔空传送（替代基座的"电脑写源"——书源体系已整体移除）。
-          // 基座考古结论：基座的 Web 服务是**纯空壳**（假开关 + 写死的假地址 192.168.41.12:1122，
-          // 无任何 HTTP/Socket 服务端实现，见基座 WebdavService.ets）⇒ 服务端为全新开发
-          //（方案与范围待用户确认，本轮先落入口与样式）。图标用 symbol、点按走
-          // clickEffect + Haptics（全 app 现有机制）。
-          Column({ space: 12 }) {
-            Row({ space: 8 }) {
-              SymbolGlyph($r('sys.symbol.display'))
-                .fontSize(16)
-                .fontColor([this.theme.mainColor])
-              Text('Web服务')
-                .fontSize(14).fontWeight(600)
-                .fontColor($r('app.color.text_primary'))
-            }
-            .width('100%')
-
-            Row({ space: 10 }) {
-              this.webServiceItem($r('sys.symbol.wifi'), 'wifi传书', (): void => {
-                this.openWifiDialog()
-              })
-              this.webServiceItem($r('sys.symbol.computer'), '电脑阅读', (): void => {
-                this.openWifiDialog()
-              })
-              // 2026-10-01（用户）：「隔空传送」更名「书籍分享」；点击进**全部书籍**管理页。
-              // ⚠️ bookTypeNumber 必须传 2（系统"全部"分组）：BooksDao.searchPage 对
-              // bookGroup===2 **跳过分组过滤**（BooksDao.ets:141）⇒ 列出全库书籍；
-              // 原来传 0（不存在组 0）⇒ 管理页为空（用户实测"进入的是空的管理页"）。
-              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '书籍分享', (): void => {
-                AppRouter.push(RouteName.BOOK_MANAGE,
-                  { currentIndex: 0, EXHIBIT: '', bookTypeNumber: 2 } as BookManageRouteParam)
-              })
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.SpaceBetween)
-          }
-          .width('100%')
-          .padding(16)
-          .backgroundColor($r('app.color.card_bg'))
-          .borderRadius(10)
-          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-          // v3.12：与顶部按钮区 24（用户"web服务与顶部过于接近"）；与统计行 16（下一行）
-          .margin({ top: 24 })
-
-          // 统计数据（v3.12：与 Web 卡之间 16，用户圈点——原结构两者之间无间隔）
+          // ── 统计数据（2026-10-13 用户要求：**挪到 Web服务 卡片上面**）────────
+          // 原顺序「Web服务卡 → 统计行 → 开通VIP」，用户要求改为「统计行 → Web服务卡 → 开通VIP」。
+          // 间距沿用原语义（只是上下互换）：本行作首个元素保留 margin top 24（原 Web 卡的顶部间距），
+          // Web 卡改为 16（原统计行与 Web 卡之间的距离）。
           Row() {
             ForEach(this.head_list, (item: dataItem, index: number) => {
               Column({ space: 5 }) {
@@ -239,6 +193,74 @@ export default struct MyCenter {
               .clickEffect(UiMotion.CLICK)
             })
           }.justifyContent(FlexAlign.SpaceBetween).width("100%").padding({ left: 20, right: 20 })
+          .margin({ top: 24 })
+
+          // ── Web服务卡片（2026-09-30 回填，用户需求）────────────────────────
+          // wifi传书 / 电脑阅读 / 隔空传送（替代基座的"电脑写源"——书源体系已整体移除）。
+          // 基座考古结论：基座的 Web 服务是**纯空壳**（假开关 + 写死的假地址 192.168.41.12:1122，
+          // 无任何 HTTP/Socket 服务端实现，见基座 WebdavService.ets）⇒ 服务端为全新开发
+          //（方案与范围待用户确认，本轮先落入口与样式）。图标用 symbol、点按走
+          // clickEffect + Haptics（全 app 现有机制）。
+          Column({ space: 12 }) {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.display'))
+                .fontSize(16)
+                .fontColor([this.theme.mainColor])
+              Text('Web服务')
+                .fontSize(14).fontWeight(600)
+                .fontColor($r('app.color.text_primary'))
+              // VIP 金标（2026-10-13 用户要求：从页面右上角**搬进本行**，紧跟「Web服务」字样）。
+              // 样式原样未动（黄底 #F5A623 + 白字 + 圆角 8 + 字号 12 + 内边距 8/3），
+              // 功能原样未动（点击 → openVipDialog() 权益弹窗；Haptics.tap + clickEffect）。
+              // 「上下对齐」由 Row 的垂直对齐保证 —— SDK 原文
+              // （`row.d.ts:156-165`）：`alignItems` "Alignment mode of child components in
+              //  the vertical direction." **Default value: VerticalAlign.Center**
+              // ⇒ 与「Web服务」文字自动上下居中对齐，无需显式设置。
+              if (this.vipOn) {
+                Row() {
+                  Text('VIP')
+                    .fontSize(12)
+                    .fontWeight(700)
+                    .fontColor(Color.White)
+                    .backgroundColor('#F5A623')
+                    .borderRadius(8)
+                    .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                }
+                .clickEffect(UiMotion.CLICK)
+                .onClick(() => {
+                  Haptics.tap();
+                  this.openVipDialog()
+                })
+              }
+            }
+            .width('100%')
+
+            Row({ space: 10 }) {
+              this.webServiceItem($r('sys.symbol.wifi'), 'wifi传书', (): void => {
+                this.openWifiDialog()
+              })
+              this.webServiceItem($r('sys.symbol.computer'), '电脑阅读', (): void => {
+                this.openWifiDialog()
+              })
+              // 2026-10-01（用户）：「隔空传送」更名「书籍分享」；点击进**全部书籍**管理页。
+              // ⚠️ bookTypeNumber 必须传 2（系统"全部"分组）：BooksDao.searchPage 对
+              // bookGroup===2 **跳过分组过滤**（BooksDao.ets:141）⇒ 列出全库书籍；
+              // 原来传 0（不存在组 0）⇒ 管理页为空（用户实测"进入的是空的管理页"）。
+              this.webServiceItem($r('sys.symbol.dot_radiowaves_left_and_right'), '书籍分享', (): void => {
+                AppRouter.push(RouteName.BOOK_MANAGE,
+                  { currentIndex: 0, EXHIBIT: '', bookTypeNumber: 2 } as BookManageRouteParam)
+              })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor($r('app.color.card_bg'))
+          .borderRadius(10)
+          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+          // 2026-10-13 顺序调换后：本卡作为**第二个**元素，与上方统计行之间取 16
+          // （原「统计行 margin top 16」的同一间距，只是方向反过来）。
           .margin({ top: 16 })
 
           // ── 开通 VIP 卡片（2026-09-28 用户设计：未开通时显示）────────────────

@@ -19,11 +19,17 @@ import { ShelfColors } from '../../common/utils/NightMode'
 import { bookParser } from '@kit.ReaderKit'
 
 /**
- * 标题图片样式
+ * 标题图片样式（返回箭头 / 标题栏图标）
+ *
+ * ⚠️ 2026-10-12：原为 `fillColor(Color.White)` —— 那是压在旧底色
+ *    `$r('app.color.book_detail_background')`（日间 `#2a5d5d` 深青绿）上的白箭头。
+ *    本页底色改为**主题渐变**后，日间档底色变浅 ⇒ 白箭头在白/浅橙渐变上几乎不可见。
+ *    改用 `ShelfColors.icon()`（日间 `rgba(19,19,19,0.88)`／夜间白），与全应用
+ *    图标配色同源。`@Extend` 不能读实例状态，故此处直接用静态方法取色。
  */
 @Extend(Image)
 function titleImageStyle() {
-  .fillColor(Color.White).width(CommonConstants.TITLE_IMG_SIZE).height(CommonConstants.TITLE_IMG_SIZE)
+  .fillColor(ShelfColors.icon()).width(CommonConstants.TITLE_IMG_SIZE).height(CommonConstants.TITLE_IMG_SIZE)
 }
 
 /**
@@ -340,7 +346,7 @@ export default struct BookDetailPage {
             // 入栈/出栈必须成对：本页现在由 NavPathStack 推入（见 Index.appRoutes）
             AppRouter.pop()
           })
-          Text('书籍详情').fontColor(Color.White).fontSize(16)
+          Text('书籍详情').fontColor(ShelfColors.textMain()).fontSize(16)
         }.height(24)
 
         // 右侧「编辑 / 分享 / 更多」三个图标已于 2026-09-21 删除：
@@ -372,19 +378,17 @@ export default struct BookDetailPage {
             .width('75%')
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .fontColor(Color.White)
+            .fontColor(ShelfColors.textMain())
             .fontSize(20)
           Blank()
           Row() {
             Text(this.bookData.author ?? '佚名')
               .fontSize(CommonConstants.FONT_NOVEL_DETAIL_AUTHOR_SIZE)
-              .fontColor('#FFF')
-              .opacity(0.45)
+              .fontColor(ShelfColors.textSub())
             Image($r('app.media.ic_public_right'))
               .width(CommonConstants.NOVEL_DETAIL_AUTHOR_IMG_SIZE)
               .height(CommonConstants.FONT_NOVEL_DETAIL_AUTHOR_SIZE)
-              .fillColor('#FFF')
-              .opacity(0.45)
+              .fillColor(ShelfColors.icon())
           }
 
           // 分类标签「幻想修仙 / 完本 / 300万字」已于 2026-09-21 删除 —— 全是写死的字符串，
@@ -407,7 +411,7 @@ export default struct BookDetailPage {
         // 简介兜底：原来是《大奉打更人》的整段原文（底座样例数据），现已去掉 ——
         // 没有简介就如实显示「暂无简介」，不要给用户看另一本书的内容。
         Text(this.bookData.intro ?? '暂无简介')
-          .fontColor('#FFFFFF')
+          .fontColor(ShelfColors.textSub())
           .fontSize(14)
           .fontWeight(400)
           .lineHeight(22)
@@ -500,7 +504,15 @@ export default struct BookDetailPage {
     }
     .height(CommonConstants.FULL_HEIGHT)
     .width(CommonConstants.FULL_WIDTH)
-    .backgroundColor($r('app.color.book_detail_background'))
+    // 2026-10-12 适配全局主题渐变。
+    // 此前是 `$r('app.color.book_detail_background')` —— 实测该资源在 **base（日间）**
+    // 档写死为 `#2a5d5d`（青绿），与本应用主题色毫无关系；dark 档才是 `#1B1B1D`。
+    // ⇒ 日间档下本页底色是固定的青绿，从书架点进来会"换了一套配色"。
+    // 改为与书架/我的同源的配色对与 stop（0.0 → 0.2）。
+    .linearGradient({
+      direction: GradientDirection.Bottom,
+      colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+    })
   }
 
   // @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0

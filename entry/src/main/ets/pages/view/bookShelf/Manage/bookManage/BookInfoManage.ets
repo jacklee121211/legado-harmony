@@ -4,7 +4,7 @@ import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
-import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
+import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 
 @Component
 
@@ -18,6 +18,8 @@ export default struct BookInfoManage{
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  /** 书架书名是否显示文件拓展名（我的-设置；与书架 `BookInfos`/`BookInfoGrids` 同键同源） */
+  @StorageLink('setExtName') showFileExt: boolean = false
   build() {
     Flex(
       {
@@ -68,7 +70,7 @@ export default struct BookInfoManage{
           space:24
         })
         {
-          Text(this.bookData.bookName)
+          Text(stripBookExt(this.bookData.bookName, this.showFileExt))
             .fontWeight(700)
           Column(){
             Text(this.bookData.intro).fontSize(12).fontColor(ShelfColors.textSub())

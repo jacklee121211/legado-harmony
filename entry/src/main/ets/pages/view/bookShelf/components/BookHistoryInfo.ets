@@ -1,4 +1,4 @@
-import { resolveCoverSource, coverCorners } from "../../../../common/utils/CoverSource"
+import { resolveCoverSource, coverCorners, stripBookExt } from "../../../../common/utils/CoverSource"
 
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
@@ -22,6 +22,8 @@ export default struct BookHistoryInfo {
   @Prop bookHistory: BookHistory
   @State delCache: boolean = false
   @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0
+  /** 书架书名是否显示文件拓展名（我的-设置；与 `BookInfos`/`BookInfoGrids` 同键同源） */
+  @StorageLink('setExtName') showFileExt: boolean = false
   /** App 级夜间开关：只为触发重绘（取色走 ShelfColors） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
 
@@ -66,7 +68,7 @@ export default struct BookHistoryInfo {
         Column({
           space: 24
         }) {
-          Text(this.book.bookName)
+          Text(stripBookExt(this.book.bookName, this.showFileExt))
             .fontWeight(700)
           Column() {
             Text(this.book.intro)

@@ -110,7 +110,13 @@ export default struct AboutPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(ShelfColors.pageBg())
+      // 2026-10-12 适配全局主题渐变（此前是本页唯一的纯色 `ShelfColors.pageBg()`
+      // ⇒ 从书架/我的点进来会"突然换底色"）。配色对与书架、我的**同源**
+      // （`ShelfColors.pageGradient`），stop 同为 0.0 → 0.2。
+      .linearGradient({
+        direction: GradientDirection.Bottom,
+        colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+      })
     }
     .hideTitleBar(true)
     .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))

@@ -1,0 +1,18 @@
+{
+  "provider": "openai",
+  "source": "OpenAI 官方 /v1/audio/speech 文档",
+  "models": [
+    {
+      "note": "标准质量",
+      "id": "tts-1"
+    },
+    {
+      "note": "高质量",
+      "id": "tts-1-hd"
+    },
+    {
+      "note": "较新，支持 instructions",
+      "id": "gpt-4o-mini-tts"
+    }
+  ]
+}

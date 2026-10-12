@@ -221,7 +221,39 @@ const HL_CALIB_KEY: string = 'TtsHlCalibV3';
  * 另：`readerCore.ReaderSetting`（SDK `@hms.core.readerservice.readerComponent.d.ets:69-200`）
  * 的 13 个字段里**没有任何版本字段**，只能在对象外旁路存版本号。
  */
-const RS_SETTING_VER: number = 1;
+const RS_SETTING_VER: number = 2;
+
+/**
+ * **系统中文黑体的族名**（不带 `fontPath` 时引擎自己按族名解析系统字体）。
+ * ⚠️ 这是个**真实族名**，不是占位字面量：
+ *   `getFontByName('HarmonyOS Sans SC')` 实测返回 `family = 鸿蒙黑体`
+ *   （见本文件 `readerSetting` 初值处注释与真机日志 `fontinfo HarmonyOS Sans SC: {...}`）。
+ * 取自 `readerSetting` 默认值，供迁移与 v2 纠正复用。
+ */
+const SYSTEM_CJK_FONT_NAME: string = '鸿蒙黑体';
+
+/**
+ * 系统中文黑体的**真实文件路径**（`getFontByName('HarmonyOS Sans SC').path` 实测值）。
+ * ⚠️ 不要清空它：`fontPath` 是 `resourceRequest` 字体分支的第一候选路径，
+ *   清空会让引擎索要字体时无字节可给 ⇒ 整篇乱码（2026-10-12 真机验证）。
+ */
+const SYSTEM_CJK_FONT_PATH: string = '/system/fonts/HarmonyOS_Sans_SC.ttf';
+
+/**
+ * ⚠️ **绝不要再把系统字体的绝对路径写进 `readerSetting.fontPath`**（2026-10-12 定案）。
+ *
+ * 真机日志（同一本书，`docs/日志.md`）：
+ *   我们：`{"fontName":"鸿蒙黑体","fontPath":"/system/fonts/HarmonyOS_Sans_SC.ttf"}` ⇒ 正文**整篇乱码**；
+ *   原版：`{"fontName":"系统字体","fontPath":""}`                                ⇒ 正常。
+ *
+ * 机理：`fontPath` 非空 ⇒ ReaderKit 判定为**自定义字体场景**，改为通过
+ * `on('resourceRequest')` 向应用索要字体字节（本文件 `registerListener()` 处的注释原文）；
+ * 系统字体目录一旦读不到 ⇒ 引擎拿不到字形 ⇒ 整篇方框/乱码。
+ * 而 `fontPath` 为空时引擎**自己解析** `fontName` 这个族名，不经过我们这条链 ⇒ 稳定。
+ *
+ * ⇒ 约定：**`fontPath` 只用来承载"用户自己导入的沙箱字体文件"**，
+ *   系统字体一律只给 `fontName`（族名）。下面 `migrateReaderSetting()` 的 v2 迁移负责清洗存量值。
+ */
 
 /** 沉浸听读：章节固定分页的页高预算已由 immersiveBudgetPx() 提供 */
 
@@ -1216,7 +1248,14 @@ export default struct ReaderPage3 {
     // 之前传占位字面量 '系统字体'（归一化成 system）或 'HarmonyOS Sans'，中文都没有字形，
     // 只能走回退 → targetSdkVersion 19→26 后落到 **HarmonyOS Sans Condensed（窄体）**，
     // 表现就是"字体窄窄的"。这里直接指名系统中文黑体族名 **鸿蒙黑体**，并把真实文件路径一并给出。
-    fontName: '鸿蒙黑体',
+    fontName: SYSTEM_CJK_FONT_NAME,
+    // ⚠️ 2026-10-12 三次修订（真机日志 19:55:23 定案）：
+    //   清空 `fontPath` **并不能**让引擎退出"自定义字体场景"——卸载重装后实测，
+    //   引擎仍按 `fontName` 拼出 `鸿蒙黑体.ttf` 来 `resourceRequest` 索要字节；
+    //   而当时字体分支只认 `fontPath`（空串）⇒ 必然失败 ⇒ 整篇乱码。
+    //   ⇒ 正解是**两头都做**：① 这里给出可用路径作为兜底；
+    //     ② `loadFontBytes()` 按引擎入参解析 + 用 `getFontByName` 反查系统字体路径。
+    //   机理与官方契约见 `loadFontBytes()` 头注释（documentId reader-setting-font）。
     fontPath: '/system/fonts/HarmonyOS_Sans_SC.ttf',
     fontSize: 18,
     fontColor: '#000000',
@@ -3982,7 +4021,6 @@ export default struct ReaderPage3 {
    */
   private migrateReaderSetting(): void {
     let changed = false;
-
     // ① scaledDensity：以系统当前值为准（设备属性，不随书持久化）
     const sysScaled = display.getDefaultDisplaySync().scaledDensity;
     if (sysScaled > 0 && this.readerSetting.scaledDensity !== sysScaled) {
@@ -4006,11 +4044,26 @@ export default struct ReaderPage3 {
         // ⚠️ 'HarmonyOS Sans' 已是字体管理弹窗里的合法系统字体（2026-09-26），不再当占位值重置
         if (fn === undefined || fn === null || fn.length === 0 || fn === '系统字体'
           || fn === 'system') {
-          this.readerSetting.fontName = '鸿蒙黑体';
-          this.readerSetting.fontPath = '/system/fonts/HarmonyOS_Sans_SC.ttf';
+          this.readerSetting.fontName = SYSTEM_CJK_FONT_NAME;
+          // ⚠️ 2026-10-12：这里**原来会写系统字体绝对路径**，正是乱码的源头之一
+          //   （旧书迁到 v1 时被种下 `fontPath=/system/fonts/…`）。
+          //   现在只给族名，路径留空；下面的 v2 迁移会再把存量脏值清一遍。
           changed = true;
           hilog.info(0x0000, 'testTag', 'rs-migrate: v0->v1 fontName -> 鸿蒙黑体');
         }
+      }
+      // v1 → v2（2026-10-12 二次修订）：**保证 `fontPath` 有值**。
+      //   初版这里写的是"把系统字体路径清空"，那是**错的方向**：真机日志（19:55:23，
+      //   卸载重装后）证明清空后引擎照样按 `fontName` 来索要 `鸿蒙黑体.ttf`，
+      //   而字体分支只认 `fontPath` ⇒ 回 0 字节 ⇒ 整篇乱码。
+      //   ⇒ 现在反过来：只要为空就补上系统中文黑体的真实路径，与 `loadFontBytes()`
+      //     的入参解析形成双保险。
+      if (ver < 2 && (this.readerSetting.fontPath === undefined
+        || this.readerSetting.fontPath === null || this.readerSetting.fontPath.length === 0)) {
+        this.readerSetting.fontPath = SYSTEM_CJK_FONT_PATH;
+        changed = true;
+        hilog.info(0x0000, 'testTag', 'rs-migrate: v1->v2 restore fontPath %{public}s',
+          SYSTEM_CJK_FONT_PATH);
       }
       PreferencesUtil.putSync(verKey, RS_SETTING_VER);
     }
@@ -4025,7 +4078,10 @@ export default struct ReaderPage3 {
       const g = ReaderFontLib.loadFontGlobal()
       if (g !== null) {
         this.readerSetting.fontName = g.fontName
-        this.readerSetting.fontPath = g.fontPath
+        // 全局记录里若 fontPath 为空，补系统中文黑体路径（与 v2 迁移同策略）
+        this.readerSetting.fontPath =
+          (g.fontPath === undefined || g.fontPath === null || g.fontPath.length === 0)
+            ? SYSTEM_CJK_FONT_PATH : g.fontPath
         this.readerSetting.fontSize = g.fontSize
         this.readerSetting.lineHeight = g.lineHeight
         changed = true;
@@ -4317,15 +4373,13 @@ export default struct ReaderPage3 {
   /**
    * ReaderKit 资源回调（官方实现范式）。
    * 排版引擎按路径索取资源时，这里把字节还给它：
-   *  · **字体**（.ttf/.otf/.woff2）：① rawfile（工程内字体）② 沙箱/绝对路径
-   *    （本工程指向系统字体 /system/fonts/HarmonyOS_Sans_SC.ttf）
+   *  · **字体**（.ttf/.otf/.woff2）：见下方 `resolveFontFile()`（2026-10-12 重写）
    *  · **背景图**（.jpg/.jpeg/.png，2026-09-25 材质功能新增）：
    *    ⚠️ 根因修复 —— 旧版这里 `!isFont` 直接回空字节，引擎要背景图时拿到的就是空
    *    ⇒ 材质背景全部回落成纯色（用户实测「每个都变成纯色了」）。
    *    现在图片请求：① 先试 rawfile（`themeBgImg` 直接传 rawfile 名的场景）
    *    ② 再按请求的绝对/沙箱路径读（材质合成图就存在沙箱缓存里）。
-   *    ⚠️ 注意图片分支用的是**请求参数 filePath**（每次请求各不相同），
-   *       不能像字体分支那样读 `readerSetting.fontPath`（那是单字体的历史巧合）。
+   *    ⚠️ 图片分支用的是**请求参数 filePath**（每次请求各不相同）。
    */
   private resourceRequest: bookParser.CallbackRes<string, ArrayBuffer> =
     (filePath: string): ArrayBuffer => {
@@ -4340,6 +4394,13 @@ export default struct ReaderPage3 {
         || lower.indexOf('.png') !== -1;
       if (!isFont && !isImage) {
         return new ArrayBuffer(0);
+      }
+      // ── 字体分支（2026-10-12 重写，见 loadFontBytes 头注释）──────────────
+      if (isFont) {
+        return ReaderPage3.loadFontBytes(
+          this.getUIContext(),
+          this.getUIContext().getHostContext() as common.UIAbilityContext,
+          this.readerSetting, filePath);
       }
       // ── 背景图分支（2026-09-25）：按请求路径给字节 ──────────────────────────
       if (isImage) {
@@ -4371,34 +4432,100 @@ export default struct ReaderPage3 {
           return new ArrayBuffer(0);
         }
       }
-      // ── 字体分支（保持真机验证过的原状）──────────────────────────────────
-      // ① rawfile
+      // 字体分支已在上面 `isFont` 处分流到 `loadFontBytes()`，这里不可达
+      return new ArrayBuffer(0);
+    };
+
+  /**
+   * 把字体字节喂给排版引擎（**2026-10-12 重写，修"整篇乱码"**）。
+   *
+   * ── 旧实现错在哪 ──────────────────────────────────────────────────────────
+   * 旧代码**完全忽略入参 `filePath`**，只读 `this.readerSetting.fontPath`：
+   *   `getRawFileContentSync(this.readerSetting.fontPath)` / `fs.statSync(this.readerSetting.fontPath)`
+   * 它只在「引擎要的文件恰好等于 `fontPath` 那个文件」时碰巧成功 ——
+   * 原注释自己也标注了这是「**单字体的历史巧合**」。
+   *
+   * ── 真机日志（`docs/日志.md` 19:55:23，卸载重装后）─────────────────────────
+   *   `resourceRequest: 鸿蒙黑体.ttf`                      ← 引擎按 **fontName** 拼名来要
+   *   `E resourceRequest: 读取字体失败 No such file or directory. Stat failed, path is:`
+   * 引擎要的是 `鸿蒙黑体.ttf`，而旧代码拿 `fontPath`（当时已为空串）去 stat ⇒ 必然失败
+   * ⇒ 回 0 字节 ⇒ 引擎无字形 ⇒ **整篇方框/乱码**。
+   *
+   * ── 官方契约（`devecocli docs read` 原文）──────────────────────────────────
+   * documentId `开发指南/Reader_Kit_阅读服务/书籍内容排版/修改阅读设置/自定义字体/reader-setting-font`：
+   *   「当排版引擎检测到是自定义字体场景时，会通过接口请求字体资源。开发者需要
+   *     **根据返回的文件路径**，判断是否为请求字体资源。如果是，则根据字体资源
+   *     所在的路径，返回对应的 ArrayBuffer。」
+   * ⇒ **必须按入参 `filePath` 解析**，不能只认 `fontPath`。这是官方明确要求的写法。
+   *
+   * ── 解析顺序（逐级兜底，任一级成功即返回）──────────────────────────────────
+   *   ① `fontPath` 本身（用户导入的沙箱/rawfile 字体 —— 官方文档的两种存放路径）
+   *   ② 引擎要的文件名当 rawfile 名（工程内置字体）
+   *   ③ 引擎要的文件名当绝对/沙箱路径
+   *   ④ **按名字查系统字体表**（`getFontByName` 反查真实文件路径）——
+   *      这一级专治「引擎拿 `fontName` 拼 `.ttf` 来要系统字体」的场景。
+   */
+  private static loadFontBytes(ui: UIContext, ctx: common.UIAbilityContext,
+    setting: readerCore.ReaderSetting, filePath: string): ArrayBuffer {
+    // 候选路径（去重，按优先级）
+    const candidates: string[] = [];
+    const add = (p: string): void => {
+      if (p !== undefined && p !== null && p.length > 0 && candidates.indexOf(p) < 0) {
+        candidates.push(p);
+      }
+    };
+    add(setting.fontPath);
+    add(filePath);
+    // ④ 系统字体表反查：引擎给的名字可能不带路径（如 '鸿蒙黑体.ttf'），
+    //    去掉扩展名后按族名查真实路径。FontInfo.path 是系统给出的绝对路径。
+    const nameOnly: string = filePath.replace(/\.[a-zA-Z0-9]{1,5}$/, '');
+    const lookup = (n: string): void => {
       try {
-        const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-        const v: Uint8Array = ctx.resourceManager.getRawFileContentSync(this.readerSetting.fontPath);
+        const info = ui.getFont().getFontByName(n);
+        if (info !== undefined && info !== null && info.path !== undefined && info.path.length > 0) {
+          add(info.path);
+        }
+      } catch (e) {
+        // 查不到就继续兜底
+      }
+    };
+    lookup(nameOnly);
+    // 同文件的两个名字：族名查不到时试 'HarmonyOS Sans SC'（getFontByName 实测
+    // 'HarmonyOS Sans SC' 的 family 才是 '鸿蒙黑体'，两个名字都试一遍最稳）
+    if (nameOnly !== 'HarmonyOS Sans SC') {
+      lookup('HarmonyOS Sans SC');
+    }
+    // 逐级尝试
+    for (const p of candidates) {
+      // rawfile（工程内置字体名，如 'fonts/SourceHanSerifCN-VF.ttf'）
+      try {
+        const v: Uint8Array = ctx.resourceManager.getRawFileContentSync(p);
         if (v.byteLength > 0) {
-          hilog.info(0x0000, 'testTag', 'resourceRequest: rawfile ok %{public}d bytes', v.byteLength);
+          hilog.info(0x0000, 'testTag', 'font bytes: rawfile ok %{public}d (%{public}s)',
+            v.byteLength, p);
           return v.buffer as ArrayBuffer;
         }
       } catch (e) {
-        // 工程里没有该字体：继续走绝对路径
+        // 不是 rawfile：继续
       }
-      // ② 沙箱 / 绝对路径
+      // 绝对 / 沙箱路径
       try {
-        const st = fs.statSync(this.readerSetting.fontPath);
-        const f = fs.openSync(this.readerSetting.fontPath, fs.OpenMode.READ_ONLY);
+        const st = fs.statSync(p);
+        const f = fs.openSync(p, fs.OpenMode.READ_ONLY);
         const buf = new ArrayBuffer(st.size);
         fs.readSync(f.fd, buf);
         fs.closeSync(f);
-        hilog.info(0x0000, 'testTag', 'resourceRequest: file ok %{public}d bytes (%{public}s)',
-          st.size, this.readerSetting.fontPath);
+        hilog.info(0x0000, 'testTag', 'font bytes: file ok %{public}d (%{public}s)', st.size, p);
         return buf;
       } catch (e) {
-        hilog.error(0x0000, 'testTag', 'resourceRequest: 读取字体失败 %{public}s',
-          e instanceof Error ? e.message : String(e));
-        return new ArrayBuffer(0);
+        // 继续下一个候选
       }
-    };
+    }
+    hilog.error(0x0000, 'testTag',
+      'font bytes: ALL candidates failed, engine asked %{public}s, fontPath=%{public}s',
+      filePath, setting.fontPath);
+    return new ArrayBuffer(0);
+  }
 
   aboutToDisappear(): void {
     // ★ 退出阅读 ⇒ 最终进度落库 + 广播书架刷新（2026-10-07）：
