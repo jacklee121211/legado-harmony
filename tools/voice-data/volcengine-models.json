@@ -1,0 +1,19 @@
+{
+  "provider": "volcengine",
+  "source": "https://docs.volcengine.com/docs/6561/1257544 (HTTP API 文档 X-Api-Resource-Id)",
+  "note": "火山用 X-Api-Resource-Id 头传模型，不是 body 里的 model 字段",
+  "models": [
+    {
+      "note": "豆包语音合成大模型2.0（本工程当前用）+ 官方音色表",
+      "id": "seed-tts-2.0"
+    },
+    {
+      "note": "官方：默认值",
+      "id": "seed-tts-2.0-standard"
+    },
+    {
+      "note": "声音复刻大模型2.0，只能用克隆音色",
+      "id": "seed-icl-2.0"
+    }
+  ]
+}

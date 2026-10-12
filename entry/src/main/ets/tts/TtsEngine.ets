@@ -384,6 +384,45 @@ const SPEAKER_CTX_NODE_CHARS: number = 80;
  * 回退：改回 false 即回到"paused+探活"路径，无其他残留。
  */
 const TTS_SILENCE_KEEPALIVE: boolean = true;
+
+/**
+ * ── 失败归因（2026-10-12 新增）：区分「网络不通」与「在线引擎不可用」────────────
+ *
+ * 由来（真机 + 上游实证）：2026-10 微软迁移 Edge 朗读合成端点，旧
+ * `speech.platform.bing.com` 开始全量返回 403/握手失败。当时 toast 一律打
+ * 「网络不佳，静音等待恢复…」——**归因完全错误**：网络是通的（音色列表接口同时刻
+ * 仍返回 200），是**在线引擎本身不可用**，用户被误导去反复检查 WiFi。
+ * 日志证据：`docs/日志.md` 21×`ws upgrade response not 101` 紧接
+ * `silence keepalive start (net down)`。
+ *
+ * ⇒ 本函数把 Edge 客户端的失败消息归类，让 toast 说实话。
+ *   判据（与 `EdgeTtsClient.ets` 实际抛出的 errMsg 取值一一对应）：
+ *   · 「连接被关闭(...)」「服务返回：…」= 服务端明确拒绝 → **引擎不可用**
+ *   · 「服务返回」里出现 4xx 字样 → 同上
+ *   · 600xxx/403/404/429 之类字样 → 同上
+ *   · 其余（连接超时/DNS/握手失败/发送失败）→ 按**网络问题**处理（维持旧文案）
+ *
+ * ⚠️ 这是**纯文案层**分类，不改变任何控制流（重试次数、垫片、探活全部不动）
+ *    ⇒ 天然可一键回退：删掉本函数、把 toast 文案改回常量字符串即可。
+ */
+function isEngineUnavailable(err: string): boolean {
+  if (err.indexOf('连接被关闭') >= 0) {
+    return true;
+  }
+  if (err.indexOf('服务返回') >= 0) {
+    return true;
+  }
+  // 服务端 4xx（403/404/429…）字样：改网络也没用
+  if (/\b(4\d\d)\b/.test(err)) {
+    return true;
+  }
+  return false;
+}
+
+/** 在线引擎不可用时的提示语（与"网络不佳"区分开，避免误导用户去修网络） */
+const TOAST_ENGINE_DOWN: string = '在线语音暂不可用，静音等待恢复…';
+/** 网络侧问题时的提示语（维持 2026-09 起的原文案） */
+const TOAST_NET_DOWN: string = '网络不佳，静音等待恢复…';
 /**
  * 静音垫片单块时长（秒）。短块 ⇒ 网络恢复后切换延迟 ≤ 该时长——**仅亮屏成立**
  * （亮屏渲染器缓冲 ~250ms）。熄屏下渲染器排队静音可达官方缓冲上限 10000ms，
@@ -2143,7 +2182,9 @@ export class TtsEngine {
           // failStreak 1..4 的旧窗口本身就是跳句/断供窗口。
           if (TTS_NET_RESILIENCE && TTS_SILENCE_KEEPALIVE) {
               hilog.warn(DOMAIN, TAG, 'silence keepalive start (net down) chunk=%{public}d', i);
-              TtsEngine.cb?.onToast('网络不佳，静音等待恢复…');
+              // 2026-10-12 归因修正：403/握手被拒类失败**不是**网络问题（见 isEngineUnavailable
+              // 的注释与真机证据），必须换文案，否则把用户引向"检查网络"这个错误方向。
+              TtsEngine.cb?.onToast(isEngineUnavailable(emsg) ? TOAST_ENGINE_DOWN : TOAST_NET_DOWN);
               // ── F2（2026-09-29）：先保底垫音，再谈探活 ─────────────────────────
               // 旧顺序是「先启动探活 → 再 await playSilenceChunk()」，本意是并行；
               // 但 playSilenceChunk 内部第一步要构建垫片 PCM，而旧构建是**同步大循环**，
@@ -2220,7 +2261,9 @@ export class TtsEngine {
               TtsEngine.netProbeDueAt = Date.now() + NET_PAUSE_PROBE_MS;
             }
             TtsEngine.setState('paused');
-            TtsEngine.cb?.onToast('网络异常，已暂停朗读');
+            // 2026-10-12 同样做归因修正（本分支是"垫片关闭"时的次选路径）
+            TtsEngine.cb?.onToast(isEngineUnavailable(emsg)
+              ? '在线语音暂不可用，已暂停朗读' : '网络异常，已暂停朗读');
             continue;
           }
           if (TTS_NET_RESILIENCE) {

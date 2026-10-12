@@ -2,6 +2,9 @@ import { webview } from '@kit.ArkWeb'
 import { common } from '@kit.AbilityKit'
 import { SetHead } from '../../../../componets/myset/SetHead'
 import UiMotion from '../../../../common/utils/UiMotion'
+import { ShelfColors } from '../../../../common/utils/NightMode'
+import { ThemeStorageKey } from '../../../../common/constants/Theme'
+import { ThemeItem } from '../../../../common/model/Theme'
 
 // ── 联系我们（2026-10-07 新增 / 2026-10-08 修复"加 QQ 群跳不出去"）──────────
 // 1. 主体仍是应用内 Web 组件打开远程 md 联系页（与「用户隐私与协议」同源策略）。
@@ -37,6 +40,8 @@ export default struct ContactPage {
   private url: string = 'https://md.weizhoudao.cc/s/%E5%96%B5%E9%98%85%E8%BD%AF%E4%BB%B6%E8%81%94%E7%B3%BB%E9%A1%B5'
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
+  /** 全局主题（2026-10-12：页面底色跟随主题渐变） */
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
 
   build() {
     NavDestination() {
@@ -48,6 +53,9 @@ export default struct ContactPage {
           .layoutWeight(1)
           .width('100%')
           .javaScriptAccess(true)
+          .borderRadius(12)
+          .clip(true)
+          .margin({ left: 12, right: 12, bottom: 12 })
           // 拦截外链：让"加 QQ 群"等跳转走系统，而不是死在 WebView 内。
           .onLoadIntercept((event) => {
             if (!BLOCK_OUTSIDE_LINKS) {
@@ -87,7 +95,13 @@ export default struct ContactPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(Color.White)
+      // 2026-10-12 适配全局主题渐变。本页正文同样在 Web 组件内（不透明画布），
+      // ⇒ 做法与「用户隐私与协议」一致：根部铺主题渐变，Web 套圆角卡片 + 外边距，
+      //    让渐变从页头色带与卡片四周透出来。
+      .linearGradient({
+        direction: GradientDirection.Bottom,
+        colors: ShelfColors.pageGradient(this.theme.mainColor, this.theme.secondColor)
+      })
     }
     .hideTitleBar(true)
     .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))

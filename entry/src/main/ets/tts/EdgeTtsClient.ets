@@ -21,7 +21,53 @@ const EDGE_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
 const EDGE_GEC_VERSION = '1-143.0.3650.75';
 const EDGE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0';
 const EDGE_ORIGIN = 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold';
-const EDGE_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
+// ── 合成端点（2026-10-12 微软端迁移，见下方 [EDGE-HOST-MIGRATION]）──────────────
+// 主用 = 新 host（Edge 155 的正式端点，接受旧 token 与旧 GEC 版本）；
+// 备用 = 旧 host（历史上一直可用，留作一键回退 / 万一新 host 也调整）。
+const EDGE_URL_PRIMARY =
+  'wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1';
+const EDGE_URL_LEGACY =
+  'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
+
+/**
+ * ── [EDGE-HOST-MIGRATION] 端点迁移（2026-10-12 实证）────────────────────────────
+ *
+ * ── 现象 ────────────────────────────────────────────────────────────────────
+ * 真机日志（`docs/日志.md`）：`ws upgrade response not 101` 21 次 / `synth fail 连接错误` 21 次
+ * ⇒ 合成 100% 失败。本机独立复现（复刻本文件 computeSecMsGec 后做真实握手）：
+ *   legacy host => 403，新 host + 旧 token/version => **101 成功 + 12528B MP3 真实出声**。
+ *
+ * ── 根因（上游 rany2/edge-tts#490 / PR #491 原文）──────────────────────────────
+ * "Since October 2026 `speech.platform.bing.com` answers the synthesis WebSocket with
+ *  403 in many countries, and since 12 October in the US too. Microsoft Edge 155
+ *  synthesizes through `api.msedgeservices.com/tts/cognitiveservices/websocket/v1`.
+ *  That host also accepts the legacy token given as `Ocp-Apim-Subscription-Key`,
+ *  with the legacy `Sec-MS-GEC` and `Sec-MS-GEC-Version`."
+ * ⇒ **只换 host + 改参数名**；`EDGE_TOKEN` / `EDGE_GEC_VERSION` / `computeSecMsGec()`
+ *    **全部保持 v1 不变**（已实测在新 host 上有效）。音色列表仍在旧 host（实测 200，别改）。
+ *
+ * ── 自动选 host（用户 2026-10-12 拍板：自动、优先新宿主、旧的尽量保留备用）──────────
+ * 不做 UI 开关。策略：**新 host 优先**；若它握手即失败（网络级哨兵错误），
+ * 本进程内自动降级到旧 host 再试一次，并把结果缓存到 `hostChoice`，
+ * 后续块直接走选定的那个，避免每块都白试一次。
+ * 两个 host 都不行 ⇒ 正常抛错 ⇒ 上层（TtsEngine）走既有重试/静音垫片，行为不变。
+ *
+ * ── 回退方式（一键）──────────────────────────────────────────────────────────
+ * · 想强制固定用某一个：把 `EDGE_HOST_AUTO` 改成 false，并设 `EDGE_HOST_FORCE_LEGACY`
+ *   （true=只用旧 host / false=只用新 host）。
+ * · 想彻底回到迁移前：EDGE_HOST_AUTO=false + EDGE_HOST_FORCE_LEGACY=true
+ *   ⇒ 与 2026-10-12 之前的行为逐字一致。
+ *
+ * ── 验证点 ──────────────────────────────────────────────────────────────────
+ * 真机听一段 → 日志应出现 `synth ok mp3=…` 且不再有 `ws upgrade response not 101`；
+ * 若出现 `edge host fallback -> legacy (…)` 表示新 host 当时不可用、已自动降级。
+ */
+const EDGE_HOST_AUTO: boolean = true;
+/** 仅当 EDGE_HOST_AUTO=false 时有意义：true=只用旧 host，false=只用新 host */
+const EDGE_HOST_FORCE_LEGACY: boolean = false;
+
+/** 本进程内的 host 选择（null = 尚未确定；确定后不再每块重试探测） */
+let hostChoice: number = 0; // 0=未定 1=新host 2=旧host
 const CONNECT_TIMEOUT_MS = 15000;
 const TURN_TIMEOUT_MS = 30000;
 
@@ -223,12 +269,62 @@ function buildHeaders(): Record<string, string> {
  */
 let wsConnSeq: number = 0;
 
+/**
+ * 合成一段文本（对外入口）：按 [EDGE-HOST-MIGRATION] 自动选 host，并在握手级失败时
+ * 自动降级到另一个 host 重试一次。失败时抛 Error（调用方做重试/静音垫片）。
+ *
+ * ⚠️ 「降级重试」只针对**整块全败**的情况，且**每个 host 每块至多试一次**：
+ *    · 已确定 host（hostChoice≠0）：照旧只走选定的那个，**不做**额外重试
+ *      （避免每块都白跑一次对手 host，拖慢听书起播）。
+ *    · 未确定（hostChoice=0，本进程首批）：新 host 失败 ⇒ 立刻试旧 host；
+ *      谁成功就把 hostChoice 定下来，后续所有块不再探测。
+ * ⇒ 正常情况（新 host 可用）退化为**零额外开销**；异常时最多多花一次握手时间。
+ */
 export async function synthesizeOnce(text: string, voice: string, rate: number,
   pitch: number): Promise<SynthResult> {
   if (!hasSpeakableText(text)) {
     const empty: SynthResult = { mp3: new ArrayBuffer(0), words: [] };
     return empty;
   }
+  const forced: boolean = !EDGE_HOST_AUTO;          // 手动固定 host：永不降级
+  const decided: boolean = hostChoice !== 0;        // 本进程已定过 host
+  try {
+    const r = await synthViaHost(text, voice, rate, pitch);
+    if (!forced && !decided) {
+      hostChoice = hostChoice === 2 ? 2 : 1;        // 记下成功者
+      hilog.info(DOMAIN, TAG, 'edge host decided -> %{public}s',
+        hostChoice === 1 ? 'primary(msedgeservices)' : 'legacy(bing)');
+    }
+    return r;
+  } catch (e) {
+    const first = e instanceof Error ? e : new Error(String(e));
+    // 只有「本进程还没定 host」且「允许自动」时才降级到另一个 host 重试一次
+    if (forced || decided) {
+      throw first;
+    }
+    const altIsPrimary: boolean = hostChoice === 2;  // 刚失败的是 legacy ⇒ 换 primary
+    hostChoice = altIsPrimary ? 1 : 2;               // 临时指向对手 host 再试
+    hilog.warn(DOMAIN, TAG, 'edge host fallback -> %{public}s (first err: %{public}s)',
+      altIsPrimary ? 'primary(msedgeservices)' : 'legacy(bing)', first.message);
+    try {
+      const r2 = await synthViaHost(text, voice, rate, pitch);
+      hilog.info(DOMAIN, TAG, 'edge host fallback OK -> %{public}s',
+        hostChoice === 1 ? 'primary(msedgeservices)' : 'legacy(bing)');
+      return r2;
+    } catch (e2) {
+      const second = e2 instanceof Error ? e2 : new Error(String(e2));
+      // 两个 host 都不行 ⇒ 复位为"未定"，下次进来重新探测（避免一次网络抖动把进程钉死）
+      hostChoice = 0;
+      hilog.error(DOMAIN, TAG, 'edge both hosts failed: primary/legacy err=%{public}s | %{public}s',
+        first.message, second.message);
+      throw second;
+    }
+  }
+}
+
+/** 按当前 hostChoice 拼 URL 并走一次完整合成（内部实现，不做降级） */
+async function synthViaHost(text: string, voice: string, rate: number,
+  pitch: number): Promise<SynthResult> {
   let gec = '';
   try {
     gec = await computeSecMsGec();
@@ -236,9 +332,18 @@ export async function synthesizeOnce(text: string, voice: string, rate: number,
     throw e instanceof Error ? e : new Error(String(e));
   }
   const connId = randomHex(32, false);
-  const url = `${EDGE_URL}?ConnectionId=${connId}&TrustedClientToken=${EDGE_TOKEN}` +
+  // ⚠️ 两个 host 的**密钥参数名不同**（上游 PR #491 原文，已实测）：
+  //   新 host 用 `Ocp-Apim-Subscription-Key`，旧 host 用 `TrustedClientToken`，**值相同**。
+  //   Sec-MS-GEC / Sec-MS-GEC-Version 两者一致，均走 v1（本文件不做 v2 算法）。
+  const usePrimary: boolean = EDGE_HOST_AUTO
+    ? hostChoice !== 2
+    : !EDGE_HOST_FORCE_LEGACY;
+  const host: string = usePrimary ? EDGE_URL_PRIMARY : EDGE_URL_LEGACY;
+  const keyParam: string = usePrimary
+    ? `Ocp-Apim-Subscription-Key=${EDGE_TOKEN}`
+    : `TrustedClientToken=${EDGE_TOKEN}`;
+  const url = `${host}?ConnectionId=${connId}&${keyParam}` +
     `&Sec-MS-GEC=${gec}&Sec-MS-GEC-Version=${EDGE_GEC_VERSION}`;
-
   wsConnSeq++;
   hilog.info(DOMAIN, TAG, 'power: ws connect #%{public}d (new socket per chunk)', wsConnSeq);
   const ws = webSocket.createWebSocket();

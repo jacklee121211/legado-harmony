@@ -323,10 +323,21 @@ export struct MyThemeConfigComp {
         })
       }
       .columnsTemplate('1fr 1fr')
-      .columnsGap(12)
+      // 2026-10-13 宽度对齐「关于我们」卡片（用户需求：两列共宽 B = A 宽）。
+      // 真机实测（Mate 80 Pro Max，屏宽 1320px，scale 3.35）：
+      //   · 关于我们卡片行 bounds = [67, ‥, 1253] ⇒ A 宽 = 1186px（= 屏宽 − 2×20vp padding）
+      //   · 主题 Grid bounds      = [126, ‥, 1194] ⇒ B 宽 = 1068px ⇒ 差 118px
+      // 根因：外层 `MyThemeConfig.ets` 已给 padding 20vp，这里**又**加了 width('90%')，
+      //   两道收窄叠加 ⇒ Grid 被居中缩掉 90%，左右各留 59px 空隙（不是列间距太小）。
+      //   `grid.d.ts:340-371` 明确 `'1fr 1fr'` 只均分「扣除 gap 后的可用宽度」，
+      //   `columnsGap` 默认 0（`grid.d.ts:430-440`）⇒ 单纯加大 gap 只会让两列各自变窄，
+      //   Grid 自身宽度纹丝不动，B 永远追不上 A。故必须去掉 width('90%') 这道多余约束。
+      // 去 90% 后 Grid 自动撑满父级内容宽（67→1253）⇒ B 宽 = A 宽 = 1186px。
+      // gap 12 → 20vp：比原值略宽、两列间有呼吸感，又不必为了凑宽度把间隙撑成 47vp（那会在
+      //   中间开一个 158px 的洞）。列宽随之 513.9 → 559.5px，比例不变、格子更饱满。
+      .columnsGap(20)
       .rowsGap(12)
-      // 2026-09-25 用户要求：两侧收紧，与上面三段开关同 90% 宽
-      .width('90%')
+      .width('100%')
       .height('100%')
     }
     .width('100%')
