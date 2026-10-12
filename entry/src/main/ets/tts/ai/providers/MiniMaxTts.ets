@@ -142,9 +142,15 @@ export class MiniMaxTtsProvider implements AiTtsProvider {
         const item: AiVoiceOption = {
           id: id as string,
           label: typeof nm === 'string' && (nm as string).length > 0 ? (nm as string) : (id as string),
-          description: groupLabel[g] + (typeof ds === 'string' && (ds as string).length > 0
-            ? ' · ' + (ds as string) : ''),
-          gender: ''
+          description: typeof ds === 'string' && (ds as string).length > 0 ? (ds as string) : '',
+          // ⚠️ MiniMax 的 /get_voice **不返回性别字段**（证据：参考项目
+          //   `voiceReadMinimaxVoiceGender.ts:1` 原话「API 无 gender 字段，由 id / 名称 / 描述推断」）。
+          //   参考项目要写 104 行启发式规则去猜；我们**不猜** —— 留空串，
+          //   由 `pickVoiceForName` 自然跳过（`g !== 'male'` 即 continue），
+          //   不产生"猜错性别导致角色配音张冠李戴"的风险。
+          gender: '',
+          // 2026-10-11：分组改用 `group` 字段（旧版把组名拼进 description，UI 无法分组）
+          group: groupLabel[g]
         };
         out.push(item);
       }
