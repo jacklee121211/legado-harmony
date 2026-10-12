@@ -124,10 +124,12 @@ const MINIMAX_VOICES: AiVoiceOption[] = [
 
 /**
  * 小米 MiMo：官方为**预置音色名**（不支持自定义/克隆）。
- * 【待验证】官方文档站为纯前端 SPA（`platform.xiaomimimo.com`），
- *   本环境抓不到正文 ⇒ 这 9 条沿用参考项目已验证的清单
- *   （其注释写明"来源：小米 MiMo 官方文档 + Studio 试听印象"）。
- *   待能访问官方文档时再逐条复核。
+ *
+ * ✅ 2026-10-11 已由官方文档确认：`docs/日志tts.md:62` 原文
+ *   「`mimo-v2.5-tts`：`mimo_default`，`冰糖`，`茉莉`，`苏打`，`白桦`，`Mia`，`Chloe`，`Milo`，`Dean`」
+ *   —— 与本表 9 条逐字一致，【待验证】标记已摘除。
+ * ⚠️ 官方**无「列音色」接口** ⇒ 与通义一样只能内置静态表。
+ * ⚠️ 本表仅适用于 `mimo-v2.5-tts` 模型；另两个模型（voicedesign/voiceclone）不支持预置音色 id。
  */
 const MIMO_VOICES: AiVoiceOption[] = [
   { id: 'mimo_default', label: 'MiMo 默认', description: '系统默认音色，中国集群一般为冰糖', gender: 'female', group: '中文' },

@@ -44,6 +44,53 @@ export const MINIMAX_META: AiProviderMeta = {
 const DEFAULT_MODEL: string = 'speech-2.8-turbo';
 const SAMPLE_RATE: number = 32000;
 
+/**
+ * 语种增强（官方 `language_boost`）。
+ * 官方 enum 含：Chinese / Chinese,Yue / English / Arabic / Russian / Spanish /
+ *   French / Portuguese / German / Turkish / Dutch / Ukrainian / Vietnamese /
+ *   Indonesian / Japanese / Italian / Korean / Thai / Polish / Romanian / Greek /
+ *   Czech / Finnish / Hindi / Bulgarian / Danish / Hebrew / Malay / Persian …
+ * 默认 `Chinese`：本工程定位中文书；不传 = 模型自主判断（与通义 Auto 同类风险）。
+ * 【待验证】与通义一样是编译期常量；需要多语种时用「附加请求体」覆盖。
+ */
+const MINIMAX_LANGUAGE: string = 'Chinese';
+
+/**
+ * 把 `/get_voice` 的 `description` 字段转成一行文本。
+ *
+ * 官方 OpenAPI 定义它是**字符串数组**（`SystemVoiceInfo.description` /
+ * `VoiceCloningInfo.description` / `VoiceGenerationInfo.description` 三者一致）：
+ * ```yaml
+ * description:
+ *   type: array
+ *   items: { type: string }
+ * ```
+ * 例：`description: ["一位沉稳可靠的中年男性高管声音，标准普通话，传递出值得信赖的感觉。"]`
+ *
+ * 这里兼容三种形态（数组 / 字符串 / 缺失），因为它们来自**服务端返回**，
+ * 我们不做"一定符合规范"的假设 —— 旧代码只判字符串，结果描述全为空。
+ */
+function voiceDescText(raw: Object): string {
+  if (raw === undefined || raw === null) {
+    return '';
+  }
+  if (typeof raw === 'string') {
+    return (raw as string).trim();
+  }
+  if (Array.isArray(raw)) {
+    const arr = raw as Array<Object>;
+    const parts: string[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      const s = arr[i];
+      if (typeof s === 'string' && (s as string).trim().length > 0) {
+        parts.push((s as string).trim());
+      }
+    }
+    return parts.join('；');
+  }
+  return '';
+}
+
 /** 业务错误（HTTP 200 但 base_resp.status_code != 0）也算**永久错误**：重试无意义 */
 function businessError(root: Record<string, Object>): string {
   const br = root['base_resp'];
@@ -74,6 +121,16 @@ export class MiniMaxTtsProvider implements AiTtsProvider {
       '"model":' + JSON.stringify(model) + ',' +
       '"text":' + JSON.stringify(req.text) + ',' +
       '"stream":false,' +
+      // ── language_boost（2026-10-11 新增）────────────────────────────────
+      // 官方 OpenAPI 原文（platform.minimaxi.com，T2A V2 `language_boost`）：
+      //   「是否增强对指定的小语种和方言的识别能力。默认值为 null，
+      //     可设置为 auto 让模型自主判断。」
+      //   enum: Chinese / Chinese,Yue / English / Japanese / Korean / ...（30+）
+      // 与通义 `language_type` 是同一个问题的两种命名：**不传 ⇒ 模型自己猜**。
+      // 本工程定位中文书 ⇒ 固定传 `Chinese`（与通义保持一致的行为）。
+      // 需要英文/粤语时，用「高级 → 附加请求体」覆盖：
+      //   {"language_boost":"English"} 或 {"language_boost":"Chinese,Yue"}
+      '"language_boost":' + JSON.stringify(MINIMAX_LANGUAGE) + ',' +
       '"voice_setting":{"voice_id":' + JSON.stringify(voice) + ',"speed":' + speed.toFixed(2) + '},' +
       '"audio_setting":{"sample_rate":' + SAMPLE_RATE + ',"format":"mp3","channel":1}' +
       '}';
@@ -142,7 +199,12 @@ export class MiniMaxTtsProvider implements AiTtsProvider {
         const item: AiVoiceOption = {
           id: id as string,
           label: typeof nm === 'string' && (nm as string).length > 0 ? (nm as string) : (id as string),
-          description: typeof ds === 'string' && (ds as string).length > 0 ? (ds as string) : '',
+          // ⚠️ 2026-10-11 修复：官方 OpenAPI 定义 `description` 是 **字符串数组**
+          //   （source: platform.minimaxi.com OpenAPI，GetVoiceResp/SystemVoiceInfo：
+          //     `description: { type: array, items: { type: string } }`）。
+          //   旧代码只判 `typeof === 'string'` ⇒ **永远拿到空串**，音色描述全丢。
+          //   这里兼容数组与字符串两种形态（voice_cloning/voice_generation 也同为数组）。
+          description: voiceDescText(ds),
           // ⚠️ MiniMax 的 /get_voice **不返回性别字段**（证据：参考项目
           //   `voiceReadMinimaxVoiceGender.ts:1` 原话「API 无 gender 字段，由 id / 名称 / 描述推断」）。
           //   参考项目要写 104 行启发式规则去猜；我们**不猜** —— 留空串，

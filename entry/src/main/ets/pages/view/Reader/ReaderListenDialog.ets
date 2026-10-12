@@ -99,7 +99,21 @@ export struct ReaderListenDialog {
   onClosed: () => void = (): void => {
   }
 
-  /** 展开档 / 收起档 */
+  /**
+   * 展开档 / 收起档。
+   *
+   * ── 2026-10-12：**听书开启时默认全窗**（用户要求）────────────────────────
+   * 用户原话：「点击这个小蓝条，或者在听书状态下点击书页的中心位置，呼出的听书弹窗
+   *   是半窗，而不是拉起来能看到 AI 系列东西的全窗，现在改为全窗。
+   *   但是未开启听书的时候，点击还是半窗。」
+   *
+   * 判据 = **TTS 引擎是否在播/暂停**（`ttsState !== 'stopped'`）。
+   *   · 听书已开启（playing / paused）⇒ 直接展开档（能看到 AI 系列设置）；
+   *   · 未开启（stopped）⇒ 收起档（只显示核心行，不吓到还没开始听的人）。
+   *
+   * 初值在 `aboutToAppear` 里按当时的 `ttsState` 定（见该方法注释）。
+   * 之后用户仍可手动换挡（顶部把手），**不会**被再次强制改写。
+   */
   @State expanded: boolean = false
   /** 材质背板：材质可用 ⇒ 内容层一个背景属性都不设；不可用 ⇒ 落回改造前的实底纯色 */
   private surface: MaterialColumnModifier = new MaterialColumnModifier('#1F1F1F', true)
@@ -107,6 +121,13 @@ export struct ReaderListenDialog {
   aboutToAppear(): void {
     this.surface = new MaterialColumnModifier(
       this.colorMode == 0 ? '#1F1F1F' : 'rgba(248, 249, 250, 1)', true)
+    // ── 听书开启时默认全窗（2026-10-12 用户要求）────────────────────────────
+    // 判据 = 引擎是否在播/暂停（`ttsState !== 'stopped'`）。
+    // 为什么放在 `aboutToAppear`（而不是用 @Watch 跟 ttsState）：
+    //   用户要的是"**呼出时**是全窗还是半窗"，这是一个**打开瞬间**的决定；
+    //   若跟随 ttsState 变化，则用户刚落座听书时弹窗会自己弹开，打扰阅读。
+    //   ⇒ 只在打开时定初值，之后完全交给用户手动换挡。
+    this.expanded = this.ttsState !== 'stopped'
   }
 
   aboutToDisappear(): void {
@@ -243,7 +264,15 @@ export struct ReaderListenDialog {
             : 'rgba(19, 19, 19, 0.20)')
       }
       .width('100%')
-      .height(20)
+      // ── 触控区放大（2026-10-12 用户反馈）──────────────────────────────────
+      // 用户原话：「听书弹窗顶部的上划按钮，就是上划从半屏变全屏那个区域
+      //   稍微放大一些，触控不灵敏」。
+      // 旧值 `height(20)`：整条把手（含左右整宽）只有 20vp 高，手指稍偏就落空。
+      // 新值 `height(36)`：**视觉不变**（里面的小横条仍是 36×4），
+      //   只是把**命中区**纵向扩到 36vp，靠近可用性下限（44vp 更佳，
+      //   但把手压在上内边距 20vp 区域内，取 36 是"命中率"与"不挤布局"的折中）。
+      // ⚠️ 该行**不占布局高度**（Stack 顶层对齐，见上面注释），所以加高不会挤掉内容。
+      .height(36)
       .justifyContent(FlexAlign.Center)
       .onClick(() => {
         Haptics.tap();

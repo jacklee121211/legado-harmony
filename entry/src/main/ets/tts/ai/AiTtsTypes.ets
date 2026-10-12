@@ -114,6 +114,26 @@ export interface AiVoiceOption {
  */
 export type AiVoiceSource = 'official' | 'builtin' | 'pulled';
 
+/**
+ * TTS 模型条目（2026-10-11 新增，与 {@link AiVoiceOption} 同构）。
+ *
+ * 为什么单独建表：模型与音色**强绑定**（官方：音色必须属于当前模型支持的列表，
+ * 跨模型混用会返回 InvalidParameter）。UI 需要「模型下拉 + 音色下拉」联动，
+ * 而裸 TextInput 无法表达"这个模型支不支持指令控制"这类能力位。
+ */
+export interface AiModelOption {
+  id: string;
+  label: string;
+  description: string;
+  /** 分组名（UI 下拉分节，如「推荐」「其它」）；空串 = 不分组 */
+  group?: string;
+  /**
+   * 是否支持自然语言语气控制（instructions / context_texts）。
+   * UI 据此决定是否渲染「风格提示词」输入框 —— 不支持还渲染就是假控件。
+   */
+  supportsInstructions: boolean;
+}
+
 /** 一个 AI TTS 服务商 */
 export interface AiTtsProvider {
   readonly meta: AiProviderMeta;

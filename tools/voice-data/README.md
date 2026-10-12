@@ -15,6 +15,29 @@
 
 ## 文件清单
 
+> ⚠️ 2026-10-11 起，本目录同时收录**音色**与**模型**两类数据。
+> 二者**强绑定**：官方原文（<https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list>）
+> 「所选音色（voice）必须属于当前模型（model）支持的音色列表，**不能跨模型混用**。
+> 音色不匹配时，服务会返回 `InvalidParameter` 错误」
+
+### 模型清单（五家）
+
+| 文件 | 服务商 | 内容 |
+|---|---|---|
+| `dashscope-models.json` | 通义 | 官方「模型列表」全部 **14** 个模型（含 API 形态、指令控制能力） |
+| `volcengine-models.json` | 火山 | **3** 个（`seed-tts-2.0` / `-standard` / `seed-icl-2.0`） |
+| `volcengine-models-official.md` | 火山 | 官方「模型列表」文档原始 Markdown |
+| `minimax-models.json` | MiniMax | **8** 个（官方 OpenAPI enum，已确认） |
+| `mimo-models.json` | MiMo | **3** 个（官方 API 文档，已确认） |
+| `openai-models.json` | OpenAI 兼容 | **3** 个（`tts-1` / `tts-1-hd` / `gpt-4o-mini-tts`） |
+
+**重要事实**：
+- **通义**：官方现行模型名里**没有** `qwen3-tts-instruct-flash`（旧名，已不在清单）。
+  支持「指令控制」的是 `qwen-audio-3.0-tts-plus` / `-flash` / `3.1-tts-flash` 与部分 CosyVoice。
+- **火山**：模型通过 **`X-Api-Resource-Id` 请求头**传递，**不是** body 的 `model` 字段。
+- **模型与音色不同表**：例如 `qwen3-tts-flash` 用 `qwen-tts-voice-list` 的 48 条音色，
+  而 `qwen-audio-3.0-tts-*` 用**另一张** `qwen-audio-tts-voice-list` 表 ⇒ UI 切换模型必须联动音色。
+
 ### 阿里通义 DashScope（Qwen3-TTS）
 
 | 文件 | 内容 | 条数 |
@@ -22,8 +45,10 @@
 | `dashscope-voices-full.json` | 官方音色列表**全量**（去重后） | 48 |
 | `dashscope-voices-clean.json` | 清洗后（去掉误串入的页面导航文字，抽出性别） | 48 |
 | `dashscope-voices-picked.json` | 我们收录的**主流中文精选** | 16 |
+| `dashscope-models.json` | 官方模型清单 | 14 |
 
-- 来源：<https://help.aliyun.com/zh/model-studio/qwen-tts-voice-list>
+- 音色来源：<https://help.aliyun.com/zh/model-studio/qwen-tts-voice-list>
+- 模型来源：<https://help.aliyun.com/zh/model-studio/tts-model>
 - 官方分三组：普通话 28 / 方言 10 / 多语种角色 10
 - 全部音色均支持 10 种语言（含日语）——这是「中文书被念成日语」问题的背景
 - ⚠️ 该服务商**无「列音色」接口** ⇒ 表只能内置或手工维护
@@ -35,9 +60,11 @@
 | `volcengine-voices-full.json` | 官方音色列表**全量** | 433 |
 | `volcengine-voices-picked.json` | 我们收录的**主流中文精选** | 24 |
 | `volcengine-voices-official.md` | 官方文档**原始 Markdown**（含全部表格与说明） | 50 KB |
+| `volcengine-models-official.md` | 官方「模型列表」原始 Markdown | 18 KB |
 
 - 来源：<https://docs.volcengine.com/docs/6561/1257544>（标题「音色列表」）
 - 官方接口取回：`GET /api/doc/getDocDetail?LibraryCode=DoubaoVoice&DocumentCode=Tonelist-1`
+  （模型列表：`DocumentCode=model-list`）
 - 官方 `UpdatedTime`：**2026-09-22**
 - 官方分区：2.0 主表 294 条 + 外语音色 137 条（另有情感参数表 8 行，非音色，已剔除）
 - ⚠️ 官方表**不提供音色描述列**（只有场景/语种/支持能力/标签）
@@ -46,18 +73,56 @@
 
 ### 小米 MiMo
 
-- 【待验证】官方文档站 `platform.xiaomimimo.com` 是**纯前端 SPA**，
-  正文靠 JS 渲染，`Invoke-WebRequest` 只能取到 18 字节的壳页 ⇒ **本次未能抓取**
-- 当前内置的 9 条沿用参考项目已验证清单
-  （其注释：「描述来源：小米 MiMo 官方文档 + Studio 试听印象」）
-- 待能访问官方文档时补抓，并复核这 9 条
+| 文件 | 内容 |
+|---|---|
+| `mimo-official-api.md` | **官方 API 文档原文**（用户手抄提供，17 KB） |
+| `mimo-models.json` | 3 个模型 + 9 条音色（官方确认） |
+
+- ✅ **2026-10-11 已由官方文档确认**（此前为参考项目二手数据）
+- 官方原文（`mimo-official-api.md`）关键行：
+  - **L37 模型**：「可选值：mimo-v2.5-tts，mimo-v2.5-tts-voicedesign，mimo-v2.5-tts-voiceclone」
+  - **L62 音色**：「mimo-v2.5-tts：mimo_default，冰糖，茉莉，苏打，白桦，Mia，Chloe，Milo，Dean」
+  - **L44-47 格式**：默认 `wav`；`stream:true` 时为 `pcm`；可选 `wav`/`mp3`/`pcm`/`pcm16`
+  - **L57-60 voice 规则**：按模型而异 —— 预置可选 / 复刻必填样本 base64 / 设计不支持该字段
+- ⚠️ 官方**无「列音色」接口** ⇒ 只能内置静态表（与通义同）
+- ⚠️ 后两个模型（voicedesign / voiceclone）**本工程不支持**（缺上传样本与音色设计的 UI）
 
 ### MiniMax
 
-- **该服务商有官方「列音色」接口**：`POST {base}/v1/get_voice`，body `{"voice_type":"all"}`
-- 因此**不做静态全表**：内置 4 条起步值，真实清单由 App 内「拉取音色」按钮获得，
-  并按指纹（`providerId|baseUrl`）落盘缓存 7 天（见 `AiVoiceCatalog.ets`）
-- 实现：`entry/src/main/ets/tts/ai/providers/MiniMaxTts.ets` 的 `listVoices`
+| 文件 | 内容 |
+|---|---|
+| `minimax-official-openapi.md` | **官方 OpenAPI 规范原文**（用户手抄提供，253 KB） |
+| `minimax-models.json` | 8 个模型（官方确认）+ 示例音色 |
+
+- ✅ **2026-10-11 已由官方 OpenAPI 确认**（此前 4 条来自阿里云托管页、4 条标【待验证】）
+- 官方原文（`minimax-official-openapi.md`）关键行：
+  - **L204-211 模型 enum**：`speech-2.8-hd` / `-turbo` / `speech-2.6-hd` / `-turbo` /
+    `speech-02-hd` / `-turbo` / `speech-01-hd` / `-turbo`（**恰好 8 个**）
+  - **L5632 `/v1/get_voice`**：查询可用音色 ID，请求体 `{"voice_type":"all"}`
+    （enum：`system` / `voice_cloning` / `voice_generation` / `all`）
+  - **L5075+ `language_boost`**：与通义 `language_type` 同类参数（enum 30+ 语种，
+    粤语需用特殊值 `Chinese,Yue`）
+  - **L491 `voice_id`**：官方列了部分示例音色（`Chinese (Mandarin)_Lyrical_Voice` 等）
+- ✅ **有「列音色」接口** ⇒ 本工程已实现动态拉取 + 落盘缓存（见下）
+
+#### MiniMax 音色查询与缓存机制（已实现）
+
+| 环节 | 位置 |
+|---|---|
+| 服务商声明 | `MINIMAX_META.supportsListVoices = true`（唯一一家） |
+| HTTP 调用 | `MiniMaxTts.listVoices()` → `POST /v1/get_voice`，体 `{"voice_type":"all"}` |
+| 缓存落盘 | `AiVoiceCatalog.ets`（指纹 = `providerId\|baseUrl`，TTL 7 天，LRU 5 个） |
+| UI 入口 | `TtsControlPanel` 的「拉取音色」/「刷新音色」按钮 |
+
+⚠️ **已知解析坑（2026-10-11 已修）**：官方 `description` 字段是**字符串数组**
+（`SystemVoiceInfo.description: { type: array, items: { type: string } }`），
+旧代码按字符串处理 ⇒ **音色描述永远为空**。现兼容数组/字符串两种形态。
+
+### 旧记录（已解决）
+
+- ~~官方文档站 `platform.xiaomimimo.com` 是纯前端 SPA，`Invoke-WebRequest` 只能取到
+  18 字节壳页 ⇒ 未能抓取~~ ⇒ **用户以浏览器打开并手抄，已解决**
+- ~~MiniMax 与 MiMo 的模型/音色为参考项目二手数据~~ ⇒ **已由官方文档确认**
 
 ### OpenAI 兼容
 
@@ -70,7 +135,16 @@
 pwsh -File tools/fetch-voice-data.ps1
 ```
 
-脚本会重新抓取通义与火山并写入本目录（MiMo 因 SPA 限制会跳过并提示）。
+脚本会自动抓取：通义（音色 48 + 模型 14）、火山（音色 433 + 模型列表文档）。
+
+**MiMo 与 MiniMax 需人工手抄**（官方站是纯前端 SPA，HTTP 直取拿不到正文）：
+
+1. 浏览器打开官方文档站；
+2. 全选复制正文，存成 Markdown；
+3. 放到本目录，命名 `mimo-official-api.md` / `minimax-official-openapi.md`；
+4. 在 `* -models.json` 里记录来源行号（便于日后复核）。
+
+> 2026-10-11 实测有效：这两份文档就是这样拿到的（253 KB + 17 KB）。
 
 ## 合规说明
 
