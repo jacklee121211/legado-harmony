@@ -1,0 +1,25 @@
+{
+  "provider": "minimax",
+  "source": "官方 OpenAPI 规范（用户手抄，归档 tools/voice-data/minimax-official-openapi.md）",
+  "sourceLines": "model enum: L204-211; language_boost: L5075+; /v1/get_voice: L5604+",
+  "models": [
+    "speech-2.8-hd",
+    "speech-2.8-turbo",
+    "speech-2.6-hd",
+    "speech-2.6-turbo",
+    "speech-02-hd",
+    "speech-02-turbo",
+    "speech-01-hd",
+    "speech-01-turbo"
+  ],
+  "voicesNote": "官方有 /v1/get_voice 接口（L5632）可查询全部音色，本工程已实现动态拉取；文档 L491 另列了部分示例音色",
+  "exampleVoices": [
+    "moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85",
+    "Chinese (Mandarin)_Lyrical_Voice",
+    "Chinese (Mandarin)_HK_Flight_Attendant",
+    "Chinese (Mandarin)_Reliable_Executive",
+    "Chinese (Mandarin)_News_Anchor",
+    "English_Graceful_Lady",
+    "Cantonese_GentleLady"
+  ]
+}

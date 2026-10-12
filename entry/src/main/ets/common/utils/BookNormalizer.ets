@@ -55,8 +55,64 @@ export class BookNormalizer {
   /** 缓存目录（应用沙箱内，随卸载清除） */
   private static readonly SUB_DIR: string = 'normalized';
 
-  /** 规整算法版本 —— 参与缓存文件名，改算法即自动作废旧缓存 */
-  private static readonly FORMAT_VERSION: string = 'v2';
+  /**
+   * 规整算法版本 —— 参与缓存文件名，改算法即自动作废旧缓存。
+   *
+   * v2 → v3（2026-10-12）：新增「格式门禁」。
+   *   旧版本错误地把 epub 等二进制格式也转译成了脏 `.txt` 缓存
+   *   （真机取证：4,298,929 字节的 epub → 6,111,782 字节的"txt"，
+   *   文件头是 ZIP 的 `PK\x03\x04`）⇒ **必须换版本号让那批脏缓存彻底作废**，
+   *   否则门禁只挡住"新转译"，老的脏文件仍会被 `hitCache()` 命中。
+   */
+  private static readonly FORMAT_VERSION: string = 'v3';
+
+  /**
+   * **只对这些扩展名做转译**（2026-10-12 新增，修"epub 打开变乱码"）。
+   *
+   * ── 为什么必须有这道门禁（真机取证的根因）───────────────────────────────
+   * 本模块的**设计前提是"全文一个行段的纯文本 txt"**（见文件头注释）。
+   * 但 `ensure()` 原先**无条件对每一本书调用**，包括 `.epub`：
+   *   ① `readText()` 把 EPUB 的 ZIP 二进制按文本编码（gbk/utf-8…）猜着解码；
+   *   ② 解出来当然是乱码 ⇒ `splitChapters()` 切不出章节 ⇒ 走"转译"；
+   *   ③ `writeNormalized()` 把这堆乱码写成 `.txt`；
+   *   ④ 该 `.txt` 被当作书交给 ReaderKit ⇒ **满屏乱码**。
+   *
+   * 真机铁证（`docs/日志.md` + 设备文件实测）：
+   *   · 源文件 `蜘蛛 - 十宗罪.epub` = **4,298,929** 字节；
+   *   · 转译产物 `normalized/2_..._v2.txt` = **6,111,782** 字节（**比源文件还大**）；
+   *   · `head -c 300 <那个txt> | od -c` 头两字节是 `P K 003 004`，
+   *     紧接 `m i m e t y p e a p p l i c a t i o n / e p u b + z i p`
+   *     ⇒ 所谓"转译版 txt"**就是原始 EPUB 的 ZIP 二进制**，
+   *     满是 `EF BF BD`（U+FFFD 替换符）⇒ 解码失败的膨胀产物。
+   *   · 日志里该书走的是 `Open normal txt with cache`（被当 txt 排版）。
+   *
+   * 对照**原版 `legado-harmony`**：全仓 grep `BookNormalizer` **零命中**，
+   * 它直接把 `bookUrl` 交给 `bookParser.getDefaultHandler(path)`
+   * （`legado-harmony` 的 `ReaderPage3.ets:132`）⇒ epub 由 ReaderKit 正常解析。
+   *
+   * 官方支持格式（documentId `开发指南/Reader_Kit_阅读服务/Reader_Kit简介/reader-introduction`）：
+   *   「提供对 **txt、epub、mobi、azw、azw3** 格式书籍进行解析的能力」
+   * ⇒ 除 txt 外**全部**交给 ReaderKit，本模块一律不碰。
+   */
+  private static readonly TEXT_EXTS: string[] = ['.txt'];
+
+  /**
+   * 这本书是否**允许**转译：只有纯文本类才允许。
+   *
+   * 判定用「白名单扩展名」而不是"黑名单排除 epub"——
+   * 因为黑名单一旦漏一个格式，就又会把二进制喂进文本解码器。
+   * 白名单下，未列出的格式（含 epub/mobi/azw/azw3 及将来任何新格式）
+   * **默认不转译**，直接交 ReaderKit ⇒ 与原版行为一致，天然安全。
+   */
+  private static isNormalizable(bookUrl: string): boolean {
+    const lower: string = bookUrl.toLowerCase();
+    for (const ext of BookNormalizer.TEXT_EXTS) {
+      if (lower.endsWith(ext)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /**
    * 判定"这本书需要转译"的阈值：我们自己的切章正则**切不出这么多章**时，
@@ -348,27 +404,36 @@ export class BookNormalizer {
     if (src.length === 0) {
       return null;
     }
-    // ① 命中缓存 ⇒ 直接用（这是"第二次进入要快"的快路径）
+    // ① 【格式门禁】只对纯文本（.txt）转译；epub/mobi/azw/azw3 等
+    //    一律**直接放行给 ReaderKit**（与原版 legado-harmony 行为一致）。
+    //    ⚠️ 必须在读缓存**之前**：旧版本已把 epub 转译成脏 .txt 缓存，
+    //       若先查缓存就会命中那堆乱码（真机实测：4.29MB 的 epub
+    //       被转成 6.11MB 的"txt"，文件头是 ZIP 的 PK\x03\x04）。
+    if (!BookNormalizer.isNormalizable(src)) {
+      hilog.info(DOMAIN, TAG, 'skip: not a plain-text book (%{public}s)', src);
+      return null;
+    }
+    // ② 命中缓存 ⇒ 直接用（这是"第二次进入要快"的快路径）
     const cached: string | null = BookNormalizer.hitCache(context, book);
     if (cached !== null) {
       const toc: string[] = BookNormalizer.readTocSidecar(cached);
       hilog.info(DOMAIN, TAG, 'cache hit: %{public}s toc=%{public}d', cached, toc.length);
       return { path: cached, toc: toc };
     }
-    // ② 读原文（按编码解）
+    // ③ 读原文（按编码解）
     const text: string | null = BookNormalizer.readText(src, book.charset ?? '');
     if (text === null) {
       hilog.warn(DOMAIN, TAG, 'readText failed, skip normalize');
       return null;
     }
-    // ③ 我们自己能切出目录吗？
+    // ④ 我们自己能切出目录吗？
     const toc: string[] = BookNormalizer.splitChapters(text);
     if (toc.length >= BookNormalizer.MIN_CHAPTERS) {
       // 我们能切出来 ⇒ 说明 ReaderKit 大概率也能 ⇒ **不折腾**，走原文件
       hilog.info(DOMAIN, TAG, 'chapters=%{public}d, no need to normalize', toc.length);
       return null;
     }
-    // ④ 切不出来 ⇒ 这本书就是"零目录"那种，转译
+    // ⑤ 切不出来 ⇒ 这本书就是"零目录"那种，转译
     hilog.warn(DOMAIN, TAG, 'no chapter found (len=%{public}d), normalizing', text.length);
     return BookNormalizer.writeNormalized(context, book, text);
   }

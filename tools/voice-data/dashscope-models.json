@@ -1,0 +1,100 @@
+[
+  {
+    "id": "cosyvoice-v2",
+    "api": "WebSocket/ HTTP",
+    "clone": "支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  },
+  {
+    "id": "cosyvoice-v3-flash",
+    "api": "WebSocket/ HTTP",
+    "clone": "支持",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "cosyvoice-v3-plus",
+    "api": "CosyVoice",
+    "clone": "WebSocket/ HTTP",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "cosyvoice-v3.5-flash",
+    "api": "WebSocket/ HTTP",
+    "clone": "支持",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "cosyvoice-v3.5-plus",
+    "api": "WebSocket/ HTTP",
+    "clone": "支持",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "MiniMax/speech-02-hd",
+    "api": "HTTP",
+    "clone": "支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  },
+  {
+    "id": "MiniMax/speech-02-turbo",
+    "api": "HTTP",
+    "clone": "支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  },
+  {
+    "id": "MiniMax/speech-2.8-hd",
+    "api": "HTTP",
+    "clone": "支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  },
+  {
+    "id": "MiniMax/speech-2.8-turbo",
+    "api": "HTTP",
+    "clone": "支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  },
+  {
+    "id": "qwen-audio-3.0-tts-flash",
+    "api": "WebSocket/ HTTP",
+    "clone": "支持",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "qwen-audio-3.0-tts-plus",
+    "api": "Qwen-Audio-TTS",
+    "clone": "WebSocket/ HTTP",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "qwen-audio-3.1-tts-flash",
+    "api": "WebSocket/ HTTP",
+    "clone": "支持",
+    "design": "支持",
+    "instruct": "支持"
+  },
+  {
+    "id": "qwen3-tts-flash",
+    "api": "HTTP",
+    "clone": "不支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  },
+  {
+    "id": "qwen3-tts-flash-realtime",
+    "api": "WebSocket",
+    "clone": "不支持",
+    "design": "不支持",
+    "instruct": "不支持"
+  }
+]
