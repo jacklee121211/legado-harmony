@@ -137,3 +137,25 @@ V2.0.2 封面圆角对齐 + 进场更顺
   工程内没有 `@ohos/hvigor`（`hvigorfile.ts` 是插件生成的一行），改构建入口风险高于收益。
 - **分块上传协议端到端自检**：`node web/dev/server.mjs` 起 mock，再 `node scripts/probe-chunk-upload.mjs`
   （11 条断言，覆盖 init/落块/重试/**断点续传只补缺块**/done/100 MB 上限/扩展名白名单）。
+- **`devecocli` 升级会静默打断 MCP**（2026-10-13 实测）：
+  `devecocli` 就是 `mcp__deveco__*` 那 10 个工具的来源，配置在
+  `~/.dsh/profiles/web-hmos/cordis.patch.yml` 的 `mcp-deveco` 行。**1.3.5 起包结构重构**
+  —— `@deveco/deveco-cli` 变成薄壳，真正实现在 `@deveco/deveco-cli-common`，
+  旧的 `<deveco-cli>\dist\cli.js` **已不存在**。
+  ⚠️ 配置里 `failOnStartupError: false` ⇒ **MCP 起不来不报错，只是工具静默消失**；
+  升级瞬间老进程仍持有已删除的文件，**表现是"还能用"，重启后才挂**。
+  **升级 devecocli 后必须复查**：
+  ```powershell
+  Test-Path "$env:APPDATA\npm\node_modules\@deveco\deveco-cli\node_modules\@deveco\deveco-cli-common\dist\cli.js"
+  ```
+  完整流程见 `~/.dsh/AGENTS.md` 第 7 节。
+- **符号名（sys.symbol / sys.color）必须查真源，不能猜**（2026-10-13 实证）：
+  唯一可信源是 `sdk\default\openharmony\ets\build-tools\ets-loader\sysResource.js`（317 KB）。
+  ⚠️ 同名文件 `sdk\default\hms\ets\sysResource.js` 只有 11 KB，**是索引不是全表**，
+  查它会得出"符号不存在"的错误结论。技能侧已收录完整表：
+  `hmos-arkui-develop-skill/references/quick-apis/17-resources.md`（1379 行，逐符号已实证）。
+- **技能目录与 agent 生态**（2026-10-13 起）：DSH 与 zcode **共用**
+  `C:\Users\Administrator\.zcode\skills`（当前 30 个技能）。官方技能市场用
+  `devecocli skills list / find / add --path`；**合并必须差异化，禁止 `--force` 覆盖**
+  —— 技能内含 100+ MB 平台二进制（`heap_cluster.exe` 等），官方 tar 包**不含**，
+  删了技能直接失效。完整流程见 `~/.dsh/AGENTS.md` 第 6 节。
