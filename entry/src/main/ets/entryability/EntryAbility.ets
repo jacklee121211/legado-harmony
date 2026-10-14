@@ -16,6 +16,8 @@ import BrightnessUtil from '../../common/utils/BrightnessUtil';
 import { NightMode } from '../common/utils/NightMode';
 // 防窥两层（2026-10-08）：启动即按已存开关应用（全局生效，见 utils/AntiPeep.ets 文件头）
 import { AntiPeep } from '../common/utils/AntiPeep';
+// 离线模式（2026-10-13）：手动切换的「全量/离线」模式，隐藏依赖网络的入口（见 utils/OfflineMode.ets）
+import { OfflineMode } from '../common/utils/OfflineMode';
 // 标定模式全局信号（2026-10-10）：冷启动回填到 AppStorage
 import { CalibMode } from '../common/utils/CalibMode';
 // VIP 启动自愈（2026-10-14）：付费用户卸载重装/换机后，把 IAP 已购记录查回来
@@ -171,6 +173,9 @@ export default class EntryAbility extends UIAbility {
       const t = (AppStorage.get<number>('BOOK_IS_BOOK_GROUPS_REFRESHING') ?? 0) + 1
       AppStorage.setOrCreate('BOOK_IS_BOOK_GROUPS_REFRESHING', t)
     })
+    // ── 离线模式（2026-10-13）：把落盘意图灌进 AppStorage，供各页 @StorageLink 订阅 ──
+    //    必须在首屏渲染前调用，否则首帧会按默认「全量模式」渲染再闪一下。
+    OfflineMode.init();
     WindowAbility.getInstance().setWindowStage(windowStage);
     // 一镜到底官方库初始化（2026-10-02 迁移 @hmanimations/ezcustomtransition，
     // skill: hmos-arkui-longtake-transition Step 2 —— 缺它转场 API 全部不可用）

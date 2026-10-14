@@ -27,6 +27,8 @@ import { ReaderKeyTurn, KEY_KEY_VOL_TURN, KEY_KEY_FP_TURN } from '../../../commo
 // ── 防窥两层开关（2026-10-08 新增，VIP 特权）：真值/下沉逻辑全在 utils/AntiPeep.ets ──
 import { AntiPeep, KEY_ANTI_PEEP_CAPTURE, KEY_ANTI_PEEP_DLP } from '../../../common/utils/AntiPeep'
 import { VipManager } from '../../../common/utils/VipManager'
+// ── 离线模式（2026-10-13 新增）：手动「全量/离线」切换，隐藏依赖网络的入口 ──
+import { OfflineMode, STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
 // ── 书架动画速度（2026-10-12）─────────────────────────────────────────────────
 import { EntranceWave } from '../../../common/utils/EntranceWave'
@@ -78,6 +80,14 @@ export default struct MySetPage{
    *   ⇒ 只改局部 state 的话登出后入口不会自己回来。绑广播键两端都自动同步。
    */
   @StorageLink(VipManager.LOGIN_STORAGE_KEY) loginType: string = ''
+  /**
+   * 离线模式（2026-10-13 新增，用户需求）：true = 离线模式（隐藏依赖网络的入口）。
+   * 绑 AppStorage 广播键（OfflineMode.STORAGE_KEY_OFFLINE_MODE）⇒ 开关一拨，
+   * 设置页自身 + 其它页（阅读器/主题页/我的）全部立即重渲染。
+   * ⚠️ `@Watch` 是必需的：本页的「其他」分组是**数组驱动**，光改状态不会重建数组
+   *    ⇒ 防窥两行不会消失。见 onOfflineModeChanged()。
+   */
+  @StorageLink(STORAGE_KEY_OFFLINE_MODE) @Watch('onOfflineModeChanged') offlineOn: boolean = false
 
   // ── 全局震动反馈（2026-09-25 新增，用户需求）────────────────────────────────
   // 开关 + 0-500 强度滑块（每 50 一档）。真正落盘到 Preferences（键 HapticsEnabled /
@@ -131,16 +141,27 @@ export default struct MySetPage{
     }, 300)
     // 阅读器信息窗开关初值（2026-10-07，默认关）
     this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean
-    this.otherSetList[0].toggleStatus = this.setInfoWin
+    // ── 离线模式（2026-10-13）：先按落盘意图重建「其他」组 ──────────────────────
+    // ⚠️ 必须早于下面 findOtherRow 的写回：rebuildOtherList 决定本组渲染哪些行。
+    // 顺序：先同步 offlineOn（防 EntryAbility.init 尚未跑到 / 页面被直接拉起），
+    // 再 rebuild，最后才回填各行 toggleStatus。
+    this.offlineOn = OfflineMode.isOn()
+    this.rebuildOtherList()
+    const offlineRow: SetList | null = this.findOtherRow(MySetConstants.SET_OFFLINE_MODE)
+    if (offlineRow !== null) { offlineRow.toggleStatus = this.offlineOn }
+    this.findOtherRow(MySetConstants.SET_INFO_WIN)!.toggleStatus = this.setInfoWin
     // 防窥两层开关初值（2026-10-08）：先让 AntiPeep 复算（写 AppStorage 的**有效值**），
     // 再回填行状态；第 2 层的系统防窥开关是异步对账，稍后由 @StorageLink 自动刷新。
-    this.otherSetList[1].vipMark = true
-    this.otherSetList[2].vipMark = true
+    // ⚠️ 2026-10-13 离线模式：这两行可能已被过滤掉 ⇒ 用 findOtherRow + 判空，不再用下标。
+    const dlpRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_DLP)
+    const capRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_CAPTURE)
+    if (dlpRow !== null) { dlpRow.vipMark = true }
+    if (capRow !== null) { capRow.vipMark = true }
     AntiPeep.refresh()
     this.setAntiPeepDlp = AppStorage.get<boolean>(KEY_ANTI_PEEP_DLP) ?? false
     this.setAntiPeepCapture = AppStorage.get<boolean>(KEY_ANTI_PEEP_CAPTURE) ?? false
-    this.otherSetList[1].toggleStatus = this.setAntiPeepDlp
-    this.otherSetList[2].toggleStatus = this.setAntiPeepCapture
+    if (dlpRow !== null) { dlpRow.toggleStatus = this.setAntiPeepDlp }
+    if (capRow !== null) { capRow.toggleStatus = this.setAntiPeepCapture }
     if (ListenUnlock.isUnlocked()) {
       this.engineSetList = [
         new SetList(false, '使用 Edge TTS 引擎', this.edgeTtsOn, '',
@@ -162,10 +183,10 @@ export default struct MySetPage{
    * 有效值会回弹为 false，行状态必须跟着回弹；阅读页眼睛图标改的也是同一份有效值。
    */
   private syncAntiPeepRows(): void {
-    if (this.otherSetList.length > 2) {
-      this.otherSetList[1].toggleStatus = this.setAntiPeepDlp
-      this.otherSetList[2].toggleStatus = this.setAntiPeepCapture
-    }
+    const dlpRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_DLP)
+    const capRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_CAPTURE)
+    if (dlpRow !== null) { dlpRow.toggleStatus = this.setAntiPeepDlp }
+    if (capRow !== null) { capRow.toggleStatus = this.setAntiPeepCapture }
   }
 
   /**
@@ -251,7 +272,19 @@ export default struct MySetPage{
   /** 动画速度档位（-2~+2，0=标准）；持久化到 Preferences，滑块一动就写 AppStorage 立即生效 */
   @State shelfAnimSpeed: number = 3
 
-  @State otherSetList: SetList[]=[
+  /**
+   * 「其他」分组的**基础**行表（全量 = 全部渲染；离线 = 滤掉防窥两行）。
+   * ⚠️ 2026-10-13 离线模式：防窥两行会在离线时被滤掉 —— 因此本表的访问一律改用
+   *     `findOtherRow(storageName)` 按 `storageName` 查找，
+   *     **禁止再用 `otherSetList[1]` / `[2]` 这种下标**（过滤后下标整体前移，
+   *     会把 toggleStatus 错写到「阅读器信息窗」那一行上）。
+   */
+  private readonly otherBaseList: SetList[] = [
+    // ── 离线模式开关（2026-10-13 新增，用户要求放「其他」组**最上面**）──────────
+    // 放第一位：它是全局形态开关，比下面任何单个功能都"更高一层"。
+    new SetList(false,'离线模式',this.offlineOn,'',
+      '开启后隐藏依赖网络的功能入口（Web服务 / 测试账号 / 防窥 / AI听书 / 字体与材质方案 / 自定义主题）；关闭恢复全量模式',
+      MySetConstants.SET_OFFLINE_MODE),
     // 阅读器信息窗（2026-10-07 新增，默认关）：全屏阅读时右上角的防窥/定时实时信息
     new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时右上角会出现防窥模式以及定时的实时信息',MySetConstants.SET_INFO_WIN),
     // ── 防窥两层（2026-10-08 新增，均 VIP 特权；用户设计：两个独立开关，可只开其一）──
@@ -260,6 +293,95 @@ export default struct MySetPage{
     new SetList(false,'阅读防窥',this.setAntiPeepDlp,'','检测到旁人注视屏幕时，用系统蒙层遮住当前窗口（阅读页顶栏眼睛图标同源）',MySetConstants.SET_ANTI_PEEP_DLP),
     new SetList(false,'防截屏/录屏',this.setAntiPeepCapture,'','开启后本应用不可被截屏录屏，退到后台时最近任务卡片也会显示白屏/隐私蒙层',MySetConstants.SET_ANTI_PEEP_CAPTURE),
   ]
+
+  /** 「其他」组**当前渲染**的行（离线时不含防窥两行；由 rebuildOtherList() 重建） */
+  @State otherSetList: SetList[] = []
+
+  /**
+   * 按 storageName 取「其他」组里的一行（离线模式改造后**唯一**合法的访问方式）。
+   * 查的是 `otherBaseList`（始终含全部行）⇒ 即使离线时该行没被渲染，
+   * 也能安全写它的 toggleStatus，不会因过滤而指向错误的行。
+   */
+  private findOtherRow(storageName: string): SetList | null {
+    for (let i = 0; i < this.otherBaseList.length; i++) {
+      if (this.otherBaseList[i].storageName === storageName) {
+        return this.otherBaseList[i]
+      }
+    }
+    return null
+  }
+
+  /**
+   * 某一行在当前形态下**是否可见**（2026-10-13 离线模式）。
+   *
+   * 为什么把判定放在**渲染层**、而不是靠替换数据源：
+   *   `SetGroupList` 是普通 class（**没有** `@Observed`，见 `SetListGroup.ets:3`；
+   *   只有 `SetList` 有 `@Observed`）。官方原文 —— `arkts-state.md:103`
+   *   「对嵌套对象的属性直接赋值**无法被框架观察到**，因此不会触发UI刷新」、
+   *   `:110`「数组项中嵌套的属性赋值无法观察」。
+   *   ⇒ 只把 `setGroupList` 整体换成新数组时，外层 ForEach 的 key 仍是 `'其他'`（未变），
+   *     ArkUI **复用**旧的 ListItemGroup 组件，其内部 `setList` 的替换观察不到
+   *     ⇒ 被滤掉的防窥两行**照旧渲染**（真机实测：两行没消失）。
+   *   故改为：数据源保持全量，在遍历时跳过不可见行。
+   */
+  private isRowVisible(item: SetList): boolean {
+    if (!this.offlineOn) {
+      return true
+    }
+    // 离线模式：防窥两层（阅读防窥 / 防截屏录屏）整体不渲染
+    return item.storageName !== MySetConstants.SET_ANTI_PEEP_DLP
+      && item.storageName !== MySetConstants.SET_ANTI_PEEP_CAPTURE
+  }
+
+  /**
+   * 某分组在当前形态下**实际可见**的行（供圆角判断用）。
+   * 必须用它而不是 `group.setList` —— 后者在离线时仍含被隐藏的行，
+   * 会让 `length === 1` / `indexOf === 0` / `length - 1` 三个圆角分支全部算错。
+   */
+  private visibleRowsOf(group: SetGroupList): SetList[] {
+    const out: SetList[] = []
+    for (let i = 0; i < group.setList.length; i++) {
+      if (this.isRowVisible(group.setList[i])) {
+        out.push(group.setList[i])
+      }
+    }
+    return out
+  }
+
+  /**
+   * 重建「其他」组的渲染表。
+   * ⚠️ 2026-10-13 修正：本方法**不再承担"隐藏防窥两行"的职责**（那改由渲染层的
+   *    `isRowVisible` 负责，原因见该方法的注释）。这里只做「按基础表刷新一次数组」，
+   *    保证 `otherSetList` 与 `otherBaseList` 同步（新增行时不至于漏渲染）。
+   *
+   *    仍然保留 `setGroupList` 的整体替换：它能让**行数变化**（如以后增删行）被感知，
+   *    且对 `SetList` 自身的 `@Observed` 属性刷新没有副作用。
+   */
+  private rebuildOtherList(): void {
+    const out: SetList[] = this.otherBaseList.slice()
+    this.otherSetList = out
+    const nextGroups: SetGroupList[] = []
+    for (let i = 0; i < this.setGroupList.length; i++) {
+      const g: SetGroupList = this.setGroupList[i]
+      nextGroups.push(g.groupValue === '其他' ? new SetGroupList('其他', out) : g)
+    }
+    this.setGroupList = nextGroups
+  }
+
+  /**
+   * 离线模式开关一变：重建「其他」组（刷新数组以驱动重渲染）+ 回填本行状态。
+   *
+   * ⚠️ 2026-10-13 修正：真正让防窥两行消失的是**渲染层的 `isRowVisible`**，
+   *    本回调的作用是**触发一次重渲染**（`@Watch` 已由 `offlineOn` 变化触发，
+   *    这里再动一次数组是为了确保 `ForEach` 的 itemGenerator 重新执行）。
+   */
+  private onOfflineModeChanged(): void {
+    this.rebuildOtherList()
+    const row: SetList | null = this.findOtherRow(MySetConstants.SET_OFFLINE_MODE)
+    if (row !== null) {
+      row.toggleStatus = this.offlineOn
+    }
+  }
 
   /** 震动反馈组（2026-09-25 新增）：开关项；强度滑块单独渲染（见 build 末尾的自绘卡片） */
   @State hapticSetList: SetList[]=[
@@ -372,20 +494,32 @@ export default struct MySetPage{
 
             if(group.setList){
               ForEach(group.setList,(item:SetList)=>{
+                // ⚠️ 2026-10-13 离线模式：不可见行**在渲染层跳过**。
+                //    为什么不靠"替换数据源"实现：`SetGroupList` 没有 `@Observed`
+                //    （见 `SetListGroup.ets:3`），其内部 `setList` 的替换观察不到 ——
+                //    官方 `arkts-state.md:103/:110` 明写「数组项中嵌套的属性赋值无法观察」，
+                //    且外层 ForEach 的 key（'其他'）不变 ⇒ 组件被复用、不会重读 `setList`。
+                //    真机实测：只替换数组时防窥两行**不消失**。
+                if (!this.isRowVisible(item)) {
+                  // 空分支：此处不能写 `return`（ArkUI 的 itemGenerator 里 return 会破坏结构）
+                } else {
                 ListItem(){//设置内容，首尾裁剪
                   // 2026-10-08：单行分组（如删剩一项且无后续自绘滑块的）要**四角全圆**；
                   // 「书架」/「震动反馈」例外 —— 它们下面还接一条自绘滑块行（占下圆角），
                   // 这里必须只给上圆角，否则两块拼不出完整卡片。
-                  if (group.setList.length === 1
+                  // ⚠️ 2026-10-13 离线模式：改用 `visibleRowsOf(group)` 判首尾/单行 ——
+                  //    直接用 `group.setList` 会把它算成"含被隐藏行"的长度与下标，
+                  //    导致离线时圆角画错行。
+                  if (this.visibleRowsOf(group).length === 1
                     && group.groupValue !== '震动反馈'
                     && group.groupValue !== '书架'){
                     SetListView({setList:item,topLeft:20,topRight:20,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
-                  }else if (group.setList.indexOf(item) == 0){
+                  }else if (this.visibleRowsOf(group).indexOf(item) == 0){
                     SetListView({setList:item,topLeft:20,topRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
 
-                  }else if (group.setList.indexOf(item) == group.setList.length - 1){
+                  }else if (this.visibleRowsOf(group).indexOf(item) == this.visibleRowsOf(group).length - 1){
                     SetListView({setList:item,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
                   }else {
@@ -393,6 +527,7 @@ export default struct MySetPage{
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
                   }
                 }.padding({left:20,right:20})
+                }
               }, (item: SetList): string => item.value)
 
               // ── 书架动画速度滑块（2026-10-12）────────────────────────────────
@@ -526,7 +661,8 @@ export default struct MySetPage{
         //     写 'test'；彩蛋码走 ListenUnlock **不写登录态**、邀请码只送 VIP 也不写登录态
         //     ⇒ 这两种时机入口**照旧显示**，符合"其他时机不消失"）。
         //   ⚠️ 不能用 `VipManager.isVip()` 当条件 —— 邀请码/购机 IAP 都会置 VIP，会误藏入口。
-        if (this.loginType !== 'test') {
+        //   ⚠️ 2026-10-13 离线模式：再叠加 `!this.offlineOn`（用户要求离线时隐藏测试账号入口）。
+        if (!this.offlineOn && this.loginType !== 'test') {
           ListItem() {
             Row({ space: 8 }) {
               SymbolGlyph($r('sys.symbol.person'))
@@ -594,11 +730,19 @@ export default struct MySetPage{
     switch (value){
       // 2026-10-08：`SET_REFRESH / SET_JUMP / SET_REPLACE / SET_TIP / SET_HEAD / SET_SEARCH`
       // 六个 case 已随假开关一起删除（全仓零消费点，理由见本文件 bookSetList 上方的注释）。
+      // ── 离线模式（2026-10-13 新增）──────────────────────────────────────────
+      // 落盘 + 广播：OfflineMode.set 写 Preferences 与 AppStorage 同键，
+      // 本页的 @StorageLink(offlineOn) 随之触发 onOfflineModeChanged() 重建「其他」组。
+      case MySetConstants.SET_OFFLINE_MODE:
+        OfflineMode.set(!this.offlineOn)
+        break;
       case MySetConstants.SET_INFO_WIN:
         // 阅读器信息窗（2026-10-07）：Preferences 持久化；阅读页进场时读一次，
         // 开关只在设置页改 ⇒ 无需跨页广播。
+        // ⚠️ 2026-10-13：改用 findOtherRow（离线时下标会前移，原来写死的 [0] 会错位）。
         this.setInfoWin = !this.setInfoWin
-        this.otherSetList[0].toggleStatus = this.setInfoWin;
+        const infoRow: SetList | null = this.findOtherRow(MySetConstants.SET_INFO_WIN)
+        if (infoRow !== null) { infoRow.toggleStatus = this.setInfoWin }
         PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN, this.setInfoWin)
         break;
       // ── 防窥两层（2026-10-08，VIP 特权）────────────────────────────────────

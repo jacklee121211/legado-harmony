@@ -82,4 +82,12 @@ export default class MySetConstants {
    * 落盘键见 `utils/AntiPeep.ets` 的 KEY_ANTI_PEEP_CAPTURE = 'antiPeepCaptureOn'。
    */
   static readonly SET_ANTI_PEEP_CAPTURE: string = 'setAntiPeepCapture';
+
+  /**
+   * 离线模式开关（2026-10-13 新增，默认关 = 全量模式）。
+   * 开启后隐藏依赖网络的入口（Web服务/测试账号/防窥/AI听书/字体材质方案/自定义主题）。
+   * ⚠️ 真正落盘到 Preferences（键见 `utils/OfflineMode.ets` 的 KEY_OFFLINE_MODE = 'offlineMode'），
+   * AppStorage 同名键 `offlineModeOn` 存当前值供各页 `@StorageLink` 订阅。
+   */
+  static readonly SET_OFFLINE_MODE: string = 'setOfflineMode';
 }
