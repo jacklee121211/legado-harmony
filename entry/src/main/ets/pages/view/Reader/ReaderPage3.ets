@@ -1744,11 +1744,19 @@ export default struct ReaderPage3 {
    * 会员化：本方法只服务已开通 VIP 的用户（调用方先门控，免费用户直接进 VIP 弹窗）。
    * 提示语按**目标值**算（不读 this.antiPeepDlpOn —— setDlp 会同步广播/异步回写该值，
    * 读旧值会把「开启/关闭」说反）。
+   *
+   * ⚠️ 2026-10-13：开的那一支改走 `AntiPeep.requestDlpOn()`（与设置页同修）。
+   *   旧写法 `AntiPeep.setDlp(true)` 在"系统防窥开关没开 + 用户把系统授权页直接返回"时，
+   *   每次点击都重新拉起系统页，连点连弹 ⇒ 观感"点不开"。`requestDlpOn` 带引导去重。
    */
   private toggleAntiPeep(): void {
-    const next: boolean = !this.antiPeepDlpOn
-    AntiPeep.setDlp(next)
-    showMessage(next ? '阅读防窥已开启' : '阅读防窥已关闭')
+    if (this.antiPeepDlpOn) {
+      AntiPeep.setDlp(false)
+      showMessage('阅读防窥已关闭')
+    } else {
+      AntiPeep.requestDlpOn()
+      showMessage('阅读防窥已开启')
+    }
   }
 
   // ── 居中下拉书签手势（2026-10-07）────────────────────────────────────────

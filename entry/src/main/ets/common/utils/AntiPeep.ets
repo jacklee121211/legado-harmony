@@ -54,6 +54,11 @@ export class AntiPeep {
   private static ctx: common.UIAbilityContext | null = null;
   private static win: window.Window | null = null;
   private static dlpSubscribed: boolean = false;
+  /**
+   * 对账进行中标记（2026-10-13）：`requestAntiPeepOptions` 会拉起系统页并 await，
+   * 期间用户连点会叠加多个系统授权页 ⇒ 用它去重，只放行一次。
+   */
+  private static reconciling: boolean = false;
 
   /** 应用启动（最早时机）：主窗口直接注入 ⇒ 立即按已存开关复算两层 */
   static start(ctx: common.UIAbilityContext, w: window.Window): void {
@@ -102,6 +107,27 @@ export class AntiPeep {
     AntiPeep.refreshWithGuide(enabled);
   }
 
+  /**
+   * 第 2 层开关的**可重入**版本（2026-10-13 修上架被拒项 ③）。
+   *
+   * 背景（用户实测口径）：「开启测试账号之后，点击防窥功能，点击多次没有开启，
+   *   怀疑首次开启时拉起了授权窗但他没点，之后就一直点不开。」
+   *
+   * 旧 `setDlp(true)` 的坑：首次点击若 `requestAntiPeepOptions` 拉起的系统页被直接返回，
+   * 有效值回弹为 false（`@StorageLink` 把开关弹回关）—— 这时**意图已经是 true**，
+   * 而设置页 onClick 是 `AntiPeep.setDlp(!this.setAntiPeepDlp)`，读到 false 取反又是 true，
+   * 表面看"点得动"，但 `reconcileDlp` 里的 `guide` 只在 `enabled===true` 时给，
+   * 于是**每一次点击都重新拉起系统页**，用户连续点几次就是连续弹几次 ⇒ 观感"点了没反应"。
+   *
+   * 本方法保证：无论当前有效值真假，只要用户主动点（意图=开），**一定**走一次带引导的对账；
+   * 并且用 `inflight` 去重，避免连点叠加多个系统授权页。
+   */
+  static requestDlpOn(): void {
+    AntiPeep.putPref(KEY_ANTI_PEEP_DLP, true);
+    AppStorage.setOrCreate(KEY_ANTI_PEEP_DLP, false);
+    AntiPeep.refreshWithGuide(true);
+  }
+
   /** 按当前 VIP 状态 + 两个开关意图复算两层（幂等、静默、不引导） */
   static refresh(): void {
     AntiPeep.refreshWithGuide(false);
@@ -131,10 +157,29 @@ export class AntiPeep {
       AppStorage.setOrCreate(KEY_ANTI_PEEP_DLP, false);
       return;
     }
+    // ⚠️ 2026-10-13 修（上架被拒项 ③「首次拉起授权窗没点，之后点不开」）：
+    // `requestAntiPeepOptions(context)` 的官方 `@param` 原文要求
+    //   「The context must belong to the Stage model and only supports
+    //     UIAbilityContext and UIExtensionContext.」（SDK `@hms.security.dlpAntiPeep.d.ts:180-181`）
+    // 旧实现写的是 `AntiPeep.ctx as common.UIAbilityContext` —— ctx 为 null 时**断言不报错**，
+    // 传 null 进去直接抛异常落进下面的 catch ⇒ 被静默降级成"第 1 层可用"，
+    // 用户看到的现象就是「点多次都开不了」。这里显式判空并从 UIAbilityContext 兜底取回。
+    if (AntiPeep.ctx === null) {
+      hilog.warn(0x0000, AntiPeep.TAG, 'reconcileDlp: ctx is null, skip requestAntiPeepOptions');
+      AppStorage.setOrCreate(KEY_ANTI_PEEP_DLP, false);
+      return;
+    }
+    // 连点去重：系统授权页已经在拉/在等 ⇒ 忽略本次，避免叠加多张系统页
+    if (AntiPeep.reconciling) {
+      hilog.info(0x0000, AntiPeep.TAG, 'reconcileDlp: already reconciling, skip duplicate request');
+      return;
+    }
+    AntiPeep.reconciling = true;
     try {
       let on: boolean = await dlpAntiPeep.isDlpAntiPeepSwitchOn();
       if (!on && guide) {
         // 官方原文：「Opens the page for setting the screen privacy switch.」（d.ts:177）
+        // 返回 `AntiPeepOptionsResult`：SUCCESS=0 / FAIL=1 / ALREADY_ON=2（d.ts:62-84）
         const r: dlpAntiPeep.AntiPeepOptionsResult =
           await dlpAntiPeep.requestAntiPeepOptions(AntiPeep.ctx as common.UIAbilityContext);
         hilog.info(0x0000, AntiPeep.TAG, 'requestAntiPeepOptions result=%{public}d', r);
@@ -151,6 +196,9 @@ export class AntiPeep {
       // 201 = DLP_GET_HIDE_STATUS 未批；801 = 设备不支持；1020600004 = 未设面容 ⇒ 一律降级
       AppStorage.setOrCreate(KEY_ANTI_PEEP_DLP, false);
       hilog.info(0x0000, AntiPeep.TAG, 'DLP unavailable: %{public}d（仅第 1 层可用）', err.code ?? 0);
+    } finally {
+      // 无论成功/降级/异常都要解锁，否则一次失败之后**永远点不开**（正是上架被拒现象 ③）
+      AntiPeep.reconciling = false;
     }
   }
 
