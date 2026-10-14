@@ -21,6 +21,8 @@ import { BusinessError } from '@kit.BasicServicesKit'
 // ── 全局震动反馈（2026-09-25 新增）+ 会员（2026-09-28 会员化改造）─────────────
 import { Haptics } from '../../../common/utils/Haptics'
 import { VipManager } from '../../../common/utils/VipManager'
+// ── 离线模式（2026-10-13 新增）：离线时整卡隐藏 Web服务 ──
+import { STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode'
 import { IapManager } from '../../../common/utils/IapManager'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
 import { WifiTransferDialog } from '../../../componets/myCenter/WifiTransferDialog'
@@ -88,6 +90,11 @@ export default struct MyCenter {
   // 亮暗色重构（2026-09-23）：订阅派生深色键 —— 渐变背景（ShelfColors.gradientStart/End）
   // 需要在深浅翻转时重绘；不订阅的话"自动"档跟随系统时会滞后到下一次重建。
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  /**
+   * 离线模式（2026-10-13 新增）：true = 隐藏 Web服务整卡（用户要求「整个 web 服务直接隐藏」）。
+   * 绑 OfflineMode 的广播键，切模式后本页立即重渲染。
+   */
+  @StorageLink(STORAGE_KEY_OFFLINE_MODE) offlineOn: boolean = false
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
 
   // （2026-10-01 已删除 setIconScale/themeIconScale 两个 Q弹状态：顶部主题/设置按钮
@@ -201,6 +208,11 @@ export default struct MyCenter {
           // 无任何 HTTP/Socket 服务端实现，见基座 WebdavService.ets）⇒ 服务端为全新开发
           //（方案与范围待用户确认，本轮先落入口与样式）。图标用 symbol、点按走
           // clickEffect + Haptics（全 app 现有机制）。
+          //
+          // ⚠️ 2026-10-13 离线模式：整卡隐藏（用户要求「web服务，整个web服务直接隐藏」）。
+          //    包**整卡**而不是只包下面那两个条目 —— 否则会剩一个孤零零的「Web服务」标题行
+          //    （它还带 VIP 金标，单独留着更奇怪）。
+          if (!this.offlineOn) {
           Column({ space: 12 }) {
             Row({ space: 8 }) {
               SymbolGlyph($r('sys.symbol.display'))
@@ -262,6 +274,7 @@ export default struct MyCenter {
           // 2026-10-13 顺序调换后：本卡作为**第二个**元素，与上方统计行之间取 16
           // （原「统计行 margin top 16」的同一间距，只是方向反过来）。
           .margin({ top: 16 })
+          }
 
           // ── 开通 VIP 卡片（2026-09-28 用户设计：未开通时显示）────────────────
           // 2026-10-01 上移：紧跟「读过」统计行，间距 16 与 Web服务→读过 一致

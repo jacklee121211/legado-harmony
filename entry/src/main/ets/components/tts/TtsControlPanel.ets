@@ -43,6 +43,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 // ── 全局震动反馈（2026-09-25 新增：hapticTick 的总开关守卫）──────────────────
 import { Haptics } from '../../common/utils/Haptics';
+// ── 离线模式（2026-10-13 新增）：离线时隐藏 AI 相关的四块 UI ──
+import { STORAGE_KEY_OFFLINE_MODE } from '../../common/utils/OfflineMode';
 // 材质：面板底色用 MaterialColumnModifier（"让出背景"，材质走弹窗 options）；
 // 面板内滑条**不设材质**（用户选 A：材质优先 —— 与"滑条光效"互斥，官方禁止材质嵌套）
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil';
@@ -191,6 +193,15 @@ export struct TtsControlPanel {
   onOpenSleepTimer: () => void = (): void => {};
   @State voiceSlot: number = 0;           // 0=旁白 1=对白 2=男生 3=女生
   @State showVoices: boolean = false;
+  /**
+   * 离线模式（2026-10-13 新增）：true = 隐藏 AI 相关四块（用户选"四块全藏"）：
+   *  · AI 听书开关（顶栏）
+   *  · 「AI 语音」接入设置区
+   *  · AI 语气
+   *  · AI 男女声
+   * ⚠️ 只藏 UI，不改 `prefs.aiTtsEnabled` 等任何已存配置 —— 关掉离线模式后配置原样回来。
+   */
+  @StorageLink(STORAGE_KEY_OFFLINE_MODE) offlineOn: boolean = false;
   /**
    * 音色区**为哪个引擎配音色**的显式选择（2026-10-10 三修，用户反馈驱动）。
    * 取值：`'auto'`（跟随当前生效引擎）/ `'local'`（华为本地）/ `'ai'` / `'edge'`。
@@ -1816,6 +1827,9 @@ export struct TtsControlPanel {
         // 新口径：**只要 Edge 未接管就能点**；若正在朗读，则先弹确认框，
         //   确认后由 `TtsEngine.switchEnginePreservingPosition()` **原地接管**
         //   （保留进度/睡眠定时/后台任务/播控会话，见该方法的注释）。
+        // ⚠️ 2026-10-13 离线模式：AI 听书开关整块隐藏（用户要求"四块全藏"）。
+        //    藏的是「开关 + 文案」整体；右侧 Blank()/「完成」保持，顶栏自动重排。
+        if (!this.offlineOn) {
         Text('AI 听书')
           .fontSize(14)
           .fontColor(this.aiSwitchEnabled() ? this.fg() : this.fgSub())
@@ -1828,6 +1842,7 @@ export struct TtsControlPanel {
             Haptics.tap();
             this.onAiSwitchChange(value);
           })
+        }
         Text('完成')
           .fontSize(16)
           .fontColor(this.accent())
@@ -2521,7 +2536,8 @@ export struct TtsControlPanel {
           // ⚠️ 与上面「AI 男女声」是**两套配置**：上面填对话大模型（说话人识别），
           //    这里填语音合成接口。分块 + 文案写清，避免用户填串（方案 §5.8）。
           // 参数行由**服务商能力位**条件渲染：没能力的参数不出现（方案 §13.3）。
-          if (!this.compactMode) {
+          // ⚠️ 2026-10-13 离线模式：整块「AI 语音」配置区隐藏（用户选"四块全藏"）。
+          if (!this.compactMode && !this.offlineOn) {
             Row({ space: 10 }) {
               Text('AI 语音').fontSize(14).fontColor(this.fg())
               Text(this.prefs.aiTtsEnabled ? '已开启' : '未开启')
@@ -2845,7 +2861,9 @@ export struct TtsControlPanel {
           }
 
           // AI 男女声识别（多角色方案）—— 收起档不渲染（细节行，展开档才看）
-          if (this.prefs.scheme === 'multi' && !this.compactMode) {
+          // ⚠️ 2026-10-13 离线模式：本块（含 AI 语气 + AI 男女声）整体隐藏
+          //    （用户选"四块全藏"：AI听书 / AI语音配置区 / AI语气 / AI男女声）。
+          if (this.prefs.scheme === 'multi' && !this.compactMode && !this.offlineOn) {
             // ── AI 语气（2026-10-10 新增；2026-10-12 提到「AI 男女声」之前）──────
             // 顺序依据（用户 2026-10-12 拍板）：**AI 语音 → AI 语气 → AI 男女声**。
             // 与男女声**同一次 LLM 调用**返回，不额外增加请求数；

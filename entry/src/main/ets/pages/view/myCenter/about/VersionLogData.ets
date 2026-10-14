@@ -20,7 +20,7 @@ export const APP_VERSION_FALLBACK: string = 'V2.1.6'
 export const VERSION_LOGS: VersionEntry[] = [
   {
     version: 'V2.1.6',
-    date: '2026-10-14',
+    date: '2026-10-15',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -54,6 +54,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '优化UI显示效果',
       '新增动画速率调整开关以及优化动画实现效果',
       '新增鸣谢开源项目思路',
+      '新增全量/离线双模式切换开关',
     ]
   },
 ]

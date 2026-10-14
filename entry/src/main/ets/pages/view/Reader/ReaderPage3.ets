@@ -52,6 +52,8 @@ import { AntiPeep } from '../../../common/utils/AntiPeep';
 // ── 会员化（2026-09-28）：免费用户点锁定功能 → VIP 弹窗 ─────────────────────
 import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
+// ── 离线模式（2026-10-13 新增）：隐藏阅读器内依赖网络的入口 ──
+import { STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode';
 import { ReaderBgPalette } from './ReaderBgPalette';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
@@ -961,6 +963,16 @@ export default struct ReaderPage3 {
    * 在 VIP 弹窗里开通成功后 VipManager.setVip 广播 ⇒ 本页图标即时解锁。
    */
   @StorageLink('vipUnlocked') vipOn: boolean = false
+  /**
+   * 离线模式（2026-10-13 新增）：true = 隐藏阅读器内依赖网络的入口。
+   * 隐藏范围（用户拍板）：
+   *  · 防窥小眼睛 —— 顶栏 `:6366` 与信息窗 `:6305` **两处都藏**（否则两处状态不一致）
+   *  · 字体管理 / 更多材质 / 更多方案（设置面板同一个 Row）
+   *  · 保存方案（底部按钮行）
+   * ⚠️ 只藏入口，**不动**任何已生效状态：防窥继续按 `antiPeepDlpOn` 生效、
+   *    已选中的字体/材质/主题照旧应用（用户明确要求）。
+   */
+  @StorageLink(STORAGE_KEY_OFFLINE_MODE) offlineOn: boolean = false
 
   // ── 居中下拉书签手势（2026-10-07 用户需求，常量与取证见文件头 BM_PULL_* 段）────
   /** 当前下拉位移（vp）：驱动内容层 `translate` 与顶部提示条 */
@@ -6302,7 +6314,8 @@ export default struct ReaderPage3 {
           }
           // 会员化（2026-10-07）：防窥为 VIP 特权 ⇒ 非会员不显示该状态图标
           // （信息窗只做"呈现"，不给免费用户展示一个用不了的静默图标）。
-          if (this.vipOn) {
+          // ⚠️ 2026-10-13 离线模式：整个图标隐藏（用户要求离线时藏防窥小眼睛）。
+          if (this.vipOn && !this.offlineOn) {
             SymbolGlyph(this.antiPeepIcon())
               .fontSize(16)
               .fontColor([this.readerSetting.fontColor])
@@ -6354,6 +6367,9 @@ export default struct ReaderPage3 {
               //   面板=父窗、定时弹窗=子窗），顶栏不再保留闹钟图标。
               // 会员化（2026-10-07）：防窥为 VIP 特权 —— 未开通时图标左侧挂 VIP 金标，
               //   点击弹 VIP 弹窗（门控范式与「更多材质/更多方案」一致）；已开通则正常切换。
+              // ⚠️ 2026-10-13 离线模式：**整块**（VIP 金标 + 眼睛）一起隐藏 ——
+              //   只藏眼睛会剩一个孤零零的 VIP 金标，比留着图标更奇怪。
+              if (!this.offlineOn) {
               if (!this.vipOn) {
                 Text('VIP')
                   .fontSize(9)
@@ -6393,6 +6409,7 @@ export default struct ReaderPage3 {
                   })
                   this.toggleAntiPeep();
                 })
+              }
 
               // ── 书签入口（2026-09-21）──────────────────────────────────────
               // 位置按用户要求：顶部栏**最右侧**（章节名之后）。搜索图标后续加在它左侧。
@@ -6818,6 +6835,10 @@ export default struct ReaderPage3 {
       // 「把字体甚至原有的字号、间距都提取到一个新的弹窗中，新的入口就在标定模式这一行，
       //   替换标定模式的位置，叫做字体管理」；标定模式开关移到 我的-设置（解锁后可见，
       //   见 MySetPage），devMode 仍控制本面板的标定功能区（下方 if (this.devMode) 原样）。
+      // ⚠️ 2026-10-13 离线模式：字体管理 / 更多材质 / 更多方案**整行隐藏**（用户要求）。
+      //    三者同处一个 Row ⇒ 包整个 Row 即可，不必逐个包。
+      //    ⚠️ 只藏入口：已选中的字体/材质/主题照旧生效，用户不会因切模式而丢外观。
+      if (!this.offlineOn) {
       Row({ space: 16 }) {
         Button('字体管理')
           .fontSize(13)
@@ -6887,6 +6908,7 @@ export default struct ReaderPage3 {
       .width('100%')
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
+      }
 
       // 我们算出来的几何（标定模式）：与截图/日志逐项对照
       if (this.devMode) {
@@ -7367,6 +7389,11 @@ export default struct ReaderPage3 {
             this.syncCustomBgGlobal()
           })
         this.FlipModeButton()
+        // ⚠️ 2026-10-13 离线模式：「保存方案」隐藏（用户要求）。
+        //    「同步全局」与「仿真翻页」**不改对齐代码** —— 本 Flex 已是
+        //    `justifyContent: FlexAlign.Center`，少一个按钮后这两个会自动重新居中
+        //    （原注释 `:7345` 记的正是这个居中布局意图）。
+        if (!this.offlineOn) {
         Button('保存方案')
           .fontSize(13)
           .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
@@ -7382,6 +7409,7 @@ export default struct ReaderPage3 {
             Haptics.tap();
             this.openSaveSchemeDialog()
           })
+        }
       }
       .width('100%')
     }.padding({

@@ -9,6 +9,8 @@ import ThemeCustomEditorDialog from './ThemeCustomEditorDialog'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { NightMode } from '../../../common/utils/NightMode'
+// ── 离线模式（2026-10-13 新增）：离线时隐藏「自定义主题」入口瓦片 ──
+import { STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode'
 // ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
 import { PlugboardConfigDialog } from '../../../componets/plugboard/PlugboardConfigDialog'
 
@@ -24,6 +26,12 @@ export struct MyThemeConfigComp {
 
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+
+  /**
+   * 离线模式（2026-10-13 新增）：true = 隐藏「自定义主题」入口瓦片。
+   * ⚠️ 只藏入口，不动 `themeList` 与 `activeIndex` —— 用户已选的主题照旧生效。
+   */
+  @StorageLink(STORAGE_KEY_OFFLINE_MODE) offlineOn: boolean = false
 
   /**
    * 「自定义主题」编辑弹窗（2026-10-01 复活：取色器 + RGB + 方案管理，**VIP 特权**）。
@@ -285,6 +293,11 @@ export struct MyThemeConfigComp {
       Grid() {
         // 2026-10-01：自定义主题入口复活（此前 2026-09-25 按用户要求删除的是旧无极版入口；
         // 现按新方案重建：取色器 + RGB + 方案管理 + VIP 门控）。置于首位。
+        // ⚠️ 2026-10-13 离线模式：整个瓦片隐藏（用户要求"自定义主题入口"在离线时藏）。
+        //    「另一个入口」=`Index.ets:1656` 的 `RouteName.CUSTOM_THEME` 路由目标 ——
+        //    全仓 grep 证实**导航到它的只有本瓦片这一处**（`openThemeEditor`）⇒
+        //    藏掉本瓦片后该路由不可达，无需再改 Index.ets。
+        if (!this.offlineOn) {
         GridItem() {
           this.addThemeTile()
         }
@@ -292,6 +305,7 @@ export struct MyThemeConfigComp {
           Haptics.tap();
           this.openThemeEditor()
         })
+        }
 
         // ── 个性化配置入口（2026-10-10 新增，2026-10-11 隐藏）────────────────
         // 【已隐藏】效果待优化，暂时隐藏入口
