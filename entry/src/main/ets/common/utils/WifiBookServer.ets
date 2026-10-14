@@ -186,7 +186,20 @@ export class WifiBookServer {
 
     private static server: socket.TCPSocketServer | null = null;
     private static running: boolean = false;
-    private static port: number = 1122;
+    /** 首选端口（默认值；被占用时从它开始向后探测） */
+    private static readonly PREFERRED_PORT: number = 1122;
+    /**
+     * 端口回退上限（2026-10-13 上架被拒项 ② 修复）。
+     * 审核测试机可能已被其它 app/上一次残留监听占用 1122 ⇒ 旧实现只弹一句
+     * 「端口 1122 绑定失败」就结束，测试人员只能判定"功能坏了"。
+     * 现在从 1122 起顺序试到 1122+PORT_SCAN_SPAN-1，首个成功即用（对用户完全透明）。
+     * SDK 依据：`listen` 失败会回 @throws 2303198 - Address already in use
+     *   （`@ohos.net.socket.d.ts:2316` 原文），故只对该错误码做回退，
+     *   其它错误（如 201 权限）**不**盲试，避免把权限问题伪装成端口问题。
+     */
+    private static readonly PORT_SCAN_SPAN: number = 10;
+    /** 当前**实际**监听端口（= 回退后的真实值；UI 显示的地址必须用它） */
+    private static port: number = WifiBookServer.PREFERRED_PORT;
     /** 绑定的地址（未鉴权时只给局域网 IP；配对后给出的完整地址带配对码） */
     private static lastAddress: string = '';
     /** 当前长时任务通知 id（0 = 无；进度心跳要用它） */
@@ -337,20 +350,45 @@ export class WifiBookServer {
         server.on('connect', (client: socket.TCPSocketConnection) => {
             WifiBookServer.handleClient(client);
         });
-        server.listen({ address: '0.0.0.0', port: WifiBookServer.port, family: 1 }, (err: Error | null) => {
+        // 端口回退（2026-10-13）：从 PREFERRED_PORT 起顺序试，首个成功即用。
+        // 只对 2303198（Address already in use）回退；其它错误立即如实上报。
+        WifiBookServer.listenWithFallback(server, WifiBookServer.PREFERRED_PORT, 0, onResult);
+    }
+
+    /**
+     * 带端口回退的 listen（2026-10-13 新增）。
+     * @param attempt 已回退次数（0 = 正在试首选端口）
+     */
+    private static listenWithFallback(server: socket.TCPSocketServer, candidate: number,
+        attempt: number, onResult?: (ok: boolean, msg: string) => void): void {
+        server.listen({ address: '0.0.0.0', port: candidate, family: 1 }, (err: Error | null) => {
             if (err) {
                 WifiBookServer.running = false;
-                console.error(`${TAG} listen failed: ${err.message}`);
-                onResult?.(false, `端口 ${WifiBookServer.port} 绑定失败：${err.message}`);
+                const raw: string = err.message ?? '';
+                console.error(`${TAG} listen failed on ${candidate}: ${raw}`);
+                // 官方错误码 2303198 = Address already in use ⇒ 换下一个端口重试
+                const inUse: boolean = raw.indexOf('2303198') >= 0
+                    || raw.toLowerCase().indexOf('address already in use') >= 0;
+                if (inUse && attempt + 1 < WifiBookServer.PORT_SCAN_SPAN) {
+                    const next: number = candidate + 1;
+                    console.info(`${TAG} port ${candidate} in use, retry on ${next}`);
+                    WifiBookServer.listenWithFallback(server, next, attempt + 1, onResult);
+                    return;
+                }
+                // 试遍了或非占用类错误 ⇒ 如实上报（含试过的范围，便于定位）
+                const span: string = attempt > 0
+                    ? `（已尝试 ${WifiBookServer.PREFERRED_PORT}-${candidate}）` : '';
+                onResult?.(false, `端口绑定失败${span}：${raw}`);
+                return;
             }
-            else {
-                WifiBookServer.running = true;
-                WifiBookServer.lastAddress = WifiBookServer.computeAddress();
-                console.info(`${TAG} listening on ${WifiBookServer.port}, address=${WifiBookServer.lastAddress}`);
-                WifiBookServer.notify();
-                onResult?.(true, '');
-                WifiBookServer.startBackgroundKeepAlive(context);
-            }
+            WifiBookServer.running = true;
+            // 记下**真实**端口 —— 地址、二维码、pairAddress 全部依赖它
+            WifiBookServer.port = candidate;
+            WifiBookServer.lastAddress = WifiBookServer.computeAddress();
+            console.info(`${TAG} listening on ${WifiBookServer.port}, address=${WifiBookServer.lastAddress}`);
+            WifiBookServer.notify();
+            onResult?.(true, '');
+            WifiBookServer.startBackgroundKeepAlive(WifiBookServer.abilityContext as common.UIAbilityContext);
         });
     }
 

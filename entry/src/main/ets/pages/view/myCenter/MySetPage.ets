@@ -70,6 +70,14 @@ export default struct MySetPage{
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级夜间开关：测试账号弹窗深浅适配用（2026-09-28） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  /**
+   * 登录态（2026-10-13）：@StorageLink 绑 VipManager 广播的**同一键**（VipManager.ets:27），
+   * 由 loginTest/logout 写入 'test'/''。用途：**只有**测试账号登录成功后，隐藏「测试账号」入口。
+   * 为什么必须绑 AppStorage 而不是在 onClick 里改局部 @State：
+   *   登出（VipManager.logout）发生在「我的」页，设置页可能已在 Navigation 栈里缓存
+   *   ⇒ 只改局部 state 的话登出后入口不会自己回来。绑广播键两端都自动同步。
+   */
+  @StorageLink(VipManager.LOGIN_STORAGE_KEY) loginType: string = ''
 
   // ── 全局震动反馈（2026-09-25 新增，用户需求）────────────────────────────────
   // 开关 + 0-500 强度滑块（每 50 一档）。真正落盘到 Preferences（键 HapticsEnabled /
@@ -511,29 +519,38 @@ export default struct MySetPage{
         // ── 测试账号入口（2026-10-01 重设计 → 2026-10-08 用户要求**移到列表最下面**）──
         // 居中胶囊按钮（圆角 + 卡底 + 淡阴影），文案前加 person symbol（SDK 符号表核实）；
         // 放最后一项：随内容滚动，滚到底才出现。底部让位由 List 的 `contentEndOffset` 负责。
-        ListItem() {
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.person'))
-              .fontSize(18)
-              .fontColor([this.theme.mainColor])
-            Text('测试账号')
-              .fontSize(FontConstants.ITEM)
-              .fontWeight(FontConstants.W_TITLE)
-              .fontColor($r('app.color.text_primary'))
+        //
+        // ⚠️ 2026-10-13 用户口径修正（上架被拒项）：
+        //   「只有登录 huaweiceshi 这个账户，登录后这个测试账户按钮才会消失，其他账户或者时机均不消失」
+        //   ⇒ 严格按 `loginType === 'test'` 判定（VipManager.loginTest 只认 huaweiceshi/huaweiceshi1234，
+        //     写 'test'；彩蛋码走 ListenUnlock **不写登录态**、邀请码只送 VIP 也不写登录态
+        //     ⇒ 这两种时机入口**照旧显示**，符合"其他时机不消失"）。
+        //   ⚠️ 不能用 `VipManager.isVip()` 当条件 —— 邀请码/购机 IAP 都会置 VIP，会误藏入口。
+        if (this.loginType !== 'test') {
+          ListItem() {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.person'))
+                .fontSize(18)
+                .fontColor([this.theme.mainColor])
+              Text('测试账号')
+                .fontSize(FontConstants.ITEM)
+                .fontWeight(FontConstants.W_TITLE)
+                .fontColor($r('app.color.text_primary'))
+            }
+            .justifyContent(FlexAlign.Center)
+            .padding({ left: 28, right: 28, top: 12, bottom: 12 })
+            .borderRadius(22)
+            .backgroundColor($r('app.color.card_bg'))
+            .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+            .clickEffect(UiMotion.CLICK)
+            .onClick(() => {
+              Haptics.tap();
+              this.openTestAccountDialog()
+            })
           }
-          .justifyContent(FlexAlign.Center)
-          .padding({ left: 28, right: 28, top: 12, bottom: 12 })
-          .borderRadius(22)
-          .backgroundColor($r('app.color.card_bg'))
-          .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
-            Haptics.tap();
-            this.openTestAccountDialog()
-          })
+          .width('100%')
+          .padding({ top: 16, bottom: 4 })
         }
-        .width('100%')
-        .padding({ top: 16, bottom: 4 })
 
       }.width('100%')
       .height('100%')
@@ -587,13 +604,25 @@ export default struct MySetPage{
       // ── 防窥两层（2026-10-08，VIP 特权）────────────────────────────────────
       // 非 VIP：开关不动，弹 VIP 弹窗并记下待办；开通成功后 onClose 里补开（用户第 4 点）。
       // 已开通：把**目标值**下发给 AntiPeep（第 2 层由它异步对账系统防窥开关）。
+      //
+      // ⚠️ 2026-10-13 修（上架被拒项 ③「首次拉起授权窗没点，之后点不开」）：
+      //   旧写法 `AntiPeep.setDlp(!this.setAntiPeepDlp)` 依赖**有效值**取反。
+      //   第 2 层的有效值在系统防窥开关没开时恒为 false（AntiPeep.ets 的 @StorageLink 回写）
+      //   ⇒ 用户首次点击拉起系统页、没点就返回 ⇒ 有效值仍是 false ⇒ 再点还是 `!false = true`
+      //   ⇒ 每次都**重新拉起系统页**，连点几次就是连着弹几次，观感就是"点了没反应/点不开"。
+      //   改成显式意图：点「开」走可重入的 `requestDlpOn()`（保证带引导 + 去重）；
+      //   点「关」才走 `setDlp(false)`。判定依据用**意图**（Preferences）而非有效值。
       case MySetConstants.SET_ANTI_PEEP_DLP: {
         if (!VipManager.isVip()) {
           this.pendingAntiPeep = KEY_ANTI_PEEP_DLP
           this.openVip()
           break
         }
-        AntiPeep.setDlp(!this.setAntiPeepDlp)
+        if (this.setAntiPeepDlp) {
+          AntiPeep.setDlp(false)
+        } else {
+          AntiPeep.requestDlpOn()
+        }
         break
       }
       case MySetConstants.SET_ANTI_PEEP_CAPTURE: {
@@ -707,7 +736,9 @@ export default struct MySetPage{
       return
     }
     if (p === KEY_ANTI_PEEP_DLP) {
-      AntiPeep.setDlp(true)
+      // 2026-10-13：这里也是"用户主动要开"，必须走带引导的可重入路径
+      // （旧 `setDlp(true)` 同样会在系统页被返回后陷入"每次点都重弹"）
+      AntiPeep.requestDlpOn()
     } else {
       AntiPeep.setCapture(true)
     }

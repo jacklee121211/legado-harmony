@@ -44,12 +44,14 @@
           "when": "inuse"
         }
       },
-//       ⚠️【受限权限·已经启用】DLP_GET_HIDE_STATUS（防窥第2层：窥视检测/系统蒙层）。
+//       ✅【受限权限·已获批并启用】DLP_GET_HIDE_STATUS（防窥第2层：窥视检测/系统蒙层）。
 //       受限开放权限（ACL）：Profile 里没有该权限白名单时**安装即失败**
 //      （错误码 9568289 "grant request permissions failed"，2026-10-07 真机实测）。
-//       等 AGC「申请受限权限」审批通过、重新出带 ACL 的 Profile 后，把下面这块
-//       取消注释即可（运行时无需其它改动：AntiPeep.ets 对 201/801 已静默降级为仅第1层）。
-//       参考实现：D:\Arkts\xiaowei（其 key/xiaoweiRelease.p7b 自带 ACL 所以能装）。现已申请通过已经开放2026.10.8 11：11
+//       AGC「申请受限权限」已于 **2026-10-08 审批通过**，下面这块自那时起即为启用状态；
+//       签名用 Profile 已带该 ACL，安装与运行均正常 —— **不要再按"待启用"处理**。
+//       （历史沿革：2026-10-07 首次尝试因 Profile 无 ACL 安装失败，故当时留注释占位；
+//         2026-10-08 获批后已解注释。参考实现：D:\Arkts\xiaowei。）
+//       运行时无需其它改动：AntiPeep.ets 对 201/801 仍保留静默降级为仅第1层。
        {
          "name": "ohos.permission.DLP_GET_HIDE_STATUS",
          "reason": "$string:anti_peep_reason",

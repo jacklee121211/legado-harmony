@@ -213,6 +213,25 @@ export struct WifiTransferDialog {
         .opacity(0.55)
         .width('100%')
 
+      // ⚠️ 2026-10-13 修（上架被拒项 ②「WiFi 传输失败」的**静默**成因）：
+      //   服务起来了但 `address === ''` 时（Wi-Fi 未连/未拿到 IPv4），旧实现整块不渲染
+      //   ⇒ 测试人员只看到"开关是开的，但没有地址、没有配对码"，无法判断是没连 WiFi 还是功能坏了。
+      //   现在显式给出原因与动作。地址来源唯一：`wifiManager.getIpInfo()`，SDK 原文
+      //   「Obtain the IPv4 information of the **Wi-Fi connection**.」（`@ohos.wifiManager.d.ts:641`）
+      //   ⇒ 只有连上 Wi-Fi 才可能有地址。
+      if (this.running && this.address === '') {
+        Column({ space: 6 }) {
+          Text('未获取到局域网地址')
+            .fontSize(14).fontWeight(600).fontColor('#EF4444').width('100%')
+          Text('请确认手机已连接 Wi-Fi（不能只用移动数据），然后重新打开本开关。若已连接仍无地址，请改用手机热点让电脑连接后重试。')
+            .fontSize(12).opacity(0.7).width('100%')
+        }
+        .width('100%')
+        .padding(12)
+        .borderRadius(12)
+        .backgroundColor('rgba(239, 68, 68, 0.10)')
+      }
+
       if (this.running && this.address !== '') {
         // ── 配对码 ────────────────────────────────────────────────────────
         Column({ space: 8 }) {
