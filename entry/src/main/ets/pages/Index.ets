@@ -66,6 +66,10 @@ import { ListenUnlock } from '../common/utils/ListenUnlock'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../common/utils/Haptics'
 import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
+// ── 首次安装模式选择（2026-10-13 新增）──────────────────────────────────────
+import FirstRunModeDialog from '../componets/common/FirstRunModeDialog'
+import { FirstRunMode } from '../common/utils/FirstRunMode'
+import { OfflineMode } from '../common/utils/OfflineMode'
 
 @Entry
 @Component
@@ -105,6 +109,34 @@ struct Main {
   private cachedFloatKey: string = ''
   /** 是否存在听书会话（书名信息条的显示条件；必须走 StorageLink 才会驱动重绘） */
   @StorageLink('listenActive') listenActive: boolean = false
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 首次安装「全量 / 离线」模式选择弹窗（2026-10-13 新增，用户需求）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 需求：首次安装的用户第一次进入后，全屏灰色遮罩 + 屏幕中央四圆角材质弹窗，
+  //   上下两个按钮（上=全量、下=离线），点击只是**红框框选**，再点「确定」才生效；
+  //   默认框选全量模式；结果与设置页的离线/全量开关**天然同步**（同一份落盘数据）。
+  //
+  // ── 为什么在这里创建 controller ──────────────────────────────────────────
+  // `Index` 是 `@Entry` 主页面，冷启动即挂载 ⇒ 它是"进入软件后"最早可用弹窗的宿主。
+  // 启动流程本身不动（用户要求"流程正常启动"）：弹窗在 `aboutToAppear` 之后触发，
+  // 不阻塞 `initAppData()` / 建表等既有初始化。
+  //
+  // ⚠️ `CustomDialogController` 的参数**不支持动态更新**（SDK
+  //    `custom_dialog_controller.d.ts:756` NOTE 原文「Custom dialog box parameters
+  //    do not support dynamic updates」）⇒ 每次弹出都 **new 一个新 controller**
+  //    （规范 4.4 同款做法：`GroupType.openGroupPanel()`）。
+  /**
+   * 首启引导弹窗控制器（null = 尚未弹出/已关闭）。
+   * 只在 `maybeShowFirstRunDialog()` 里 new，保证每次都是新实例。
+   */
+  private firstRunDialog: CustomDialogController | null = null
+  /**
+   * 启动后延迟弹出的毫秒数。
+   * 为什么要延迟：冷启动首帧还要跑 `initAppData()` + 建表 + 一镜到底初始化，
+   * 弹窗与首帧同拍会和孩子布局抢帧。给一点余量让主界面先立住。
+   */
+  private static readonly FIRST_RUN_DELAY_MS: number = 600
 
   // ══════════════════════════════════════════════════════════════════════════
   // 一镜到底（书架 → 阅读器）运行态 —— 2026-09-23
@@ -456,6 +488,61 @@ struct Main {
     // 听书解锁位：与 ReaderPage3:3140 同源（@StorageLink 初值 false，必须从 Preferences 拉）
     this.listenUnlocked = ListenUnlock.isUnlocked()
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
+    // ★ 首次安装模式选择（2026-10-13）：流程正常启动，主界面立住后再弹引导。
+    this.maybeShowFirstRunDialog()
+  }
+
+  /**
+   * 首次安装时弹出「全量 / 离线」模式选择（2026-10-13 新增，用户需求）。
+   *
+   * ── 三重判定全在 `FirstRunMode.shouldShow()` 里 ─────────────────────────────
+   *   · `FirstRunMode.ENABLED === false` ⇒ 永不弹（开发者一键开关，用户明确要求）；
+   *   · 已落盘 `firstRunModeChosen === true` ⇒ 不再弹（只弹一次）；
+   *   · `IGNORE_FLAG_FOR_DEBUG` ⇒ 调试期每次冷启都弹。
+   *
+   * ── 与设置页开关"天然同步"的实现 ──────────────────────────────────────────
+   * 本弹窗**不自己存模式值**：确认时调 `OfflineMode.set()` —— 与设置页
+   * `MySetPage.itemOnclick` 的 `SET_OFFLINE_MODE` 分支（`MySetPage.ets:737`）
+   * 是**同一个函数**，写同一个 Preferences 键 + 同一个 AppStorage 广播键
+   * ⇒ 两处天然同源，不存在"两边各存一份、互相覆盖"的问题。
+   */
+  private maybeShowFirstRunDialog(): void {
+    if (!FirstRunMode.shouldShow()) {
+      return
+    }
+    setTimeout(() => {
+      // 再次判定：延迟期间可能已经因为其它路径标记完成（防御性）
+      if (!FirstRunMode.shouldShow()) {
+        return
+      }
+      // 规范 4.4：options 不支持动态更新 ⇒ 每次 new 新 controller
+      this.firstRunDialog = new CustomDialogController({
+        builder: FirstRunModeDialog({
+          // 用户要求「默认框选全量模式」⇒ 初始选中 = false
+          initialOffline: false,
+          confirm: (offline: boolean): void => {
+            // ① 落盘 + 全应用广播（与设置页开关同一入口 ⇒ 天然同步）
+            OfflineMode.set(offline)
+            // ② 标记首启引导已完成 ⇒ 以后不再弹
+            FirstRunMode.markDone()
+            this.firstRunDialog = null
+          }
+        }),
+        // 强制选择语义：点遮罩 / 返回键都不关（用户必须选一个再确定）
+        autoCancel: false,
+        alignment: DialogAlignment.Center,
+        width: '80%',
+        cornerRadius: 20,
+        // ★ 材质生效的必要条件（规范 2.2）
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        // 灰色遮罩（SDK 默认即 0x33000000，这里显式写出来便于阅读与调整）
+        maskColor: '0x80000000',
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      })
+      this.firstRunDialog.open()
+    }, Main.FIRST_RUN_DELAY_MS)
   }
 
   /**

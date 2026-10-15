@@ -29,6 +29,8 @@ import { AntiPeep, KEY_ANTI_PEEP_CAPTURE, KEY_ANTI_PEEP_DLP } from '../../../com
 import { VipManager } from '../../../common/utils/VipManager'
 // ── 离线模式（2026-10-13 新增）：手动「全量/离线」切换，隐藏依赖网络的入口 ──
 import { OfflineMode, STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode'
+// ── 首次安装模式选择（2026-10-13 新增）：本页只用到「开发者重放」入口 ──────────
+import { FirstRunMode } from '../../../common/utils/FirstRunMode'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
 // ── 书架动画速度（2026-10-12）─────────────────────────────────────────────────
 import { EntranceWave } from '../../../common/utils/EntranceWave'
@@ -424,6 +426,41 @@ export default struct MySetPage{
   // 登录从「我的」页下线后，测试账号表单（登录 + 彩蛋解锁双职能）迁到本页顶部。
   private testAccountDialog: CustomDialogController | null = null
 
+  /**
+   * 开发者入口：重放首启引导弹窗（2026-10-13 新增）。
+   *
+   * 用户要求「这个模块天然支持一键开关（给我们，也就是开发者保留天然开关）」
+   * ⇒ 提供三级开关，这里是最常用的那级（运行期重放）：
+   *   ① 编译期总闸 `FirstRunMode.ENABLED = false` ⇒ 全工程永不弹（主开关）；
+   *   ② 本方法 `FirstRunMode.debugReset()` ⇒ 抹掉首启标记，**下次冷启**重新弹一次；
+   *   ③ 调试期 `FirstRunMode.IGNORE_FLAG_FOR_DEBUG = true` ⇒ 每次冷启都弹。
+   *
+   * 挂载点：**长按**「离线模式」那一行（`SET_OFFLINE_MODE`）触发，见 `itemOnLongPress`。
+   * 为什么用长按而不是新增可见入口：这是开发者能力，不该出现在用户可见的设置列表里。
+   */
+  private devResetFirstRun(): void {
+    Haptics.success()
+    FirstRunMode.debugReset()
+    const t = FirstRunMode.shouldShow() ? '已重置：下次冷启动会重新弹出首启引导' : '已重置首启标记'
+    // showToast 会抛异常 ⇒ 按本页既有写法包 try/catch（同 `onLoginOk` / `onInviteRedeemed`）
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: t })
+    } catch (e) {
+      // 提示失败不影响重置本身
+    }
+  }
+
+  /**
+   * 设置行**长按**（开发者暗门，2026-10-13 新增）。
+   * 目前只有「离线模式」一行挂了它 —— 用于重放首启引导。
+   * 普通点击仍走 `itemOnclick`（保持用户交互不变）。
+   */
+  itemOnLongPress(value: string): void {
+    if (value === MySetConstants.SET_OFFLINE_MODE) {
+      this.devResetFirstRun()
+    }
+  }
+
   private openTestAccountDialog(): void {
     this.testAccountDialog = new CustomDialogController({
       builder: TestAccountDialog({
@@ -515,16 +552,20 @@ export default struct MySetPage{
                     && group.groupValue !== '书架'){
                     SetListView({setList:item,topLeft:20,topRight:20,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
+                      .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
                   }else if (this.visibleRowsOf(group).indexOf(item) == 0){
                     SetListView({setList:item,topLeft:20,topRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
+                      .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
 
                   }else if (this.visibleRowsOf(group).indexOf(item) == this.visibleRowsOf(group).length - 1){
                     SetListView({setList:item,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
+                      .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
                   }else {
                     SetListView({setList:item})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
+                      .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
                   }
                 }.padding({left:20,right:20})
                 }
@@ -733,6 +774,8 @@ export default struct MySetPage{
       // ── 离线模式（2026-10-13 新增）──────────────────────────────────────────
       // 落盘 + 广播：OfflineMode.set 写 Preferences 与 AppStorage 同键，
       // 本页的 @StorageLink(offlineOn) 随之触发 onOfflineModeChanged() 重建「其他」组。
+      // ⚠️ 与首启引导弹窗（`componets/common/FirstRunModeDialog.ets`）**同一入口**
+      //    ⇒ 两处天然同步（首启选的模式 = 这里显示的开关状态），不存在两份状态互相覆盖。
       case MySetConstants.SET_OFFLINE_MODE:
         OfflineMode.set(!this.offlineOn)
         break;
