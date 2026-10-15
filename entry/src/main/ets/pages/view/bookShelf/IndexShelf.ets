@@ -197,7 +197,11 @@ export default struct IndexShelf {
         Row() {
           List({ scroller: this.scrollController }) {
             ListItem() {
-              BookMark({ title: '书架', index: 0, currentIndex: this.currentIndex }).onClick(() => {
+              // ★ 顶部标题（2026-10-13 用户要求：「书架」→「喵阅」）★
+              // ⚠️ 这里传的字面量就是**屏幕上那两个大字**（`BookMark` 的 build 里
+              //    `Text(this.title)`，25 号加粗，见 `componets/head/BookMark.ets:34,43`）。
+              //    改标题只需改这一处；下面 `titleArray` 是页签数据源，与显示无关。
+              BookMark({ title: '喵阅', index: 0, currentIndex: this.currentIndex }).onClick(() => {
                 Haptics.tap();
                 this.currentIndex = 0
                 this.tabsController.changeIndex(0)
