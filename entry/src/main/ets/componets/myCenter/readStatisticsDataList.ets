@@ -207,9 +207,24 @@ export struct readStatisticsDataList{
          //      这里结构是 Scroll，故用"内容内边距"这条等价路径，与工程排查记录的口径一致。）
          .padding({ bottom: this.bottomRectHeight + (this.delStatus ? 80 : 16) })
        }.scrollable(ScrollDirection.Vertical)
-       .scrollBar(BarState.Off) // 滚动条常驻显示
-       .friction(0.6)
-       .edgeEffect(EdgeEffect.None)
+       .scrollBar(BarState.Off)
+       // ── 2026-10-13 手感对齐书架（用户反馈「读过页面滑动很生硬，没有 q 弹」）──────
+       // 根因是**两个 SDK 默认值不一样**（原文均出自 SDK `.d.ts`）：
+       //   · `list.d.ts`   `edgeEffect(...)`「Default value: **EdgeEffect.Spring**」
+       //     ⇒ 书架是 `List`，**不写就有回弹**；
+       //   · `scroll.d.ts` `edgeEffect(...)`「Default value: <em>EdgeEffect.None</em>」
+       //     ⇒ 本组件是 `Scroll`，**不写就没有回弹**；旧代码还显式写了 `None`，
+       //        等于把唯一的回弹可能也关掉 ⇒ 滑到底"硬停"，正是用户说的生硬。
+       // ⇒ 显式给 Spring。`alwaysEnabled: false` 与 List 的默认一致
+       //   （`list.d.ts` 原文「Default value: **{ alwaysEnabled: false }**」）：
+       //   内容不足一屏时不弹，避免只有一两本书时整页跟手乱晃。
+       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
+       // ⚠️ 2026-10-13 删掉原来的 `.friction(0.6)`：
+       //   `scroll.d.ts` / `list.d.ts` 的 `friction` 默认值原文一致 ——
+       //   「Since API version 12, the default value for non-wearable devices is **0.75**」。
+       //   书架（List）走默认 0.75，本页却写死 0.6（API 10 时代的老默认）
+       //   ⇒ 同样手速滑出来的惯性距离与书架不是一个手感。
+       //   删掉即继承平台默认，与书架同源；将来要单独调再显式写。
        // ── 2026-10-13 修「底部被遮住一大块」──────────────────────────────────
        // 原为 `.size({width:320, height:"80%"})` + `.padding({bottom:50})`：
        //   · 高度只占父容器的 **80%**、且 `.align(TopStart)` 贴顶

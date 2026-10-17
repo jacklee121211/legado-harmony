@@ -439,6 +439,13 @@ export default struct BookManagePage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Off)
+        // ── 2026-10-13 手感对齐书架（用户反馈「管理页列表滑动很生硬」）──────────────
+        // 本页的滚动容器是 **`Scroll`**（书架是 `List`），而两者 `edgeEffect` 默认值不同：
+        //   · `list.d.ts`   「Default value: **EdgeEffect.Spring**」  ← 书架不写就有回弹
+        //   · `scroll.d.ts` 「Default value: <em>EdgeEffect.None</em>」← 本页不写就没有
+        // ⇒ 不写这一行，本页滑到底就是"硬停"；书架因为默认值恰好是 Spring 才显得 Q 弹。
+        // `alwaysEnabled: false` 与 List 默认一致（内容不足一屏时不弹，避免整页乱晃）。
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
         // ════════════════════════════════════════════════════════════════════
         // 2026-10-12 十一修（用户：「书距离左侧太近了，完全没有边距，
         //   增加一些边距，最好和书架的边距一样」）
