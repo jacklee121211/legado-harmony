@@ -1,4 +1,5 @@
-import booksUtils from '../../common/utils/booksUtils';
+// （2026-10-13 删除未使用的 `booksUtils` import —— 它在本文件里唯一的调用点是
+//   已删掉的 `getOrder()`；现在排序直接在 SQL 里判 `order !== undefined`。）
 import DbUtil from '../../common/utils/DbUtil';
 import toolsUtils from '../../common/utils/ToolsUtils';
 import AppDatabaseUtil from '../AppDatabaseUtil';
@@ -60,10 +61,15 @@ class BooksDao {
     let type = param?.type;
     let bookGroup = param?.bookGroup;
     let order = param?.order;
-    let sort = 0
-    if (order !== undefined){
-      sort = booksUtils.getOrder(order)
-    }
+    // ── 2026-10-13 清理死代码：「更新排序 / 手动排序」已无 UI 入口 ──────────────
+    // 证据：`IndexSearchType.ets:28-29` 原文
+    //   「2026-10-01（用户）：「最近阅读」的排序弹窗（更新排序/手动排序）功能已废，
+    //     直接删除——标题恢复为纯文字（无下拉箭头、无点击、无 popup）。」
+    // 且全工程只有 `newAddShelf.ets:100` 给过 `searchValue` 赋值（那是搜索关键词，
+    // 不是排序）⇒ 书架链上 `searchValue` 恒为 `'最近阅读'`。
+    // ⇒ 原来那套 `getOrder()` + `switch(sort)` 三选一恒走 case 0，case 1/2 是死分支。
+    //   本方法保留 `order` 参数（调用方仍在传），但语义收窄成"是否指定了排序"：
+    //   指定 = 最近阅读；不指定 = 按导入时间（下面两个分支**行为与改造前完全一致**）。
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       let sql = `SELECT * FROM ${this.TABLE_NAME}`;
@@ -89,17 +95,21 @@ class BooksDao {
       }
       sql += ` ORDER BY`;
       if (order !== undefined) {
-        switch (sort){
-          case 0:
-            sql += ` isTop DESC, durChapterTime DESC`;
-            break;
-          case 1:
-            sql += ` isTop DESC, latestChapterTime DESC`;
-            break;
-          case 2:
-            sql += ` isTop DESC, sort ASC`;
-            break;
-        }
+        // ── 「最近阅读」（现唯一可用的排序档）──────────────────────────────
+        // 2026-10-13 两件事一起做：
+        // ① **修排序**：让**最新导入的书排最前**。
+        //    旧：`isTop DESC, durChapterTime DESC`
+        //      · 本地导入的书 `durChapterTime = 0`（`FileHandler.CopyFile` 显式写 0）
+        //        ⇒ DESC 里 0 最小 ⇒ 新书被压到**所有读过的书之后**，导入完要往下翻才找得到。
+        //    新：把"最后活动时间"统一成一个派生值再排 ——
+        //      · 读过的书（durChapterTime > 0）用 durChapterTime；
+        //      · 从没读过的书（= 0）用 createTime（`BooksDao.insert:282` 写的导入时刻）。
+        //      ⇒ 新导入的书 createTime 最大 ⇒ 紧跟置顶之后排第一。
+        //    依据（RDB 底层是 SQLite，支持标准 SQL 表达式）：documentId
+        //    `FAQ/本地数据和文件/本地数据库管理/关系型数据库RDB支持哪些搜索能力/faqs-local-database-management-23`
+        //    原文「SQL查询：SQLite 支持标准的 SQL 查询语法…」
+        // ② **清死代码**：`case 1`（更新排序）/ `case 2`（手动排序）已无 UI 入口，删除。
+        sql += ` isTop DESC, CASE WHEN durChapterTime = 0 THEN createTime ELSE durChapterTime END DESC, createTime DESC`;
       } else {
         sql += ` isTop DESC, createTime DESC`;
       }
@@ -203,10 +213,8 @@ class BooksDao {
 
   async searchPage(param?: BooksTypeSearchParams, pageNumber: number = 1, pageSize: number = 21) {
     let order = param?.order;
-    let sort = 0;
-    if (order !== undefined) {
-      sort = booksUtils.getOrder(order);
-    }
+    // 2026-10-13 清死代码：原来的 `getOrder()` + `switch(sort)` 恒走 case 0，
+    // 「更新排序 / 手动排序」已无 UI 入口（证据见本文件 `search()` 里的同段注释）。
 
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
@@ -219,17 +227,14 @@ class BooksDao {
 
       sql += ` ORDER BY`;
       if (order !== undefined) {
-        switch (sort) {
-          case 0:
-            sql += ` isTop DESC, durChapterTime DESC, createTime DESC`;
-            break;
-          case 1:
-            sql += ` isTop DESC, latestChapterTime DESC,updateTime DESC`;
-            break;
-          case 2:
-            sql += ` isTop DESC, sort ASC`;
-            break;
-        }
+        // ── 2026-10-13 与 `search()` 保持**逐字一致**的「最近阅读」排序 ────────
+        // 本方法是书架实际走的查询（`BookContent.ets:117`），所以这里是用户
+        // 「导入后要往下翻才看得到新书」的**直接**根因所在。
+        // 修法与理由见 `search()` 里同段注释：没读过的书用 createTime 参与排序
+        // ⇒ 最新导入的排在置顶之后的第一位。
+        // ⚠️ 两处 ORDER BY 必须同步改，否则书架（searchPage）与管理页（search）
+        //    的"最近阅读"顺序会不一致。
+        sql += ` isTop DESC, CASE WHEN durChapterTime = 0 THEN createTime ELSE durChapterTime END DESC, createTime DESC`;
       } else {
         sql += ` isTop DESC, createTime DESC`;
       }

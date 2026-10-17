@@ -49,6 +49,45 @@ OUT = os.path.join(MATERIAL_ROOT, '02_成片')
 
 FPS = 30
 
+# 系统信息栏占屏高的比例（实测：1320×2848 裁 128 → 0.0449；890×1920 裁 86 → 0.0448）
+# ⇒ 所有素材（静帧截图 / 录屏）**统一裁掉同样比例**，得到同一个 App 画布，比例 0.4853
+SYSTEM_BAR_RATIO = 0.0449
+
+
+def expand_box(box, aspect, size):
+    """把兴趣区**向外扩**到目标宽高比（不裁掉兴趣区内的任何内容）。
+
+    为什么不用 cover：实测（2026-10-17）03_font 的 crop 比例 0.553，cover 裁到 0.485
+    会把左侧「字号/行距」标签切掉一半。往外扩只会多带一点上下文，不会切内容。
+    """
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    W, H = size
+    if w / h > aspect:
+        nh = w / aspect
+        cy = (y0 + y1) / 2.0
+        y0, y1 = cy - nh / 2.0, cy + nh / 2.0
+    else:
+        nw = h * aspect
+        cx = (x0 + x1) / 2.0
+        x0, x1 = cx - nw / 2.0, cx + nw / 2.0
+    # 夹回画布内（先平移，仍超界再压缩）
+    if x0 < 0:
+        x1 -= x0
+        x0 = 0
+    if x1 > W:
+        x0 -= (x1 - W)
+        x1 = W
+    if y0 < 0:
+        y1 -= y0
+        y0 = 0
+    if y1 > H:
+        y0 -= (y1 - H)
+        y1 = H
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(W, x1), min(H, y1)
+    return int(round(x0)), int(round(y0)), int(round(x1)), int(round(y1))
+
 
 def resolve_src(name):
     """素材查找：先新物料目录，再旧的 promo/src 归档。找不到直接报错并列出两处路径。"""
@@ -69,7 +108,7 @@ def layout(ratio):
             title_px=100, sub_px=42, chip_px=28,
             gap_chip_title=26, gap_title_bar=34, gap_bar_sub=30,
             bar_w=112, bar_h=10,
-            phone_screen_w=600,
+            phone_screen_w=620,
             phone_anchor='bottom', phone_bottom=64,
             blurb=None,
         )
@@ -80,7 +119,7 @@ def layout(ratio):
             title_px=112, sub_px=46, chip_px=30,
             gap_chip_title=28, gap_title_bar=38, gap_bar_sub=34,
             bar_w=124, bar_h=11,
-            phone_screen_h=948,
+            phone_screen_h=900,
             phone_anchor='right', phone_right=168,
             blurb=None,
         )
@@ -99,20 +138,29 @@ class SceneRenderer:
         self.bg = kit.make_background((W, H), scene['c1'], scene['c2'],
                                       scene['accent'], blur_scale=W / 1080.0)
 
-        # 源图（像素不改，只裁切）
-        self.src = Image.open(resolve_src(scene['src'])).convert('RGB')
-        self.region = scene['crop'] or (0, 0, self.src.size[0], self.src.size[1])
-        x0, y0, x1, y1 = self.region
-        self.crop = self.src.crop((x0, y0, x1, y1))
+        # 源图（像素不改，只裁切）：先统一裁掉系统信息栏，再取场景兴趣区
+        raw = Image.open(resolve_src(scene['src'])).convert('RGB')
+        cut = int(round(raw.size[1] * SYSTEM_BAR_RATIO))
+        self.full = raw.crop((0, cut, raw.size[0], raw.size[1]))
+        self.canvas_aspect = self.full.size[0] / self.full.size[1]
 
-        # 手机样机
+        if scene.get('crop'):
+            x0, y0, x1, y1 = scene['crop']
+            y0 = max(0, y0 - cut)
+            y1 = min(self.full.size[1], y1 - cut)
+            box = expand_box((x0, y0, x1, y1), self.canvas_aspect, self.full.size)
+            self.crop = self.full.crop(box)
+        else:
+            self.crop = self.full
+
+        # 手机样机：形状**恒为画布比例**，保证每个场景的机框轮廓一致；不画灵动岛
         if ratio == '9:16':
             sw = self.L['phone_screen_w']
-            sh = int(round(sw * self.crop.size[1] / self.crop.size[0]))
+            sh = int(round(sw / self.canvas_aspect))
         else:
             sh = self.L['phone_screen_h']
-            sw = int(round(sh * self.crop.size[0] / self.crop.size[1]))
-        self.phone = kit.Phone(sw, sh)
+            sw = int(round(sh * self.canvas_aspect))
+        self.phone = kit.Phone(sw, sh, island=False)
         self.sw, self.sh = self.phone.screen_box[2] - self.phone.screen_box[0], \
             self.phone.screen_box[3] - self.phone.screen_box[1]
 

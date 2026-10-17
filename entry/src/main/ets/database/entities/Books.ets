@@ -112,4 +112,8 @@ export class bookShelfImport {
   }
 }
 
-export const BOOK_SEARCH_TYPE: string[] = ['最近阅读', '更新排序', '手动排序']
+// （2026-10-13 删除 `export const BOOK_SEARCH_TYPE = ['最近阅读','更新排序','手动排序']`）
+// 原因：排序档只剩「最近阅读」一档可达 —— `IndexSearchType` 的排序下拉弹窗
+// 2026-10-01 已按用户要求删除（原文见 `componets/head/IndexSearchType.ets:28-29`），
+// 全工程再无任何代码把 `searchValue` 改成另外两档 ⇒ 常量与 `booksUtils.getOrder()`
+// 一起去掉；SQL 侧改为在 `BooksDao.search/searchPage` 里直接判 `order !== undefined`。

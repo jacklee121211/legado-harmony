@@ -1,10 +1,10 @@
-import CommonConstants from '../../common/constants/CommonConstants'
-import { Haptics } from '../../common/utils/Haptics';
-import FontConstants from '../../common/constants/FontConstants'
-import PaddingConstants from '../../common/constants/PaddingConstants'
+// 2026-10-13 清理：排序下拉弹窗删除后，本组件只剩一个 Text，
+// 下面四个 import（CommonConstants / Haptics / FontConstants / PaddingConstants）
+// 全部不再使用，一并删除。
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
-import { BOOK_SEARCH_TYPE } from '../../database/entities/Books'
+// （2026-10-13 删除未使用的 `BOOK_SEARCH_TYPE` import —— 该常量本身也已删除，
+//   排序下拉弹窗 2026-10-01 就废了，见本文件 build() 里的原文。）
 import { NightMode } from '../../common/utils/NightMode'
 
 @Component
