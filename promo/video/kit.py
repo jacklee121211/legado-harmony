@@ -177,17 +177,28 @@ def make_background(size, c1, c2, accent, blur_scale):
 # ── 手机外框 ────────────────────────────────────────────────────────────────
 
 class Phone:
-    """按"屏幕宽高"生成一台手机样机（机身 + 屏幕裁切 mask + 灵动岛 + 玻璃高光）。
+    """按"屏幕宽高"生成一台手机样机（机身 + 屏幕裁切 mask + 玻璃高光，可选灵动岛）。
 
-    坐标系：整张图左上角为原点，`.screen_box` 给出屏幕在其中的位置。
-    屏幕区域在 `.body` 里是**透明**的，所以机身可以叠在任何内容上。
+    ⚠️ 2026-10-17 决策：**默认不画灵动岛**（`island=False`）。
+       原因（实测）：录屏 890×1920 里灵动岛占 y 20..85，而「喵阅」标题在 y 96..146；
+       成品要裁掉系统栏（y≥86），裁完标题距卡片上沿只剩 10px ⇒ 画岛必然压字。
+       而系统录屏组件（红点+计时）就在岛里，属于花絮，不进成片。
+       所以：屏幕内容 = 裁掉系统栏后的 App 画布，机框只保留边框/侧键/高光。
     """
 
     PAD_RATIO = 0.012      # 外扩留白（侧键用）
     BEZEL_RATIO = 0.030    # 边框宽 / 屏幕宽
     SCREEN_R_RATIO = 0.082  # 屏幕圆角 / 屏幕宽
 
-    def __init__(self, screen_w, screen_h):
+    # 灵动岛（黑胶囊）尺寸 —— 2026-10-17 从真机录屏实测（promo/video/_island.py）：
+    #   录屏帧 890x1920 上量得 宽 341 / 高 66 / 顶部 20
+    #   ⇒ 占屏宽 0.383、占屏高 0.0344、顶部偏移 0.0104
+    ISLAND_W_RATIO = 0.395
+    ISLAND_H_RATIO = 0.0352
+    ISLAND_TOP_RATIO = 0.0096
+
+    def __init__(self, screen_w, screen_h, island=False):
+        self.island_on = island
         sw, sh = int(round(screen_w)), int(round(screen_h))
         bezel = max(3, int(round(sw * self.BEZEL_RATIO)))
         pad = max(3, int(round(sw * self.PAD_RATIO)))
@@ -231,9 +242,10 @@ class Phone:
         self.body = body
 
         # 灵动岛
-        iw, ih = int(sw * 0.235), max(6, int(sh * 0.0295))
+        iw = int(sw * self.ISLAND_W_RATIO)
+        ih = max(6, int(sh * self.ISLAND_H_RATIO))
         ix = ox + (sw - iw) // 2
-        iy = oy + int(sh * 0.0125)
+        iy = oy + int(sh * self.ISLAND_TOP_RATIO)
         self.island = (ix, iy, iw, ih)
 
         # 玻璃高光（斜向白色低透明渐变，只铺在屏幕区）
@@ -253,6 +265,8 @@ class Phone:
         screen = Image.alpha_composite(shot.convert('RGBA'), self.gloss)
         out = self.body.copy()
         out.paste(screen, (self.screen_box[0], self.screen_box[1]), self.screen_mask)
+        if not self.island_on:
+            return out
         d = ImageDraw.Draw(out)
         ix, iy, iw, ih = self.island
         d.rounded_rectangle((ix, iy, ix + iw, iy + ih), ih // 2, fill=(0, 0, 0, 255))

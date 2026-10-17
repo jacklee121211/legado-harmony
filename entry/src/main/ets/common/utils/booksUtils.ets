@@ -1,5 +1,5 @@
 import BooksDao from '../../database/dao/BooksDao'
-import { Books, bookShelfImport, BOOK_SEARCH_TYPE } from '../../database/entities/Books'
+import { Books, bookShelfImport } from '../../database/entities/Books'
 import bookGroupUtils from './bookGroupUtils'
 import toolsUtils from './ToolsUtils'
 import bookRename from './BookRename'
@@ -120,11 +120,10 @@ class booksUtils{
     let bookId: number[] = toolsUtils.numberArrays(ids)
     return await BooksDao.getBookByIds(bookId)
   }
-
-  //校验类型数据查询数组内容
-  getOrder(type:string){
-    return BOOK_SEARCH_TYPE.indexOf(type) ?? 0;
-  }
+  // （2026-10-13 删除 `getOrder()`：「更新排序 / 手动排序」已无 UI 入口，
+  //   排序档只剩「最近阅读」一档 ⇒ 这套"标签 → 序号"的映射没有存在意义。
+  //   证据：`IndexSearchType.ets:28-29`（下拉弹窗 2026-10-01 已删）。
+  //   `BooksDao.search/searchPage` 已改为直接判 `order !== undefined`。）
 }
 let booksUtil = new booksUtils();
 export default booksUtil as booksUtils;
