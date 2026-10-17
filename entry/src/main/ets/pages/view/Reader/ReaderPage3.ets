@@ -13,6 +13,8 @@ import { WindowAbility } from '../../../entryability/WindowAbility';
 import { SleepTimerDialog } from './SleepTimerDialog'
 // 目录 / 书签弹窗（2026-09-23 从 `bindSheet` 迁出成 @CustomDialog，理由见该文件头注释）
 import { ReaderCatalogDialog } from './ReaderCatalogDialog'
+// ── 2026-10-13 拆分：书签从目录弹窗独立出来（两个按钮 + 两个弹窗，用户要求）──
+import { ReaderBookmarkDialog } from './ReaderBookmarkDialog'
 // 听书面板（2026-09-23 从 `bindSheet` 迁出成 @CustomDialog，理由见该文件头注释）
 import { ReaderListenDialog, LISTEN_DIALOG_BOTTOM_GAP } from './ReaderListenDialog'
 import { ReaderSettingDialog, SETTING_DIALOG_BOTTOM_GAP } from './ReaderSettingDialog'
@@ -53,7 +55,7 @@ import { AntiPeep } from '../../../common/utils/AntiPeep';
 import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
 // ── 离线模式（2026-10-13 新增）：隐藏阅读器内依赖网络的入口 ──
-import { STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode';
+import { OfflineMode } from '../../../common/utils/OfflineMode';
 import { ReaderBgPalette } from './ReaderBgPalette';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
@@ -945,7 +947,9 @@ export default struct ReaderPage3 {
    * 两个重载（:761/:777）都没有时长/曲线参数 ⇒ 内置节奏定死、真机实测太慢；
    * 自驱 `.scale()` 三段式（压下→过冲→回弹）手感跟手（见 `UiMotion.runJellyClick`）。
    */
-  @State barScale: number[] = [1, 1, 1, 1]
+  // ⚠️ 2026-10-13 拆分：底栏由 4 格变 5 格（目录 / 书签 / 听书 / 日夜 / 设置）
+  //    ⇒ 本数组必须同步到 5 个元素，否则点第 5 格时 `s[pos] = v` 会写越界（缩放不弹）。
+  @State barScale: number[] = [1, 1, 1, 1, 1]
   /** 顶栏书签图标的 Q弹缩放值（同上） */
   @State bookmarkScale: number = 1
   /** 顶栏防窥眼睛图标的 Q弹缩放值（同上） */
@@ -963,16 +967,15 @@ export default struct ReaderPage3 {
    * 在 VIP 弹窗里开通成功后 VipManager.setVip 广播 ⇒ 本页图标即时解锁。
    */
   @StorageLink('vipUnlocked') vipOn: boolean = false
-  /**
-   * 离线模式（2026-10-13 新增）：true = 隐藏阅读器内依赖网络的入口。
-   * 隐藏范围（用户拍板）：
-   *  · 防窥小眼睛 —— 顶栏 `:6366` 与信息窗 `:6305` **两处都藏**（否则两处状态不一致）
-   *  · 字体管理 / 更多材质 / 更多方案（设置面板同一个 Row）
-   *  · 保存方案（底部按钮行）
-   * ⚠️ 只藏入口，**不动**任何已生效状态：防窥继续按 `antiPeepDlpOn` 生效、
-   *    已选中的字体/材质/主题照旧应用（用户明确要求）。
+  /*
+   * 离线/精简模式对阅读器的影响（2026-10-13 方案 A 改版）。
+   *
+   * ⚠️ 本页**不再**持有 `offlineOn` 订阅：按方案 A，阅读器内**所有**入口都属于
+   *    「阅读增强」（防窥图标 / 字体管理 / 更多材质 / 更多方案 / 保存方案），
+   *    全部离线可用 ⇒ 精简模式下照常显示，不再逐处判 `offlineOn`。
+   *    统一判据与一键回退点在 `OfflineMode.showReadingEnhancements()`。
+   *    真正需要网络的「下载字体」在 `ReaderFontDialog` 内部单独门控。
    */
-  @StorageLink(STORAGE_KEY_OFFLINE_MODE) offlineOn: boolean = false
 
   // ── 居中下拉书签手势（2026-10-07 用户需求，常量与取证见文件头 BM_PULL_* 段）────
   /** 当前下拉位移（vp）：驱动内容层 `translate` 与顶部提示条 */
@@ -1244,15 +1247,20 @@ export default struct ReaderPage3 {
    *    只剩"记住上次输入、下次打开回填"的作用（打开时当 `initKeyword` 传进去）。
    */
   @State catalogKeyword: string = ''
-  /** 「目录 / 书签」弹窗的当前页签（0=目录 1=书签）—— 只作"记忆"，打开时当 `initTab` 回填 */
-  @State cdlTab: number = 0
+  // ⚠️ 2026-10-13 拆分：原 `cdlTab`（目录/书签页签记忆）已删除 —— 目录与书签成了
+  //    两个独立弹窗，不再有"上次停在哪个页签"这回事。
   /**
-   * 目录 / 书签弹窗控制器。**每次打开时新建** —— 与 `sleepDialog` 同理：
+   * **目录**弹窗控制器。**每次打开时新建** —— 与 `sleepDialog` 同理：
    * SDK `custom_dialog_controller.d.ts:756` 的 NOTE 原文
    * 「Custom dialog box parameters **do not support dynamic updates**」
-   * ⇒ 预先建好再改传入值不会生效；要传"当前章号 / 日夜模式 / 页签 / 关键词"就只能每次新建。
+   * ⇒ 预先建好再改传入值不会生效；要传"当前章号 / 日夜模式 / 关键词"就只能每次新建。
    */
   private readerCatalogDialog: CustomDialogController | null = null
+  /**
+   * **书签**弹窗控制器（2026-10-13 从目录弹窗拆出，与上面那个完全独立）。
+   * 同样每次打开新建（理由同上）。
+   */
+  private readerBookmarkDialog: CustomDialogController | null = null
   @State readerSetting: readerCore.ReaderSetting = {
     // ⚠️ 必须写真实字体族名。平台查询结果（UIContext.getFont().getFontByName）：
     //   'HarmonyOS Sans'    → /system/fonts/HarmonyOS_Sans.ttf     （仅拉丁字形，342KB）
@@ -6314,8 +6322,10 @@ export default struct ReaderPage3 {
           }
           // 会员化（2026-10-07）：防窥为 VIP 特权 ⇒ 非会员不显示该状态图标
           // （信息窗只做"呈现"，不给免费用户展示一个用不了的静默图标）。
-          // ⚠️ 2026-10-13 离线模式：整个图标隐藏（用户要求离线时藏防窥小眼睛）。
-          if (this.vipOn && !this.offlineOn) {
+          // ⚠️ 2026-10-13 方案 A：防窥是**纯系统能力**（AntiPeep 无网络依赖）⇒
+          //   精简模式下保留（否则把一项 VIP 权益藏起来不卖）。开关见
+          //   `OfflineMode.showReadingEnhancements()`（改 false 可一键全部隐藏）。
+          if (this.vipOn && OfflineMode.showReadingEnhancements()) {
             SymbolGlyph(this.antiPeepIcon())
               .fontSize(16)
               .fontColor([this.readerSetting.fontColor])
@@ -6367,9 +6377,9 @@ export default struct ReaderPage3 {
               //   面板=父窗、定时弹窗=子窗），顶栏不再保留闹钟图标。
               // 会员化（2026-10-07）：防窥为 VIP 特权 —— 未开通时图标左侧挂 VIP 金标，
               //   点击弹 VIP 弹窗（门控范式与「更多材质/更多方案」一致）；已开通则正常切换。
-              // ⚠️ 2026-10-13 离线模式：**整块**（VIP 金标 + 眼睛）一起隐藏 ——
-              //   只藏眼睛会剩一个孤零零的 VIP 金标，比留着图标更奇怪。
-              if (!this.offlineOn) {
+              // ⚠️ 2026-10-13 方案 A：VIP 金标 + 眼睛整块在精简模式下**保留**
+              //   （防窥是纯系统能力，离线可用；藏了等于这项权益没法卖）。
+              if (OfflineMode.showReadingEnhancements()) {
               if (!this.vipOn) {
                 Text('VIP')
                   .fontSize(9)
@@ -6653,19 +6663,13 @@ export default struct ReaderPage3 {
           //   · 「TabContent 不支持设置沉浸光感」⇒ 材质只挂在 Tabs 上，TabContent 是空壳。
           //   · 越界回弹会"扯出白区"⇒ `edgeEffect(EdgeEffect.None)`（与 Index.ets 同款修复）。
           //
-          // 【4 个页签 = 4 个动作】**动作由每个图标自己的 `onClick` 派发**
-          //   （见 `ReaderBarItem()`；Tabs 在这里**只**当材质背板 + 提供悬浮几何）。
-          //   ⚠️ 真机实测：一次点击 `onTabBarClick` 会派发多次、且**第一个 index 恒为 0**
-          //   ⇒ 曾经出现"点听书/设置都弹目录"，所以这里**故意不挂** `onTabBarClick`。
-          //   内容区不可见，故禁掉左右滑动。
-          //
-          // 【听书入口（2026-09-27 回归常驻）】4 个页签对所有人可见：目录/听书/日夜/设置。
-          //   新用户点听书 = 华为本地 TTS（`TtsEngine.activeEngineId` 双重校验：未解锁一律
-          //   回落本地）；暗号解锁（我的→改名命中 我爱李杰克/我爱小妖）只影响两件事：
-          //   ① 默认可切 Edge TTS；② 我的-设置里出现引擎开关。引擎口径见 TtsControlPanel.isLocal。
-          //   `ReaderBarItem(action, pos)` 第一个参数是**动作 id**（0=目录 1=听书 2=日夜 3=设置），
-          //   第二个是**页签位置**（驱动动效计数），
-          //   ⚠️ 两套编号不能混：`dispatchBarAction` 永远收**动作 id**。
+          // 【5 个页签 = 5 个动作，2026-10-13 由 4 个拆分而来】
+          //   动作：0=目录 1=书签 2=听书 3=日夜 4=设置
+          //   为什么多一格：用户要求「目录和书签分离成两个按钮两个弹窗」。
+          //   ⚠️ 动作 id 与页签位置**一一对应**（pos === action），下面 `ReaderBarItem(action, pos)`
+          //      两套编号现在数值相同，但语义仍不同 —— 别合并成一个参数。
+          //   ⚠️ 动作由每个图标自己的 `onClick` 派发，**不要**改回 `Tabs.onTabBarClick()`
+          //      （真机实测：一次点击派发多次且第一个 index 恒为 0 ⇒ 点听书/设置都弹目录）。
           Tabs({ barPosition: BarPosition.End }) {
             TabContent() {
               Column()
@@ -6679,6 +6683,9 @@ export default struct ReaderPage3 {
             TabContent() {
               Column()
             }.tabBar(this.ReaderBarItem(3, 3))
+            TabContent() {
+              Column()
+            }.tabBar(this.ReaderBarItem(4, 4))
           }
           // ⚠️ 这里**故意不挂 `.onTabBarClick()`** —— 动作由每个图标自己的 `onClick` 派发
           //   （见 `ReaderBarItem()`）：真机实测一次点击 `onTabBarClick` 会派发多次、
@@ -6835,10 +6842,11 @@ export default struct ReaderPage3 {
       // 「把字体甚至原有的字号、间距都提取到一个新的弹窗中，新的入口就在标定模式这一行，
       //   替换标定模式的位置，叫做字体管理」；标定模式开关移到 我的-设置（解锁后可见，
       //   见 MySetPage），devMode 仍控制本面板的标定功能区（下方 if (this.devMode) 原样）。
-      // ⚠️ 2026-10-13 离线模式：字体管理 / 更多材质 / 更多方案**整行隐藏**（用户要求）。
-      //    三者同处一个 Row ⇒ 包整个 Row 即可，不必逐个包。
-      //    ⚠️ 只藏入口：已选中的字体/材质/主题照旧生效，用户不会因切模式而丢外观。
-      if (!this.offlineOn) {
+      // ⚠️ 2026-10-13 方案 A：字体管理 / 更多材质 / 更多方案**保留**在精简模式。
+      //   「导入字体 / 更多材质 / 更多方案」是 VIP 权益且**全部本地**（字体走
+      //   `ReaderFontLib` 无网络依赖，材质是 rawfile）⇒ 藏了等于这三项卖不出去。
+      //   真联网的「下载字体」在弹窗内部单独门控（见 `ReaderFontDialog`）。
+      if (OfflineMode.showReadingEnhancements()) {
       Row({ space: 16 }) {
         Button('字体管理')
           .fontSize(13)
@@ -7389,11 +7397,12 @@ export default struct ReaderPage3 {
             this.syncCustomBgGlobal()
           })
         this.FlipModeButton()
-        // ⚠️ 2026-10-13 离线模式：「保存方案」隐藏（用户要求）。
+        // ⚠️ 2026-10-13 方案 A：「保存方案」**保留**在精简模式 —— 方案完全存在本地
+        //   （`ReaderCustomBg` 走 Preferences），零网络依赖，且是 VIP 权益。
         //    「同步全局」与「仿真翻页」**不改对齐代码** —— 本 Flex 已是
         //    `justifyContent: FlexAlign.Center`，少一个按钮后这两个会自动重新居中
         //    （原注释 `:7345` 记的正是这个居中布局意图）。
-        if (!this.offlineOn) {
+        if (OfflineMode.showReadingEnhancements()) {
         Button('保存方案')
           .fontSize(13)
           .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
@@ -7464,15 +7473,20 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 打开「目录 / 书签」弹窗（2026-09-23 从 `bindSheet` 改成 `@CustomDialog`）。
+   * 打开**目录**弹窗（2026-09-23 从 `bindSheet` 改成 `@CustomDialog`）。
+   *
+   * ── 2026-10-13 拆分（用户要求）──────────────────────────────────────────────
+   * 原来「目录 / 书签」共用一个按钮 + 一个弹窗（弹窗里两个页签）。
+   * 现在拆成**两个按钮 + 两个弹窗**：本方法只管目录，书签见 `openBookmarkDialog()`。
+   * 搜索栏与目录过滤**原样保留在目录弹窗里**（用户原话「效果不变，搜索不变」）。
    *
    * ⚠️ **每次打开都新建控制器**：`CustomDialogControllerOptions` 的参数**不支持动态更新**，
    *    SDK `custom_dialog_controller.d.ts:756` 的 NOTE 原文
    *    「Custom dialog box parameters **do not support dynamic updates**」
-   *    ⇒ 预先建好再改传入值不会生效；要传"当前章号 / 日夜模式 / 页签 / 关键词"就只能每次新建。
+   *    ⇒ 预先建好再改传入值不会生效；要传"当前章号 / 日夜模式 / 关键词"就只能每次新建。
    *    （本页 `openSleepTimerDialog()` 是同款做法。）
-   * 关闭动作：关自己一律走 `this.readerCatalogDialog?.close()`；点章节 / 书签由下面两个回调按
-   *    **改造前的原始顺序**收尾（先跳转、后关窗；书签那条"章节已不存在"的早退分支**不关窗**）。
+   * 关闭动作：关自己一律走 `this.readerCatalogDialog?.close()`；点章节由回调按
+   *    **改造前的原始顺序**收尾（先跳转、后关窗）。
    */
   openCatalogDialog(): void {
     this.readerCatalogDialog = new CustomDialogController({
@@ -7480,16 +7494,10 @@ export default struct ReaderPage3 {
         // 目录数据：传**浅拷贝**（元素仍是同一批对象引用，弹窗里靠引用相等判断"当前章"）
         catalogItems: this.CatalogList.getOriginDataArray().slice(),
         currentChapterIndex: this.bookData.durChapterIndex,
-        totalChapterNum: this.bookData.totalChapterNum,
         colorMode: this.colorMode,
-        bookName: this.bookData.bookName,
-        initTab: this.cdlTab,
         initKeyword: this.catalogKeyword,
         onKeywordChange: (kw: string): void => {
           this.catalogKeyword = kw
-        },
-        onTabChange: (t: number): void => {
-          this.cdlTab = t
         },
         onPickCatalogItem: (item: bookParser.CatalogItem, index: number): void => {
           // 顺序与改造前的 `ListItem.onClick` 完全一致：
@@ -7497,11 +7505,6 @@ export default struct ReaderPage3 {
           this.bookData.durChapterIndex = index
           this.jumpToCatalogItem(item)
           this.readerCatalogDialog?.close()
-        },
-        onPickBookmark: (row: BookmarkRow): void => {
-          // `jumpToBookmark()` 内部自带"章节已不存在"的早退分支（早退时**不关**弹窗），
-          // 关窗动作也留在那边，保证与改造前行为一致。
-          this.jumpToBookmark(row)
         }
       }),
       autoCancel: true,
@@ -7531,6 +7534,46 @@ export default struct ReaderPage3 {
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
     this.readerCatalogDialog?.open()
+  }
+
+  /**
+   * 打开**书签**弹窗（2026-10-13 拆分出来，与目录完全独立）。
+   *
+   * ── 与目录弹窗的三点已知异同（都是刻意的）──────────────────────────────────
+   * ① **没有搜索栏**：搜索针对目录章节名（「搜索不变」指的是目录那套照旧）；
+   * ② **右侧「顶部 / 定位 / 底部」竖向 dock 保留**（用户明确要求两个弹窗都有），
+   *    在本书签列表里作用于书签行，语义见 `ReaderBookmarkDialog.BookmarkDock()`；
+   * ③ 面板高度常量与目录弹窗**共用一份**（`CATALOG_PANEL_HEIGHT`）⇒ 两窗等高。
+   *
+   * ⚠️ 同样**每次打开新建控制器**（理由同上：options 不支持动态更新）。
+   * 关闭动作：点书签由 `jumpToBookmark()` 内部收尾（其含"章节已不存在"早退分支，
+   *   早退时**不关窗**），与拆分前行为一致。
+   */
+  openBookmarkDialog(): void {
+    this.readerBookmarkDialog = new CustomDialogController({
+      builder: ReaderBookmarkDialog({
+        bookName: this.bookData.bookName,
+        currentChapterIndex: this.bookData.durChapterIndex,
+        totalChapterNum: this.bookData.totalChapterNum,
+        colorMode: this.colorMode,
+        onPickBookmark: (row: BookmarkRow): void => {
+          // `jumpToBookmark()` 内部自带"章节已不存在"的早退分支（早退时**不关**弹窗），
+          // 关窗动作也留在那边，保证与拆分前行为一致。
+          this.jumpToBookmark(row)
+        }
+      }),
+      autoCancel: true,
+      // 位置/宽度/材质/动效与目录弹窗**逐项一致**：两个弹窗是一对，观感必须同一套。
+      alignment: DialogAlignment.Bottom,
+      offset: { dx: 0, dy: -CATALOG_DIALOG_BOTTOM_GAP },
+      width: '92%',
+      cornerRadius: 20,
+      customStyle: false,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    })
+    this.readerBookmarkDialog?.open()
   }
 
   /**
@@ -7571,11 +7614,21 @@ export default struct ReaderPage3 {
           .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
           .scale({ x: this.barScale[pos], y: this.barScale[pos] })
       } else if (action === 1) {
-        SymbolGlyph($r('sys.symbol.book_badge_speaker'))
+        // ── 书签格（2026-10-13 新增）────────────────────────────────────────
+        // 符号名已核：`sys.symbol.bookmark` / `bookmark_fill` 都在 SDK 符号表
+        // （`sysResource.js` 实测 `bookmark: 125831605` / `bookmark_fill: 125831606`）。
+        // 用**空心** bookmark：本格是"打开书签列表"，不是"当前页是否已加书签"的
+        // 状态指示 —— 后者是右上角那个图标（`bookmarkIcon()`），两处语义不同，别混。
+        SymbolGlyph($r('sys.symbol.bookmark'))
           .fontSize(24)
           .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
           .scale({ x: this.barScale[pos], y: this.barScale[pos] })
       } else if (action === 2) {
+        SymbolGlyph($r('sys.symbol.book_badge_speaker'))
+          .fontSize(24)
+          .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
+          .scale({ x: this.barScale[pos], y: this.barScale[pos] })
+      } else if (action === 3) {
         // ── 三模式图标（2026-09-26 用户要求加「自由」）────────────────────────
         // 沿用改造前的**「显示目标」**约定（见下段注释）：日间时显示「夜间」、
         // 夜间时显示「自由」、自由时显示「日间」。想改成"显示当前模式"
@@ -7639,9 +7692,12 @@ export default struct ReaderPage3 {
       return '目录'
     }
     if (action === 1) {
-      return '听书'
+      return '书签'
     }
     if (action === 2) {
+      return '听书'
+    }
+    if (action === 3) {
       return this.readerModeName(this.nextReaderMode())
     }
     return '设置'
@@ -7659,12 +7715,15 @@ export default struct ReaderPage3 {
   private dispatchBarAction(index: number): void {
     hilog.info(0x0000, 'testTag', 'readerBarAction: index=%{public}d', index)
     if (index === 0) {
-      // 目录（含书签页签）—— 2026-09-23 起是 @CustomDialog
+      // 目录（**2026-10-13 拆分后只剩目录**，书签见下面 index===1）—— @CustomDialog
       this.openCatalogDialog()
     } else if (index === 1) {
+      // 书签（2026-10-13 从目录弹窗独立出来的第二个弹窗）
+      this.openBookmarkDialog()
+    } else if (index === 2) {
       // 听书面板（@CustomDialog，见 `openListenDialog()`）
       this.openListenDialog()
-    } else if (index === 2) {
+    } else if (index === 3) {
       // ── 三模式循环：日间 → 夜间 → 自由 → 日间（2026-09-26 加上「自由」）──────────
       // 起因（用户原话）：「我们设置一个背景色之后…如果点击日间或者夜间切换，就没了，
       //   这次设置就丢了」；解决方案是用户提的：「增加一个模式，日间，夜间，**自由**」。
@@ -8171,7 +8230,7 @@ export default struct ReaderPage3 {
    * `requestLocate(spine, node, char, silent)`（自带 `startPlay` + 超时翻页逼近兜底）。
    * 与「我的 → 书签」点击走的是同一套坐标、同一条链路，保证两处行为一致。
    *
-   * 由 `ReaderCatalogDialog` 的 `onPickBookmark` 回调进来（书签列表本身也由弹窗自己加载）。
+   * 由 `ReaderBookmarkDialog` 的 `onPickBookmark` 回调进来（书签列表本身也由弹窗自己加载）。
    * ⚠️ 关窗放在**这里**（而不是回调方）：`item` 不存在时上面会 `return`（早退、只弹 toast），
    *    改造前就是这个语义 —— 早退时弹窗**不关**。
    */
@@ -8199,6 +8258,10 @@ export default struct ReaderPage3 {
     const spine = this.getResourceItemByCatalog(item).index
     hilog.info(0x0000, 'testTag', 'bmJump(dialog): catalog=%{public}d → spine=%{public}d node=%{public}d',
       idx, spine, pos)
+    // 2026-10-13 拆分：书签已独立成 `ReaderBookmarkDialog` ⇒ 关**书签**弹窗。
+    // 同时兜底关一下目录弹窗（正常情况下它为 null，`?.` 无副作用）——
+    // 防的是"两个弹窗控制器都非空"的异常态把面板留在屏幕上。
+    this.readerBookmarkDialog?.close()
     this.readerCatalogDialog?.close()
     this.requestLocate(spine, pos, 0, false)
   }

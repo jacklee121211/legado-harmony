@@ -13,3 +13,7 @@
 # 需要构建时由 DevEco Studio 自动生成
 /build-profile.json5
 /docs/
+
+# 宣传视频：原始录屏（体积大 + 常含无关前台画面）、Python 缓存
+/promo/raw/
+__pycache__/

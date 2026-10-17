@@ -36,8 +36,18 @@ export class FirstRunMode {
   /**
    * ★ 一键开关（开发者总闸）★
    * `false` ⇒ `shouldShow()` 恒 false，首启引导模块整体失效，行为与本改动前完全一致。
+   *
+   * ⚠️ 2026-10-13 用户拍板：**暂时屏蔽**首启「全量/精简」模式选择弹窗
+   *    （原话「感觉意义不大，先屏蔽掉选择模式弹窗吧」）。
+   *    ⇒ 置 `false`。弹窗代码、样式、回调全部保留，随时可翻回 `true` 恢复，
+   *      无需改动 `Index.ets` / `FirstRunModeDialog.ets` 任何一行。
+   *
+   * 副作用说明（刻意接受）：
+   *   · 新装机不再弹引导 ⇒ 直接进主界面，`offlineMode` 保持默认 `false`（全量模式）；
+   *   · 精简模式仍可通过「我的 → 设置 → 其他 → 离线模式」手动开启，
+   *     方案 A 的边界调整（阅读增强类保留可见）在那里继续生效，不受本开关影响。
    */
-  static readonly ENABLED: boolean = true;
+  static readonly ENABLED: boolean = false;
 
   /**
    * 调试用：忽略落盘标记，每次冷启都弹一次。

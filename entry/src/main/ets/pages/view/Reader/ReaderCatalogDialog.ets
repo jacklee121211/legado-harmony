@@ -5,7 +5,8 @@ import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
-import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao'
+// ⚠️ 2026-10-13 拆分：`BookmarksDao` / `BookmarkRow` 的 import 已随书签面板一起
+//    搬到 `ReaderBookmarkDialog.ets`（本文件不再接触书签数据）。
 
 /**
  * 阅读器「目录 / 书签」弹窗（2026-09-22 从 `bindSheet` 改成 `@CustomDialog`）。
@@ -88,6 +89,24 @@ const PANEL_BG_DAY: string = 'rgba(248, 249, 250, 1)'
 const PANEL_HEIGHT: number = 560
 const PANEL_HEIGHT_TYPING: number = 440
 
+/**
+ * ── 2026-10-13 拆分：目录 / 书签变成**两个按钮 + 两个弹窗**（用户要求）─────────
+ * 本文件自此**只服务目录**；书签拆到同目录的 `ReaderBookmarkDialog.ets`。
+ *
+ * 拆分后保留的东西（用户原话「效果不变，搜索不变」）：
+ *   · 搜索栏、目录过滤、当前章高亮、点击跳章 —— 全部原样；
+ *   · 右侧「顶部 / 定位 / 底部」竖向 dock —— 两个弹窗**都有**（用户明确要求）。
+ * 拆出去的东西：
+ *   · 顶部「目录 / 书签」页签行（不再需要 —— 各进各的窗）；
+ *   · `bmRows` / `loadBookmarks()` / `cdlPercent()` / `BookmarkListPane()` /
+ *     `onPickBookmark` / `onTabChange` / `initTab`。
+ *
+ * ⚠️ 面板高度常量 `PANEL_HEIGHT` / `PANEL_HEIGHT_TYPING` 由两个弹窗**共用**，
+ *    所以必须 `export` —— 书签弹窗 import 本文件的常量，避免两处各写一份而慢慢飘开。
+ */
+export const CATALOG_PANEL_HEIGHT: number = PANEL_HEIGHT
+export const CATALOG_PANEL_HEIGHT_TYPING: number = PANEL_HEIGHT_TYPING
+
 @CustomDialog
 export struct ReaderCatalogDialog {
   /** 由 `CustomDialogController` 注入（`@CustomDialog` 必需字段） */
@@ -97,8 +116,8 @@ export struct ReaderCatalogDialog {
   catalogItems: bookParser.CatalogItem[] = []
   /** 当前阅读章节的**目录下标**（高亮用） */
   @Prop currentChapterIndex: number = 0
-  /** 全书章节总数（书签进度百分比用，与「我的 → 书签」同口径） */
-  @Prop totalChapterNum: number = 0
+  // （2026-10-13 拆分：原 `@Prop totalChapterNum` 只服务书签百分比 `cdlPercent()`，
+  //   已随书签一起搬到 `ReaderBookmarkDialog`，本组件不再需要。）
   /** 日/夜模式（**0 = 夜间**，1 = 日间；与父页面 `colorMode` 同义） */
   @Prop colorMode: number = 0
   /**
@@ -107,35 +126,23 @@ export struct ReaderCatalogDialog {
    *   这里用**同一个源** ⇒ 换主题时两处一起变。
    */
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
-  /** 本书书名（书签按书名过滤的唯一关联键） */
-  @Prop bookName: string = ''
-  /** 初始页签（0=目录 1=书签）—— 父页面记忆上次选择 */
-  @Prop initTab: number = 0
+  // （2026-10-13 拆分：原 `@Prop bookName` 只服务书签按书名过滤，已搬到
+  //   `ReaderBookmarkDialog`；本组件不再接触书签数据。）
   /** 初始搜索关键词 —— 父页面记忆上次输入 */
   @Prop initKeyword: string = ''
 
   /** 关键词变化（父页面记忆，下次打开回填） */
   onKeywordChange: (kw: string) => void = (_kw: string): void => {
   }
-  /** 页签变化（父页面记忆） */
-  onTabChange: (t: number) => void = (_t: number): void => {
-  }
   /** 点某章：父页面负责 `durChapterIndex = index` + `jumpToCatalogItem(item)` + 关弹窗 */
   onPickCatalogItem: (item: bookParser.CatalogItem, index: number) => void =
     (_item: bookParser.CatalogItem, _index: number): void => {
     }
-  /** 点某条书签：父页面负责 `jumpToBookmark(row)`（其内部含"章节已不存在"的早退分支） */
-  onPickBookmark: (row: BookmarkRow) => void = (_row: BookmarkRow): void => {
-  }
 
   /** 过滤后的目录数据源（LazyForEach 需要**稳定实例**） */
   @State filteredSource: BasicDataSource<bookParser.CatalogItem> = new BasicDataSource<bookParser.CatalogItem>()
-  /** 当前页签（0=目录 1=书签） */
-  @State tab: number = 0
   /** 搜索关键词 */
   @State keyword: string = ''
-  /** **本书**的书签列表 */
-  @State bmRows: BookmarkRow[] = []
   /** 是否正在输入（搜索框有光标）—— 决定面板高度，见 `PANEL_HEIGHT_TYPING` 的注释 */
   @State typing: boolean = false
 
@@ -148,12 +155,10 @@ export struct ReaderCatalogDialog {
   private surface: MaterialColumnModifier = new MaterialColumnModifier(PANEL_BG_NIGHT, true)
 
   aboutToAppear(): void {
-    this.tab = this.initTab === 1 ? 1 : 0
     this.keyword = this.initKeyword
     // colorMode 0 = 夜间 ⇒ 深色兜底；1 = 日间 ⇒ 浅色兜底（与改造前 `backgroundColor` 的三元一致）
     this.surface = new MaterialColumnModifier(this.colorMode == 0 ? PANEL_BG_NIGHT : PANEL_BG_DAY, true)
     this.rebuildFilteredCatalog()
-    this.loadBookmarks()
   }
 
   /** 按 `keyword` 重建 `filteredSource`（大小写不敏感，按章节名 includes） */
@@ -167,20 +172,6 @@ export struct ReaderCatalogDialog {
     }
     this.filteredSource.clear()
     this.filteredSource.pushAllData(hit)
-  }
-
-  /**
-   * 拉取**本书**的书签。
-   * `BookmarksDao.list()` 返回全部书的书签，这里按 `bookName` 过滤 ——
-   * `bookmarks` 表没有 bookId 列，书名是唯一关联键（与写入端 `toggleBookmark()` 一致）。
-   */
-  private async loadBookmarks(): Promise<void> {
-    try {
-      const all = await BookmarksDao.list()
-      this.bmRows = all.filter((r: BookmarkRow) => (r.bookName ?? '') === this.bookName)
-    } catch (e) {
-      this.bmRows = []
-    }
   }
 
   /**
@@ -209,26 +200,8 @@ export struct ReaderCatalogDialog {
     return this.catalogItems[idx] === item
   }
 
-  /**
-   * 书签进度百分比（与「我的 → 书签」口径一致：章下标 / 总章数）。
-   * 点击某条书签的**跳转**不在这里做 —— 由父页面 `jumpToBookmark()` 复用现成的精确跳转链路
-   * （目录号 → `getResourceItemByCatalog` → 正文号 → `requestLocate`），保证与
-   * 「我的 → 书签」两处行为一致。
-   */
-  private cdlPercent(row: BookmarkRow): number {
-    const total = this.totalChapterNum ?? 0
-    const idx = row.chapterIndex ?? 0
-    // 电脑端书签 chapterIndex = -1（网页章号≠手机目录下标，见审计 H3）⇒ 不显示百分比
-    if (total <= 0 || idx < 0) {
-      return 0
-    }
-    return Math.max(0, Math.min(100, Math.round((idx + 1) / total * 100)))
-  }
-
-  /** 选中文字色（跟随日/夜模式） */
-  private activeColor(): string {
-    return this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'
-  }
+  // （2026-10-13 拆分：原 `activeColor()` 只被书签面板用，已随书签一起搬到
+  //   `ReaderBookmarkDialog.ets`；本文件目录列表用内联三元，不依赖它。）
 
   build() {
     Column() {
@@ -253,42 +226,11 @@ export struct ReaderCatalogDialog {
         .onEditChange((isEditing: boolean) => {
           this.typing = isEditing
         })
-      // ── 「目录 / 书签」页签（2026-09-21）─────────────────────────────
-      // 为什么加在这里：书签此前**只能**在「我的 → 书签」看到 —— 读书中途想跳到
-      // 自己的书签得先退出阅读页。现在与目录共用同一个弹窗。
-      Row() {
-        Text('目录')
-          .fontSize(15)
-          .fontWeight(this.tab === 0 ? 600 : 400)
-          .fontColor(this.tab === 0 ? this.activeColor() : 'rgba(136, 136, 136, 1.00)')
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .padding({ top: 10, bottom: 10 })
-          .onClick(() => {
-            Haptics.tap();
-            this.tab = 0
-            this.onTabChange(0)
-          })
-        Text(this.bmRows.length > 0 ? `书签 ${this.bmRows.length}` : '书签')
-          .fontSize(15)
-          .fontWeight(this.tab === 1 ? 600 : 400)
-          .fontColor(this.tab === 1 ? this.activeColor() : 'rgba(136, 136, 136, 1.00)')
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .padding({ top: 10, bottom: 10 })
-          .onClick(() => {
-            Haptics.tap();
-            this.tab = 1
-            this.onTabChange(1)
-          })
-      }
-      .width('100%')
-
-      if (this.tab === 0) {
-        this.CatalogListPane()
-      } else {
-        this.BookmarkListPane()
-      }
+      // ── 2026-10-13 拆分：页签行已删除 ─────────────────────────────────────
+      // 原「目录 / 书签」两个页签合在一个弹窗里；现在各是一个按钮 + 一个弹窗
+      // （书签见 `ReaderBookmarkDialog.ets`）⇒ 本弹窗进来就是目录，不需要页签。
+      // ⚠️ 搜索栏留在**目录弹窗**（用户原话「搜索不变」）；书签弹窗没有搜索。
+      this.CatalogListPane()
     }
     // ★ 悬浮外观由**弹窗 options** 提供（`width: '92%'` + `cornerRadius` + `systemMaterial`），
     //   所以内容层**不能**再写左右 margin（同时写 `width('100%')` + 左右 margin 会让总宽超出容器，
@@ -410,8 +352,13 @@ export struct ReaderCatalogDialog {
       //      `MaterialDockModifier` 二选一（开材质时一个背景属性都不设）。
       //   一键回退：`ImmersiveMaterialUtil.ENABLED = false` ⇒ 自动落回原来那块蓝。
       // ★ 跟随主题色（半透明 —— 毛玻璃要透出后面的目录文字，不能是实底）
+      // ⚠️ 2026-10-13 用户反馈：「这个三按钮的竖向弹窗背景不够透明，增加些透明度」
+      //   ⇒ 不透明度 0.82 → 0.55。`tint(hex, alpha)` 的 alpha 直接决定 perceived 透明
+      //      （`ImmersiveMaterialUtil.ets:233-238` 把 alpha 写进 `#AARRGGBB` 的首字节）。
+      //   0.55 仍保证按钮字可读（底下是目录列表，透出的是暗色文字/深底）。
+      //   回退：把 `0.55` 改回 `0.82`。
       .attributeModifier(new MaterialDockModifier(
-        ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.82)))
+        ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55)))
       .borderRadius(20)
       .position({ bottom: '10%', right: '5%' })
     }
@@ -423,65 +370,4 @@ export struct ReaderCatalogDialog {
     .layoutWeight(1)
   }
 
-  /**
-   * 「书签」页签内容 —— 只有**本书**的书签。
-   * 点某条即跳到那一页（父页面 `jumpToBookmark`），坐标与「我的 → 书签」完全一致。
-   */
-  @Builder
-  BookmarkListPane() {
-    Column() {
-      if (this.bmRows.length === 0) {
-        Column({ space: 8 }) {
-          Text('本书还没有书签')
-            .fontSize(14)
-            .fontColor('rgba(136, 136, 136, 1.00)')
-          Text('阅读时点右上角的书签图标即可添加')
-            .fontSize(12)
-            .fontColor('rgba(136, 136, 136, 1.00)')
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else {
-        List({ space: 0 }) {
-          ForEach(this.bmRows, (row: BookmarkRow) => {
-            ListItem() {
-              Column({ space: 4 }) {
-                Text(row.chapterName ?? '（无章节名）')
-                  .fontSize(14)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-                  .fontColor(this.activeColor())
-                Text(`${(row.bookText ?? '').length > 0 ? row.bookText : '—'}    ${this.cdlPercent(row)}%`)
-                  .fontSize(12)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-                  .fontColor('rgba(136, 136, 136, 1.00)')
-              }
-              .alignItems(HorizontalAlign.Start)
-              .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-              .width('100%')
-            }
-            .onClick(() => {
-              Haptics.tap();
-              this.onPickBookmark(row)
-            })
-          }, (row: BookmarkRow) => `${row.time}`)
-        }
-        .width('100%')
-        .height('100%')
-        .scrollBar(BarState.Off)
-        .divider({
-          strokeWidth: 0.8,
-          color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.25)' : 'rgba(136, 136, 136, 1.00)',
-          startMargin: 12,
-          endMargin: 12
-        })
-      }
-    }
-    .width('100%')
-    .layoutWeight(1)
-  }
 }

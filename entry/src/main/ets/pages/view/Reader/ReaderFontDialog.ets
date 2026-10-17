@@ -28,6 +28,7 @@ import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import UiMotion from '../../../common/utils/UiMotion';
 import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
+import { STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode';
 
 /** 与原面板一致的快捷档位（字号） */
 const FONT_PRESETS: number[] = [12, 18, 24, 32, 40, 48];
@@ -58,6 +59,21 @@ export struct ReaderFontDialog {
   onClose: () => void = (): void => {}
 
   @StorageLink('readerColorMode') colorMode: number = 1
+
+  /**
+   * 精简模式（2026-10-13 方案 A）：只用于隐藏**真联网**的「下载字体」区。
+   *
+   * ── 为什么只有下载要藏 ────────────────────────────────────────────────
+   * 本弹窗里两件事网络属性完全不同：
+   *   · 「导入字体文件」= 本地文件选择器（`picker`）+ `ReaderFontLib` 登记，
+   *     `ReaderFontLib.ets:23-26` 只依赖 ArkUI / AbilityKit / CoreFileKit / Preferences ⇒ **离线可用**；
+   *   · 「下载字体」= `http.createHttp()` 拉直链（本文件 `:22` import `@kit.NetworkKit`）
+   *     ⇒ **必须联网**，精简模式（「断网能用」）下留着就是"功能存在但不可用"。
+   * ⇒ 导入留、下载藏。两者都是 VIP 权益，所以精简模式仍能正常转化。
+   *
+   * 回退：把 `if (!this.offlineOn)` 处的条件直接删掉即可恢复常显。
+   */
+  @StorageLink(STORAGE_KEY_OFFLINE_MODE) offlineOn: boolean = false
 
   // ── 本地编辑态（页面是真源，这里只镜像当前会话的编辑）────────────────────
   @State fontSize: number = 18
@@ -520,13 +536,17 @@ export struct ReaderFontDialog {
         }
         .width('100%')
       } else {
-        TextInput({ text: this.dlUrl, placeholder: '粘贴字体直链，空格或；以输入多个' })
-          .onChange((v: string) => {
-            this.dlUrl = v
-          })
-          .fontSize(13)
-          .width('100%')
-          .height(36)
+        // ⚠️ 2026-10-13 方案 A：直链输入框只服务「下载字体」（联网）⇒ 精简模式下隐藏。
+        //    「导入字体文件」按本地文件选择器工作，**保留**在下面的 Row 里。
+        if (!this.offlineOn) {
+          TextInput({ text: this.dlUrl, placeholder: '粘贴字体直链，空格或；以输入多个' })
+            .onChange((v: string) => {
+              this.dlUrl = v
+            })
+            .fontSize(13)
+            .width('100%')
+            .height(36)
+        }
 
         Row({ space: 12 }) {
           Button('导入字体文件')
@@ -544,22 +564,27 @@ export struct ReaderFontDialog {
               }
               this.importFont()
             })
-          Button('开始下载字体')
-            .fontSize(13)
-            .fontColor(Color.White)
-            .backgroundColor('#007DFF')
-            .borderRadius(18)
-            .height(34)
-            .padding({ left: 14, right: 14 })
-            .onClick(() => {
-              Haptics.tap();
-              // 会员化（2026-09-28）：下载字体为 VIP 特权，免费用户 → VIP 弹窗
-              if (!VipManager.isVip()) {
-                this.openVip()
-                return
-              }
-              this.startDownload()
-            })
+          // ⚠️ 2026-10-13 方案 A：「开始下载字体」需联网（`http.createHttp`）⇒ 精简模式下隐藏。
+          //    只藏这个按钮、不藏整行，是为了让「导入字体文件」在精简模式下仍可点、
+          //    仍能命中 VIP 门控（保住这项权益的售卖面）。
+          if (!this.offlineOn) {
+            Button('开始下载字体')
+              .fontSize(13)
+              .fontColor(Color.White)
+              .backgroundColor('#007DFF')
+              .borderRadius(18)
+              .height(34)
+              .padding({ left: 14, right: 14 })
+              .onClick(() => {
+                Haptics.tap();
+                // 会员化（2026-09-28）：下载字体为 VIP 特权，免费用户 → VIP 弹窗
+                if (!VipManager.isVip()) {
+                  this.openVip()
+                  return
+                }
+                this.startDownload()
+              })
+          }
         }
         .justifyContent(FlexAlign.Center)
         .width('100%')
