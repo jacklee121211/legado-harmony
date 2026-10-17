@@ -18,6 +18,13 @@ export struct readStatisticsDataList{
   @State lastScreenX: number = 0
   @State lastScreenY: number = 0
   @Consume delStatus:boolean
+  /**
+   * 系统底部手势区高度（vp）——
+   * 本组件所在的页面容器已用 `ColumnModifier.withoutBottomInset()` **不再让位**，
+   * 所以"最后一项不被手势条压住"的职责搬到这里：内容末尾内边距 = bottomRectHeight + 呼吸位。
+   * 依据：`docs/底部手势区贯通-排查记录.md:47,94`（盒子不留边，让位走内容末尾）。
+   */
+  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   @Builder text(value:string,back:ResourceColor=ShelfColors.textSub()){
@@ -57,6 +64,11 @@ export struct readStatisticsDataList{
         .fontSize(16)
         .lineHeight(24)
         .fontWeight(500)
+        // 2026-10-13：原先**没写 fontColor**（走系统默认字色 token）。默认 token 跟的是
+        // Ability 配色（`ctx.setColorMode`），而本页底色/列表文字跟的是 `ShelfColors`
+        // （AppStorage 驱动）—— 两套机制在时序不同步时会"暗底 + 深字"。
+        // 统一到 `ShelfColors.textMain()`，与页面标题同源。
+        .fontColor(ShelfColors.textMain())
     }.padding({top:12,bottom:12})
     .width("100%")
     .justifyContent(FlexAlign.Start)
@@ -64,7 +76,7 @@ export struct readStatisticsDataList{
   //作者及书名
   @Builder bookAuthor(book:readBookList){
     Column({space:12}){
-      Text(book.bookName).fontSize(16).lineHeight(24)
+      Text(book.bookName).fontSize(16).lineHeight(24).fontColor(ShelfColors.textMain())
       Column(){
         this.text(book.author)
         // ⚠️ 「累计阅读X小时Y分钟」已移除（2026-09-21）。
@@ -119,7 +131,7 @@ export struct readStatisticsDataList{
       }
       Row(){
         this.text("读到")
-        Text(schedule.toString()).fontSize(24).lineHeight(24).fontWeight(600)
+        Text(schedule.toString()).fontSize(24).lineHeight(24).fontWeight(600).fontColor(ShelfColors.textMain())
         this.text("%")
       }
     }.alignItems(HorizontalAlign.End)
@@ -184,14 +196,37 @@ export struct readStatisticsDataList{
              .clip(true)
            })
          }
+         // ── 最后一个条目底部留白（2026-10-13 用户要求「保留最后一个书籍底部的留白」）──
+         // ★ 页面盒子已 `withoutBottomInset()`（不再让出手势区）⇒ 手势区高度必须由这里补：
+         //   普通态：bottomRectHeight + 16（16 = 基础呼吸位）
+         //   管理态：bottomRectHeight + 80（80 = 删除浮条 48 + 上下各 16 呼吸位）
+         // ⚠️ 留白必须加在**滚动内容内部**，不能加在滚动容器上：加容器等于把可视区截短，
+         //    条目照样会被浮条/手势条压住；加在内容里才能滚出来。
+         //    （`Scroll` **没有** `contentEndOffset` —— SDK `scroll.d.ts` 里无该声明，
+         //      `list.d.ts` 才有；本工程书架是 List 所以能用 `contentEndOffset`，
+         //      这里结构是 Scroll，故用"内容内边距"这条等价路径，与工程排查记录的口径一致。）
+         .padding({ bottom: this.bottomRectHeight + (this.delStatus ? 80 : 16) })
        }.scrollable(ScrollDirection.Vertical)
        .scrollBar(BarState.Off) // 滚动条常驻显示
        .friction(0.6)
        .edgeEffect(EdgeEffect.None)
-       .size({width:320,height:"80%"})
-       .padding({bottom:50})
+       // ── 2026-10-13 修「底部被遮住一大块」──────────────────────────────────
+       // 原为 `.size({width:320, height:"80%"})` + `.padding({bottom:50})`：
+       //   · 高度只占父容器的 **80%**、且 `.align(TopStart)` 贴顶
+       //     ⇒ 底部约 20% 整块空出来，看起来像被一块遮罩盖住、书籍穿不到底（用户反馈）；
+       //   · 再叠 50vp 内边距，"遮住"得更明显。
+       // 现在：宽度仍取满（与原来 320 在 360vp 屏上等值），高度交给 `layoutWeight(1)`
+       //   吃掉「表头之后」的全部剩余高度 ⇒ 列表一直铺到页面底边（与书架同一逻辑）。
+       // ⚠️ 用 `layoutWeight(1)` 而**不是** `height('100%')`：百分比高度会按父容器的
+       //    内容区解析，容易把表头那份高度也算进去导致溢出。
+       .width(CommonConstants.FULL_WIDTH)
+       .layoutWeight(1)
        .align(Alignment.TopStart)
      }
+     // 根容器撑满交给它的那块「剩余高度」（由 `readStatistics.ets` 的
+     // `layoutWeight(1)` 包裹层确定）⇒ 内部 `layoutWeight` 才有参照。
+     .width(CommonConstants.FULL_WIDTH)
+     .height('100%')
   }
 
   ouTouch(e:TouchEvent){

@@ -325,12 +325,18 @@ export default struct MySetPage{
    *     ArkUI **复用**旧的 ListItemGroup 组件，其内部 `setList` 的替换观察不到
    *     ⇒ 被滤掉的防窥两行**照旧渲染**（真机实测：两行没消失）。
    *   故改为：数据源保持全量，在遍历时跳过不可见行。
+   *
+   * ── 2026-10-13 方案 A（用户拍板）────────────────────────────────────────
+   * 隐藏标准由「看起来高级」改成「**是否真的需要网络**」。防窥两层是**纯系统能力**
+   * （`AntiPeep.ets:38-43` 只依赖 DeviceSecurityKit / ArkUI / AbilityKit，无任何网络 Kit）
+   * ⇒ 离线可用，且是 VIP 权益 ⇒ 精简模式下**保留可见**，否则等于把这项权益藏起来不卖。
+   * 开关见 `OfflineMode.showReadingEnhancements()`（改 false 可一键全部隐藏）。
    */
   private isRowVisible(item: SetList): boolean {
-    if (!this.offlineOn) {
+    if (!this.offlineOn || OfflineMode.showReadingEnhancements()) {
       return true
     }
-    // 离线模式：防窥两层（阅读防窥 / 防截屏录屏）整体不渲染
+    // 回退档（showReadingEnhancements() === false）：防窥两层整体不渲染
     return item.storageName !== MySetConstants.SET_ANTI_PEEP_DLP
       && item.storageName !== MySetConstants.SET_ANTI_PEEP_CAPTURE
   }

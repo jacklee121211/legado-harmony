@@ -4,9 +4,13 @@ import CommonConstants from '../../../common/constants/CommonConstants';
 import { dataItem } from '../../../componets/dataList/dataItem';
 import { readStatisticsDataList } from '../../../componets/myCenter/readStatisticsDataList';
 import { readBookList } from '../../../componets/dataList/readBookList';
-import { readTabs } from '../../../componets/myCenter/readTabs';
+// ⚠️ 2026-10-13：`readTabs`（那个只显示「书架」一个页签的分段控件）已不再使用 ——
+// 分类模式只剩默认一种，页签恒为 1 项 ⇒ 纯冗余，按用户要求删掉。
+// 组件文件 `componets/myCenter/readTabs.ets` **保留**（未引用即不打包，留着以备将来
+// 真出现多分类）。要彻底删文件再说，本次不动，避免影响其它分支。
 import { serviceDialog } from '../../../componets/webDavService/serviceDialog';
-import { PublicConstants } from '../../../common/constants/PublicConstants';
+// （2026-10-13 顺手清掉未使用的 `PublicConstants` import —— 它只在下面那条注释里
+//   被提到名字，代码里一次都没引用过。）
 import BooksDao from '../../../database/dao/BooksDao';
 import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao';
 import { Books } from '../../../database/entities/Books';
@@ -48,19 +52,24 @@ export default struct readStatistics {
   // ⚠️ 页面底色：ColumnModifier 默认写死浅灰（PublicConstants.WINDOW_BACKGROUND_COLOR）
   // ⇒ 暗色下整页发白。链式传入 ShelfColors.pageBg()（本页是 NavDestination，每次入栈
   // 都是新实例 ⇒ 构造时取色即为当次正确的深浅档）。
-  Column = new ColumnModifier().backgroundColor(ShelfColors.pageBg())
+  //
+  // ★★ 2026-10-13 `withoutBottomInset()`：**底部不再让出系统手势区** ★★
+  // 用户反馈「不够贯穿底部，还是有一条」。根因就是本修饰器给**页面盒子**加了
+  // `padding.bottom = bottomRectHeight` ⇒ 滚动内容被截在屏幕底以上，剩下一条永远是
+  // 页面底色。工程结论见 `docs/底部手势区贯通-排查记录.md:47,94`：
+  //   「滚动容器盒子自身的底部 margin/padding 会把内容截在屏幕底以上；
+  //     底部让位一律用 contentEndOffset（只动内容末尾）或给内容加内边距」。
+  // ⇒ 盒子留边归零，让位职责交给 `readStatisticsDataList` 的**内容末尾内边距**
+  //   （那里已按 `bottomRectHeight + 16/80` 补好，最后一项照样不会被手势条/删除浮条压住）。
+  Column = new ColumnModifier().backgroundColor(ShelfColors.pageBg()).withoutBottomInset()
   /** 全局主题（2026-10-12：外层 Column 底色改为跟随主题渐变） */
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   @State type: number | string = 0
   /**
-   * 「读过 / 读完」列表上方那个小页签条的内容。
-   *
-   * 2026-10-11：与书架顶部同步 —— 漫画/有声书两个入口已删（书架只剩「书架」一个页签），
-   * 这里也只留「书架」。数字见 `loadData()`。
+   * 顶部「读过 / 读完 / 书签」三个统计项（本页自己的标题页签，**保留**）。
+   * 2026-10-13：原来这里还有一份 `read_list`（分类页签「书架」）—— 分类模式只剩默认一种，
+   * 那排只含一个「书架」的分段控件已按用户要求删除（见 `build()`）。
    */
-  @State read_list: dataItem[] = [
-    new dataItem("书架", 0),
-  ]
   @State title_list: dataItem[] = [
     new dataItem("读过", 0),
     new dataItem("读完", 0),
@@ -69,8 +78,24 @@ export default struct readStatistics {
   @State read_index: number = 0
   @State translateNum: number = 0
   @State translateX: number = 120
-  @State dateValue: number[] = [2023, 36]
+  /**
+   * 表头「YYYY年 读过/读完 N 本」的 `[年份, 本数]`。
+   *
+   * ⚠️ 2026-10-13 修初值：原来写死 `[2023, 36]`（底座样例遗留）。它虽然是**占位值**、
+   *    `loadData()` 一跑就会被真实值覆盖，但真机上存在"先渲染一帧占位再刷新"的窗口
+   *    （`readStatisticsDataList.readHeader` 的注释就记着更早那次"表头永远停在 2023年36本"
+   *    的事故）⇒ 初值改成**当前年、0 本**，任何时刻都不会显示出一个假的年份。
+   * 年份本身是**真实逻辑**：`applyTypeFilter()` 里 `new Date().getFullYear()` 取当前年，
+   *    统计时间戳落在本年度内的本数 ⇒ 2027 年读书会自动显示「2027年读过 N 本」。
+   */
+  @State dateValue: number[] = [new Date().getFullYear(), 0]
   @Provide delStatus: boolean = false
+  /**
+   * 底部安全区高度（vp）—— 删除浮条要避开手势条。
+   * 与阅读器/书架同源：`EntryAbility` 启动时把 `bottomRectHeight` 写进 AppStorage
+   * （`EntryAbility.ets` 的 `getWindowAvoidArea(TYPE_NAVIGATION_INDICATOR)` → `toVp`）。
+   */
+  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
 
   @State delDialog: boolean = false
   /** 渲染用（读过/读完走缩略图网格） */
@@ -87,8 +112,8 @@ export default struct readStatistics {
    * 批量删除靠下标对齐（`bookList[i]` ↔ `rawBooks[i]`）。
    */
   private allTypeBooks: Books[] = []
-  /** 当前选中的类型页签（现只有「书架」一档，恒为 0） */
-  @State typeIndex: number = 0
+  // （2026-10-13：`@State typeIndex` 已删 —— 它原本只是分类页签的状态镜像，
+  //   页签条已按用户要求删除，`applyTypeFilter()` 也不再按 bookType 过滤。）
   /** 书签列表（文字两行） */
   @State markList: BookmarkRow[] = []
   /** 书签被选中待删的 time 集合 */
@@ -114,8 +139,15 @@ export default struct readStatistics {
   @Builder head() {
     Row() {
       Row() {
-        Image($r("app.media.return_left"))
-          .size({ width: CommonConstants.TITLE_IMG_SIZE, height: CommonConstants.TITLE_IMG_SIZE })
+        // ── 返回键（2026-10-13 改 SymbolGlyph）────────────────────────────────
+        // 原实现是 `Image($r('app.media.return_left'))` —— **PNG 位图**（2354 B），
+        // 位图的像素颜色烧死在文件里，`fillColor` 对 PNG 无效 ⇒ 暗色下仍是深色箭头，
+        // 在深底上几乎看不见（正是用户反馈「左侧的返回<在暗色模式下缺少颜色适配」）。
+        // 改用文字型 SymbolGlyph：颜色完全由 `fontColor` 决定，日/夜随 `ShelfColors.icon()` 翻。
+        // 符号名已核真源 `sysResource.js`：`chevron_left: 125832663`。
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(CommonConstants.TITLE_IMG_SIZE)
+          .fontColor([ShelfColors.icon()])
           .onClick(() => {
             Haptics.tap();
             // 迁 Navigation 第 4 期：本页现在是 NavDestination，
@@ -124,15 +156,30 @@ export default struct readStatistics {
           })
       }.width("33%")
       Row() {
-        Text(this.title_list[this.type].title).fontSize(16).fontWeight(600).lineHeight(24)
+        // 标题（2026-10-13）：原先**没写 fontColor**，用的是系统默认字色 token。
+        // 那个 token 跟的是 Ability 配色（`setColorMode`），而本页底色跟的是
+        // `ShelfColors.pageBg()` / `pageGradient()`（AppStorage 驱动）—— 两套机制
+        // 在某些时序下会不同步（暗底 + 黑字）。统一走 `ShelfColors.textMain()`，
+        // 与底色同源，任何时序都不会错配。
+        Text(this.title_list[this.type].title)
+          .fontSize(16)
+          .fontWeight(600)
+          .lineHeight(24)
+          .fontColor(ShelfColors.textMain())
       }.width("33%")
       .justifyContent(FlexAlign.Center)
       Row() {
+        // 「管理 / 完成」（2026-10-13）：原用 `$r('app.color.text_secondary')`。
+        // 该资源**确实**有暗色变体（`resources/dark/element/color.json`：
+        // 日 `#99606060` / 暗 `#9EF8F9FA`），但它生效的前提是 Ability 配色被切成 DARK
+        // —— 而本页背景走的是 `ShelfColors`（AppStorage）。两套机制必须同源才不会
+        // 出现"背景已暗、字还是暗字的灰"。这里改用 `ShelfColors.textSub()`
+        // （日 rgba(96,96,96,0.6) / 暗 rgba(248,249,250,0.62)），与列表副文本同款。
         Text(this.delStatus ? "完成" : "管理")
           .fontSize(14)
           .fontWeight(500)
           .lineHeight(22)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(ShelfColors.textSub())
           .onClick(() => {
             Haptics.tap();
             this.delStatus = !this.delStatus
@@ -143,18 +190,65 @@ export default struct readStatistics {
     .padding({ top: 12, bottom: 12 })
   }
 
+  /**
+   * 管理态底部「删除」浮条（2026-10-13 改版）。
+   *
+   * ── 改前 / 改后（用户原话）───────────────────────────────────────────────
+   * 「管理，选择之后，底部删除按钮，不是精致的四圆角小弹窗（系统风格统一），
+   *   而是一种撑满覆盖，优化一下。」
+   * 改前：`overlay` 里一条 `width('100%')` + `height(50)` 的实心条，**左右贴边、
+   *   直角、无投影** ⇒ 看起来像"被裁了一块的页面"，不像浮在页面上的控件；
+   *   而且底边压在屏幕最底，手势条会盖住它。
+   * 改后：**四圆角浮动 dock** —— 左右各留 16vp、圆角 24（= 高的一半，胶囊形）、
+   *   `ShelfColors.card()` 实底 + 柔和投影、底部避开系统手势区
+   *   （`bottomRectHeight` + 16vp）。整条与全应用"悬浮 dock"观感一致
+   *   （书架 dock / 阅读器底栏都是这个语言）。
+   *
+   * ⚠️ 外层 Column 用 `width('100%')` + `padding` 而不是给内层 Row 设
+   *    `width('100%')` + `margin` —— 后者在 ArkUI 里会**超出父容器宽度**
+   *    （百分比宽按父宽算、margin 再外扩），表现就是"右侧被裁掉一截"。
+   *    本页 `readStatisticsDataList` 也有同款注意点。
+   *
+   * ⚠️⚠️ **`.overlay()` 的 builder 根节点必须给显式高度**（2026-10-13 真机回归）⚠️⚠️
+   *    第一版这里只有 `width('100%') + padding`、**没有 height**，真机现象：
+   *      ① 「删除」跑到**整个屏幕最上方**并溢出；
+   *      ② 整页无法点击其它内容。
+   *    原因：`overlay` 会把 builder 的根节点撑到**父容器的整屏高度**，
+   *    而 `Column` 默认 `justifyContent = FlexAlign.Start` ⇒ 内容贴顶；
+   *    那块整屏高的 overlay 层同时吃掉了全部命中测试。
+   *    本工程另一处 overlay（`componets/myCenter/readTabs.ets:79`）的 builder 根节点
+   *    `Row` 写了 `.height(30)`；改造前的旧版这里也是 `Button.height(50)` —— 都有显式高度。
+   *    ⇒ 这里必须写 `height = 药丸高(48) + 底部避让(bottomRectHeight + 16)`，
+   *      与 `padding.bottom` 用**同一个表达式**，两处一起改，否则高度会打架。
+   */
   @Builder delBottom() {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
+    Column() {
       Row() {
-        Text("删除").fontColor(Color.Red)
-      }.height("100%")
-    }.backgroundColor($r('app.color.card_bg'))
-    .width("100%")
-    .height(50)
-    .borderColor($r('app.color.sub_btn_bg'))
-    .borderWidth({
-      top: 1
-    })
+        // 删除用强调红（与全工程"危险操作"同色系；`ACCENT_RED` 在本工程已有先例）
+        Text("删除")
+          .fontSize(15)
+          .fontWeight(500)
+          .fontColor('#E84026')
+      }
+      .justifyContent(FlexAlign.Center)
+      .width('100%')
+      .height(48)
+      .borderRadius(24)
+      .backgroundColor(ShelfColors.card())
+      // 与「我的」页卡片同一套浮起层次（同款淡投影，见 MyCenter 的 VIP 卡片）
+      .shadow({ radius: 16, color: 'rgba(0, 0, 0, 0.12)', offsetX: 0, offsetY: 4 })
+      .onClick(() => {
+        Haptics.tap();
+        this.deleteList()
+      })
+    }
+    .width('100%')
+    // ★ 显式高度 —— overlay 根节点没它就会被撑满整屏（见上方 ⚠️⚠️）
+    //   48（药丸高）+ bottomRectHeight + 16（离手势条的呼吸位）
+    .height(48 + this.bottomRectHeight + 16)
+    // 底部避让系统手势条：本页是 NavDestination，`overlay` 对齐的是**整页底边**，
+    // 不留白的话浮条会被手势条压住一半。
+    .padding({ left: 16, right: 16, bottom: this.bottomRectHeight + 16 })
     .visibility(this.delStatus ? Visibility.Visible : Visibility.None)
     .transition(
       TransitionEffect.asymmetric(
@@ -165,10 +259,6 @@ export default struct readStatistics {
           TransitionEffect.translate({ y: 0 }).animation({ duration: 500 }))
       )
     )
-    .onClick(() => {
-      Haptics.tap();
-      this.deleteList()
-    })
   }
 
   /** 书签列表项：两行 —— ①书名 + 进度% ②存书签那页首行前 10 字 */
@@ -251,19 +341,28 @@ export default struct readStatistics {
         if (Number(this.type) === 2) {
           this.markListBuilder()
         } else {
-          readTabs({
-            read_list: this.read_list,
-            // 页签切换 → 过滤列表（回调见 `readTabs.onIndexChange`，2026-09-29 新增）
-            onIndexChange: (index: number): void => {
-              this.typeIndex = index
-              this.applyTypeFilter()
-            }
-          })
-          readStatisticsDataList({
-            dateValue: this.dateValue,
-            headLabel: Number(this.type) === 0 ? '读过' : '读完',
-            bookList: this.bookList
-          })
+          // ── 2026-10-13：删掉分类页签条（`readTabs`）────────────────────────
+          // 那里原本只有「书架」一个选项 —— 分类模式已只剩默认一种，
+          // 一个只含单项的分段控件既没有可选项、又白占一行高度（用户要求删除）。
+          // 「读过 / 读完」的直接从表头「YYYY年 读过 N 本」开始。
+          // ── 2026-10-13 修「底部被遮住一大块」────────────────────────────────
+          // 原写法直接把 `readStatisticsDataList` 当兄弟节点摆进本 Column：
+          // 它内部滚动区是 `.size({ height:"80%" })` + `.align(TopStart)`
+          // ⇒ 只占剩余高度的 80%、贴顶 ⇒ 底部约 20% 整块空出（用户反馈的"遮罩"）。
+          // 修法：外面套一层 `layoutWeight(1)` 的 Column，把**确定的剩余高度**交给它；
+          //   子组件内部再把高度改成 `height('100%')` + 滚动区 `layoutWeight(1)`，
+          //   就能像书架一样铺到页面底边。
+          // ⚠️ 这层包裹是必需的：直接给子组件写 `height('100%')` 会按**整个页面内容区**
+          //   解析（含上方 `head()` 占掉的位置）⇒ 头部 + 100% 溢出。
+          Column() {
+            readStatisticsDataList({
+              dateValue: this.dateValue,
+              headLabel: Number(this.type) === 0 ? '读过' : '读完',
+              bookList: this.bookList
+            })
+          }
+          .width(CommonConstants.FULL_WIDTH)
+          .layoutWeight(1)
         }
       }.attributeModifier(this.Column)
       .height(CommonConstants.FULL_HEIGHT)
@@ -462,10 +561,7 @@ export default struct readStatistics {
       list = []
     }
     this.allTypeBooks = list
-    // 2026-10-11：原先这里按 `bookType` 分别统计「小说/漫画/有声书」三个数字；
-    //   现在页签只剩「书架」一个（老数据已由 `BooksDao.migrateBookTypeToShelf()`
-    //   把 bookType 1/2 归一到 0）⇒ 直接给当前口径列表的总数。
-    this.read_list = [new dataItem("书架", list.length)]
+    // 2026-10-13：分类页签条已删除 ⇒ 不再往 `read_list` 喂数字（该状态一并删除）。
     this.applyTypeFilter()
   }
 

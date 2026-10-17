@@ -31,7 +31,22 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(ROOT, 'src')
-OUT_DIR = os.path.join(ROOT, 'out')
+
+# ── 物料/产物目录（2026-10-17 统一到 docs/宣发物料/）────────────────────────
+#   素材查找：先 00_原始素材/截图/（你新录的），再回落 promo/src/（旧归档）
+#   产物输出：02_成片/<vN>/，与视频成片同处
+MATERIAL_ROOT = os.path.join(os.path.dirname(ROOT), 'docs', '宣发物料')
+SHOT_DIR = os.path.join(MATERIAL_ROOT, '00_原始素材', '截图')
+OUT_DIR = os.path.join(MATERIAL_ROOT, '02_成片')
+
+
+def resolve_src(name):
+    """素材查找：新物料目录优先，回落旧归档。找不到直接报错并列出两处路径。"""
+    for d in (SHOT_DIR, SRC_DIR):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    raise SystemExit(f'找不到素材 {name}\n  查过：{SHOT_DIR}\n  查过：{SRC_DIR}')
 
 FONTS = {
     'bold': r'C:\Windows\Fonts\HarmonyOS_Sans_SC_Bold.ttf',
@@ -78,9 +93,12 @@ POSTERS = [
         c1=(6, 28, 88), c2=(0, 138, 224), accent=(96, 205, 255),
     ),
     dict(
-        # 2026-10-12 换新截图：书架页 UI 已更新（浅色渐变背景 + 悬浮 dock + 新版页签）
-        src='02_shelf_new.jpg', out='2_鸿蒙光感.png',
-        crop=(0, 300, 1320, 2848),
+        # 2026-10-17 终版截图：顶部标题「喵阅」+ 5 本书 + **dock 磨砂材质（能透出底下书卡）**。
+        # 这张是原生完整截图，不再需要 splice_shelf.py 拼接（拼接版留作备选）。
+        # 裁切上沿 110：状态栏文字到 y=99，标题「喵阅」在 y=141..218（实测 _measure.py），
+        # 旧裁切 300 恰好把标题整条切掉 ⇒ 新版故意**保留品牌标题**。
+        src='02_书架_喵阅_完整版.jpg', out='2_鸿蒙光感.png',
+        crop=(0, 110, 1320, 2848),
         title='鸿蒙赋能', sub='沉浸光感，全新UI超美观！',
         c1=(112, 38, 4), c2=(255, 140, 44), accent=(255, 210, 140),
     ),
@@ -303,7 +321,7 @@ def material_layers(size, scale, area_h, bleed):
         return int(round(v * scale))
 
     # 后层：九宫格弹窗（完整面板）
-    dlg = Image.open(os.path.join(SRC_DIR, '03_material.jpg')).convert('RGB')
+    dlg = Image.open(resolve_src('03_material.jpg')).convert('RGB')
     x0, y0, x1, y1 = MATERIAL_DIALOG_CROP
     dlg = dlg.crop((x0, y0, x1, y1))          # 完整体：1162 x 1466
 
@@ -458,7 +476,7 @@ def compose(p, size):
         return canvas.convert('RGB')
 
     # ── 单卡：原图直出（只裁切/缩放/圆角/投影/描边）────────────────────────
-    shot = Image.open(os.path.join(SRC_DIR, p['src'])).convert('RGB').crop(p['crop'])
+    shot = Image.open(resolve_src(p['src'])).convert('RGB').crop(p['crop'])
     aspect = shot.size[0] / shot.size[1]
 
     # 卡片下方若还有免责小字，先给它留出高度。
