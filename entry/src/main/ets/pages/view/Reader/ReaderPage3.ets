@@ -993,8 +993,26 @@ export default struct ReaderPage3 {
   @State infoWinOn: boolean = false
   /** 定时实时信息文案（时间型 = 秒级倒计时；章节型 = 剩余X章；两者可并存） */
   @State infoTimerText: string = ''
-  /** 信息窗秒级刷新句柄（-1 = 未启动；仅信息窗开且定时在跑时启动，功耗门禁） */
+  /** 信息窗秒级刷新句柄（-1 = 未启动；功耗门禁见 syncInfoTicker） */
   private infoTicker: number = -1
+  /**
+   * 信息窗**左侧**的系统时间文案 `HH:mm:ss`（2026-10-13 新增，用户需求：
+   * 「打开后右侧会出现书签/定时/防窥的提示，在左侧增加当前的系统时间」）。
+   *
+   * 为什么自带一个 `HH:mm:ss` 而不复用状态栏：信息窗只在**全屏阅读**（菜单栏隐藏）时显示，
+   * 那时系统状态栏已被 `toggleWindowSystemBar([], …)` 隐藏 ⇒ 屏幕上没有别的钟可看。
+   * 走本地时区（`Date` 的 `getHours/getMinutes/getSeconds`）。
+   */
+  @State infoClockText: string = ''
+  /**
+   * 信息窗时钟前的小图标：白天 = 太阳、夜间 = 月亮（2026-10-13 用户需求）。
+   *
+   * 判定用**钟点**而非阅读器日夜模式（`readerSetting.nightMode`）：用户要的是"现在几点"
+   * 对应的天色，白天看日间主题的书也该是太阳。区间沿用系统「免打扰/夜间」通行的
+   * 18:00–06:00 口径（含 18 点起、不含 6 点）。
+   * 随 `infoTicker` 每秒复算 ⇒ 跨过 18:00 / 06:00 时图标自动切换，不需要额外监听。
+   */
+  @State infoClockIsDay: boolean = true
   /**
    * 弹窗控制器。**每次打开时新建** —— 因为 SDK 明确
    * 「Custom dialog box parameters **do not support dynamic updates**」
@@ -1212,14 +1230,55 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 信息窗秒级刷新的启停对账：仅"开关开 + 定时在跑 + **前台**"时才转
-   * （功耗门禁：熄屏后台 1s 唤醒一次是纯浪费；均无需时清空文案）。
+   * 系统时间文案 `HH:mm:ss`（本地时区，2026-10-13 新增）。
+   * 用 `Date` 的 `getHours/getMinutes/getSeconds`：都是**本地时间**取值（非 UTC），
+   * 与系统状态栏同一时区口径；`padStart`/`pad2` 补齐两位数。
+   */
+  private computeInfoClockText(): string {
+    const d = new Date();
+    const pad2 = (n: number): string => (n < 10 ? '0' + n : '' + n);
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
+
+  /**
+   * 时钟图标判定：6:00–18:00 为白天（太阳），其余为夜间（月亮）。
+   * 边界取「含 6 点、不含 18 点」⇒ `h >= 6 && h < 18`。
+   */
+  private computeInfoClockIsDay(): boolean {
+    const h = new Date().getHours();
+    return h >= 6 && h < 18;
+  }
+
+  /**
+   * 信息窗时钟的 symbol 图标资源。
+   * ⚠️ 符号名必须来自真源 `sysResource.js`（symbol 段从第 3372 行起，勿查 hms 侧 11KB 索引）：
+   *    `sun: 125832513`、`moon_fill: 125831541` —— 两个都已在该表内实测存在。
+   */
+  private infoClockIcon(): Resource {
+    return this.infoClockIsDay ? $r('sys.symbol.sun') : $r('sys.symbol.moon_fill');
+  }
+
+  /**
+   * 信息窗刷新器的启停对账（2026-10-13 改版）。
+   *
+   * 改版原因：信息窗左侧现在常驻**系统时间**，1 秒一跳 —— 它不依赖睡眠定时，
+   * 旧门禁 `infoWinOn && sleepTimerActive && appForeground` 会让"没设定时"时时间不走。
+   * 新门禁 = `infoWinOn && appForeground`（功耗门禁保留：只有信息窗真的可见、
+   * 且应用在前台才转；后台/退出阅读一律停，见 `onAppForegroundChanged` /
+   * `syncInfoTicker` 尾部那处显式清理）。
+   *
+   * 定时文案（`infoTimerText`）仍按原口径计算：定时没跑时 `computeInfoTimerText()`
+   * 返回空串，右侧那一段自然不渲染（见 UI 处 `if (this.infoTimerText.length > 0)`）。
    */
   private syncInfoTicker(): void {
-    const need: boolean = this.infoWinOn && this.sleepTimerActive && this.appForeground;
+    const need: boolean = this.infoWinOn && this.appForeground;
     if (need && this.infoTicker === -1) {
+      this.infoClockText = this.computeInfoClockText();
+      this.infoClockIsDay = this.computeInfoClockIsDay();
       this.infoTimerText = this.computeInfoTimerText();
       this.infoTicker = setInterval((): void => {
+        this.infoClockText = this.computeInfoClockText();
+        this.infoClockIsDay = this.computeInfoClockIsDay();
         this.infoTimerText = this.computeInfoTimerText();
       }, 1000);
     } else if (!need) {
@@ -1234,6 +1293,7 @@ export default struct ReaderPage3 {
       this.infoTicker = -1;
     }
     this.infoTimerText = '';
+    this.infoClockText = '';
   }
 
   @State CatalogList: BasicDataSource<bookParser.CatalogItem> = new BasicDataSource<bookParser.CatalogItem>(); //章节数据
@@ -3368,8 +3428,10 @@ export default struct ReaderPage3 {
     AntiPeep.ensureInit(this.getUIContext().getHostContext() as common.UIAbilityContext);
     // 会员化（2026-10-07）：灌入 VIP 解锁位（@StorageLink vipOn 的初值；与「我的」页同键）
     AppStorage.setOrCreate('vipUnlocked', VipManager.isVip());
-    // ── 阅读器信息窗（2026-10-07）：开关只在设置页改，进场读一次即可
-    this.infoWinOn = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean;
+    // ── 阅读器信息窗（2026-10-07；2026-10-13 起**默认开**）：开关只在设置页改，进场读一次。
+    // ⚠️ 默认值必须与 `MySetPage.ets` 的 `getSync(SET_INFO_WIN, true)` 保持一致，
+    //    否则新用户会出现「设置页显示开、阅读页不显示」。
+    this.infoWinOn = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, true) as boolean;
     this.syncInfoTicker();
     // 标定值要在 readerSetting 载入之后再读（自动行高系数依赖字号/行距）
     this.loadCalib();
@@ -6295,51 +6357,83 @@ export default struct ReaderPage3 {
       }
 
       // ── 阅读器信息窗（2026-10-07 用户设计）：仅全屏（菜单栏隐藏）且开关开启时显示 ──
-      // 右上角：定时实时信息（时间型=秒级倒计时 / 章节型=剩余X章，可并存）+ 防窥眼睛；
+      // 右侧：定时实时信息（时间型=秒级倒计时 / 章节型=剩余X章，可并存）+ 防窥眼睛；
       // 本页有书签时，书签图标出现在**定时左侧**（2026-10-07 用户需求）。
+      // 左侧：当前**系统时间** `HH:mm:ss`（2026-10-13 新增，用户需求）。
       // 用户拍板：①非全屏不显示（顶栏已有三个图标）；②不可点击（"像和文字一样被渲染
       //   的内容"）⇒ 整层与全部子节点逐个 HitTestMode.None（工程已知坑：None 只穿透
       //   自身，子节点照样吃触摸）。字色随正文（readerSetting.fontColor 与正文同源）。
-      // 位置与顶栏图标同一视觉基线（topRectHeight+12，右 20）。
+      // 位置与顶栏图标同一视觉基线（topRectHeight+12，左右各 20）。
       if (!this.isShowSetting && this.infoWinOn) {
-        Row({ space: 8 }) {
-          // 书签联动的**实时性来源**：`isBookmarked` 是 @State，翻页时由
-          // `pageShow → syncBookmarkState()` 刷新、点顶栏/下拉手势时由 `toggleBookmark()`
-          // 立即改写 ⇒ 本行随状态直接重渲染，不存在"要等翻页/其他操作才刷新"的延迟。
-          if (this.isBookmarked) {
-            SymbolGlyph(this.bookmarkIcon())
-              .fontSize(16)
-              .fontColor([this.readerSetting.fontColor])
-              .opacity(0.9)
-              .hitTestBehavior(HitTestMode.None)
+        // 一行两段：左 = 系统时间，右 = 书签/定时/防窥。
+        // ⚠️ 结构保证左对齐：Row 内两段都是 `layoutWeight(1)` 的等分格，
+        //   左格内容靠 Start、右格内容靠 End ⇒ 右段外观与改版前（整行 End + 满宽）
+        //   **完全一致**，不会因插入左侧元素而整体左移。
+        Row() {
+          // ── 左段：系统时间（2026-10-13 加图标：白天太阳 / 夜间月亮）────────────
+          Row({ space: 4 }) {
+            if (this.infoClockText.length > 0) {
+              // 图标与文字同色同透明度，跟正文一致（与右侧书签/防窥图标同规格）
+              // `ReplaceSymbolEffect` + triggerValue：从太阳切到月亮（或反之）时播放形变动效
+              SymbolGlyph(this.infoClockIcon())
+                .fontSize(14)
+                .fontColor([this.readerSetting.fontColor])
+                .opacity(0.9)
+                .symbolEffect(new ReplaceSymbolEffect(), this.infoClockIsDay ? 1 : 0)
+                .hitTestBehavior(HitTestMode.None)
+              Text(this.infoClockText)
+                .fontSize(13)
+                .fontColor(this.readerSetting.fontColor)
+                .opacity(0.9)
+                .hitTestBehavior(HitTestMode.None)
+            }
           }
-          if (this.infoTimerText.length > 0) {
-            Text(this.infoTimerText)
-              .fontSize(13)
-              .fontColor(this.readerSetting.fontColor)
-              .opacity(0.9)
-              .hitTestBehavior(HitTestMode.None)
+          .justifyContent(FlexAlign.Start)
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+
+          // ── 右段：书签 / 定时 / 防窥（原逻辑未改，仅加了等分外层）──────────
+          Row({ space: 8 }) {
+            // 书签联动的**实时性来源**：`isBookmarked` 是 @State，翻页时由
+            // `pageShow → syncBookmarkState()` 刷新、点顶栏/下拉手势时由 `toggleBookmark()`
+            // 立即改写 ⇒ 本行随状态直接重渲染，不存在"要等翻页/其他操作才刷新"的延迟。
+            if (this.isBookmarked) {
+              SymbolGlyph(this.bookmarkIcon())
+                .fontSize(16)
+                .fontColor([this.readerSetting.fontColor])
+                .opacity(0.9)
+                .hitTestBehavior(HitTestMode.None)
+            }
+            if (this.infoTimerText.length > 0) {
+              Text(this.infoTimerText)
+                .fontSize(13)
+                .fontColor(this.readerSetting.fontColor)
+                .opacity(0.9)
+                .hitTestBehavior(HitTestMode.None)
+            }
+            // 会员化（2026-10-07）：防窥为 VIP 特权 ⇒ 非会员不显示该状态图标
+            // （信息窗只做"呈现"，不给免费用户展示一个用不了的静默图标）。
+            // ⚠️ 2026-10-13 方案 A：防窥是**纯系统能力**（AntiPeep 无网络依赖）⇒
+            //   精简模式下保留（否则把一项 VIP 权益藏起来不卖）。开关见
+            //   `OfflineMode.showReadingEnhancements()`（改 false 可一键全部隐藏）。
+            if (this.vipOn && OfflineMode.showReadingEnhancements()) {
+              SymbolGlyph(this.antiPeepIcon())
+                .fontSize(16)
+                .fontColor([this.readerSetting.fontColor])
+                .opacity(0.9)
+                .hitTestBehavior(HitTestMode.None)
+            }
           }
-          // 会员化（2026-10-07）：防窥为 VIP 特权 ⇒ 非会员不显示该状态图标
-          // （信息窗只做"呈现"，不给免费用户展示一个用不了的静默图标）。
-          // ⚠️ 2026-10-13 方案 A：防窥是**纯系统能力**（AntiPeep 无网络依赖）⇒
-          //   精简模式下保留（否则把一项 VIP 权益藏起来不卖）。开关见
-          //   `OfflineMode.showReadingEnhancements()`（改 false 可一键全部隐藏）。
-          if (this.vipOn && OfflineMode.showReadingEnhancements()) {
-            SymbolGlyph(this.antiPeepIcon())
-              .fontSize(16)
-              .fontColor([this.readerSetting.fontColor])
-              .opacity(0.9)
-              .hitTestBehavior(HitTestMode.None)
-          }
+          .justifyContent(FlexAlign.End)
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
         }
-        .justifyContent(FlexAlign.End)
         // ⚠️ 必须显式撑满高度 + 顶部对齐：Stack 子元素默认垂直居中（2026-10-07 真机实测：
         //   信息窗曾跑到屏幕右侧正中），撑满后内容钉在顶部。
         .alignItems(VerticalAlign.Top)
         .width('100%')
         .height('100%')
-        .padding({ top: this.topRectHeight + 12, right: 20 })
+        .padding({ top: this.topRectHeight + 12, left: 20, right: 20 })
         .hitTestBehavior(HitTestMode.None)
       }
 

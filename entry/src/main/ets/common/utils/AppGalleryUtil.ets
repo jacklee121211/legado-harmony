@@ -3,6 +3,8 @@ import { deviceInfo } from '@kit.BasicServicesKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import type { common } from '@kit.AbilityKit'
+import dataPreferences from '@ohos.data.preferences'
+import CommonConstants from '../constants/CommonConstants'
 
 /**
  * ── 应用市场（AppGallery Kit）统一封装 ─────────────────────────────────────────
@@ -80,6 +82,13 @@ const MIN_API_UPDATE: number = 12
 
 /** 本应用包名（与 AppScope/app.json5 的 bundleName 一致；改包名时这里必须同步） */
 const BUNDLE_NAME: string = 'com.jk.reader'
+
+/**
+ * 本地「已评价」冷却期：一年。
+ * 依据：`1021500009 - The user has already left a comment, and less than a year has elapsed since then.`
+ * ⇒ 华为的账号级限制是一年，本地记到一年即可，不必永久拉黑用户。
+ */
+const REVIEW_COOLDOWN_MS: number = 365 * 24 * 60 * 60 * 1000
 
 /** 检查更新的业务结果（把 SDK 的枚举 + 各类异常收敛成调用方好用的三态） */
 export enum UpdateCheckState {
@@ -231,11 +240,120 @@ export class AppGalleryUtil {
     try {
       await commentManager.showCommentDialog(context)
       hilog.info(0x0000, TAG, 'showCommentDialog succeeded')
+      // 成功拉起 ⇒ 清掉旧的"已评价"记录（例如换了账号 / 满一年后再评）
+      AppGalleryUtil.clearReviewedMark(context)
       return CommentResult.SHOWN
     } catch (e) {
       const err = e as BusinessError
       hilog.warn(0x0000, TAG, `showCommentDialog failed, code=${err.code}, msg=${err.message}`)
-      return AppGalleryUtil.mapCommentErrorCode(err.code)
+      const result: CommentResult = AppGalleryUtil.mapCommentErrorCode(err.code)
+      // 命中"已评价/达上限" ⇒ 落本地记录，后续不再弹软引导（见 shouldSkipPrompt）
+      AppGalleryUtil.recordReviewedMark(context, result)
+      return result
+    }
+  }
+
+  // ── 2.1 本地「已评价」状态（避免重复打扰）─────────────────────────────────
+  //
+  // ⚠️ 为什么这些方法**必须显式收 context**、不能复用 bookDataPreferences.shared 的默认路径：
+  // `DataPreferencesUtils.ets:26-32` 的 `appCtx()` 走的是全局 `getContext()`，而 SDK
+  // `…\ets\component\common.d.ts:1346-1366` 原文明确：
+  //   「The default context is the context obtained by **tracing the call chain** of the API.
+  //     If this API is used in an asynchronous callback or not initially called on the current page,
+  //     the context of the instance may fail to be traced. In this case, `undefined` is returned.」
+  // 而本类写状态恰好发生在 `await commentManager.showCommentDialog()` **之后**（异步回调里）
+  // ⇒ 若沿用默认路径，有拿到 undefined 导致 set/get 抛错甚至崩溃的风险。
+  // 这里统一用调用方传入的 UIAbilityContext 走 `preferences.getPreferencesSync(ctx, …)`。
+
+  /** 取 Preferences 实例；失败返回 null（调用方需判空，绝不让它影响主流程） */
+  private static preferences(ctx: common.Context): dataPreferences.Preferences | null {
+    try {
+      return dataPreferences.getPreferencesSync(ctx, { name: CommonConstants.PREFERENCES_BOOK_DATA_KEY })
+    } catch (e) {
+      hilog.warn(0x0000, TAG, `getPreferencesSync failed: ${JSON.stringify(e)}`)
+      return null
+    }
+  }
+
+  /**
+   * 是否应跳过软引导弹窗。
+   *
+   * 真机实证（`docs/日志.md`，2026-10-18）：
+   *   ① 首次：`1021500007 The user has already commented on the current version.`
+   *   ② 改 versionName 后：`1021500009 ... less than a year has elapsed since then.`
+   * ⇒ 「按版本」限制可以用改版本号绕开，但「按账号一年」的限制绕不开。
+   *   既然一年内再点也只会得到 0009，就没必要再弹软引导去为难用户。
+   */
+  static shouldSkipPrompt(ctx: common.Context): boolean {
+    const now: number = Date.now()
+    const reviewedAt: number = AppGalleryUtil.readMark(ctx, CommonConstants.RATING_REVIEWED_AT)
+    if (reviewedAt > 0 && now - reviewedAt < REVIEW_COOLDOWN_MS) {
+      return true
+    }
+    const limitAt: number = AppGalleryUtil.readMark(ctx, CommonConstants.RATING_LIMIT_AT)
+    if (limitAt > 0 && now - limitAt < REVIEW_COOLDOWN_MS) {
+      return true
+    }
+    return false
+  }
+
+  /** 记录「已评价」状态 */
+  private static recordReviewedMark(ctx: common.Context, result: CommentResult): void {
+    const now: number = Date.now()
+    if (result === CommentResult.ALREADY_REVIEWED_CURRENT || result === CommentResult.REVIEWED_WITHIN_YEAR) {
+      AppGalleryUtil.writeMark(ctx, CommonConstants.RATING_REVIEWED_AT, now)
+      hilog.info(0x0000, TAG, `record reviewed mark at ${now}`)
+    } else if (result === CommentResult.LIMIT_REACHED) {
+      AppGalleryUtil.writeMark(ctx, CommonConstants.RATING_LIMIT_AT, now)
+      hilog.info(0x0000, TAG, `record limit mark at ${now}`)
+    }
+  }
+
+  /** 清除「已评价」状态（成功拉起过就认为约束已解除） */
+  private static clearReviewedMark(ctx: common.Context): void {
+    try {
+      const prefs: dataPreferences.Preferences | null = AppGalleryUtil.preferences(ctx)
+      if (prefs === null) {
+        return
+      }
+      prefs.deleteSync(CommonConstants.RATING_REVIEWED_AT)
+      prefs.deleteSync(CommonConstants.RATING_LIMIT_AT)
+    } catch (e) {
+      hilog.warn(0x0000, TAG, `clearReviewedMark failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private static readMark(ctx: common.Context, key: string): number {
+    try {
+      const prefs: dataPreferences.Preferences | null = AppGalleryUtil.preferences(ctx)
+      if (prefs === null) {
+        return 0
+      }
+      const raw: dataPreferences.ValueType = prefs.getSync(key, 0)
+      if (typeof raw === 'number') {
+        return raw
+      }
+      return 0
+    } catch (e) {
+      hilog.warn(0x0000, TAG, `readMark(${key}) failed: ${JSON.stringify(e)}`)
+      return 0
+    }
+  }
+
+  private static writeMark(ctx: common.Context, key: string, value: number): void {
+    try {
+      const prefs: dataPreferences.Preferences | null = AppGalleryUtil.preferences(ctx)
+      if (prefs === null) {
+        return
+      }
+      prefs.putSync(key, value)
+      // flush() 返回 Promise 且可能 reject（磁盘满 / 权限），必须接 catch，
+      // 否则会成为 unhandled rejection。
+      prefs.flush().catch((err: BusinessError) => {
+        hilog.warn(0x0000, TAG, `flush(${key}) failed, code=${err.code}, msg=${err.message}`)
+      })
+    } catch (e) {
+      hilog.warn(0x0000, TAG, `writeMark(${key}) failed: ${JSON.stringify(e)}`)
     }
   }
 

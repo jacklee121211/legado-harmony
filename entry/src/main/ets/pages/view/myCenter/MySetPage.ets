@@ -53,7 +53,7 @@ export default struct MySetPage{
   //  ⚠️ 这 6 个还都是 `@StorageLink`（内存态、无 putSync）⇒ 关掉重启即复原，本就形同虚设。
   /** 书架书名显示拓展名（2026-09-27，本项目自研功能：默认关；Preferences 持久化） */
   @StorageLink(MySetConstants.SET_EXT_NAME) setExtName: boolean = false
-  /** 阅读器信息窗（2026-10-07）：全屏阅读时右上角防窥/定时实时信息，Preferences 持久化 */
+  /** 阅读器信息窗（2026-10-07）：全屏阅读时的系统时间 + 防窥/定时实时信息；Preferences 持久化，默认开 */
   @StorageLink(MySetConstants.SET_INFO_WIN) setInfoWin: boolean = false
 
   // ── 防窥两层开关（2026-10-08 拆层，VIP 特权）──────────────────────────────
@@ -141,8 +141,9 @@ export default struct MySetPage{
     setTimeout((): void => {
       this.applySmartKeyHint()
     }, 300)
-    // 阅读器信息窗开关初值（2026-10-07，默认关）
-    this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, false) as boolean
+    // 阅读器信息窗开关初值（2026-10-13 起**默认开**；用户要求"信息窗默认打开"）
+    // ⚠️ 这里是默认值的**权威单点**，`ReaderPage3.aboutToAppear` 的回读用同一个 true。
+    this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, true) as boolean
     // ── 离线模式（2026-10-13）：先按落盘意图重建「其他」组 ──────────────────────
     // ⚠️ 必须早于下面 findOtherRow 的写回：rebuildOtherList 决定本组渲染哪些行。
     // 顺序：先同步 offlineOn（防 EntryAbility.init 尚未跑到 / 页面被直接拉起），
@@ -287,8 +288,11 @@ export default struct MySetPage{
     new SetList(false,'离线模式',this.offlineOn,'',
       '开启后隐藏依赖网络的功能入口（Web服务 / 测试账号 / 防窥 / AI听书 / 字体与材质方案 / 自定义主题）；关闭恢复全量模式',
       MySetConstants.SET_OFFLINE_MODE),
-    // 阅读器信息窗（2026-10-07 新增，默认关）：全屏阅读时右上角的防窥/定时实时信息
-    new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时右上角会出现防窥模式以及定时的实时信息',MySetConstants.SET_INFO_WIN),
+    // 阅读器信息窗（2026-10-13 起默认开）：说明文案随新增的左侧系统时间更新
+    // ⚠️ 第 1 个实参是 `showArrow`（见 SetListGroup.ets:62 构造签名），**不是**开关初值！
+    //    开关状态由第 3 个实参 `this.setInfoWin` 给。此处必须 false = 渲染 Toggle 开关，
+    //    传 true 会渲染成箭头 `>` ⇒ 整行变成可点击跳转样式（2026-10-13 用户实测发现）。
+    new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时左侧显示当前系统时间，右侧显示书签、定时与防窥的实时信息',MySetConstants.SET_INFO_WIN),
     // ── 防窥两层（2026-10-08 新增，均 VIP 特权；用户设计：两个独立开关，可只开其一）──
     // 第 2 层默认开（系统能力不足/系统防窥开关未开时自动显示为关，见 AntiPeep）；
     // 第 1 层默认关。阅读页顶栏眼睛图标 = 第 2 层的第二个入口（同键同源）。

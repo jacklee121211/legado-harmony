@@ -248,6 +248,19 @@ export default class CommonConstants {
   //系统UA'0-Android', '1-Phone', '2-电脑', '3-自定义'
   static readonly SYSTEM_UA:string = 'SYSTEM_UA'
   /**
+   * ── 应用市场评分状态（2026-10-18）────────────────────────────────────────
+   * 用途：系统已判定"该账号已评价过"时，**不再弹软引导弹窗**，避免无意义打扰。
+   *
+   * 依据（真机实测，`docs/日志.md`）：
+   *   1021500007 该版本已评价      → 换 versionName 可绕（实测已绕开）
+   *   1021500009 该账号一年内已评价 → **换版本号无效**（实测：改版本后 0007 变 0009）
+   * 所以本地要记到 **一年后** 才重新允许引导。
+   */
+  // 上次收到"已评价"类结果的时间戳（毫秒）。0 / 不存在 = 从未评价过。
+  static readonly RATING_REVIEWED_AT:string = 'RATING_REVIEWED_AT'
+  // 上次收到"评论数达上限"的时间戳（毫秒）。这类限制官方未给明确期限，按一年处理。
+  static readonly RATING_LIMIT_AT:string = 'RATING_LIMIT_AT'
+  /**
    * 数据库日志标签
    */
   static readonly RDB_TAG: string = 'RdbTag';

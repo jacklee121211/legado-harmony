@@ -64,9 +64,16 @@ export default class MySetConstants {
   static readonly SET_KEY_FP: string = 'setKeyFpTurn';
 
   /**
-   * 阅读器信息窗（2026-10-07 新增，默认关；Preferences 同名键持久化）。
-   * 开启后：全屏阅读（菜单栏隐藏）时右上角显示 防窥眼睛 + 定时实时信息（玻璃层，
-   * 不参与仿真翻页卷纸、不可点击——用户明确拍板），字色随正文。
+   * 阅读器信息窗（2026-10-07 新增；Preferences 同名键持久化）。
+   * 开启后：全屏阅读（菜单栏隐藏）时显示 左侧系统时间 + 右侧 防窥眼睛/定时实时信息/书签
+   * （玻璃层，不参与仿真翻页卷纸、不可点击——用户明确拍板），字色随正文。
+   *
+   * ⚠️ **默认值 = 开启**（2026-10-13 用户要求「阅读器信息窗默认打开，新用户默认关闭」）。
+   *    权威默认值由 `MySetPage.ets` 的 `PreferencesUtil.getSync(SET_INFO_WIN, true)` 单点给出；
+   *    阅读页 `ReaderPage3.aboutToAppear` 回读时必须用**同一个默认值**，
+   *    否则「设置页显示开、阅读页却不显示」。
+   *    存量用户不受影响：`getSync(key, defValue)` 只在本地**从未存过**该键时返回默认值
+   *    （harmony-utils `PreferencesUtil.ets:105-108` 直接转发 `preferences.getSync`）。
    */
   static readonly SET_INFO_WIN: string = 'setReaderInfoWin';
 

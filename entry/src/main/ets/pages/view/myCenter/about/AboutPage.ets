@@ -229,11 +229,22 @@ export default struct AboutPage {
     this.toast('暂时无法检查更新')
   }
 
-  /** 「评分评价」入口：先软引导，愿意再去评分 */
+  /**
+   * 「评分评价」入口：先软引导，愿意再去评分。
+   *
+   * 若本地已记录「这个账号评价过」（一年内），**不再弹软引导** ——
+   * 因为系统必然返回 1021500009，弹了也只是让用户白点一次。
+   * 直接给感谢提示，符合真机实证：改 versionName 后仍报 0009（按账号一年限制）。
+   */
   private onRateEntry(): void {
     if (!AppGalleryUtil.canComment()) {
       // 设备不支持应用内评分 ⇒ 直接尝试跳应用市场写评论页
       this.openStoreWriteReview()
+      return
+    }
+    if (AppGalleryUtil.shouldSkipPrompt(this.hostContext())) {
+      hilog.info(0x0000, 'AboutPage', 'rating cooldown active, skip prompt dialog')
+      this.toast('感谢你之前的评价')
       return
     }
     this.ratingPromptDialog?.open()
