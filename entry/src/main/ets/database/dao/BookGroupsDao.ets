@@ -189,19 +189,28 @@ class BookGroupsDao{
     }
   }
 
-  //更新分组显示状态
+  /**
+   * 更新分组显示状态。
+   *
+   * 2026-10-13 修三处（书架分组管理面板改成"点击即隐藏/恢复"后必须精准）：
+   * ① `show || !item.show` ⇒ `show === undefined ? !item.show : show`
+   *    旧写法在 **`show = false` 且该分组已经是隐藏态**时算成 `false || true = true`，
+   *    把"隐藏"反向写成"显示"；未传 `show` 时仍保持旧的"翻转"语义（其它调用点依赖它）；
+   * ② 判空用**查询结果** `count.length`（旧写法判 `column` 恒非空，是工程记录过的笔误）；
+   * ③ 逐条 `await this.update(item)`（旧写法裸调 ⇒ 调用方重查可能读到未提交的旧值）。
+   */
   async updateGroupShow(id: number, show?: boolean) {
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       const predicates = DbUtil.getPredicates(this.TABLE_NAME);
       predicates.equalTo('groupId', id)
       const count = await DbUtil.queryForList<BookGroups>(predicates, column)
-      if (column.length > 0)
-        count.forEach((item) => {
-          item.show = show||!item.show
+      if (count.length > 0)
+        for (const item of count) {
+          item.show = show === undefined ? !item.show : show
           item.updateTime = Date.now()
-          this.update(item)
-        })
+          await this.update(item)
+        }
     } catch (e){
       console.log('TagInfo, Error, ', JSON.stringify(e))
     }

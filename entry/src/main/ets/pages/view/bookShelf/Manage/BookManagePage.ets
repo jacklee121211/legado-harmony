@@ -1241,6 +1241,16 @@ export default struct BookManagePage {
           this.bookMoveGroup?.close()
           this.bookMoveGroup = null
         },
+        // 新建分组成功后真开真关（2026-10-13，与书架 `BookInfoDialogs` 同款修复）：
+        // 旧实现靠弹窗自己 `setTimeout → getGroupList()`，而那时实例已被 close 销毁
+        // ⇒ 新分组不显示；且重开时 `presetGroups` 是创建瞬间的旧快照。
+        onGroupCreated: (): void => {
+          this.bookMoveGroup?.close()
+          this.bookMoveGroup = null
+          this.openMoveGroup().catch((e: Error): void => {
+            console.error('openMoveGroup after create failed: ' + e.message)
+          })
+        },
         oldGroupId: this.bookTypeNumber,
         currentIndex: this.currentIndex,
         Ids: this.checkListNumber,

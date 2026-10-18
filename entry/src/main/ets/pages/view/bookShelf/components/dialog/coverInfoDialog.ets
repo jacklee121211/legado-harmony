@@ -15,7 +15,9 @@ import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../co
 import UiMotion from '../../../../../common/utils/UiMotion'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
-import { COVER_DEFAULT_FILES } from '../../../../../common/utils/CoverSource'
+import { COVER_DEFAULT_FILES, coverCorners } from '../../../../../common/utils/CoverSource'
+import CommonConstants from '../../../../../common/constants/CommonConstants'
+import bookCover from '../../../../../common/utils/BookCover'
 
 @CustomDialog
 /**
@@ -74,6 +76,102 @@ export default struct coverInfoDialog{
   }
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+
+  /**
+   * 「自定义」预览列 —— 2026-10-18 **内联到本组件**，不再经 `coverInfoImageShow` 子组件。
+   *
+   * ── 为什么必须内联（真机日志证据，`docs/日志.md`）─────────────────────────
+   * 选完图后日志里出现：
+   *   `E AceStateMgmt: View coverInfoImageShow is already in process of destruction,
+   *    will not execute observeComponentCreation2`
+   * ⇒ 给子组件 `@Prop imageString` 赋进去的**新 URI 被丢弃**，
+   *   预览位于是停在旧值/空值上，露出深色衬底 —— 用户看到的就是"灰色蒙版"。
+   * 内联后预览直接读本组件的 `@State coverImages`，没有跨组件这一层，
+   * 也就没有"子组件正在销毁"的窗口期。
+   */
+  @Builder customColumn() {
+    Column() {
+      Stack() {
+        Flex({ alignItems: ItemAlign.End }) {
+          // ⚠️⚠️ **必须用 `visibility` 而不是 `if`**（2026-10-18，与 CoverStyleDialog 同因）：
+          //   选图回来后 `if` 分支翻转 ⇒ ArkUI 在组件销毁/重建窗口期创建 Image 被跳过
+          //   （日志 `View coverInfoImageShow is already in process of destruction` 是同一回事），
+          //   于是预览位停在空态、露出深色衬底 = 用户看到的"灰色蒙版"。
+          //   常驻 + 切 visibility ⇒ 组件实例不重建，src 变化走正常的重新加载。
+          Image(this.customPreviewSrc() === ''
+            ? $rawfile(COVER_DEFAULT_FILES[0]) : this.customPreviewSrc())
+            .draggable(false)
+            .borderRadius(coverCorners(CommonConstants.NOVEL_IMG_WIDTH))
+            .width(CommonConstants.NOVEL_IMG_WIDTH)
+            .height(CommonConstants.NOVEL_IMG_HEIGHT)
+            .visibility(this.customPreviewSrc() !== '' ? Visibility.Visible : Visibility.None)
+          // 空态：浅色底 + 可见虚线框 + 图标（旧实现是深色衬底 + 黑字，用户说"像灰块套框"）
+          Column({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.picture'))
+              .fontSize(20)
+              .fontColor([$r('app.string.color_black_45')])
+            Text('点击选择')
+              .fontColor($r('app.string.color_black_45'))
+              .fontWeight(400)
+              .fontSize(12)
+              .lineHeight(16)
+          }
+          .justifyContent(FlexAlign.Center)
+          .width(CommonConstants.NOVEL_IMG_WIDTH)
+          .height(CommonConstants.NOVEL_IMG_HEIGHT)
+          .borderRadius(5)
+          .backgroundColor('rgba(0, 0, 0, 0.03)')
+          .border({ width: 1, color: 'rgba(0, 0, 0, 0.18)', style: BorderStyle.Dashed, radius: 5 })
+          .visibility(this.customPreviewSrc() !== '' ? Visibility.None : Visibility.Visible)
+        }
+        .borderRadius(5)
+        // 深色衬底只在**有图**时当画框；空态必须透明
+        .backgroundColor(this.customPreviewSrc() !== '' ? $r('app.string.color_black_65') : Color.Transparent)
+        .align(Alignment.Start)
+        .width(CommonConstants.NOVEL_IMG_WIDTH)
+        .height(CommonConstants.NOVEL_IMG_HEIGHT)
+        .zIndex(2)
+      }
+      .align(Alignment.BottomStart)
+      Row({ space: 12 }) {
+        Text('自定义')
+          .fontWeight(400)
+          .fontSize(14)
+          .fontColor($r('app.string.color_black_45'))
+          .lineHeight(22)
+        Radio({ value: JSON.stringify('1'), group: 'radioGroup' })
+          .checked(this.selectedType === 1)
+          .radioStyle({
+            checkedBackgroundColor: this.theme.mainColor
+          })
+          .border({ width: 2, color: 'rgba(255, 255, 255, 0.10)' })
+          .width(20).height(20)
+          .onChange((val) => {
+            // ⚠️ 这里**只切样式**，不拉起选图器：点单选框会冒泡到整列 `onClick`，
+            //    两边都拉选图器会连开两次系统相册（改造前子组件的 onChange 也只切样式）。
+            if (val) {
+              this.pickDefault = -1
+              this.selectedType = 1
+            }
+          })
+      }
+      .padding({ top: 8 })
+    }
+    .onClick((): void => {
+      Haptics.tap()
+      this.onSelectCustom()
+    })
+  }
+
+  /** 选中「自定义」并拉起选图器（点预览列或单选框都会到这里） */
+  private onSelectCustom(): void {
+    this.pickDefault = -1
+    this.selectedType = 1
+    this.setCoverImages().catch((e: Error): void => {
+      console.error('setCoverImages failed: ' + e.message)
+    })
+  }
+
   build() {
     Column(){
       Flex({
@@ -84,6 +182,29 @@ export default struct coverInfoDialog{
           Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
           Text(`共${0}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
         }
+        // ── 批量「重置」（2026-10-13，用户要求）──────────────────────────────
+        // 语义（用户口径）：范围内**每本书各自**恢复到自己"导入时的那张封面"——
+        //   · 有自带封面的书 ⇒ 恢复为自带封面（清空 customCoverUrl 即可，自带封面是只读字段）
+        //   · 没有自带封面的书（txt 等）⇒ 恢复为默认封面（同样只是清空 customCoverUrl）
+        // 所以这是**一次清空、两种效果**，不需要按书分支写逻辑。
+        // 符号名已核实：`sysResource.js` 中 `arrow_counterclockwise: 125832702`。
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+            .fontSize(15)
+            .fontColor([NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)'])
+          Text('重置')
+            .fontSize(12)
+            .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)')
+        }
+        .height(30)
+        .padding({ left: 12, right: 12 })
+        .borderRadius(15)
+        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.06)')
+        .clickEffect(UiMotion.CLICK)
+        .onClick((): void => {
+          Haptics.tap()
+          this.openResetConfirm()
+        })
       }.padding(20)
       // （2026-10-01 已删除「仅用于当前分组」开关：coverOnly 字段全工程无渲染消费方，
       //  开关没有实际效果，用户确认删除。）
@@ -115,20 +236,8 @@ export default struct coverInfoDialog{
           // 整列可点，点即切回默认样式（网格随之恢复）。
           this.selectedType = 0
         })
-        coverInfoImageShow({
-          coverCount:2,
-          imageString:this.coverImages,
-          selectImage:this.selectedType,
-          onSelectImageNumber:(number:number)=>{
-            this.selectedType = number
-          }
-        }).onClick(()=>{
-          Haptics.tap();
-          this.pickDefault = -1
-          // 点自定义预览列 = 同时选中"自定义"单选（原来只选图不选中样式，radio 不亮）
-          this.selectedType = 1
-          this.setCoverImages()
-        })
+        this.customColumn()
+        // 2026-10-18：整列可点 = 选「自定义」并拉起选图器（行为与改造前一致）
       }.padding({ left:20, right:20, top:16 })
 
       // ── 9 张默认封面网格（2026-10-01 从预览列移出为全宽，修横向溢出）────────────
@@ -348,7 +457,112 @@ export default struct coverInfoDialog{
     // 这样新旧两条实现才能共用同一签名（两者的 Result 类型不同、不可互相赋值）。
     // 行为与旧代码 `imageUrl?.photoUris[0] || ''` 完全等价：未选择 → `''`（即清空封面）。
     const uris: string[] = await pickerAvatar();
-    this.coverImages = uris.length > 0 ? uris[0] : '';
-    this.itemData.coverUrl = this.coverImages
+    if (uris.length === 0 || uris[0] === '') {
+      this.coverImages = '';
+      this.itemData.coverUrl = '';
+      return
+    }
+    // ── 2026-10-13：相册 URI **先落地沙箱**再显示/落库 ──────────────────────
+    // 修「点击并选择图片后预览图没有及时刷新」（真机）：`pickerAvatar()` 返回的是
+    // 相册媒体 URI（SDK NOTE：can be used only by calling photoAccessHelper.getAssets），
+    // 直接给 Image 首帧解码会失败。详见 `common/utils/BookCover.ets` 头注释。
+    const local: string = await bookCover.importPickedImage(uris[0])
+    this.coverImages = local;
+    this.itemData.coverUrl = local
+    // 诊断打点（2026-10-18）：选图后预览源到底是什么
+    console.info('[coverInfo] pick done raw=' + uris[0]
+      + ' local=' + local
+      + ' preview=' + (this.customPreviewSrc() === '' ? '<EMPTY>' : this.customPreviewSrc()))
+  }
+
+  /** 自定义列预览只接受"真实图片"值（`default://…` 交给默认样式列显示） */
+  private customPreviewSrc(): string {
+    const v: string = this.coverImages
+    if (v === '' || v.startsWith('default://')) {
+      return ''
+    }
+    return v
+  }
+
+  // ── 批量「重置」：确认弹窗（2026-10-13）────────────────────────────────
+  /**
+   * 重置确认弹窗。
+   *
+   * 规范要点（用户 2026-10-13：「弹窗支持**子进父出**，以及适配全局弹窗的风格和逻辑」）：
+   *  · 子进父出：`openResetConfirm()` 先关本弹窗再开它；
+   *  · 取消 ⇒ 关它 + 把本弹窗开回来（入规则）；
+   *  · 确认 ⇒ 执行重置，然后按本文件既有的收尾方式（关自己 + `cancel()`
+   *    通知父级 + toast），与「确定」按钮的 `applyGroupCover` 完全同一条链。
+   *  · 风格：`customStyle:false` + `systemMaterial` + SPRING_FAST（全局弹窗配方）。
+   */
+  private resetConfirmDialog: CustomDialogController | null = new CustomDialogController({
+    builder: TitleContentDialog({
+      title: '将范围内书籍的封面恢复为自带封面',
+      content: '有自带封面的书恢复为自带封面；没有自带封面的书恢复为默认封面。手动设置的封面将被清除。',
+      confirm: (): void => {
+        this.resetGroupCover().catch((e: Error): void => {
+          console.error('resetGroupCover failed: ' + e.message)
+        })
+      },
+      cancel: (): void => {
+        // 入规则：取消重置 ⇒ 把封面弹窗开回来
+        this.controller?.open()
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    gridCount: 4,
+    customStyle: false,
+    cornerRadius: 25,
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    cancel: (): void => {
+      // 遮罩/返回键：与取消按钮同一条收尾路径
+      this.controller?.open()
+    }
+  })
+
+  private openResetConfirm(): void {
+    // 子进父出：先关自己（关闭权在**持有 controller 的宿主**这一侧 —— 本弹窗的
+    // controller 正是父级创建后传进来的那个，所以这里 close 有效）
+    this.controller?.close()
+    this.resetConfirmDialog?.open()
+  }
+
+  /**
+   * 执行批量重置：范围内每本书清空 `customCoverUrl`。
+   *
+   * 为什么"一次清空"就能做到"分别恢复"（用户口径）：
+   * 渲染优先级 `customCoverUrl > builtinCoverUrl > coverUrl > alt` ——
+   * 清空自定义层后，有自带封面的书自动露出自带封面，没有的自动落到默认封面。
+   */
+  private async resetGroupCover(): Promise<void> {
+    const targetBooks: Books[] = await this.resolveTargetBooks()
+    let count: number = 0
+    for (const b of targetBooks) {
+      if ((b.customCoverUrl ?? '') !== '') {
+        b.customCoverUrl = ''
+        await booksUtil.addBooks(b)
+        count++
+      }
+    }
+    // 分组自身的封面（分组卡片上那张）也恢复默认；聚合条目（分组/书单/全部）没有实体分组，跳过
+    if (!this.itemData.isSystem) {
+      this.itemData.coverUrl = ''
+      await bookGroupUtil.updatePartialGroup(this.itemData)
+    }
+    // 弹窗自身的选择态一并清掉
+    this.pickDefault = -1
+    this.selectedType = 0
+    this.coverImages = ''
+    // 书行被改写 ⇒ 书架列表重查（LazyForEach 键值含 customCoverUrl）
+    this.isBookRefreshing++
+    setTimeout((): void => {
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.controller?.close()
+      this.cancel()
+      showMessage(count > 0 ? `已恢复 ${count} 本书的封面` : '封面已恢复')
+    }, 100)
   }
 }

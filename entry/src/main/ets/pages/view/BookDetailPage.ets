@@ -12,7 +12,7 @@ import { BookHistory } from '../../database/entities/BookHistory'
 import bookHistoryUtils from '../../common/utils/BookHistoryUtils'
 import booksUtil from '../../common/utils/booksUtils'
 import booksDao from '../../database/dao/BooksDao'
-import { resolveCoverSource, coverCorners } from '../../common/utils/CoverSource'
+import { resolveBookCover, coverCorners } from '../../common/utils/CoverSource'
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 import { ShelfColors } from '../../common/utils/NightMode'
@@ -363,9 +363,9 @@ export default struct BookDetailPage {
 
       // 小说标题
       Row({ space: CommonConstants.SPACE_20 }) {
-        // 2026-10-01：封面走 customCoverUrl 优先（resolveCoverSource 处理 default:// 协议），
-        // 与书架渲染同一契约；无自定义封面回退原 coverUrl。
-        Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
+        // 2026-10-13：走 `resolveBookCover`（四层：自定义 > 自带 > 书源 > 默认），
+        // 自带封面（导入时从 epub 等提取）在详情页同样生效；无自带再回退原 coverUrl。
+        Image(resolveBookCover(this.bookData))
           .alt($r('app.media.icon_book_default_cover_ten'))
           .width(CommonConstants.NOVEL_IMG_WIDTH)
           .height(CommonConstants.NOVEL_IMG_HEIGHT)

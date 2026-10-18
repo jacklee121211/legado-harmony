@@ -1,4 +1,4 @@
-import { resolveCoverSource, coverCorners, stripBookExt } from "../../../../common/utils/CoverSource"
+import { resolveBookCover, coverCorners, stripBookExt } from "../../../../common/utils/CoverSource"
 
 import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
@@ -160,6 +160,7 @@ export default struct BookInfos {
       const fresh = await booksDao.getBookByIds([id])
       if (fresh.length > 0) {
         this.book.customCoverUrl = fresh[0].customCoverUrl
+        this.book.builtinCoverUrl = fresh[0].builtinCoverUrl
         this.book.coverUrl = fresh[0].coverUrl
         this.book.bookName = fresh[0].bookName
         this.book.author = fresh[0].author
@@ -220,7 +221,9 @@ export default struct BookInfos {
                 .backgroundColor($r('app.color.mask_45'))
                 .zIndex(1)
             }
-            Image(resolveCoverSource(this.book.customCoverUrl ?? '') ?? this.book.coverUrl)
+            // 2026-10-13：书籍封面统一走 `resolveBookCover`（四层：自定义 > 自带 > 书源 > 默认）。
+            // 自带封面（导入时从 epub 等文件提取）由此自动生效，且"重置"后自动露出。
+            Image(resolveBookCover(this.book))
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
               // 视觉升级（2026-09-21）：给封面加圆角 + 柔和投影。

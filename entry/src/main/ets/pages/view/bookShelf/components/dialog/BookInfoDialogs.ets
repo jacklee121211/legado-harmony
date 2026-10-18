@@ -21,7 +21,7 @@ import { uniformTypeDescriptor } from '@kit.ArkData';
 import { fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { ShelfColors } from '../../../../../common/utils/NightMode'
-import { resolveCoverSource } from '../../../../../common/utils/CoverSource'
+import { resolveBookCover } from '../../../../../common/utils/CoverSource'
 import CoverStyleDialog from './CoverStyleDialog'
 import RenameBookDialog from './RenameBookDialog'
 import MarkToolButton from '../../../../../componets/common/MarkToolButton'
@@ -178,8 +178,9 @@ export default struct BookInfoDialogs{
       // `layoutWeight(1)`（自适应吃剩余宽度、书名/作者超长省略）+ 右侧动作区
       // `flexShrink(0)`（绝不压缩），间距由 layoutWeight 自然分配。
       Row({ space: 12 }){
-        // v3.21：小封面也走 resolveCoverSource（换默认/自定义封面后本弹窗预览实时同步）
-        Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
+        // 2026-10-13：走 `resolveBookCover`（四层：自定义 > 自带 > 书源 > 默认）；
+        // 换封面/重置后本弹窗恢复时会 `refreshSelfBook` 重查 ⇒ 预览实时同步。
+        Image(resolveBookCover(this.bookData))
           .alt($r('app.media.icon_book_default_cover_one'))
           .width(45).height(65)
           .draggable(false)
@@ -261,14 +262,24 @@ export default struct BookInfoDialogs{
             })
             this.coverStyleDialog?.open()
           })
-          Text('书籍详情').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
-          Image($r('app.media.icon_right')).width(20).height(20).fillColor($r('app.string.color_black_45'))
-        } .onClick(()=>{
-          Haptics.tap();
-          // 迁 Navigation 第 2 期：详情页已改为 NavDestination，改走路由门面
-          AppRouter.push(RouteName.BOOK_DETAIL, this.bookData)
-          this.controller?.close()
-        })
+          // ── 「书籍详情」入口（2026-10-18 改为**独立子组**）──────────────────
+          // 真机问题：旧实现把 `onClick`（跳详情）挂在**外层 Row** 上，而「封面」是它的
+          // 子节点 —— ArkUI 的 `onClick` 会沿父链触发，点「封面」时**两个都执行**
+          // （封面弹窗刚建出来就被 `AppRouter.push(BOOK_DETAIL)` 覆盖/打乱）。
+          // 现在两个入口各自成组、各挂各的 onClick，外层不再有 onClick。
+          Row({
+            space:4
+          }){
+            Text('书籍详情').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
+            Image($r('app.media.icon_right')).width(20).height(20).fillColor($r('app.string.color_black_45'))
+          }
+          .onClick(()=>{
+            Haptics.tap();
+            // 迁 Navigation 第 2 期：详情页已改为 NavDestination，改走路由门面
+            AppRouter.push(RouteName.BOOK_DETAIL, this.bookData)
+            this.controller?.close()
+          })
+        }
         .flexShrink(0)
       }
       .alignItems(VerticalAlign.Center)
@@ -553,6 +564,19 @@ export default struct BookInfoDialogs{
           this.bookMoveGroup?.close()
           this.bookMoveGroup = null
           this.childDialogClosed()
+        },
+        // ── 新建分组成功后**真开真关**重开本弹窗（2026-10-13）────────────────
+        // 旧实现：弹窗自己 `setTimeout(500) → getGroupList()` 刷新，但点「+」时它
+        // 已经被 `close()` ⇒ 刷新写在已销毁的实例上；重开时 `aboutToAppear` 又用
+        // `presetGroups`（创建瞬间的旧快照）覆盖列表 ⇒ 新分组**永远不出现**。
+        // 现在：关掉旧实例 → 重新 `prefetchGroups()` → new controller → open，
+        // `presetGroups` 天然是当次最新（与本文件 `openRenameDialog` 同款"打开瞬间重建"）。
+        onGroupCreated: (): void => {
+          this.bookMoveGroup?.close()
+          this.bookMoveGroup = null
+          this.openMoveGroupDialog().catch((e: Error): void => {
+            console.error('openMoveGroupDialog after create failed: ' + e.message)
+          })
         },
         oldGroupId: this.bookData.bookGroup,
         currentIndex: this.bookData.bookType,

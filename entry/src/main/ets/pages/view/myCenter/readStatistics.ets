@@ -18,7 +18,7 @@ import UiMotion from '../../../common/utils/UiMotion';
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { RouteName, ReaderRouteParam, ReadStatisticsRouteParam } from '../../../common/router/AppRouter';
 import { ShelfColors } from '../../../common/utils/NightMode';
-import { resolveCoverSource } from '../../../common/utils/CoverSource';
+import { resolveBookCover } from '../../../common/utils/CoverSource';
 import { ThemeStorageKey } from '../../../common/constants/Theme';
 import { ThemeItem } from '../../../common/model/Theme';
 
@@ -598,7 +598,9 @@ export default struct readStatistics {
       // 旧实现空值兜底用的是 `app.media.book_cover`，那是个样板图 ⇒ 真机上"缩略图不对"。
       // 2026-10-06：并补上 `customCoverUrl` 优先级（`CoverSource.ets` 头注释的唯一契约），
       // 否则书架换过封面的书在统计页仍是旧封面/默认封面（"封面不与全局同步"同类）。
-      const cover: ResourceStr = resolveCoverSource(b.customCoverUrl ?? '') ?? (b.coverUrl ?? '')
+      // 2026-10-13：统一走 `resolveBookCover`（自定义 > **自带** > 书源 > 默认），
+      // 自带封面（导入时从 epub 等提取）在统计页同样生效。
+      const cover: ResourceStr = resolveBookCover(b)
       out.push(new readBookList(b.bookName, cover, b.author ?? '',
         [0, 0], new Date(t === 0 ? (b.durChapterTime ?? 0) : (b.finishedTime ?? 0)), pct, 0))
     }

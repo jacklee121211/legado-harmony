@@ -4,13 +4,25 @@
  *   ① `default://cover_defaults/cN.svg` —— 内置 9 张装饰封面（rawfile，渲染端转 $rawfile）
  *   ② `datashare://...` / `file://...`  —— 用户自选图片（Image 原生可显）
  *   ③ 空                                 —— 回退书源封面/默认 alt
- * 渲染优先级（调用方组装）：customCoverUrl > coverUrl > alt。
+ * 渲染优先级（调用方组装）：customCoverUrl > builtinCoverUrl > coverUrl > alt。
+ *
+ * 2026-10-13 新增第 3 层「书籍自带封面」`Books.builtinCoverUrl`（方案 C）：
+ *   · 它是**导入时从书籍文件里提取**的封面（epub 的 `bookCoverImage` 等），只读；
+ *   · 存的是**沙箱绝对路径**（不是 URI），渲染前经 `coverPathToUri()` 转 URI；
+ *   · 书籍封面的所有渲染点一律走 `resolveBookCover(book)` —— **不要在调用方
+ *     再手写 `custom ?? coverUrl` 的两层拼接**（那样必然漏掉自带封面，且这是
+ *     本工程"换封面不生效"类 bug 的历史来源）。
+ *   · 分组封面（`BookGroups.coverUrl`）/ 书单封面（`worksCoverUrl`）与书籍封面
+ *     是两套数据，仍走 `resolveCoverSource()`（它们没有"自带封面"概念）。
  *
  * ⚠️ 本文件 2026-10-12 起**同时承载书名展示的唯一真源**（`stripBookExt()` / `BookNameDisplay`）：
  * 那些函数与封面无关，只是因为本文件的导入面**已经覆盖全部书名渲染点**
  * （工程内 14 处 import 本文件，恰好就是所有会显示书名的组件），
  * 而剥拓展名的规则要能被每一个渲染点共用、只写一份 ⇒ 挂在这里。
  */
+import { fileUri } from '@kit.CoreFileKit'
+import { Books } from '../../database/entities/Books'
+
 export const DEFAULT_COVER_PREFIX: string = 'default://cover_defaults/'
 
 /**
@@ -139,4 +151,57 @@ export function resolveCoverSource(custom: string): ResourceStr | null {
     return idx > 0 ? $rawfile(COVER_DEFAULT_FILES[idx - 1]) : ''
   }
   return custom
+}
+
+/**
+ * 沙箱**路径** → Image 可显示的沙箱 **URI**。
+ *
+ * 官方依据：FAQ `FAQ/UI框架/组件使用/Image组件如何读入沙箱内的图片/faqs-arkui-154`
+ * 原文「Image组件**不能直接传入应用沙箱路径，需要传入应用沙箱URI**…
+ * 调用 `fileUri.getUriFromPath` 方法将沙箱路径转化为沙箱URI」。
+ *
+ * 已经带协议的串（`file://` / `datashare://` / `http(s)://`）原样返回 ——
+ * 存量 `customCoverUrl` 就可能是这三种，不能重复转。
+ * 非法路径 / 转换失败 ⇒ 返回 `''`（调用方继续回退下一层，绝不抛到渲染帧里）。
+ */
+export function coverPathToUri(path: string): string {
+  if (path === undefined || path === null || path === '') {
+    return ''
+  }
+  if (path.startsWith('file://') || path.startsWith('datashare://')
+    || path.startsWith('http://') || path.startsWith('https://')) {
+    return path
+  }
+  try {
+    // SDK `@ohos.file.fileuri.d.ts`：`function getUriFromPath(path: string): string;`（同步）
+    return fileUri.getUriFromPath(path)
+  } catch (e) {
+    console.error('coverPathToUri failed: ' + (e instanceof Error ? e.message : String(e)))
+    return ''
+  }
+}
+
+/**
+ * **书籍封面**的唯一解析出口（四层优先级）。
+ *
+ * `customCoverUrl > builtinCoverUrl > coverUrl > alt`
+ *
+ * 为什么必须收口成一个函数（2026-10-13）：
+ * 加第 3 层之前，9 个书籍封面渲染点各自手写
+ * `resolveCoverSource(book.customCoverUrl ?? '') ?? book.coverUrl`；
+ * 加层时只要漏一处，就会出现「书架有封面、管理页没有」这类不同步。
+ * 现在调用方一律 `Image(resolveBookCover(book))`，加层只改这一处。
+ *
+ * 返回 `''` 时 `Image` 走 `.alt(...)` 默认封面（故调用方**必须**继续挂 alt）。
+ */
+export function resolveBookCover(book: Books): ResourceStr {
+  const custom: ResourceStr | null = resolveCoverSource(book.customCoverUrl ?? '')
+  if (custom !== null) {
+    return custom
+  }
+  const builtin: string = coverPathToUri(book.builtinCoverUrl ?? '')
+  if (builtin !== '') {
+    return builtin
+  }
+  return book.coverUrl ?? ''
 }

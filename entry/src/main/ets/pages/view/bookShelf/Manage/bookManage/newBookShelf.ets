@@ -17,7 +17,7 @@ import NewAddShelfDialog from '../../components/dialog/NewAddShelfDialog'
 import ImmersiveMaterialUtil from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
-import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
+import { resolveBookCover, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 
 @Component
 export default struct newBookShelf{
@@ -403,7 +403,11 @@ export default struct newBookShelf{
           // 2026-10-06：书单候选书列表的封面也要与书架同源（customCoverUrl > coverUrl > alt）。
           // 与 CoverStyleDialog 的写入端（写 `Books.customCoverUrl`）配对，缺一边就"不同步"。
           // 圆角对齐书架列表项（`BookInfos.ets` 用 coverCorners(60)）。
-          Image(resolveCoverSource(book.customCoverUrl ?? '') ?? book.coverUrl)
+          // 2026-10-13：与书架同源，统一走 `resolveBookCover`（自定义 > 自带 > 书源 > 默认）。
+          // ⚠️ 书单**自有封面**（`worksCoverUrl`）仍只从 `customCoverUrl > coverUrl` 继承
+          // （见下方「确定」按钮处），刻意**不接自带封面** —— 自带封面文件是**随书**的，
+          // 书被删除时会一起清掉，书单若引用了它就会变成死链。
+          Image(resolveBookCover(book))
             .draggable(false)
             .alt($r('app.media.icon_book_default_cover_one'))
             .borderRadius(coverCorners(69))

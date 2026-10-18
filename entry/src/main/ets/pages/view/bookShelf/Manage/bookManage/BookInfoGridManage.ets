@@ -5,7 +5,7 @@ import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
-import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
+import { resolveBookCover, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 
 @Component
 /**
@@ -70,7 +70,7 @@ export default struct BookInfoGridManage{
             // 2026-10-06：同 BookInfoManage —— 封面与书架同源（customCoverUrl > coverUrl > alt），
             // 否则书架换过封面后管理页宫格仍显示默认封面（用户 2026-10-06 反馈）。
             // 圆角对齐书架宫格（`BookInfoGrids.ets` 用 coverCorners(100)）。
-            Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
+            Image(resolveBookCover(this.bookData))
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
               .borderRadius(coverCorners(100))

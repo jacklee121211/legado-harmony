@@ -10,6 +10,7 @@ import { Books } from '../../database/entities/Books';
 import booksUtil from './booksUtils';
 import booksDao from '../../database/dao/BooksDao';
 import { AppUtil, PreferencesUtil } from '@pura/harmony-utils';
+import bookCover from './BookCover';
 
 /**
  * ── T13/D-17b：把**模块顶层**的 `getContext()` + `context.filesDir` 改为惰性求值 ──────────
@@ -65,6 +66,14 @@ export class FileHandler {
       file = fs.openSync(srcUrl, fs.OpenMode.READ_WRITE);
       const dstPath = appCtx().filesDir + '/' + file.name; // file.name:《幽影之冰》.txt
       await fs.copyFile(file.fd, dstPath, 0);
+      // ── 书籍**自带封面**（2026-10-13，方案 C）──────────────────────────────
+      // epub/mobi/azw/azw3 用 ReaderKit 的 `bookParser` 取书封并落成沙箱文件；
+      // txt 没有封面 ⇒ 内部直接跳过。
+      // ⚠️ 必须放在**插入之前**：这样只需一次 insert 就带齐字段，不会出现
+      //    "先入库、再异步补封面"导致的二次写库与刷新竞态。
+      // ⚠️ 提取失败/超时必须静默（`BookCover` 内部吞异常并返回 ''）——
+      //    它只是"这本书没有自带封面"，绝不能把导入本身判成失败。
+      const builtinCover: string = await bookCover.extractBuiltinCover(dstPath, file.name)
       const book: Books = {
         bookName: file.name,
         bookUrl: dstPath,
@@ -83,6 +92,9 @@ export class FileHandler {
         isTop: false,
         isJoin: true,
         isLocalBook: true
+      }
+      if (builtinCover !== '') {
+        book.builtinCoverUrl = builtinCover
       }
       await booksUtil.addBooks(book)
       return true

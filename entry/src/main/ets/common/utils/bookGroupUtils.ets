@@ -146,12 +146,20 @@ class bookGroupUtils{
     }
   }
 
-  //批量更新分组是否显示
+  /**
+   * 批量更新分组是否显示。
+   *
+   * ⚠️ 2026-10-13 必须逐个 `await`（原实现 `Ids.forEach` 裸调 DAO）：
+   * 书架「分组管理」面板改成"点一下自定义分组就隐藏/恢复"之后，点击回调紧跟着
+   * 重查分组列表 + 广播刷新 —— 裸调的话 DAO 里的 UPDATE 可能还没提交，重查读到**旧** `show`
+   * ⇒ 表现为"点了没反应，关掉弹窗再开才对"（同类坑：`updatePartialGroup` 2026-10-01 已修，
+   * 依据 `docs/标准-弹窗与按钮统一规范.md` 第 5 节第 2 条「广播必须发生在 DB 提交之后」）。
+   */
   async updateGroupShow(groupId:number|number[], isShow?:boolean){
-    let Ids:number[] = toolsUtils.numberArrays(groupId)
-    Ids.forEach((item:number)=>{
-      BookGroupsDao.updateGroupShow(item,isShow)
-    })
+    const ids:number[] = toolsUtils.numberArrays(groupId)
+    for (const id of ids) {
+      await BookGroupsDao.updateGroupShow(id,isShow)
+    }
   }
 
   //更新分组的bookIds

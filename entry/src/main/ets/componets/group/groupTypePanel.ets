@@ -4,15 +4,55 @@ import { ThemeItem } from '../../common/model/Theme'
 import bookGroupUtil from '../../common/utils/bookGroupUtils'
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
-import BookManageDialog from '../../pages/view/bookShelf/components/dialog/BookManageDialog'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
-import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverInfoDialog'
-import UiMotion from '../../common/utils/UiMotion'
+import UiMotion, { runJellyClick } from '../../common/utils/UiMotion'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil'
-import hideDialogExample from '../common/hideDialog'
-import { showMessage } from '../common/promptShow'
 import { NightMode } from '../../common/utils/NightMode'
 
+/**
+ * 五个系统基础单元（2026-10-01 用户定义，**位置锁定、顺序恒定**）：
+ *   全部 → 本地 → 书单 → 分组 → 未分组
+ * 2026-10-13 起本常量只用于**判定**（哪些 chip 点击无反馈 / 不画眼睛 / 不许隐藏），
+ * 不改变渲染顺序 —— 顺序仍与父级 `GroupType.sortSystemChips` 一致（五要素在前）。
+ */
+const BASE_UNIT_NAMES: string[] = ['全部', '本地', '书单', '分组', '未分组']
+
+/**
+ * 书架 → 分组行尾部「三横」→ 本面板（`GroupManageDialog` 的内容层）。
+ *
+ * ══ 2026-10-13 用户改版（本次，只动弹窗，**书架那一行原封不动**）══════════════════
+ * 用户原话：
+ *  「点击更多按钮出现的弹窗中所有分组点击不再出现半屏弹窗，默认五要素点击之后不需要有
+ *    任何反馈，所有自定义分组点击后，直接进入隐藏分组，隐藏分组点击后恢复正常分组。
+ *    右上角管理按钮直接取消。」
+ *  「所有自定义分组右上角的X改成symbol的eye，睁眼表示未隐藏，闭眼表示隐藏，也就是和防窥
+ *    的图标一样。」
+ *  「简单来说，这个管理页面，只负责一个功能，就是进行自定义分组的隐藏和释放，因为半屏
+ *    弹窗我们实际上用不上。」
+ *
+ * ⇒ 结构（两栏）**保持原样**：显示分组 / 隐藏分组。删掉的东西与理由：
+ *   ① **半屏弹窗**：点击 chip 不再"进入分组"（`bindSheet` + `BookManageDialog` 整块删除，
+ *      连带 `clickGroup` / `isShowBookFolderInfoDialog` / `bookFolderInfoDialog()`）；
+ *   ② **「管理 / 完成」开关**：用户「右上角管理按钮直接取消」。它同时是拖拽排序的开关，
+ *      而拖拽落点 `changeIndex()` 一直是 TODO（只打日志、不写库）⇒ 一并删除，不留假功能；
+ *   ③ **隐藏/恢复前的二次确认框**（`hideDialogExample`）：用户要「点击后**直接**进入隐藏
+ *      分组」⇒ 点击即生效，中间不再夹"确定隐藏吗"。
+ *
+ * ── X → eye（符号已核实，不是猜的）────────────────────────────────────────
+ * 用户要求「和防窥的图标一样」⇒ 沿用阅读页防窥那一对（`ReaderPage3.ets:1817`）：
+ *   · `sys.symbol.eye`       = 睁眼 = **未隐藏**（在「显示分组」栏）
+ *   · `sys.symbol.eye_slash` = 闭眼 = **已隐藏**（在「隐藏分组」栏）
+ * 符号存在性证据（SDK 真源 `sysResource.js`，非打包快照）：
+ *   `sdk/default/openharmony/ets/build-tools/ets-loader/sysResource.js`
+ *     `eye: 125832271,`
+ *     `eye_slash: 125832272,`
+ *
+ * ── 点击行为矩阵 ────────────────────────────────────────────────────────
+ * | 位置              | 点击                     | 长按            |
+ * | 显示分组·五要素   | **完全无反馈**（不挂 onClick） | 无            |
+ * | 显示分组·自定义   | 隐藏（移入隐藏分组）      | 无              |
+ * | 隐藏分组          | 恢复（移回显示分组）      | 编辑（FolderInfoDialog）|
+ */
 @Component
 export default struct groupTypePanel {
   /**
@@ -27,22 +67,25 @@ export default struct groupTypePanel {
    * · 材质不可用 / 总开关关闭 ⇒ 落回 **白色实底**，绝不会"透明露底"。
    */
   private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
-  @State isShowIcon: boolean = false
+  /** 右上角 ✕ 的 Q弹缩放（规范第 1 节三件套：SymbolGlyph + Haptics + runJellyClick） */
+  @State closeScale: number = 1
+  /** 打开瞬间的快照（父级最近一次查询结果，已按"五要素在前"排过序）——只为让首帧成型 */
   @Prop showGroupList: BookGroups[] = []
-  @State hideList: BookGroups[] = []
   @Prop currentIndex: number = 0
-  // ── 2026-10-11：「标签锁」开关已删（随分类页签合并）─────────────────────────
-  // 它原本读写的 `APP_INDEX_SCROLLABLE` 只有一个作用：`IndexShelf` 那个
-  // 小说/漫画/有声书 Tabs 的 `.scrollable()`（左右滑动切大类）。
-  // 现在大类只剩「书架」一个 ⇒ 开关无论开关都**没有任何效果**，
-  // 留着就是本工程明令清理的「假开关」（参 `MySetPage` 同款清理注释）。
-  // 连带删除：`updateAppData` / `customizeDialogExample` 两个 import、tagLock 弹窗。
-  // 回退：`git checkout` 本文件即可恢复。
-  @Prop clickGroup: BookGroups
+  /**
+   * 面板自持的全量分组（2026-10-13 新增）。
+   * 为什么不能只用 `@Prop showGroupList`：@Prop 是**创建瞬间快照**，点一下隐藏之后它不会变
+   * ⇒ 分组会"点了没反应、要关掉弹窗再开"（规范 4.4 表格同款坑）。
+   */
+  @State allGroups: BookGroups[] = []
+  /** 长按编辑的分组（走 `FolderInfoDialog`） */
+  @State dialogGroupData: BookGroups = new BookGroups()
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级夜间开关：只为触发重绘（取色走下面的 `fgMain/fgSub/chipBg`），理由见 `IndexShelf` 同名字段 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  /** 分组变更广播键（规范第 5 节：改完必须广播，书架分组行 `GroupType` 在听） */
+  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
 
   /**
    * 主文字色 / 次级文字色 / 淡色块底 —— 夜间必须自己翻，否则是**黑字压深底**。
@@ -65,16 +108,139 @@ export default struct groupTypePanel {
   }
 
   aboutToAppear(): void {
-    this.getGroupList()
+    // ① 先用父级快照成型（避免"打开瞬间列表是空的，过一会儿才刷出来"——工程老问题）
+    this.allGroups = this.showGroupList.slice()
+    // ② 再以库为准重查（父级快照可能是几分钟前的）
+    this.reload()
   }
 
-  getGroupList() {
-    BookGroupsDao.searchHide({
-      type: this.currentIndex,
-      show: false
-    }).then((val) => {
-      this.hideList = val
+  /**
+   * 重查本大类的全部分组（含隐藏），写入 `allGroups`。
+   * 排序用 `sortChips()`，与父级 `GroupType.sortSystemChips()` **同一条规则**
+   * （五要素在前、其余按库里的相对顺序），保证本面板与书架那一行的 chip 顺序一致。
+   */
+  private reload(): void {
+    BookGroupsDao.search({
+      type: this.currentIndex
+    }).then((val: BookGroups[]) => {
+      this.allGroups = this.sortChips(val)
     })
+  }
+
+  private sortChips(list: BookGroups[]): BookGroups[] {
+    const systems: BookGroups[] = []
+    for (const name of BASE_UNIT_NAMES) {
+      const hit = list.find((g: BookGroups) => g.isSystem && g.groupName === name)
+      if (hit !== undefined) {
+        systems.push(hit)
+      }
+    }
+    const result: BookGroups[] = []
+    for (const g of systems) {
+      result.push(g)
+    }
+    for (const g of list) {
+      if (!systems.includes(g)) {
+        result.push(g)
+      }
+    }
+    return result
+  }
+
+  /** 是不是五个系统基础单元（`isSystem` + 名字在白名单里）⇒ 点击无反馈 / 不画眼睛 / 不许隐藏 */
+  private isBaseUnit(item: BookGroups): boolean {
+    return item.isSystem && BASE_UNIT_NAMES.includes(item.groupName)
+  }
+
+  /** 「显示分组」栏 = 所有 `show = true` 的分组（五要素 + 自定义），顺序与原实现一致 */
+  private visibleGroups(): BookGroups[] {
+    return this.allGroups.filter((g: BookGroups) => g.show)
+  }
+
+  /** 「隐藏分组」栏 = 所有 `show = false` 的分组 */
+  private hiddenGroups(): BookGroups[] {
+    return this.allGroups.filter((g: BookGroups) => !g.show)
+  }
+
+  /**
+   * 点击分组 = 隐藏 ⇄ 恢复（本面板唯一功能）。
+   *
+   * 顺序很关键（规范第 5 节第 2 条「广播必须发生在 DB 提交之后」）：
+   *   ① 面板内**先**乐观更新 ⇒ 手指抬起就能看到它跳到另一栏（不等异步写库）；
+   *   ② `await` 落库 ⇒ 然后才重查 + 广播。
+   *   反例（本次一并修掉）：`bookGroupUtil.updateGroupShow` 原实现是 `forEach` 裸调 DAO
+   *   （不 await），调用方立刻重查会读到**旧** `show` ⇒ "点了没反应，重开弹窗才对"。
+   */
+  private toggleShow(item: BookGroups): void {
+    const id: number | undefined = item.groupId
+    if (id === undefined) {
+      return
+    }
+    Haptics.tap()
+    const next: boolean = !item.show
+    // ① 乐观更新：改对象 + **换数组引用**（只改对象属性不会触发本次 build）
+    item.show = next
+    this.allGroups = this.allGroups.slice()
+    // ② 落库 → 重查 → 广播
+    bookGroupUtil.updateGroupShow(id, next).then(() => {
+      this.reload()
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    })
+  }
+
+  /** 长按隐藏分组 → 编辑（改名 / 删除；隐藏中的分组**只有**这里能编辑） */
+  private editGroup(item: BookGroups): void {
+    Haptics.tap()
+    this.dialogGroupData = item
+    this.groupInfoDialog?.open()
+  }
+
+  groupInfoDialog: CustomDialogController | null = new CustomDialogController({
+    builder: FolderInfoDialog({
+      itemData: this.dialogGroupData,
+      // 真开真关（2026-10-01 用户方案）：子关闭→重查→open，全新实例=全新快照
+      reopen: (): void => { this.reopenGroupInfoDialog() },
+      // ⚠️ 必须用箭头包一层：旧写法 `cancel: this.exitDialog` 把方法**脱绑**传出去，
+      //   回调里 `this` 不再指向本组件（工程内同类坑见规范 4.4 表格）
+      cancel: (): void => {
+        this.exitDialog()
+      }
+    }),
+    cancel: (): void => {
+      this.exitDialog()
+    },
+    autoCancel: true,
+    // 2026-09-25 用户反馈：长按编辑弹窗与全局统一 —— 居中 + 四圆角 + 标准宽
+    // （原 Bottom/100%/customStyle:true 是贴底老款式）。customStyle:false 时弹窗层
+    // 才有背景，systemMaterial 才有处附着（工程 2026-09-22 真机结论）。
+    width: '80%',
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 20,
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+
+  })
+
+  //退出弹框
+  exitDialog(): void {
+    this.groupInfoDialog?.close()
+    // 改名 / 删除 / 改隐藏态都会影响两栏归属 ⇒ 关子弹窗后重查
+    this.dialogGroupData = new BookGroups()
+    this.reload()
+    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+  }
+
+  /** 真开真关（2026-10-01 用户方案）：重查该分组 → 更新 dialogGroupData → open。 */
+  private async reopenGroupInfoDialog(): Promise<void> {
+    const id = this.dialogGroupData.groupId
+    if (id !== undefined) {
+      const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      const fresh = groups.find((g: BookGroups) => g.groupId === id)
+      if (fresh !== undefined) {
+        this.dialogGroupData = fresh
+      }
+    }
+    this.groupInfoDialog?.open()
   }
 
   build() {
@@ -87,28 +253,26 @@ export default struct groupTypePanel {
       }) {
         Row({ space: 12 }) {
           Text('显示分组').fontSize(16).fontWeight(500).lineHeight(24).fontColor(this.fgMain())
-          Text('点击进入').fontSize(12).fontWeight(400).lineHeight(20).fontColor(this.fgSub())
+          // 2026-10-13：原「点击进入」—— 点击语义已改为"隐藏"，提示同步改。
+          // 五要素点击仍然无任何反馈（既不隐藏也不跳转），见两个 ForEach 的 onClick 守卫。
+          Text('点击隐藏').fontSize(12).fontWeight(400).lineHeight(20).fontColor(this.fgSub())
         }.alignItems(VerticalAlign.Bottom)
 
         Row({ space: 12 }) {
-          Text(this.isShowIcon ? '完成' : '管理')
-            .fontSize(12)
-            .fontWeight(400)
-            .lineHeight(20)
-            .fontColor(this.theme.mainColor)
-            .onClick(() => {
-              Haptics.tap();
-              this.isShowIcon = !this.isShowIcon
-            })
+          // ── 2026-10-13：「管理 / 完成」文字开关已删（用户：「右上角管理按钮直接取消」）──
           // v3.20：关闭 X 换 SymbolGlyph + 主题色——原 `app.media.close` 位图为固定深色，
           // 深色模式下不可观测（用户反馈）。`xmark` 经 SDK 符号表核实存在。
           SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(20)
             .fontColor([this.theme.mainColor])
+            .scale({ x: this.closeScale, y: this.closeScale })
+            .clickEffect(UiMotion.CLICK)
             .onClick(() => {
               Haptics.tap();
+              runJellyClick((v: number) => {
+                this.closeScale = v
+              })
               this.onClose()
-              this.isShowIcon = false
             })
         }
       }
@@ -117,54 +281,39 @@ export default struct groupTypePanel {
         direction: FlexDirection.Row, wrap: FlexWrap.Wrap,
         justifyContent: FlexAlign.Start
       }) {
-        ForEach(this.showGroupList, (item: BookGroups, index: number) => {
-          if (item.show) {
-            Row() {
-              if (index === 0) {
-                this.GroupTypeColor(item.groupName)
-              } else {
-                this.GroupType(item.groupName)
-              }
-              if (this.isShowIcon) {
-                Image(!item.isSystem ? $r('app.media.clear') : $r('app.media.sort'))
-                  .width(12)
-                  .height(12)
-                  .offset({ x: -20, y: -20 })
-                  .onClick(() => {
-                    Haptics.tap();
-                    if (!item.isSystem && item.groupId) {
-                      this.isHide = true
-                      this.checkListNumber = item.groupId
-                      this.clickHideDialog?.open()
-                    }
-                  })
-              }
+        ForEach(this.visibleGroups(), (item: BookGroups, index: number) => {
+          Row() {
+            if (index === 0) {
+              this.GroupTypeColor(item.groupName)
+            } else {
+              this.GroupType(item.groupName)
             }
-            .width('25%')
-            .onTouch((event: TouchEvent) => {
-              if (event.type === TouchType.Down) {
-                this.dragIndex = index // 获取当前拖拽子组件的索引
-                // T10-3（Round 29）：官方规则 `@performance/high-frequency-log-check`
-                // 「不建议在高频函数中使用 Hilog。高频函数包括：onTouch、onItemDragMove、onDragMove、
-                //   onMouse、onVisibleAreaChange、onAreaChange、onScroll（已废弃）、onWillScroll」。
-                // 原 `console.info('onTouch' + this.dragIndex)` 为调试日志（无字段前缀、无诊断用途），已删除。
-              }
-            })
-            .draggable(this.isShowIcon)
-            .onDragStart(() => {
-              console.log('onDragStart')
-            })
-            .onDrop((event: DragEvent, extraParams: string) => {
-              console.log('onDrop')
-              this.changeIndex(this.dragIndex, index, 0)
-            })
-            .onClick(() => {
-              Haptics.tap();
-              this.clickGroup = item
-              this.isShowBookFolderInfoDialog = true
-            })
+            if (!this.isBaseUnit(item)) {
+              // 2026-10-13：X（`app.media.clear`）→ `sys.symbol.eye`（睁眼＝未隐藏）。
+              // 位置沿用原来的 `offset({ x: -20, y: -20 })`（**不改布局/比例**，只换图标），
+              // 并且自己带 onClick —— 与 chip 本体同一个动作（同一个 hit 只派发一次，
+              // 不会"点一次翻两次"）。
+              SymbolGlyph($r('sys.symbol.eye'))
+                .fontSize(12)
+                .fontColor([this.theme.mainColor])
+                .offset({ x: -20, y: -20 })
+                .onClick(() => {
+                  this.toggleShow(item)
+                })
+            }
           }
-        }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+          .width('25%')
+          .onClick(() => {
+            // 用户：「默认五要素点击之后不需要有任何反馈」⇒ 五要素**连 onClick 效果都没有**
+            // （不是"点了弹提示"，是完全不动）。
+            if (!this.isBaseUnit(item)) {
+              this.toggleShow(item)
+            }
+          })
+        }, (item: BookGroups): string => item.groupId !== undefined
+          // 键值并入显示字段（规范 5.3）：改名 / 隐藏态变化都必须换键，否则 ForEach 复用旧组件。
+          ? 'g' + item.groupId + item.groupName + (item.show ? 'S' : 'H')
+          : item.groupName)
       }
 
       Flex({
@@ -173,73 +322,40 @@ export default struct groupTypePanel {
       }) {
         Row({ space: 12 }) {
           Text('隐藏分组').fontSize(16).fontWeight(500).lineHeight(24).fontColor(this.fgMain())
-          Text('点击进入,长按编辑').fontSize(12).fontWeight(400).lineHeight(20).fontColor(this.fgSub())
+          Text('点击恢复，长按编辑').fontSize(12).fontWeight(400).lineHeight(20).fontColor(this.fgSub())
         }.alignItems(VerticalAlign.Bottom)
-        // 2026-10-11：「标签锁」开关（含 ? 帮助图标 + `customizeDialogExample`）整行已删，
-        //   原因见类字段区的注释（页签只剩「书架」一个 ⇒ 该开关恒为空操作）。
       }
 
-      if (this.hideList.length > 0) {
+      if (this.hiddenGroups().length > 0) {
         Flex({
           direction: FlexDirection.Row, wrap: FlexWrap.Wrap, alignContent: FlexAlign.Center
         }) {
-          ForEach(this.hideList, (item: BookGroups, index: number) => {
+          ForEach(this.hiddenGroups(), (item: BookGroups) => {
             Row() {
               this.GroupType(item.groupName)
-              if (this.isShowIcon) {
-                Image($r('app.media.add_new_fill')).width(12).height(12).offset({ x: -20, y: -20 })
-                  .onClick(() => {
-                    Haptics.tap();
-                    if (item.groupId) {
-                      this.isHide = false
-                      this.checkListNumber = item.groupId
-                    }
-                    this.clickHideDialog?.open()
-                  })
-              }
+              // 2026-10-13：`app.media.add_new_fill` → `sys.symbol.eye_slash`（闭眼＝已隐藏），
+              // 位置沿用原 `offset({ x: -20, y: -20 })`。
+              SymbolGlyph($r('sys.symbol.eye_slash'))
+                .fontSize(12)
+                .fontColor([this.theme.mainColor])
+                .offset({ x: -20, y: -20 })
+                .onClick(() => {
+                  this.toggleShow(item)
+                })
             }
-            .onTouch((event: TouchEvent) => {
-              if (event.type === TouchType.Down) {
-                this.dragIndex = index // 获取当前拖拽子组件的索引
-                // T10-3（Round 29）：官方规则 `@performance/high-frequency-log-check`
-                // 「不建议在高频函数中使用 Hilog。高频函数包括：onTouch、onItemDragMove、onDragMove、
-                //   onMouse、onVisibleAreaChange、onAreaChange、onScroll（已废弃）、onWillScroll」。
-                // 原 `console.info('onTouch' + this.dragIndex)` 为调试日志（无字段前缀、无诊断用途），已删除。
-              }
-            })
-            .draggable(this.isShowIcon)
-            .onDragStart(() => {
-              console.log('onDragStart')
-            })
-            .onDrop((event: DragEvent, extraParams: string) => {
-              console.log('onDrop')
-              this.changeIndex(this.dragIndex, index, 1)
-            })
             .onClick(() => {
-              Haptics.tap();
-              this.clickGroup = item
-              this.isShowBookFolderInfoDialog = true
+              // 用户：「隐藏分组点击后恢复正常分组」⇒ 点击即恢复（不再有确认框、不再开半屏）
+              this.toggleShow(item)
             })
             .gesture(
               LongPressGesture({ repeat: false, duration: 500 })
-                .onAction((event: GestureEvent) => {
-                  // 五个系统单元锁定（2026-10-01 用户定义）：全部/本地/分组/未分组无长按
-                  // 弹窗；书单长按直达封面样式；自建分组仍走原弹窗。
-                  if (item.isSystem) {
-                    if (item.groupName === '书单') {
-                      this.openWorksCoverDialog(item)
-                    } else {
-                      showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
-                    }
-                    return
-                  }
-                  this.dialogGroupData = item
-                  // this.group = item
-                  this.changeNumber = 1
-                  this.groupInfoDialog?.open()
+                .onAction(() => {
+                  this.editGroup(item)
                 }))
             .width('25%')
-          }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
+          }, (item: BookGroups): string => item.groupId !== undefined
+            ? 'h' + item.groupId + item.groupName + (item.show ? 'S' : 'H')
+            : 'h' + item.groupName)
         }
       } else {
         Flex({
@@ -253,17 +369,6 @@ export default struct groupTypePanel {
         .padding({ top: 6, bottom: 6 })
 
       }
-      Flex()
-        .bindSheet($$this.isShowBookFolderInfoDialog, this.bookFolderInfoDialog(), {
-          detents: [SheetSize.MEDIUM, SheetSize.LARGE, 200],
-          showClose: false,
-          dragBar: true,
-          maskColor: 'rgba(0,0,0,0.6)',
-          onDisappear: () => {
-            console.log('隐藏')
-          }
-        })
-
     }
     .borderRadius({ bottomLeft: 20, bottomRight: 20 })
     .padding({
@@ -284,18 +389,7 @@ export default struct groupTypePanel {
     .attributeModifier(this.surface)
   }
 
-  // 2026-10-11：`tagLockContent` / `tagLockDialog` / `onAccept()` 三个成员已随
-  //   「标签锁」开关一并删除（它唯一的作用是切换已不存在的三个分类大类）。
-  @State dragIndex: number = 0
-
-  changeIndex(index1: number, index2: number, type: number = 2) { // 交换数组位置
-    if (!this.isShowIcon) {
-      showMessage('请在管理状态下拖到改变顺序')
-      return
-    }
-    console.log('changeIndex' + index1 + ',' + index2)
-    //TODO 更新排序顺序到数据库中sort
-  }
+  // ── 以下两个 chip 绘制与 2026-10-13 之前**完全一致**（只换了右上角图标）──────
 
   @Builder
   GroupTypeColor(title: string) {
@@ -353,125 +447,5 @@ export default struct groupTypePanel {
         bottom: 6
       })
     }
-  }
-
-  @State changeNumber: number = 0
-  @State dialogGroupData: BookGroups = new BookGroups()
-  groupInfoDialog: CustomDialogController | null = new CustomDialogController({
-    builder: FolderInfoDialog({
-      itemData: this.dialogGroupData,
-      // 真开真关（2026-10-01 用户方案）：子关闭→重查该分组→open，全新实例=全新快照
-      reopen: (): void => { this.reopenGroupInfoDialog() },
-      cancel: () => {
-        this.exitDialog()
-      }
-    }),
-    cancel: this.exitDialog,
-    autoCancel: true,
-    // 2026-09-25 用户反馈：长按编辑弹窗与全局统一 —— 居中 + 四圆角 + 标准宽
-    // （原 Bottom/100%/customStyle:true 是贴底老款式）。customStyle:false 时弹窗层
-    // 才有背景，systemMaterial 才有处附着（工程 2026-09-22 真机结论）。
-    width: '80%',
-    alignment: DialogAlignment.Center,
-    customStyle: false,
-    cornerRadius: 20,
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-
-  })
-
-  //退出弹框
-  exitDialog() {
-    this.changeNumber = 0
-    this.getGroupList()
-    this.groupInfoDialog?.close()
-  }
-
-  /** 真开真关（2026-10-01 用户方案）：重查该分组 → 更新 dialogGroupData → open。 */
-  private async reopenGroupInfoDialog(): Promise<void> {
-    const id = this.dialogGroupData.groupId
-    if (id !== undefined) {
-      const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
-      const fresh = groups.find((g: BookGroups) => g.groupId === id)
-      if (fresh !== undefined) {
-        this.dialogGroupData = fresh
-      }
-    }
-    this.groupInfoDialog?.open()
-  }
-
-  /** 「书单」（系统单元）长按 → 直达封面样式弹窗（与 GroupType 同款，2026-10-01） */
-  private worksCoverDialog: CustomDialogController | null = null
-  private openWorksCoverDialog(item: BookGroups): void {
-    this.worksCoverDialog = new CustomDialogController({
-      builder: coverInfoDialog({
-        itemData: item,
-        // ⚠️ 2026-10-12：**必须真的 close**。旧写法只 `= null` 把引用丢掉，
-        //   而 coverInfoDialog 内部自己的 `controller.close()` 在 @CustomDialog
-        //   子组件里不可靠 ⇒ 弹窗留在屏幕上无法关闭（本项目真机两次验证，
-        //   见 `ReaderSaveSchemeDialog.ets:205-208`）。
-        cancel: (): void => {
-          this.worksCoverDialog?.close()
-          this.worksCoverDialog = null
-        }
-      }),
-      autoCancel: true,
-      width: '92%',
-      alignment: DialogAlignment.Center,
-      cornerRadius: 20,
-      customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      // 遮罩/返回键：同一条收尾路径（2026-10-12）
-      cancel: (): void => {
-        this.worksCoverDialog?.close()
-        this.worksCoverDialog = null
-      }
-    })
-    this.worksCoverDialog?.open()
-  }
-
-  @State isShowBookFolderInfoDialog: boolean = false
-
-  @Builder
-  bookFolderInfoDialog() {
-    Column() {
-      BookManageDialog({
-        title: this.clickGroup.groupName,
-        currentIndex: this.currentIndex,
-        bookTypeNumber: this.clickGroup.groupId,
-      })
-    }
-  }
-
-  //需要显示的Id
-  @State checkListNumber: number = 0
-  @State isHide: boolean = false
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
-  //是否隐藏分组弹窗
-  clickHideDialog: CustomDialogController | null = new CustomDialogController({
-    builder: hideDialogExample({
-      confirm: () => {
-        this.clickHideAccept()
-      },
-      isHide: this.isHide
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-  })
-
-  //隐藏操作
-  clickHideAccept() {
-    bookGroupUtil.updateGroupShow(this.checkListNumber, !this.isHide)
-    setTimeout(() => {
-      this.getGroupList()
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      showMessage('显示成功')
-    }, 500)
-    this.checkListNumber = 0
-    this.isHide = false
   }
 }

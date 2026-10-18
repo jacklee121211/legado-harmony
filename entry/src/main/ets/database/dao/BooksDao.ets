@@ -790,6 +790,39 @@ class BooksDao {
   }
 
   /**
+   * 统计**除给定 id 之外**还有多少书引用同一张自定义封面（删书清理封面文件用）。
+   *
+   * 为什么需要引用计数（2026-10-13）：批量封面（`coverInfoDialog.applyGroupCover`）
+   * 会把**同一个** `customCoverUrl` 写给范围内每一本书 —— 删掉其中一本时若直接
+   * `unlink` 那个文件，其余书的封面会全部变成死链。只有计数为 0 才能真删。
+   *
+   * 自带封面（`builtinCoverUrl`）不需要计数：文件名由**该书**的文件名派生，一书一份。
+   *
+   * 依据（SDK `@ohos.data.relationalStore.d.ts`）：
+   *   `notIn(field: string, value: Array<ValueType>): RdbPredicates;`（@since 9）
+   */
+  async countCustomCoverRefsExcluding(uri: string, excludeIds: number[]): Promise<number> {
+    if (uri === undefined || uri === null || uri === '' || excludeIds.length === 0) {
+      return 0;
+    }
+    try {
+      const validIds: number[] = excludeIds.filter((id: number): boolean => typeof id === 'number');
+      if (validIds.length === 0) {
+        return 0;
+      }
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const predicates = DbUtil.getPredicates(this.TABLE_NAME);
+      predicates.equalTo('customCoverUrl', uri);
+      predicates.notIn('id', validIds);
+      return await DbUtil.queryForCount(predicates, column);
+    } catch (e) {
+      // 查询失败时**保守返回 1**（当作"还有人用"）⇒ 宁可不删文件，也不删出死链
+      console.log('countCustomCoverRefsExcluding, Error, ', JSON.stringify(e));
+      return 1;
+    }
+  }
+
+  /**
    * 一次性迁移：把「漫画 / 有声书」两个分类页签的数据并回「书架」。
    *
    * 背景（2026-10-11 用户裁定）：书架顶部三个页签（小说/漫画/有声书）在实现上只是

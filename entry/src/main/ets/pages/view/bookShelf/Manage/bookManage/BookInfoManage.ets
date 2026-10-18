@@ -4,7 +4,7 @@ import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
-import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
+import { resolveBookCover, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 
 @Component
 
@@ -55,7 +55,9 @@ export default struct BookInfoManage{
             // ——"书架的封面改变，但是在管理中还是默认的封面"（用户 2026-10-06 反馈）。
             // 圆角与书架列表项同曲率（`BookInfos.ets` 用 coverCorners(60)），否则自定义
             // 图片封面在这里是直角、在书架是书脊式圆角。
-            Image(resolveCoverSource(this.bookData.customCoverUrl ?? '') ?? this.bookData.coverUrl)
+            // 2026-10-13：统一走 `resolveBookCover`（四层：自定义 > 自带 > 书源 > 默认），
+            // 自带封面（导入时从 epub 等提取）在管理页同样生效。
+            Image(resolveBookCover(this.bookData))
               .draggable(false)
               .alt($r('app.media.icon_book_default_cover_one'))
               .borderRadius(coverCorners(60))

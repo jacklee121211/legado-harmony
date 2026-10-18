@@ -3,6 +3,7 @@ import { Books, bookShelfImport } from '../../database/entities/Books'
 import bookGroupUtils from './bookGroupUtils'
 import toolsUtils from './ToolsUtils'
 import bookRename from './BookRename'
+import bookCover from './BookCover'
 
 class booksUtils{
   // ⚠️ 必须**逐个 await**（2026-09-29，审核问题②）：
@@ -96,9 +97,11 @@ class booksUtils{
     // 书签 / 浏览历史）都挂在 `BookRename` 的清单里。必须在**删行之前**拿名字，
     // 否则同名重导会继承旧进度与旧设置。
     let names: string[] = []
+    // 2026-10-13：删书同时清理**封面文件**，所以要把整行留下来（见本方法末尾）
+    let removed: Books[] = []
     try {
-      const rows: Books[] = await BooksDao.getBookByIds(bookId)
-      names = rows.map((b: Books): string => b.bookName ?? '')
+      removed = await BooksDao.getBookByIds(bookId)
+      names = removed.map((b: Books): string => b.bookName ?? '')
         .filter((n: string): boolean => n !== '')
     } catch (e) {
       console.log('delBooksById: read names failed, ', JSON.stringify(e))
@@ -109,10 +112,30 @@ class booksUtils{
       bookGroupUtils.updateMoveBookIdsByGroupId(BookGroupId)
     }
 
-    BooksDao.deleteBook(bookId)
+    // ⚠️ 必须 await：紧接着要用"这些 id 已不在表里"作为封面引用计数的前提
+    await BooksDao.deleteBook(bookId)
     // 删行之后清理派生数据（失败只记日志，不影响删除本身 —— 本方法无返回值语义）
     for (const n of names) {
       await bookRename.purge(n)
+    }
+    // ── 封面文件清理（2026-10-13）─────────────────────────────────────────
+    // · 自带封面：文件名由**该书**的文件名派生（一书一份）⇒ 直接删；
+    // · 自定义封面：批量封面会把**同一个** URI 写给范围内多本书 ⇒ 必须确认没有
+    //   别的书还在引用，否则会删出死链（其余书的封面集体变默认封面）。
+    // 两步都只动 `<filesDir>/covers/` 下的文件（`BookCover.removeCoverFile` 内有白名单）。
+    for (const b of removed) {
+      try {
+        bookCover.removeCoverFile(b.builtinCoverUrl ?? '')
+        const custom: string = b.customCoverUrl ?? ''
+        if (custom !== '') {
+          const left: number = await BooksDao.countCustomCoverRefsExcluding(custom, bookId)
+          if (left === 0) {
+            bookCover.removeCoverFile(custom)
+          }
+        }
+      } catch (e) {
+        console.log('delBooksById: remove cover file failed, ', JSON.stringify(e))
+      }
     }
   }
 

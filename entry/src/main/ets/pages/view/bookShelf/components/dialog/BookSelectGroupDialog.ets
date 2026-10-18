@@ -36,6 +36,21 @@ export default struct BookSelectGroupDialog{
   onClose: () => void = () => {
 
   }
+  /**
+   * **新建分组成功后**通知调用方（2026-10-13 新增，修「新建分组后移动分组弹窗里看不到新组」）。
+   *
+   * ── 为什么必须交给调用方重开 ─────────────────────────────────────────────
+   * 点「+」时本弹窗已经 `this.controller?.close()`（见 `title()` builder 的 v3.21 出规则），
+   * 而旧实现是在 `onAccept()` 里 `setTimeout(500) → this.getGroupList()` 自刷新 ——
+   * 那 500ms 之后组件实例**已经被销毁**，`this.groupList = ...` 写在一个死实例上，
+   * 界面当然不会变。更糟的是重开时 `aboutToAppear` 又会用
+   * `presetGroups`（**创建瞬间的旧快照**，里面没有新组）把列表覆盖回去。
+   *
+   * ⇒ 现在：由**持有 controller 的调用方** `close → 重新预取分组 → new controller → open`，
+   *    与工程已确立的"真开真关"完全一致（`BookInfoDialogs.openMoveGroupDialog` 等）。
+   * 未传（null）时保持旧行为（自刷新 + 自己 open），不影响其它宿主。
+   */
+  onGroupCreated: (() => void) | null = null
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   /** 书架书列表重查信号（2026-10-12）：自动解散分组时同时广播，让书的 bookGroup 变化落到界面 */
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
@@ -290,7 +305,7 @@ export default struct BookSelectGroupDialog{
     this.controller?.open()
   }
   //确定
-  onAccept(){
+  async onAccept(): Promise<void> {
     // ⚠️ 子弹窗（addBookTypeDialog）确认时**先自己 close 再回调**本方法 ⇒ 本方法无论走
     // 哪个分支，末尾都必须把父弹窗（移动分组）open 回来，否则提前 return 的分支
     // （空名/重名）会让屏幕上两层弹窗全消失。
@@ -315,10 +330,19 @@ export default struct BookSelectGroupDialog{
       let bookGroups = new BookGroups()
       bookGroups.groupName = newName
       bookGroups.groupType = this.currentIndex
-      BookGroupsDao.insert(bookGroups)
+      // ⚠️ 必须 await（2026-10-13）：重开弹窗时调用方会**立刻**重查分组列表，
+      //    不等待提交就会漏掉刚建的这一组（前端表现仍是"看不到新分组"）
+      await BookGroupsDao.insert(bookGroups)
       showMessage(`已添加${newName}分组`)
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      if (this.onGroupCreated !== null) {
+        // 真开真关：本弹窗已被关闭 ⇒ 交给调用方重开（它会重新预取分组）。
+        // 绝不能再在这里 `getGroupList()`：实例已销毁，写了也不会显示（见字段注释）。
+        this.onGroupCreated()
+        return
+      }
+      // 兜底（未传 onGroupCreated 的宿主）：保持旧的自刷新行为
       setTimeout(()=>{
-        this.BOOK_IS_BOOK_GROUPS_REFRESHING++
         this.getGroupList()
       },500)
     }

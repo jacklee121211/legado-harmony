@@ -79,6 +79,15 @@ export default struct coverInfoImageShow {
     }
   }
 
+  /**
+   * @deprecated 2026-10-18 起**不再被使用**：分组封面弹窗的「自定义」预览已内联到
+   * `coverInfoDialog.customColumn()`。原因（真机日志 `docs/日志.md`）：
+   *   `E AceStateMgmt: View coverInfoImageShow is already in process of destruction,
+   *    will not execute observeComponentCreation2`
+   * —— 选图返回的瞬间本组件正在销毁，`@Prop imageString` 的新值被丢弃，
+   * 预览位停在旧值上并露出深色衬底（用户看到的"灰色蒙版"）。
+   * 保留此分支只为兼容（当前仅 `coverCount === 1` 的「默认样式」列在用本组件）。
+   */
   @Builder coverImageTwo(){
     Column(){
       Stack(){
@@ -93,26 +102,36 @@ export default struct coverInfoImageShow {
               .width(CommonConstants.NOVEL_IMG_WIDTH)
               .height(CommonConstants.NOVEL_IMG_HEIGHT)
           } else {
-            // 2026-10-01（用户）：未选图时的灰黑蒙版改成「点击选择」浅色虚线占位，
-            // 明示这是可点击的选图入口（原深色块像一张没加载出来的封面）。
-            Column(){
+            // ── 未选图占位（2026-10-13 重做）────────────────────────────────
+            // 用户原话（真机截图）：「自定义预览图默认很难看，像是一个**灰色的矩形
+            // 然后套着一个框**，然后内部还是**黑色的字体**」。
+            // 旧实现三件套正是这三样：外层 `backgroundColor(color_black_65)`（黑 65% =
+            // 深灰块）+ 虚线框（黑 20%，在深底上几乎不可见）+ `Text('点击选择')`
+            // 用 `color_black_45`（黑字压深底 ⇒ 读不出来）。
+            // 现在：**浅色底 + 可见虚线框 + picture 图标 + 可读提示字**，
+            // 与单本封面弹窗（`CoverStyleDialog`）的选图入口视觉语言对齐。
+            Column({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.picture'))
+                .fontSize(20)
+                .fontColor([$r('app.string.color_black_45')])
               Text('点击选择')
                 .fontColor($r('app.string.color_black_45'))
                 .fontWeight(400)
                 .fontSize(12)
-                .lineHeight(18)
+                .lineHeight(16)
             }
-            .padding({top:19,bottom:19,left:17,right:17})
-            .border({
-              width: 1,
-              color: 'rgba(0,0,0,0.20)',
-              style: BorderStyle.Dashed,
-              radius: 5
-            })
+            .justifyContent(FlexAlign.Center)
+            .width(CommonConstants.NOVEL_IMG_WIDTH)
+            .height(CommonConstants.NOVEL_IMG_HEIGHT)
+            .borderRadius(5)
+            .backgroundColor('rgba(0, 0, 0, 0.03)')
+            .border({ width: 1, color: 'rgba(0, 0, 0, 0.18)', style: BorderStyle.Dashed, radius: 5 })
           }
         }
         .borderRadius(5)
-        .backgroundColor($r('app.string.color_black_65'))
+        // 2026-10-13：深色衬底只在**有图**时当"画框"用；空态必须透明，
+        // 否则又会退化成用户看到的"灰块 + 框 + 黑字"。
+        .backgroundColor(this.imageString ? $r('app.string.color_black_65') : Color.Transparent)
         .align(Alignment.Start)
         .width(CommonConstants.NOVEL_IMG_WIDTH).height(CommonConstants.NOVEL_IMG_HEIGHT)
         .zIndex(2)

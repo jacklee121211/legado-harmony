@@ -12,7 +12,7 @@ import clickUtil from '../../../../common/utils/ClickUtils'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
-import { resolveCoverSource, coverCorners, stripBookExt } from '../../../../common/utils/CoverSource'
+import { resolveBookCover, coverCorners, stripBookExt } from '../../../../common/utils/CoverSource'
 
 @Component
 /**
@@ -184,7 +184,8 @@ export default struct BookInfoGrids{
           // 2026-10-04：接入 resolveCoverSource（customCoverUrl > coverUrl，见 CoverSource.ets
           // 头注释契约）—— 此前宫格只读 coverUrl，自定义封面在宫格形态**根本不显示**；
           // 同时补上与内置封面 SVG 同曲率的书脊式圆角（90 宽画布左 4 / 右 8 等比）。
-          Image(resolveCoverSource(this.book.customCoverUrl ?? '') ?? this.book.coverUrl)
+          // 2026-10-13：书籍封面统一走 `resolveBookCover`（四层：自定义 > 自带 > 书源 > 默认）
+          Image(resolveBookCover(this.book))
             .draggable(false)
             .alt($r('app.media.icon_book_default_cover_one'))
             .borderRadius(coverCorners(100))
@@ -324,6 +325,7 @@ export default struct BookInfoGrids{
       const fresh = await booksDao.getBookByIds([id])
       if (fresh.length > 0) {
         this.book.customCoverUrl = fresh[0].customCoverUrl
+        this.book.builtinCoverUrl = fresh[0].builtinCoverUrl
         this.book.coverUrl = fresh[0].coverUrl
         this.book.bookName = fresh[0].bookName
         this.book.author = fresh[0].author

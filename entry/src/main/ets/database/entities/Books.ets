@@ -30,6 +30,25 @@ export class Books {
   coverUrl?: string
   //自定义封面Url
   customCoverUrl?: string
+  /**
+   * 书籍**自带封面**（导入时从书籍文件内提取，例如 epub 的 `bookCoverImage`）。
+   *
+   * ── 为什么是第三个字段（2026-10-13，方案 C）──────────────────────────────
+   * 渲染优先级：`customCoverUrl > builtinCoverUrl > coverUrl > alt`。
+   * 它是**只读事实**：只在导入时写一次，用户不可编辑；「重置」只清
+   * `customCoverUrl`，本字段不动 ⇒ 重置就是"露出自带封面"。
+   * 若把自带封面塞进 `customCoverUrl`（方案 B），重置就再也找不到原始值了。
+   *
+   * ── 为什么存**沙箱绝对路径**而不是 URI ──────────────────────────────────
+   * ① 渲染端统一经 `CoverSource.resolveBookCover()` → `fileUri.getUriFromPath()`
+   *    转沙箱 URI（官方 FAQ `faqs-arkui-154`：Image 不能直接吃沙箱路径）；
+   * ② 删书清理时可以直接 `fs.unlinkSync(path)`，不必反解带 bundleName 的 URI。
+   *
+   * ⚠️ `BooksDao.getPartialColumn()` 是白名单，**不含本列** ⇒ 任何
+   * `partialUpdate` 路径都不会写它；本列只经 `insert`/`update`（全列）写入，
+   * 与导入路径一致。将来若要更新它，务必用 `BooksDao.update`，不要用 `partialUpdate`。
+   */
+  builtinCoverUrl?: string
   //简介内容(书源获取)
   intro?: string
   //简介内容(用户修改)

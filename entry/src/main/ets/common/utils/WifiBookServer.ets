@@ -15,6 +15,7 @@ import syncConfig, { SyncPos, SYNC_V2_ENABLED, normEx } from './SyncConfig'
 import webCredential, { DevToken, DEVICE_COOKIE, PAIR_QUERY_KEY } from './WebCredential'
 import uploadSessions, { UploadInitResult, UploadSessionMeta, MAX_FILE_BYTES } from './UploadSession'
 import CommonConstants from '../../common/constants/CommonConstants'
+import bookCover from './BookCover'
 /**
  * wifi传书 / 电脑阅读 · 内置 HTTP 服务（2026-09-30 回填，端口 1122）。
  *
@@ -2494,6 +2495,12 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 isJoin: true,
                 isLocalBook: true
             };
+            // 自带封面（2026-10-13，方案 C）：epub 从文件内提取（txt 天然没有）。
+            // 与 `FileHandler.CopyFile` 同一条能力；失败/超时只返回 ''，不影响入库。
+            const builtinCover: string = await bookCover.extractBuiltinCover(dst, safeName);
+            if (builtinCover !== '') {
+                book.builtinCoverUrl = builtinCover;
+            }
             await booksUtil.addBooks(book);
             // 传书入库后**广播书架刷新**（2026-10-06 用户反馈"传完要手下滑才刷新"）：
             // `BOOK_IS_BOOK_REFRESHING` 是书架全组件的公共刷新信号（BookContent
