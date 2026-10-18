@@ -343,8 +343,23 @@ export default struct groupTypeComponent {
         //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
         //   容器高 = 15号字(18) + 8×2 = **34vp**（与左/右胶囊**完全等高**）。
         //   ⚠️ 右 padding 仍为 0：三横列靠右贴边缘（End 对齐），不受 padding 影响。
-        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.15)' : 'rgba(255, 255, 255, 0.15)')
-        .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
+        // ── 2026-10-13（用户反馈）这一行胶囊比上一行「最近阅读」更白更"实"、不透 ──────────
+        // 根因**不是**配方不同：两处原本逐字一样（`0.15` + `COMPONENT_REGULAR`）。实测（亮色真机）：
+        //   · 本行 y≈400 背后渐变 `#FFC49E`，上一层 y≈210 背后 `#FFA162`（更橙）
+        //     ⇒ 同样的奶白糊叠在更亮的底上，结果冲到 `#FFFFF0`（绿通道顶满）；
+        //   · 本行胶囊 46.3vp 高、满宽，面积约为上胶囊 1.8 倍 ⇒ 同白度块头大就更"实"。
+        // ── 调参记录（**真机逐个量过，别重复试错**）───────────────────────────────
+        //   ① 兑底 alpha `0.15 → 0.06`：几乎无效（`#FFFFF0 → #FFFFEC`，差 4/255）
+        //   ② 模糊档 `COMPONENT_REGULAR → COMPONENT_THIN`：也只差 9/255（`→ #FFFFE7`）
+        //   ⇒ 结论：**白味来自 `BlurStyle.COMPONENT_*` 这档系统材质本身**（浅色下≈50% 不透明奶白），
+        //     调 alpha 或调档位都动不了它。要真"透"就必须**换掉这种模糊方式**。
+        //   ③ 改用 `backgroundEffect`（`common.d.ts:17946`，`BackgroundEffectOptions`
+        //      字段 = radius/saturation/brightness/color）—— 半径与染色都由我们给，
+        //      不再有系统那层固定的奶白 ⇒ 渐变能透上来，观感贴近上胶囊。
+        // ⚠️ 上胶囊（`BookBodyContent.ets:84`）**不动** —— 用户对它满意。
+        // 回退：删掉下面这行，恢复 `.backgroundColor(0.15) + .backgroundBlurStyle(COMPONENT_REGULAR)`。
+        // 配方唯一真源：`ImmersiveMaterialUtil.glassOptions()`（书架三胶囊共用，调参只改那一处）
+        .backgroundEffect(ImmersiveMaterialUtil.glassOptions())
         .borderRadius(20)
         .padding({ left: 12, right: 0, top: 8, bottom: 8 })
         // ★ 2026-09-23 用户反馈：「这一行下面没空间，和下面的书籍叠加了」。

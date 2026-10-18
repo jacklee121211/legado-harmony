@@ -163,6 +163,44 @@ export default class ImmersiveMaterialUtil {
   }
 
   /**
+   * **书架三胶囊共用的「可调玻璃」配方**（2026-10-13 新增）—— 唯一真源。
+   *
+   * ── 为什么不用 `BlurStyle.COMPONENT_*`（真机逐点量出来的结论）──────────────
+   * 三处胶囊原本都是 `backgroundColor(rgba(255,255,255,0.15)) + backgroundBlurStyle(COMPONENT_REGULAR)`。
+   * 用户反馈「下面那一行胶囊底色很强、不透」，实测（Mate 80 Pro Max 亮色）：
+   *   · 上一行（背后渐变 `#FFA162`）→ 胶囊 `#FFF1CE`
+   *   · 下一行（背后渐变 `#FFC49E`）→ 胶囊 `#FFFFF0`（白到顶）
+   *   ⇒ 两处白度差 ≈ 背后色差的一半，说明 **`COMPONENT_*` 这档系统材质在浅色下就是
+   *      ≈50% 不透明的奶白**，且这个比例 **与我们的 alpha、与档位都无关**：
+   *     alpha `0.15 → 0.06` 只让结果降 4/255；档位 `REGULAR → THIN` 只降 9/255。
+   *   ⇒ 想让渐变真正透上来，必须换掉这种模糊方式。
+   *
+   * ── 用 `backgroundEffect` 的原因 ──────────────────────────────────────────
+   * SDK 原文（`common.d.ts:17946`）：`backgroundEffect(options: BackgroundEffectOptions): T;`
+   * 选项字段（同文件 `BackgroundEffectOptions`）：`radius`（必填）/ `saturation` / `brightness` / `color`
+   * ⇒ 半径与染色都由我们给，不再有系统那层固定奶白。实测效果：
+   *   下一行 `#FFFFF0 → #FEE3D0`（能看出底下的橙色渐变）；暗色 `#1D1D20`，
+   *   与底部 dock 的 `#1F1F20` 基本一致（用户想要的"和 dock 一个材质感"）。
+   *
+   * ── 调参旋钮（就这两个）──────────────────────────────────────────────────
+   * · `color` 的 alpha：越大越"实"、越小越"透"
+   * · `radius`：越大越"雾"、越小越"清晰"
+   *
+   * ⚠️ 这是**普通组件**上的玻璃，不是沉浸光感（沉浸光感只在 Navigation 标题栏 /
+   *    底部 TabBar 生效，见本文件 `MaterialDockModifier` 的真机教训）—— 所以别换成
+   *    `.systemMaterial()`，那样在这一层会静默失效并把背景删掉。
+   */
+  static glassOptions(): BackgroundEffectOptions {
+    const opts: BackgroundEffectOptions = {
+      radius: 24,
+      saturation: 1.0,
+      brightness: 1.0,
+      color: NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.45)' : 'rgba(255, 255, 255, 0.35)'
+    };
+    return opts;
+  }
+
+  /**
    * **底部页签**的材质背板。
    * 官方硬性约束（`…/组件适配沉浸光感` 原文）：
    *   「悬浮样式仅在 barOverlap 为 true、vertical 为 false、barPosition 为

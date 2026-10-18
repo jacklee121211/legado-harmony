@@ -9,6 +9,8 @@ import IndexSearchType from '../../../../componets/head/IndexSearchType'
 import AppRouter, { RouteName, BookManageRouteParam } from '../../../../common/router/AppRouter'
 import BookContentRefresh from './BookContentRefresh'
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
+// 2026-10-13：三胶囊共用的「可调玻璃」配方（唯一真源）
+import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 
 @Component
 export default struct BookBodyContent {
@@ -81,8 +83,11 @@ export default struct BookBodyContent {
             //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
             //     0.92 → 0.55 的 alpha 调优是关键。
             //   容器高 = 15号字(18) + 8×2 = **34vp**（与右胶囊 symbol 视觉 20 + 7×2 = 34vp 等高）。
-            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.15)' : 'rgba(255, 255, 255, 0.15)')
-            .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
+            // ★ 2026-10-13（用户）：三胶囊统一成**同一款可调玻璃**
+            //   （配方唯一真源 `ImmersiveMaterialUtil.glassOptions()`，
+            //    为什么不用 `BlurStyle.COMPONENT_*` 的真机实测数据都在那个方法的注释里）。
+            //   回退：换回 `.backgroundColor(0.15) + .backgroundBlurStyle(COMPONENT_REGULAR)`。
+            .backgroundEffect(ImmersiveMaterialUtil.glassOptions())
             .borderRadius(20)
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           }
@@ -101,8 +106,8 @@ export default struct BookBodyContent {
           Row() {
             this.trailingActions()
           }
-          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(38, 38, 41, 0.15)' : 'rgba(255, 255, 255, 0.15)')
-          .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
+          // 与左侧胶囊同款玻璃（2026-10-13，配方见 `ImmersiveMaterialUtil.glassOptions()`）
+          .backgroundEffect(ImmersiveMaterialUtil.glassOptions())
           .borderRadius(20)
           .padding({ left: 10, right: 10, top: 7, bottom: 7 })
         }
