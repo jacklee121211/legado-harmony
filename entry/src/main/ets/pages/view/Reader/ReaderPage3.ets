@@ -34,6 +34,8 @@ import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/u
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
+// 阅读时长记账（2026-10-13 新增）：「真实阅读时长」的唯一写入端，见该文件头注释
+import { ReadTimeRecorder } from '../../../common/utils/ReadTimeRecorder';
 import { NightMode } from '../../../common/utils/NightMode';
 import { TtsControlPanel } from '../../../components/tts/TtsControlPanel';
 // ── 自定义背景色（2026-09-25 新增）─────────────────────────────────────────────
@@ -1192,6 +1194,9 @@ export default struct ReaderPage3 {
    * 两个刷新器都要过一遍 `syncInfoTicker()` —— 它的门禁里含 `appForeground`。
    */
   private onAppForegroundChanged(): void {
+    // ★ 2026-10-13 阅读时长：前台才计时。切后台立刻结算并停表、回前台重新起表
+    //   （否则熄屏/放后台的时间会被算成"阅读时长"，那是假数据）。
+    ReadTimeRecorder.get().onForegroundChange(this.appForeground)
     if (this.appForeground) {
       this.refreshSleepStatus(); // 后台期间没刷，回前台先补一次真实剩余量
       this.startSleepTicker();
@@ -3393,6 +3398,12 @@ export default struct ReaderPage3 {
     const temp: ReaderRouteParam = this.initParam
     this.bookData = temp.bookData
     this.bookData = PreferencesUtil.getSync(`BookCurrentData_${this.bookData.bookName}`, this.bookData) as Books
+    // ★ 2026-10-13 阅读时长：**记账起点就在这里**。
+    //   ⚠️ 位置不能上移：本行之前 `this.bookData` 还是字段初始值 `new Books()`（`:1038`），
+    //      `id` 为 0 ⇒ `attach(0)` 会被直接拒掉，计时永远不会开始（真机表现为"时长恒为 0"）。
+    //   口径：只算**前台停留**（切后台由 `onAppForegroundChanged` 结算并停表），
+    //   60 秒心跳落库防被杀丢段；阈值/一键回退见 `ReadTimeRecorder` 头注释。
+    ReadTimeRecorder.get().attach(this.bookData.id ?? 0)
     // ★ 必须**在 bookData 就绪之后**才注册（详见上面那段注释）：
     //   `registerTtsCallbacks()` 末尾会判断"在听的是不是本页这本"并把听书状态回拉，
     //   早于本行调用会因为 `bookData` 为空而恒判 false。
@@ -4618,6 +4629,9 @@ export default struct ReaderPage3 {
   }
 
   aboutToDisappear(): void {
+    // ★ 2026-10-13 阅读时长：先结算并停表（放在最前 —— 后面的 releaseBook / disposed
+    //   都会让后续代码不再执行，记账不能依赖它们之后）。
+    ReadTimeRecorder.get().detach()
     // ★ 退出阅读 ⇒ 最终进度落库 + 广播书架刷新（2026-10-07）：
     //   书架只认 `BOOK_IS_BOOK_REFRESHING` 广播重查，而本页原先只写库不广播、
     //   宿主 Index 的 onPageShow 又不因 NavDestination pop 触发 ⇒ 回书架不重排。

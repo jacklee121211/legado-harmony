@@ -3,6 +3,8 @@ import { Attribute } from '../../../common/utils/Attribute'
 import { SetList, SetGroupList } from '../../../componets/dataList/SetListGroup'
 import { SetListView } from '../../../componets/myset/SetListView'
 import { TabHeader } from '../../../componets/common/TabHeader'
+// 2026-10-13：「关于我们」入口从「我的」页迁到本页最底部，需要路由门面
+import AppRouter, { RouteName } from '../../../common/router/AppRouter'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
 import { PreferencesUtil } from '@pura/harmony-utils'
@@ -413,6 +415,20 @@ export default struct MySetPage{
   /** 听书引擎组（2026-09-25 新增）：仅解锁后在 aboutToAppear 里填充并追加到分组列表 */
   @State engineSetList: SetList[]=[]
 
+  /**
+   * 「关于」组（2026-10-13 新增）：**从「我的」页迁来的「关于我们」入口**。
+   *
+   * 用户要求：放设置页**最底部**，且"材质和显示效果以及矩形宽度样式都需要和设置页的其他元素对齐"。
+   * ⇒ 做法是**做成一个标准设置组**（SetList + SetListView），而不是自绘一张卡片 ——
+   *   这样宽度（外层 `padding 20` + `card_bg`）、圆角（20）、行高、字号（ITEM + CAPTION 副说明）
+   *   全部自动继承其它行，只有一套样式。
+   * 单行组 ⇒ 渲染层命中"四角全圆"分支（`visibleRowsOf(group).length === 1`）。
+   */
+  private aboutSetList: SetList[] = [
+    new SetList(true, '关于我们', false, '',
+      '联系我们 / 更新日志 / 隐私协议 / 开源许可', 'aboutUs'),
+  ]
+
   // 分组顺序（2026-10-08 用户重排）：书架 → 按键翻页 → 震动反馈 → 其他
   // （听书引擎组解锁后 concat 到末尾，位置不变）
   @State setGroupList: SetGroupList[] = [
@@ -488,7 +504,7 @@ export default struct MySetPage{
         onLoginOk: (): void => {
           this.testAccountDialog?.close()
           this.testAccountDialog = null
-          this.getUIContext().getPromptAction().showToast({ message: '测试账号登录成功' })
+          this.getUIContext().getPromptAction().showToast({ message: '登录成功' })
         },
         onInviteRedeemed: (): void => {
           this.testAccountDialog?.close()
@@ -702,6 +718,26 @@ export default struct MySetPage{
           }
         }, (group: SetGroupList): string => group.groupValue)
 
+        // ── 「关于」组（2026-10-13 新增）：从「我的」页迁来的入口 ───────────────────
+        // 位置（用户第二次修正）：**在「登录」胶囊之上** —— 「登录」才是整页最下面那一项。
+        // 所以「关于」没有进 `setGroupList`（那个数组在登录之前整体渲染，且离线时会重建），
+        // 而是在这里按固定顺序单独渲染：…其它设置组 → 关于 → 登录。
+        // 对齐说明：用标准 `ListItemGroup` + `SetListView`（与「书架/其他」组同一组件）
+        // ⇒ 宽度（外层 padding 20 + surface 底）、圆角 20、材质（backgroundBlurStyle）、
+        //    字号（ITEM + CAPTION 副说明）全部与其它元素完全一致，不存在自绘样式。
+        // 单行组 ⇒ 四角全圆（见上面 `visibleRowsOf(group).length === 1` 分支的同类判断）。
+        ListItemGroup({ header: this.itemHead('关于') }) {
+          ForEach(this.aboutSetList, (item: SetList) => {
+            ListItem() {
+              SetListView({ setList: item, topLeft: 20, topRight: 20, bottomLeft: 20, bottomRight: 20 })
+                .onClick(() => {
+                  Haptics.tap();
+                  this.itemOnclick(item.storageName)
+                })
+            }.padding({ left: 20, right: 20 })
+          }, (item: SetList) => item.value)
+        }
+
         // ── 测试账号入口（2026-10-01 重设计 → 2026-10-08 用户要求**移到列表最下面**）──
         // 居中胶囊按钮（圆角 + 卡底 + 淡阴影），文案前加 person symbol（SDK 符号表核实）；
         // 放最后一项：随内容滚动，滚到底才出现。底部让位由 List 的 `contentEndOffset` 负责。
@@ -719,7 +755,7 @@ export default struct MySetPage{
               SymbolGlyph($r('sys.symbol.person'))
                 .fontSize(18)
                 .fontColor([this.theme.mainColor])
-              Text('测试账号')
+              Text('登录')
                 .fontSize(FontConstants.ITEM)
                 .fontWeight(FontConstants.W_TITLE)
                 .fontColor($r('app.color.text_primary'))
@@ -779,6 +815,12 @@ export default struct MySetPage{
     // 顺序说明：先 tap 再翻转 —— 关闭震动反馈时还能感受到"最后一下"。
     Haptics.tap();
     switch (value){
+      // ── 关于我们（2026-10-13 新增）─────────────────────────────────────────
+      // 从「我的」页迁来的入口（用户要求放设置页最底部）。行是 showArrow 型（非开关），
+      // 所以在 `setGroupList` 里以标准 SetList 注册、这里只负责跳转。
+      case 'aboutUs':
+        AppRouter.push(RouteName.ABOUT)
+        break;
       // 2026-10-08：`SET_REFRESH / SET_JUMP / SET_REPLACE / SET_TIP / SET_HEAD / SET_SEARCH`
       // 六个 case 已随假开关一起删除（全仓零消费点，理由见本文件 bookSetList 上方的注释）。
       // ── 离线模式（2026-10-13 新增）──────────────────────────────────────────

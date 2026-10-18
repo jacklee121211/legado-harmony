@@ -3,6 +3,9 @@ import { Haptics } from '../../common/utils/Haptics';
 import { PublicConstants } from '../../common/constants/PublicConstants'
 import { readBookList } from '../dataList/readBookList'
 import { NightMode, ShelfColors } from '../../common/utils/NightMode'
+// 书名显示口径（「显示文件拓展名」开关）的唯一出口
+import MySetConstants from '../../common/constants/MySetConstants'
+import { bookNameDisplay } from '../../common/utils/CoverSource'
 
 
 @Component
@@ -27,6 +30,13 @@ export struct readStatisticsDataList{
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+  /**
+   * 「显示文件拓展名」开关（我的-设置，Preferences 键 setExtName）。
+   * ⚠️ 2026-10-13 修：本组件过去直接 Text(book.bookName) ⇒ 书架上显示「默认协议」、
+   *    这里却显示「默认协议.txt」，同一个开关两套结果。现在统一走 ookNameDisplay()，
+   *    开关一变本组件立即重绘（@StorageLink 驱动）。
+   */
+  @StorageLink(MySetConstants.SET_EXT_NAME) showExt: boolean = false
   @Builder text(value:string,back:ResourceColor=ShelfColors.textSub()){
     Text(value)
       .fontSize(12)
@@ -76,7 +86,7 @@ export struct readStatisticsDataList{
   //作者及书名
   @Builder bookAuthor(book:readBookList){
     Column({space:12}){
-      Text(book.bookName).fontSize(16).lineHeight(24).fontColor(ShelfColors.textMain())
+      Text(bookNameDisplay(this.showExt).display(book.bookName)).fontSize(16).lineHeight(24).fontColor(ShelfColors.textMain())
       Column(){
         this.text(book.author)
         // ⚠️ 「累计阅读X小时Y分钟」已移除（2026-09-21）。

@@ -192,6 +192,19 @@ export interface ReadStatisticsRouteParam {
 }
 
 /**
+ * 「阅读数据」详情页（`pages/view/myCenter/ReadStatsPage`）路由参数（2026-10-13 新增）。
+ *
+ * 传的是**当前档位与锚点**：用户在一级卡里已经切到「本年 2025」，点进详情页
+ * 必须还是「本年 2025」——否则用户会看到"进去就跳回本月"，口径断裂。
+ */
+export interface ReadStatsRouteParam {
+  /** 初始档位：'day' | 'month' | 'year' | 'all' | 'custom' */
+  mode: string
+  /** 周期锚点（毫秒时间戳） */
+  anchorMs: number
+}
+
+/**
  * 「书架管理」页（`pages/view/bookShelf/Manage/BookManagePage`）路由参数。
  *
  * 对应原 `BookManagePage.ets:24-33` 的 `class routerParams`（字段名保持一致）。
@@ -220,6 +233,8 @@ export class RouteName {
   static readonly READER: string = 'ReaderPage3';
   /** 读过 / 读完 / 书签 二级菜单（`pages/view/myCenter/readStatistics`） */
   static readonly READ_STATISTICS: string = 'ReadStatistics';
+  /** 阅读数据详情页（`pages/view/myCenter/ReadStatsPage`，2026-10-13 新增） */
+  static readonly READ_STATS: string = 'ReadStatsPage';
   /** 主题配置（`pages/view/myCenter/MyThemeConfig`） */
   static readonly THEME_CONFIG: string = 'MyThemeConfig';
   /** 我的设置（`pages/view/myCenter/MySetPage`） */

@@ -26,11 +26,14 @@ import ReaderPage3 from './view/Reader/ReaderPage3'
 import {
   ReaderRouteParam,
   ReadStatisticsRouteParam,
+  ReadStatsRouteParam,
   BookManageRouteParam,
 } from '../common/router/AppRouter'
 // ── 迁 Navigation 第 4 期：5 个真实可达页 ────────────────────────────────────
 import BookManagePage from './view/bookShelf/Manage/BookManagePage'
 import ReadStatistics from './view/myCenter/readStatistics'
+// 阅读数据详情页（2026-10-13 新增：日/月/年/总/自定义 五档 + Top 榜）
+import ReadStatsPage from './view/myCenter/ReadStatsPage'
 import MyThemeConfig from './view/myCenter/MyThemeConfig'
 import MySetPage from './view/myCenter/MySetPage'
 import CreateCustomTheme from './view/myCenter/CreateCustomTheme'
@@ -1730,6 +1733,14 @@ struct Main {
       // ── 第 4 期：读过/读完/书签 ────────────────────────────────────────
       NavDestination() {
         ReadStatistics({ routeParam: param as ReadStatisticsRouteParam })
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.READ_STATS) {
+      // ── 2026-10-13：阅读数据详情（五档 + 趋势 + Top 榜）────────────────
+      // 转场跟"二级设置类页面"同档（右滑入）：它就是从「我的」里点进来的二级页。
+      NavDestination() {
+        ReadStatsPage({ routeParam: param as ReadStatsRouteParam })
       }
       .hideTitleBar(true)
       .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))

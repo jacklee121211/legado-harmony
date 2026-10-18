@@ -85,7 +85,7 @@ export struct TestAccountDialog {
   build() {
     Column({ space: 14 }) {
       Row() {
-        Text('测试账号登录')
+        Text('登录')
           .fontSize(16)
           .fontWeight(600)
           .fontColor(this.mainColor())
@@ -117,7 +117,7 @@ export struct TestAccountDialog {
           this.passInput = v
         })
 
-      Button('确认')
+      Button('登录')
         .fontSize(15)
         .fontWeight(600)
         .fontColor(Color.White)
@@ -129,7 +129,7 @@ export struct TestAccountDialog {
           this.confirm()
         })
 
-      Text('仅限内部测试使用')
+      Text('账号密码登录 · 请妥善保管账号信息')
         .fontSize(10)
         .fontColor(this.subColor())
         .width('100%')

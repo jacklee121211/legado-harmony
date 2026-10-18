@@ -58,7 +58,20 @@ export struct SetListView{
         }
 
         if (this.setList.showArrow){
-          Image($r("app.media.right")).size({width:25,height:25})
+          // ── 2026-10-13 修「暗色下箭头是黑的」（用户实测反馈）────────────────────
+          // 旧实现：`Image($r("app.media.right")).size({width:25,height:25})`。
+          // 实测那张资源是**纯黑 PNG**（72×72，取样像素 `#000000` / alpha 224 ≈ 0.88）——
+          // 位图的像素颜色烧死在文件里，`fillColor` / 主题色 / 深浅色**都改不动它**
+          // ⇒ 深色底上就是一条看不见的黑箭头。
+          // 现在改成文字型 `SymbolGlyph`：颜色完全由 `fontColor` 决定，
+          // 日/夜跟随 `ShelfColors.icon()`（日 `rgba(19,19,19,0.88)` / 夜 `rgba(248,249,250,0.88)`），
+          // 与全工程"图标一律 SymbolGlyph + ShelfColors"的口径一致
+          // （同类历史修复见 `readStatistics.ets` 的返回箭头）。
+          // 字号取 15：原 PNG 里箭头实际绘制区只有 19×30 px（画布 72），按 25vp 显示约 6.6×10.4vp
+          // ⇒ 15 号 chevron 的观感最接近原样。
+          SymbolGlyph($r('sys.symbol.chevron_forward'))
+            .fontSize(15)
+            .fontColor([ShelfColors.icon()])
         }else {
           Toggle({ type: ToggleType.Switch, isOn: this.setList.toggleStatus})
             .selectedColor("#F60").hoverEffect(HoverEffect.None)

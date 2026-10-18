@@ -1,4 +1,3 @@
-import BookMark from '../../../componets/head/BookMark'
 import AppRouter, { RouteName, BookManageRouteParam } from '../../../common/router/AppRouter'
 import BookBodyContent from './components/BookBodyContent'
 import { FileHandler } from '../../../common/utils/FileHandler'
@@ -194,43 +193,18 @@ export default struct IndexShelf {
         justifyContent: FlexAlign.SpaceBetween,
         alignItems: ItemAlign.End
       }) {
-        Row() {
-          List({ scroller: this.scrollController }) {
-            ListItem() {
-              // ★ 顶部标题（2026-10-13 用户要求：「书架」→「喵阅」）★
-              // ⚠️ 这里传的字面量就是**屏幕上那两个大字**（`BookMark` 的 build 里
-              //    `Text(this.title)`，25 号加粗，见 `componets/head/BookMark.ets:34,43`）。
-              //    改标题只需改这一处；下面 `titleArray` 是页签数据源，与显示无关。
-              BookMark({ title: '喵阅', index: 0, currentIndex: this.currentIndex }).onClick(() => {
-                Haptics.tap();
-                this.currentIndex = 0
-                this.tabsController.changeIndex(0)
-                console.log(this.currentIndex + '')
-              })
-            }
-          }
-          // .align(Alignment.TopStart)
-          .height(40)
-          .scrollBar(BarState.Off)
-          .listDirection(Axis.Horizontal)
-          // ⚠️ 2026-09-23：这里**试过**加"向沉浸光感看齐"的胶囊外观（半透明底+强模糊+圆角），
-          //   用户真机看后反馈「不好看」⇒ **已按用户要求改回原样**（不加任何底色/模糊）。
-          //   「最近阅读/浏览历史…」和「分组/全部/未分组…」那两处的胶囊保留（用户没反对）。
-        }
-
-        // ── 个性化插件屏 · 书架区（2026-10-10 新增）────────────────────────────
-        // 【已隐藏 2026-10-11】效果待优化，暂时隐藏入口
-        // 占据书架标题右侧的剩余空间。无配置时不占位（width:0 height:0）。
-        // 搜索/更多图标已下移到"最近阅读"行尾（2026-09-29），本区域不再承载功能按钮。
-        // PlugboardZone({ zone: PlugZone.SHELF_TOP, zoneLabel: '1区·书架' })
-        //   // 2026-10-10 标定反馈：1区左侧太靠近"书架"两字
-        //   // ⇒ 与"书架"两字之间多留（≈12vp）
-        //   .margin({ left: 12 })
-        //   // 让 Zone 在 Flex 剩余空间里撑开
-        //   .layoutWeight(1)
-
-        // ── 网盘导入弹窗绑定宿主（2026-09-29）───────────────────────────────────
-        // bindSheet 需要一个可见节点作为绑定锚点。这里用一个零尺寸的 Flex 占位。
+        // ── 2026-10-13 用户要求：**删掉「喵阅」标题行，让下方内容整体上提** ──────────
+        // 真机实测（Mate 80 Pro Max，1320×2848 @3.35）：
+        //   · 「喵阅」文字本身占 y=132~232（30vp）；
+        //   · 它所在的那个 `List` 写了 `.height(40)` ⇒ **这 40vp（134px）才是标题行的真实占高**；
+        //   · 下一行「最近阅读」胶囊在 y=344。
+        // ⚠️ 关键结论：**只删那两个汉字不会让内容上提** —— `.height(40)` 还在，
+        //    下面会留一条 40vp 的空白带。必须把这个 List 一起删掉，Tabs 才会整体上移 40vp。
+        // 为什么可以整个删：`titleArray` 只有一项 `['书架']`、页签栏 `barWidth/barHeight = 0`
+        //   ⇒ 这个标题除了"点一下回到 0 号页签"没有任何作用（点到它也只是原地不动）。
+        //
+        // ⚠️ 但下面这个 **0 尺寸的 Row 必须留着**：它是 `bindSheet`（网盘导入 / 云盘导入）
+        //    的绑定锚点，删掉它「网盘导入」弹窗就再也弹不出来（`bindSheet` 需要一个可见节点）。
         Row() {
           Flex() {
           }

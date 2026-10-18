@@ -4,6 +4,7 @@ import BooksDao from './dao/BooksDao'
 import worksListsDao from './dao/WorksListsDao'
 import BookmarksDao from './dao/BookmarksDao'
 import readRecordDao from './dao/ReadRecordDao'
+import readDailyDao from './dao/ReadDailyDao'
 
 class DataBase {
   async initAllTable() {
@@ -28,6 +29,11 @@ class DataBase {
     //     `[RdbTag], 事务第 3 条失败，回滚`
     //     `BookRename.rename db failed: {"code":14800021}`
     await readRecordDao.initReadRecordTable()
+    // ★ 2026-10-13 新增：阅读数据模块的**日粒度时长表** `readDaily`。
+    //   与 `bookmarks` / `readRecord` 是同一个坑的第三次预防 ——
+    //   建表语句只在 `AppDatabase/index.ets` 的快照里，**没人调就永远不会建**。
+    //   本表由 `ReadTimeRecorder` 写入（进书计时），`ReadDailyDao` 提供四档聚合。
+    await readDailyDao.initTable()
     // ★ 2026-10-11 分类页签合并：书架顶部「漫画 / 有声书」两个入口已删除（只剩「书架」）。
     //   这里把历史数据（bookType / groupType / worksType = 1 或 2）一次性归一到 0，
     //   保证删入口不丢书；自带 Preferences 标志 ⇒ 只跑一次、失败下次重试。

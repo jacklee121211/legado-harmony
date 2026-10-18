@@ -28,6 +28,16 @@ interface BookTypeBackupRow {
   bookType: number
 }
 
+/** 单值 COUNT 查询的结果行（`countFinishedInRange` 用） */
+interface CountRow {
+  cnt: number
+}
+
+/** 单值 COUNT 查询的列描述（`ADBUtil.getColumn` 只认快照里的列，聚合列必须自己给） */
+const COUNT_COLUMN: ColumnInfo[] = [
+  { name: 'cnt', columnName: 'cnt', type: ColumnType.LONG }
+]
+
 class BooksDao {
   TABLE_NAME: string = 'books'
 
@@ -616,6 +626,30 @@ class BooksDao {
     } catch (e) {
       console.log('countFinished, Error, ', JSON.stringify(e));
       return 0;
+    }
+  }
+
+  /**
+   * 「读完」计数（**限定时间区间**）：`finishedTime` 落在 `[startMs, endMs]` 内的本数。
+   *
+   * 为什么需要"区间"版（2026-10-13 阅读数据模块）：
+   * 「本日/本月/本年读完几本」必须按周期统计，而 `countFinished()` 只有总数。
+   * 「读完」的数据源刻意**不用**新的时长表 `readDaily` ——
+   * `finishedTime` 是"曾经读到末章"的一次性标记，**历史数据本来就有**，
+   * 用它统计可以让日月年三档一上线就显示真实值（时长则只能从功能上线后积累）。
+   */
+  async countFinishedInRange(startMs: number, endMs: number): Promise<number> {
+    try {
+      const s: number = Math.floor(startMs)
+      const e: number = Math.floor(endMs)
+      const rows = await DbUtil.querySqlForList<CountRow>(
+        `SELECT COUNT(*) AS cnt FROM ${this.TABLE_NAME} ` +
+        `WHERE finishedTime > 0 AND finishedTime >= ${s} AND finishedTime <= ${e}`,
+        COUNT_COLUMN)
+      return rows.length > 0 ? (rows[0].cnt ?? 0) : 0
+    } catch (e2) {
+      console.log('countFinishedInRange, Error, ', JSON.stringify(e2))
+      return 0
     }
   }
 
