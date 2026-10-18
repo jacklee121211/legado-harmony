@@ -62,7 +62,11 @@ export default struct BookContentRefresh {
             } else {
               BookFolder({
                 EXHIBIT: this.EXHIBIT,
-                currentIndex:this.currentIndex
+                currentIndex:this.currentIndex,
+                // 2026-10-13：分组卡片改成"点了**直接切到该分组**"（用户不再要半屏 sheet）
+                // ⇒ 子组件必须能写回这两个状态，故传 @Link（链尾 @Prop 是单向副本，写不生效）。
+                GROUP: this.GROUP,
+                bookTypeNumber: this.bookTypeNumber
               })
             }
           }

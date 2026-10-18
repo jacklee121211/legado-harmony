@@ -6,7 +6,6 @@ import { folderList } from '../../../componets/dataList/folderList'
 import BookGroupsDao from '../../../database/dao/BookGroupsDao'
 import bookGroupUtil from '../../../common/utils/bookGroupUtils'
 import { BookGroups } from '../../../database/entities/BookGroups'
-import BookManageDialog from './components/dialog/BookManageDialog'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
 import coverInfoDialog from './components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
@@ -24,8 +23,17 @@ export default struct BookFolder {
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   currentIndex: number = 0
-  @State changeNumber: number = 0
-  @State isShowBookFolderInfoDialog: boolean = false
+  /**
+   * 2026-10-13 新增（用户：「在分组这个列表里，点击哪个分组，直接切换到对应分组去，
+   * 这样也算是天然适配」）：
+   * 点分组卡片不再开半屏 sheet，而是**直接切到那个分组** ⇒ 本组件必须能写回父级
+   * （`IndexShelf`）的这两个状态，故用 `@Link`（`@Prop` 是单向副本，写了不生效）。
+   * 上游链路（全部是既有 @Link 链，本组件只是接到链尾）：
+   *   `IndexShelf` `@State @Watch('changeGroup') GROUP` / `@State bookTypeNumber`
+   *   → `BookBodyContent`（@Link）→ `BookContentRefresh`（@Link）→ 本组件（@Link）。
+   */
+  @Link GROUP: string
+  @Link bookTypeNumber: number
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   /**
    * 书籍数据变更（删书 / 移入移出分组 / 导入）→ **只重算"共N本"**（2026-10-06）。
@@ -118,8 +126,9 @@ export default struct BookFolder {
    *    自建分组仍读 `book_groups.bookIds` 这个陈旧冗余列（真机实测为空串，且被
    *    `DbUtil.parseResultSet` 读成 undefined）⇒ 一律显示"共0本"。
    *    现在**所有**分组统一走 `bookGroupUtil.fillRealBookIds`（按 books.bookGroup 现算，
-   *    口径与点进分组后的列表查询同源）—— 点进文件夹走 BookManageDialog，查询口径
-   *    同样是 `bookGroup = groupId`，天然一致。
+   *    口径与点进分组后的列表查询同源）—— 「点进分组」现在是**切到该分组**
+   *    （`openGroup()` ⇒ `bookTypeNumber = groupId`），列表查询口径仍是 `bookGroup = groupId`，
+   *    天然一致。
    */
   async getGroupList() {
     try {
@@ -147,6 +156,40 @@ export default struct BookFolder {
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
     return val
+  }
+
+  /**
+   * 点分组卡片 = **直接切到该分组**（2026-10-13 用户改版）。
+   *
+   * 用户原话：「我发现现在点击分组之后，点击里面的未分组，出现的还是半屏弹窗，不需要
+   *   这个了，在分组这个列表里，点击哪个分组，直接切换到对应分组去，这样也算是天然适配」。
+   *
+   * 走的**就是分组行 chip 那条老路径**（`componets/group/GroupType.ets` 的
+   * `selectGroup()`）：`GROUP = '标签'` + `bookTypeNumber = 该分组 id`
+   * ⇒ `BookContentRefresh` 依据 `bookTypeNumber` 渲染 `BookContent`，
+   *   而 `BookContent` 的查询口径正是 `bookGroup = bookTypeNumber` ——
+   *   与分组卡片的"共N本"（`fillRealBookIds` 按 `books.bookGroup` 现算）同源，
+   *   所以点进去的数字与列表条数天然一致。
+   *
+   * ⚠️ 语句顺序**不能反**：`IndexShelf` 有 `@Watch('changeGroup')`，`GROUP` 变成
+   *   `'标签'` 时它会把 `bookTypeNumber` 兜底置成 2（全部）。官方文档
+   *   `开发指南/…/状态管理_V1/管理组件拥有的状态/Watch装饰器_状态变量更改通知/arkts-watch`
+   *   原文两句：
+   *     「@Watch触发时机：回调触发时间是变量真正变化、**被赋值的时间**」
+   *     「@Watch方法在自定义组件的属性变更之后**同步执行**」
+   *   ⇒ 兜底发生在 `this.GROUP = '标签'` **这一行当场**，紧跟其后的
+   *   `this.bookTypeNumber = id` 必然覆盖它；
+   *   反过来写（先 id 后 GROUP）就会被兜底改成"全部"，表现为"点了没反应"。
+   *   该顺序与 `GroupType.selectGroup()` 逐字一致（那条路径在真机上已验证）。
+   */
+  private openGroup(item: BookGroups): void {
+    const id: number | undefined = item.groupId
+    if (id === undefined) {
+      return
+    }
+    Haptics.tap()
+    this.GROUP = '标签'
+    this.bookTypeNumber = id
   }
 
   build() {
@@ -181,13 +224,11 @@ export default struct BookFolder {
                   return
                 }
                 this.dialogGroupData = item
-                this.changeNumber = 1
                 this.groupInfoDialog?.open()
               }))
           .onClick(() => {
-            Haptics.tap();
-            this.isShowBookFolderInfoDialog = true
-            this.clickGroup = item
+            // 2026-10-13 用户：「点击哪个分组，直接切换到对应分组去」⇒ 不再开半屏 sheet
+            this.openGroup(item)
           })
           // ── 渐次入场（2026-09-24，需求第 5 / 7 点）
           // 只动图形变换属性，不触发重新布局。`.animation()` 放最后。
@@ -222,44 +263,16 @@ export default struct BookFolder {
           + '|' + (item.bookIds?.length ?? 0)
       })
     }
-    .bindSheet($$this.isShowBookFolderInfoDialog, this.bookFolderInfoDialog(), {
-      detents: [SheetSize.MEDIUM, SheetSize.LARGE, 200],
-      showClose: false,
-      dragBar: true,
-      maskColor: 'rgba(0,0,0,0.6)',
-      onDisappear: () => {
-        console.log('隐藏')
-      }
-    })
+    // ── 2026-10-13：`bindSheet($$isShowBookFolderInfoDialog, BookManageDialog)` 整块删除 ──
+    // 用户：「点击里面的未分组，出现的还是半屏弹窗，不需要这个了…点击哪个分组，直接切换到
+    //   对应分组去」。分组内容现在由书架列表本身呈现（`bookTypeNumber = 该分组 id`
+    //   ⇒ `BookContent` 按 `bookGroup` 查），与点分组行 chip 完全同一条路径、同一套口径。
   }
 
-  // D-12（Round 28）：**不采纳** lint 的 @ObjectLink 建议，改为语义正确的 @State。
-  // 依据：① 本变量在 L59 被本地整体赋值 `this.clickGroup = item`，而官方限制「@ObjectLink 装饰的变量是
-  //          只读的，不能被赋值，否则会有运行时报错 Cannot set property when setter is undefined」
-  //          （devecocli docs read arkts-observed-and-objectlink 限制条件 6）→ 改 @ObjectLink 会运行时报错；
-  //      ② 唯一调用点 BookContentRefresh.ets:72 只传 EXHIBIT/currentIndex，从不传 clickGroup，
-  //          而 @ObjectLink「禁止本地初始化，必须从父组件初始化」→ 同样不成立；
-  //      ③ 故它本就是「组件本地可变状态」，@State 才是正确装饰器（顺带消除 clickGroup 初始为 undefined 的隐患）。
-  @State clickGroup: BookGroups = new BookGroups()
-
-  @Builder
-  bookFolderInfoDialog() {
-    Column() {
-      BookManageDialog({
-        title: this.clickGroup.groupName,
-        currentIndex: this.currentIndex,
-        bookTypeNumber: this.clickGroup.groupId,
-        // 子进父退 / 子退父进（2026-10-01）：BookManageDialog 里打开"加入书单"CustomDialog
-        // 前先收起本分组 sheet，子关闭后恢复。
-        onChildDialogOpen: (): void => {
-          this.isShowBookFolderInfoDialog = false
-        },
-        onChildDialogClose: (): void => {
-          this.isShowBookFolderInfoDialog = true
-        }
-      })
-    }
-  }
+  // ── 2026-10-13：`@State clickGroup` + `bookFolderInfoDialog()`（BookManageDialog 的
+  //    sheet 内容）一并删除。历史上这里要 `clickGroup` 只是为了把"点了哪个分组"传给
+  //    sheet（当时还专门论证过它为什么必须是 @State 而非 @ObjectLink —— 因为它被本地
+  //    整体赋值）。现在点击直接切分组（`openGroup()`），不再需要中间态。
 
   @Builder
   bookInfoGrid(item: BookGroups) {
@@ -426,7 +439,6 @@ export default struct BookFolder {
 
   //退出弹框
   exitDialog() {
-    this.changeNumber = 0
     this.groupInfoDialog?.close()
   }
 
