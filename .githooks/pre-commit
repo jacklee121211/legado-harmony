@@ -12,6 +12,21 @@ set -u
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$ROOT" || exit 0
 
+# ── 隐私闸门（2026-10-19，必须放在**任何 exit 0 之前**）─────────────────────────
+# 起因：screenshots/ 与 verify/ 里有锁屏/桌面截图（含家人的照片），曾被随"全量提交"
+# 带进 GitHub 历史，最后只能重写历史 + 强推才清除。这里在提交前硬拦一道。
+BLOCKED=$(git diff --cached --name-only | grep -E '^(screenshots|verify|\.cache)/' || true)
+if [ -n "$BLOCKED" ]; then
+  echo ""
+  echo "[pre-commit] X 拒绝提交：暂存区里有截图/验证产物（含个人隐私画面）"
+  echo "$BLOCKED" | sed 's/^/    /'
+  echo "    -> 这些目录已在 .gitignore 中；请 git restore --staged <文件> 后重试。"
+  echo "    -> 验证截图请放到仓库外：D:\\Arkts\\3.8.11\\_dsh_shots\\"
+  echo ""
+  exit 1
+fi
+
+
 [ -d web ] || exit 0
 [ -f web/build.mjs ] || exit 0
 [ -d web/node_modules ] || { echo "[pre-commit] 跳过 web 重建：web/node_modules 不存在（先 npm i）"; exit 0; }
@@ -30,17 +45,3 @@ fi
 
 exit 0
 
-# ── 隐私闸门（2026-10-19）：禁止把截图/本地验证产物提交进去 ──────────────────────
-# 起因：screenshots/ 与 verify/ 里含锁屏/桌面截图（有家人的照片），曾被随全量提交带进
-# GitHub 历史，事后只能重写历史+强推才清除。这里在提交前硬拦一道。
-# 命中即**阻断提交**（这是少数必须阻断的场景：一旦进历史就要重写历史才能挽回）。
-BLOCKED=$(git diff --cached --name-only | grep -E '^(screenshots|verify|\.cache)/' || true)
-if [ -n "$BLOCKED" ]; then
-  echo ""
-  echo "[pre-commit] ✗ 拒绝提交：暂存区里有截图/验证产物（含个人隐私画面）"
-  echo "$BLOCKED" | sed 's/^/    /'
-  echo "    → 这些目录已在 .gitignore 里；请 git restore --staged <文件> 后重试。"
-  echo "    → 验证截图请放到仓库外目录（例如 D:\\Arkts\\3.8.11\\_dsh_shots\\）。"
-  echo ""
-  exit 1
-fi
