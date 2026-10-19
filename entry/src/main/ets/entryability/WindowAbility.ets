@@ -295,4 +295,65 @@ export class WindowAbility {
       hilog.error(0x0000, TAG, 'setStatusBarContentColor failed: ' + JSON.stringify(error));
     });
   }
+
+  /**
+   * 阅读页「显示系统状态栏」= **真穿透**（2026-10-19 新增，用户需求）。
+   *
+   * 做法：状态栏底色设为**全透明** `#00000000`，只改图标/文字颜色。
+   * 为什么这样就能"背景融合"：窗口在 `EntryAbility.ets:278` 就设置了
+   * `setWindowLayoutFullScreen(true)`（布局延伸到系统栏区域），阅读页根容器本身铺满
+   * 整屏并自带阅读背景/材质 ⇒ 状态栏区域露出的就是**阅读页自己的背景**。
+   *
+   * 依据（SDK 原文，`@ohos.window.d.ts`）：
+   *   · `:442-450` `statusBarColor?: string` ——「The value is a hexadecimal RGB **or ARGB**
+   *     color code … The default value is **'#66000000'**」⇒ 支持带 alpha 的 ARGB，
+   *     默认值本身就带 alpha，说明透明度会生效。
+   *   · `:469` `statusBarContentColor?: string` ——「Color of the text on the status bar.
+   *     After this property is set, the setting of **isStatusBarLightIcon** is invalid.」
+   *     ⇒ 只传 content color 即可，不必再传 lightIcon。
+   *
+   * @param dark true = 深色阅读背景（状态栏图标用白）；false = 浅色（图标用黑）
+   */
+  setStatusBarTransparent(dark: boolean): void {
+    if (!this.windowClass) {
+      return;
+    }
+    try {
+      this.windowClass.setWindowSystemBarProperties({
+        statusBarColor: '#00000000',
+        statusBarContentColor: dark ? '#FFFFFF' : '#000000'
+      }).then(() => {
+        hilog.info(0x0000, TAG, 'setStatusBarTransparent(%{public}s) succeeded', String(dark));
+      }, (error: Error) => {
+        hilog.error(0x0000, TAG, 'setStatusBarTransparent failed: ' + JSON.stringify(error));
+      });
+    } catch (exception) {
+      hilog.error(0x0000, TAG, 'setStatusBarTransparent threw: ' + JSON.stringify(exception));
+    }
+  }
+
+  /**
+   * 退出阅读页时把状态栏底色**还原成系统默认**（2026-10-19）。
+   *
+   * 为什么必须有：本 App 之前从不改 `statusBarColor`（全仓 grep 零命中），一旦阅读页把它
+   * 设成透明，退出后书架/我的等页面的状态栏也会变成透明 —— 那是**全局外观变化**，
+   * 不在用户授权范围内。这里还原成 SDK 文档给的默认值 `'#66000000'`
+   * （`@ohos.window.d.ts:443`「The default value is '#66000000'」）⇒ 与改动前观感一致。
+   */
+  restoreStatusBarBackground(): void {
+    if (!this.windowClass) {
+      return;
+    }
+    try {
+      this.windowClass.setWindowSystemBarProperties({
+        statusBarColor: '#66000000'
+      }).then(() => {
+        hilog.info(0x0000, TAG, 'restoreStatusBarBackground succeeded');
+      }, (error: Error) => {
+        hilog.error(0x0000, TAG, 'restoreStatusBarBackground failed: ' + JSON.stringify(error));
+      });
+    } catch (exception) {
+      hilog.error(0x0000, TAG, 'restoreStatusBarBackground threw: ' + JSON.stringify(exception));
+    }
+  }
 }

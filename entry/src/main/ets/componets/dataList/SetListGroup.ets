@@ -53,6 +53,21 @@ export class SetList{
    */
   disabled?: boolean
 
+  /**
+   * 子项缩进（2026-10-19 新增）：true = 整行左内边距 +20vp（视觉上"开头空两格"）。
+   * 用途：设置页「显示阅读器信息窗」主开关下面的元素子项（时间/电量/书签/防窥/定时）。
+   * 渲染侧见 `SetListView`。
+   */
+  indent?: boolean
+
+  /**
+   * 不渲染右侧控件（2026-10-19 新增）：true = 既不画箭头也不画 Toggle，只留 `rightText`。
+   * 用途：多档"值行"（如「时间显示」的 关 / 时:分 / 时:分:秒）—— 它既不是布尔开关，
+   * 也不是跳转行；点击由页面在 `itemOnclick` 里按当前值循环。
+   * ⚠️ 未设该字段时行为与改动前完全一致（`showArrow` 决定箭头/Toggle）。
+   */
+  hideControl?: boolean
+
 
   storageName: string
 
@@ -64,7 +79,9 @@ export class SetList{
     toggleStatus?: boolean,
     rightText?: string,
     bottomText?: string,
-    storageName?: string
+    storageName?: string,
+    indent?: boolean,
+    hideControl?: boolean
   ) {
     this.showArrow = showArrow;
     this.value = value;
@@ -74,6 +91,8 @@ export class SetList{
     this.storageName = storageName || '';
     this.vipMark = false;
     this.disabled = false;
+    this.indent = indent === true;
+    this.hideControl = hideControl === true;
   }
 
 }

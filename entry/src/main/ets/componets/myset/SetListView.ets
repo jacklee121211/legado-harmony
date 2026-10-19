@@ -54,10 +54,21 @@ export struct SetListView{
         }
 
         if (this.setList.rightText != null && this.setList.rightText.length > 0){
-          Text(this.setList.rightText).fontSize(FontConstants.CAPTION).fontColor($r('app.color.text_tertiary'))
+          // 2026-10-19 用户需求：「这种点击开关，增加下划线，确保用户看到之后知道还能点击」。
+          // 只给**多档值行**（`hideControl === true`，右侧既无箭头也无 Toggle）加下划线 ——
+          // 普通开关行的右侧文字（如滑块当前值）不加，避免误以为可点。
+          Text(this.setList.rightText)
+            .fontSize(FontConstants.CAPTION)
+            .fontColor($r('app.color.text_tertiary'))
+            .decoration({
+              type: this.setList.hideControl === true ? TextDecorationType.Underline : TextDecorationType.None,
+              color: $r('app.color.text_tertiary')
+            })
         }
 
         if (this.setList.showArrow){
+          // 箭头行 = 可点进去/可点换值；`hideControl` 的值行（多档设置，如「时间显示」）不画箭头
+          // （2026-10-19：`hideControl` 见 `SetListGroup.SetList`）。
           // ── 2026-10-13 修「暗色下箭头是黑的」（用户实测反馈）────────────────────
           // 旧实现：`Image($r("app.media.right")).size({width:25,height:25})`。
           // 实测那张资源是**纯黑 PNG**（72×72，取样像素 `#000000` / alpha 224 ≈ 0.88）——
@@ -72,7 +83,7 @@ export struct SetListView{
           SymbolGlyph($r('sys.symbol.chevron_forward'))
             .fontSize(15)
             .fontColor([ShelfColors.icon()])
-        }else {
+        }else if (this.setList.hideControl !== true) {
           Toggle({ type: ToggleType.Switch, isOn: this.setList.toggleStatus})
             .selectedColor("#F60").hoverEffect(HoverEffect.None)
             // 整行置灰时开关不可点（2026-10-08：智控键在本机不支持）
@@ -97,7 +108,14 @@ export struct SetListView{
     }.width("100%")
     .backgroundColor(ShelfColors.surface())
     .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
-    .padding({ left:20,right:20,top:12,bottom:12 })
+    .padding({
+      // 子项缩进（2026-10-19 新增）：`indent = true` 时左侧再多 20vp，
+      // 视觉上等于"标题开头空两格"（父项「显示阅读器信息窗」下面的元素子项用）。
+      left: this.setList.indent === true ? 40 : 20,
+      right: 20,
+      top: 12,
+      bottom: 12
+    })
     .justifyContent(FlexAlign.SpaceBetween)
     .alignItems(VerticalAlign.Center)
     // 置灰（2026-10-08）：整行降透明度，配合 Toggle.enabled(false)；

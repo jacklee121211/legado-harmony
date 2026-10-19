@@ -55,8 +55,10 @@ import { ReaderTextureDialog } from './ReaderTextureDialog';
 import { ReaderFontLib } from '../../../common/utils/ReaderFontLib';
 import { ReaderFontDialog } from './ReaderFontDialog';
 import { ReaderSchemeDialog } from './ReaderSchemeDialog';
-// ── 按键翻页（2026-10-07）：音量键/智控键翻页，开关在 设置-按键翻页 ──────────
+// ── 按键翻页（2026-10-07）：音量键翻页，开关在 设置-功能-「音量键翻页」（2026-10-19：原「按键翻页」组已删）──
 import { ReaderKeyTurn } from '../../../common/utils/ReaderKeyTurn';
+// ── 信息窗电量（2026-10-19 新增）：实时电量（symbol 图标 + 百分比 + 充电状态）──
+import { BatteryStatus } from '../../../common/utils/BatteryStatus';
 // ── 防窥保护（2026-10-07）：顶栏眼睛图标开关，方案见 utils/AntiPeep.ets ───────
 import { AntiPeep } from '../../../common/utils/AntiPeep';
 // ── 会员化（2026-09-28）：免费用户点锁定功能 → VIP 弹窗 ─────────────────────
@@ -293,6 +295,17 @@ const READER_BAR_HEIGHT: number = 60;
  * `margin({ bottom: 10 })` 一致（悬浮条的留白现在由 `FloatingTabBarStyle.barBottomMargin` 表达）。
  */
 const READER_BAR_BOTTOM_GAP: number = 10;
+
+/**
+ * 信息窗（含时钟/电量/书签/防窥）里的 symbol 图标**统一字号**（2026-10-19 新增）。
+ *
+ * 为什么要有这个常量：用户实测反馈「信息窗的电量 symbol 图标有点小，似乎没和其他图标
+ * 大小对齐」—— 旧代码里时钟 14、书签 16、防窥 16、电量 14、充电闪电 12，五种字号混排。
+ * 现在全部取本常量（16 = 原来书签/防窥的档位，用户认可那两个是"对齐的"）。
+ */
+const INFO_ICON_SIZE: number = 16;
+/** 信息窗文字（时钟/电量百分比/定时）统一字号 —— 原来是 13，保持不变 */
+const INFO_TEXT_SIZE: number = 13;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 居中下拉书签手势（2026-10-07 用户需求）
@@ -1040,7 +1053,7 @@ export default struct ReaderPage3 {
   // 实现性质是 ArkUI 玻璃层：不参与仿真翻页卷纸（翻页动画进行中的零点几秒元素原地不动，
   // 纸从其下方经过；无隧穿/丢内容——内容由状态驱动，任何一页都正确）。字色取
   // `readerSetting.fontColor`（与正文同源，自动跟随材质均色/日夜）。
-  /** 设置-其他-「阅读器信息窗」开关（Preferences，进场读一次；开关只在设置页改） */
+  /** 设置-功能-「阅读器信息窗」开关（2026-10-19：原「其他」组改名「功能」；Preferences，进场读一次） */
   @State infoWinOn: boolean = false
   /** 定时实时信息文案（时间型 = 秒级倒计时；章节型 = 剩余X章；两者可并存） */
   @State infoTimerText: string = ''
@@ -1064,6 +1077,35 @@ export default struct ReaderPage3 {
    * 随 `infoTicker` 每秒复算 ⇒ 跨过 18:00 / 06:00 时图标自动切换，不需要额外监听。
    */
   @State infoClockIsDay: boolean = true
+  /**
+   * 信息窗左侧**当前电量**（2026-10-19 新增，用户需求：系统时间后面增加电量显示）。
+   * -1 = 还没拿到（不渲染）；0~100 = 百分比。数据源见 `common/utils/BatteryStatus.ets`
+   * （`BatteryStatus.start()` 订阅 `usual.event.BATTERY_CHANGED` ⇒ 充电插拔/掉电都实时刷新）。
+   */
+  @State infoBatterySoc: number = -1
+  /** 是否在充电（含已充满）⇒ 图标旁再叠一个闪电 */
+  @State infoCharging: boolean = false
+  /**
+   * 阅读页「显示系统状态栏」（2026-10-19 新增，**全局**设置，设置页在
+   * 功能组「显示文件拓展名」下面；Preferences 键 `MySetConstants.SET_READER_STATUS_BAR`）。
+   *
+   * 开启后的行为（用户拍板）：
+   *   · 不再隐藏状态栏，而是显示它，并把状态栏底色设成**全透明**（真穿透，
+   *     窗口本来就是 `setWindowLayoutFullScreen(true)`）⇒ 状态栏区域露出阅读背景；
+   *   · 信息窗**左侧**（系统时间 + 电量）隐藏 —— 否则与状态栏重复；右侧书签/定时/防窥保留；
+   *   · 顶部菜单等用 `readerTopInset()` 让位（不能再用 `topRectHeight`，沉浸期它被冻结成 0）。
+   */
+  @State readerStatusBarOn: boolean = false
+
+  // ── 信息窗元素子开关（2026-10-19 新增，用户需求：设置页信息窗为主开关 + 5 个元素子项）──
+  // 与设置页（`MySetPage` 的 `syncInfoWinChildRows`）同一批 Preferences 键，进场各读一次。
+  /** 时间显示：0 = 关，1 = 时:分，2 = 时:分:秒（**默认 1 = 时:分**，用户 2026-10-19 定稿） */
+  @State infoWinTimeMode: number = 1
+  /** 电量显示：0 = 关，1 = 仅图标，2 = 图标+百分比（**默认 1 = 仅图标**，用户 2026-10-19 定稿） */
+  @State infoWinBatteryMode: number = 1
+  @State infoWinBookmarkShow: boolean = true
+  @State infoWinAntiPeepShow: boolean = true
+  @State infoWinTimerShow: boolean = true
   /**
    * 弹窗控制器。**每次打开时新建** —— 因为 SDK 明确
    * 「Custom dialog box parameters **do not support dynamic updates**」
@@ -1289,8 +1331,15 @@ export default struct ReaderPage3 {
    * 与系统状态栏同一时区口径；`padStart`/`pad2` 补齐两位数。
    */
   private computeInfoClockText(): string {
+    // 2026-10-19：按「时间显示」三档出文案（0 = 关 ⇒ 空串，调用处 `length > 0` 兜住不渲染）
+    if (this.infoWinTimeMode <= 0) {
+      return '';
+    }
     const d = new Date();
     const pad2 = (n: number): string => (n < 10 ? '0' + n : '' + n);
+    if (this.infoWinTimeMode === 1) {
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
     return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
   }
 
@@ -1310,6 +1359,67 @@ export default struct ReaderPage3 {
    */
   private infoClockIcon(): Resource {
     return this.infoClockIsDay ? $r('sys.symbol.sun') : $r('sys.symbol.moon_fill');
+  }
+
+  /**
+   * 信息窗电量的图标资源（2026-10-19 新增，2026-10-19 二次修正）。
+   *
+   * ⚠️ 符号名来自真源 `sdk/default/openharmony/ets/build-tools/ets-loader/sysResource.js`
+   *    （该表内 `battery_*` 共 **51** 个符号）：
+   *    `battery_5/10/15/20/30/40/50/60/70/80/90/95/100percent` 共 13 档（本方法按"向下取档"）。
+   *
+   * ★ 用户实测修正（2026-10-19）：「充电之后出现了两个点亮图标，之前的固定显示没丢，
+   *   又出现了一个新的充电图标」⇒ 现在**充电就整体替换成充电图标**（不再叠在电量图标旁边），
+   *   并且尺寸与其它图标一致（见 `INFO_ICON_SIZE`）。
+   *   〜 备用候选（万一 `battery_bolt_fill` 在真机上不是"电池+闪电"的形状）：
+   *     `battery_bolt_2_fill` / `battery_bolt_3_fill` / `battery_bolt`。
+   */
+  private infoBatteryIcon(): Resource {
+    if (this.infoCharging) {
+      // 充电中（含已充满）：只显示这一个图标（替代电量档位图标）
+      return $r('sys.symbol.battery_bolt_fill')
+    }
+    const s: number = this.infoBatterySoc;
+    if (s >= 100) { return $r('sys.symbol.battery_100percent') }
+    if (s >= 95) { return $r('sys.symbol.battery_95percent') }
+    if (s >= 90) { return $r('sys.symbol.battery_90percent') }
+    if (s >= 80) { return $r('sys.symbol.battery_80percent') }
+    if (s >= 70) { return $r('sys.symbol.battery_70percent') }
+    if (s >= 60) { return $r('sys.symbol.battery_60percent') }
+    if (s >= 50) { return $r('sys.symbol.battery_50percent') }
+    if (s >= 40) { return $r('sys.symbol.battery_40percent') }
+    if (s >= 30) { return $r('sys.symbol.battery_30percent') }
+    if (s >= 20) { return $r('sys.symbol.battery_20percent') }
+    if (s >= 15) { return $r('sys.symbol.battery_15percent') }
+    if (s >= 10) { return $r('sys.symbol.battery_10percent') }
+    return $r('sys.symbol.battery_5percent')
+  }
+
+  /**
+   * 电量文本：百分比（用户要求"支持百分比以及充电状态的显示"）。
+   * ⚠️ 本工程已知坑：字符串模板里不要拼 `%` 之外的东西，`Text('${n}%')` 是安全的。
+   */
+  private infoBatteryText(): string {
+    return `${this.infoBatterySoc}%`;
+  }
+
+  /**
+   * 阅读页顶部让位高度（2026-10-19 新增，配合「显示系统状态栏」）。
+   *
+   * 为什么不能一直用 `topRectHeight`：进书 620ms 后 `WindowAbility.freezeTopRect()` 会把它
+   * **冻结成 0**（隐藏状态栏那一刻 `avoidAreaChange` 归零，冻结是为了不让主页上下跳
+   * 38.81vp，见 `WindowAbility` 那段长注释）。所以：
+   *   · 状态栏隐藏（默认）⇒ 用 `topRectHeight`（= 0，与改动前完全一致）；
+   *   · 状态栏显示 ⇒ 用**系统状态栏高度** `AppStorage['stateHeight']`（`EntryAbility.ets:310`
+   *     在启动时按 `AvoidAreaType.TYPE_SYSTEM` 写好的 vp 值，沉浸期不会被清零）。
+   *     取不到（0/缺失）时回落到本项目实测值 38.81vp（见 `WindowAbility` 注释里的实测值）。
+   */
+  private readerTopInset(): number {
+    if (!this.readerStatusBarOn) {
+      return this.topRectHeight;
+    }
+    const h: number = AppStorage.get<number>('stateHeight') ?? 0;
+    return h > 0 ? h : 38.81;
   }
 
   /**
@@ -3520,7 +3630,27 @@ export default struct ReaderPage3 {
     // ⚠️ 默认值必须与 `MySetPage.ets` 的 `getSync(SET_INFO_WIN, true)` 保持一致，
     //    否则新用户会出现「设置页显示开、阅读页不显示」。
     this.infoWinOn = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, true) as boolean;
+    // 显示系统状态栏（2026-10-19 新增）：全局开关，进场读一次（与信息窗同款口径）。
+    // ⚠️ 必须在下面那个 620ms 的"进入沉浸"块之前读到，否则那个块拿不到用户的选择。
+    this.readerStatusBarOn =
+      PreferencesUtil.getSync(MySetConstants.SET_READER_STATUS_BAR, false) as boolean;
+    // 信息窗元素子开关（2026-10-19 新增）：与设置页同一批键、同一套默认值
+    // （时间 2 = 时:分:秒；电量/书签/防窥/定时 默认开 ⇒ 默认观感与改动前一致）。
+    this.infoWinTimeMode = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIME, 1) as number;
+    this.infoWinBatteryMode = MySetConstants.infoBatteryMode(
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_BATTERY, 1));
+    this.infoWinBookmarkShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_BOOKMARK, true) as boolean;
+    this.infoWinAntiPeepShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_ANTIPEEP, true) as boolean;
+    this.infoWinTimerShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIMER, true) as boolean;
     this.syncInfoTicker();
+    // ── 信息窗电量（2026-10-19 新增）：订阅电池变化公共事件 ──────────────────
+    // 与 `syncInfoTicker()` 的秒级刷新分工：时间/倒计时走 1s 定时器，电量走系统事件
+    // （`usual.event.BATTERY_CHANGED`）⇒ 掉电/插拔充电器立刻反映，不额外耗电轮询。
+    // 退书在 `aboutToDisappear` 里 `BatteryStatus.stop()`。
+    BatteryStatus.start((soc: number, charging: boolean): void => {
+      this.infoBatterySoc = soc;
+      this.infoCharging = charging;
+    });
     // 标定值要在 readerSetting 载入之后再读（自动行高系数依赖字号/行距）
     this.loadCalib();
     this.startPlay(this.bookData.bookUrl ?? '', this.bookData.localBookDurChapterPos?.resourceIndex ?? 0,
@@ -3559,7 +3689,18 @@ export default struct ReaderPage3 {
         return;
       }
       WindowAbility.getInstance().freezeTopRect();
-      WindowAbility.getInstance().toggleWindowSystemBar([], this.getUIContext().getHostContext());
+      // ── 系统栏（2026-10-19 改造：支持「显示系统状态栏」真穿透）────────────────
+      // 关（默认，老行为）：`[]` = 状态栏与导航栏全隐藏，阅读页满屏。
+      // 开：只显示状态栏（`['status']`；names 是**要显示**的栏，空数组才是全隐藏），
+      //     并把它的底色设成全透明 ⇒ 露出我们自己的阅读背景（真穿透）。
+      //     导航栏仍然隐藏，底部菜单/悬浮条的布局完全不变。
+      if (this.readerStatusBarOn) {
+        WindowAbility.getInstance().toggleWindowSystemBar(['status'], this.getUIContext().getHostContext());
+        WindowAbility.getInstance().setStatusBarTransparent(
+          this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+      } else {
+        WindowAbility.getInstance().toggleWindowSystemBar([], this.getUIContext().getHostContext());
+      }
       this.syncAbilityColorMode();
     }, UiMotion.LT_ENTER_DUR + 60);
   }
@@ -4359,6 +4500,13 @@ export default struct ReaderPage3 {
     // 不再写 App 级夜间开关（旧的 `NightMode.set()` 已删除）——书架跟不跟，由三档裁决。
     NightMode.setReaderNight(this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext);
+    // 显示系统状态栏时（2026-10-19）：状态栏图标色必须跟着阅读器日/夜间走，
+    // 否则「浅色纸 + 白色图标」会看不见。`NightMode.sync()` 只管内容色，
+    // 状态栏底色（透明）由这里一并复设，避免只改一半。
+    if (this.readerStatusBarOn) {
+      WindowAbility.getInstance().setStatusBarTransparent(
+        this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+    }
   }
 
   /**
@@ -4833,6 +4981,8 @@ export default struct ReaderPage3 {
     this.disposed = true;
     // 按键翻页退订（2026-10-07）：退书立即交还系统音量键（官方要求"确定响应时才激活"）
     ReaderKeyTurn.detachReader();
+    // 信息窗电量退订（2026-10-19）：退书即停订阅，避免回调闭包驻留整个 App 生命周期
+    BatteryStatus.stop();
     // 信息窗秒级刷新停止（2026-10-07）
     if (this.infoTicker !== -1) {
       clearInterval(this.infoTicker);
@@ -6715,43 +6865,66 @@ export default struct ReaderPage3 {
         //   左格内容靠 Start、右格内容靠 End ⇒ 右段外观与改版前（整行 End + 满宽）
         //   **完全一致**，不会因插入左侧元素而整体左移。
         Row() {
-          // ── 左段：系统时间（2026-10-13 加图标：白天太阳 / 夜间月亮）────────────
+          // ── 左段：系统时间 + 电量（2026-10-19：状态栏开启时整段隐藏）────────────
+          // ⚠️ 用户拍板：`显示系统状态栏` 开启后，状态栏本身就有时间与电量
+          //   ⇒ 这里再显示一遍是重复信息，**只藏左段**，右段（书签/定时/防窥）照旧。
           Row({ space: 4 }) {
-            if (this.infoClockText.length > 0) {
+            if (!this.readerStatusBarOn) {
+              // 时间显示（2026-10-19：受子开关控制，0 = 关 ⇒ 文案为空，整段不渲染）
+              if (this.infoClockText.length > 0) {
               // 图标与文字同色同透明度，跟正文一致（与右侧书签/防窥图标同规格）
               // `ReplaceSymbolEffect` + triggerValue：从太阳切到月亮（或反之）时播放形变动效
               SymbolGlyph(this.infoClockIcon())
-                .fontSize(14)
+                .fontSize(INFO_ICON_SIZE)
                 .fontColor([this.readerSetting.fontColor])
                 .opacity(0.9)
                 .symbolEffect(new ReplaceSymbolEffect(), this.infoClockIsDay ? 1 : 0)
                 .hitTestBehavior(HitTestMode.None)
               Text(this.infoClockText)
-                .fontSize(13)
+                .fontSize(INFO_TEXT_SIZE)
                 .fontColor(this.readerSetting.fontColor)
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
+            }
+            // ── 电量（2026-10-19 新增；三档循环，见「电量显示」子开关）─────────────
+            // 2 = 图标 + 百分比；1 = **仅图标**（用户要求"点击依次是 图标+百分比 / 图标 / 关闭"）；
+            // 0 = 关闭（整段不渲染）。**充电时图标整体替换成充电图标**（不再叠两个图标）。
+            // `infoBatterySoc < 0` = 还没拿到值 ⇒ 整段不渲染（不显示 "0%" 这种假数据）。
+            if (this.infoWinBatteryMode > 0 && this.infoBatterySoc >= 0) {
+              SymbolGlyph(this.infoBatteryIcon())
+                .fontSize(INFO_ICON_SIZE)
+                .fontColor([this.readerSetting.fontColor])
+                .opacity(0.9)
+                .hitTestBehavior(HitTestMode.None)
+              if (this.infoWinBatteryMode >= 2) {
+                Text(this.infoBatteryText())
+                  .fontSize(INFO_TEXT_SIZE)
+                  .fontColor(this.readerSetting.fontColor)
+                  .opacity(0.9)
+                  .hitTestBehavior(HitTestMode.None)
+              }
+            }
             }
           }
           .justifyContent(FlexAlign.Start)
           .layoutWeight(1)
           .hitTestBehavior(HitTestMode.None)
 
-          // ── 右段：书签 / 定时 / 防窥（原逻辑未改，仅加了等分外层）──────────
+          // ── 右段：书签 / 定时 / 防窥（各自受子开关控制，2026-10-19）──────────
           Row({ space: 8 }) {
             // 书签联动的**实时性来源**：`isBookmarked` 是 @State，翻页时由
             // `pageShow → syncBookmarkState()` 刷新、点顶栏/下拉手势时由 `toggleBookmark()`
             // 立即改写 ⇒ 本行随状态直接重渲染，不存在"要等翻页/其他操作才刷新"的延迟。
-            if (this.isBookmarked) {
+            if (this.infoWinBookmarkShow && this.isBookmarked) {
               SymbolGlyph(this.bookmarkIcon())
-                .fontSize(16)
+                .fontSize(INFO_ICON_SIZE)
                 .fontColor([this.readerSetting.fontColor])
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
-            if (this.infoTimerText.length > 0) {
+            if (this.infoWinTimerShow && this.infoTimerText.length > 0) {
               Text(this.infoTimerText)
-                .fontSize(13)
+                .fontSize(INFO_TEXT_SIZE)
                 .fontColor(this.readerSetting.fontColor)
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
@@ -6761,9 +6934,9 @@ export default struct ReaderPage3 {
             // ⚠️ 2026-10-13 方案 A：防窥是**纯系统能力**（AntiPeep 无网络依赖）⇒
             //   精简模式下保留（否则把一项 VIP 权益藏起来不卖）。开关见
             //   `OfflineMode.showReadingEnhancements()`（改 false 可一键全部隐藏）。
-            if (this.vipOn && OfflineMode.showReadingEnhancements()) {
+            if (this.infoWinAntiPeepShow && this.vipOn && OfflineMode.showReadingEnhancements()) {
               SymbolGlyph(this.antiPeepIcon())
-                .fontSize(16)
+                .fontSize(INFO_ICON_SIZE)
                 .fontColor([this.readerSetting.fontColor])
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
@@ -6778,7 +6951,7 @@ export default struct ReaderPage3 {
         .alignItems(VerticalAlign.Top)
         .width('100%')
         .height('100%')
-        .padding({ top: this.topRectHeight + 12, left: 20, right: 20 })
+        .padding({ top: this.readerTopInset() + 12, left: 20, right: 20 })
         .hitTestBehavior(HitTestMode.None)
       }
 
@@ -7161,7 +7334,9 @@ export default struct ReaderPage3 {
           .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
         }
       }.width("100%").height("100%").enabled(this.isShowSetting).padding({
-        top: this.topRectHeight,
+        // ⚠️ 2026-10-19：改用 `readerTopInset()` —— 显示系统状态栏时状态栏是可见的，
+        //    沉浸期 `topRectHeight` 被冻结成 0，顶部菜单会压到状态栏下面。
+        top: this.readerTopInset(),
       })
       }
       .width('100%')

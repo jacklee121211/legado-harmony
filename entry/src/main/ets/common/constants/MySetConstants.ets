@@ -41,6 +41,8 @@ export default class MySetConstants {
    * 震动反馈开关（2026-09-25 新增，全局震动方案）。
    * ⚠️ 与旧 SET_* 不同：这个键**真正落盘**（Preferences `HapticsEnabled`，
    * 见 `common/utils/Haptics.ets`）。
+   * 默认值 = **开**（权威单点：`Haptics.isEnabled()` 的 `getSync(KEY_ENABLED, true)`；
+   * `MySetPage` 的 `@StorageLink(SET_HAPTICS) setHaptics = true` 与之对齐）。2026-10-19 用户口径确认。
    */
   static readonly SET_HAPTICS: string = 'setHaptics';
 
@@ -55,12 +57,22 @@ export default class MySetConstants {
   static readonly SET_EXT_NAME: string = 'setExtName';
 
   /**
-   * 按键翻页组（2026-10-07 新增，默认关；Preferences 同名键持久化，见 utils/ReaderKeyTurn.ets）。
+   * 按键翻页（2026-10-07 新增；Preferences 同名键持久化，见 utils/ReaderKeyTurn.ets）。
    * 音量键翻页订阅会拦截系统音量调节（官方 `inputConsumer.on('keyPressed')` 原文），
    * 故仅在阅读页存活时生效，退书即恢复系统音量。
+   * ⚠️ 2026-10-19 两处口径变更：
+   *   ① **默认开**（用户：「音量键翻页…都是默认开启的」）—— 权威默认值在
+   *      `ReaderKeyTurn.isVolOn()`（`getSync(KEY_KEY_VOL_TURN, true)`）与
+   *      `MySetPage.aboutToAppear` / `@StorageLink` 初值，三处必须一致；
+   *   ② **独立的「按键翻页」组已删除** —— 音量键翻页并入设置页「功能」组第一行
+   *      （原「其他」组，改名为「功能」并提到正页最顶端）。键名不变。
    */
   static readonly SET_KEY_VOL: string = 'setKeyVolTurn';
-  /** 智控键（侧边指纹键）上/下滑翻页；仅支持该按键的机型生效（KEYCODE_FINGERPRINT_SLIDE_*，@since 26） */
+  /**
+   * 智控键（侧边指纹键）上/下滑翻页；仅支持该按键的机型生效（KEYCODE_FINGERPRINT_SLIDE_*，@since 26）。
+   * ⚠️ 2026-10-19：设置页的「智控键翻页」**整行已按用户要求删除**，本常量随之**无 UI 引用**；
+   *    保留只为兼容 `utils/ReaderKeyTurn.ets`（底层按用户选择未删，常量名与 Preferences 键保持一致）。
+   */
   static readonly SET_KEY_FP: string = 'setKeyFpTurn';
 
   /**
@@ -76,6 +88,64 @@ export default class MySetConstants {
    *    （harmony-utils `PreferencesUtil.ets:105-108` 直接转发 `preferences.getSync`）。
    */
   static readonly SET_INFO_WIN: string = 'setReaderInfoWin';
+
+  /**
+   * 阅读器信息窗的**元素子开关**（2026-10-19 新增，用户需求：
+   * 「显示阅读器信息窗」变成主开关，打开后下面每行空两格列出全部元素，各自可开关）。
+   *
+   * 全部为**全局** Preferences 键。**默认值（2026-10-19 用户定稿）**：
+   *   · 时间显示 `SET_INFO_WIN_TIME`：**三档**（0=关 / 1=`时:分` / 2=`时:分:秒`），默认 **1**（`时:分`）；
+   *   · 电量 `SET_INFO_WIN_BATTERY`：**三档**（0=关 / 1=仅图标 / 2=图标+百分比），默认 **1**（仅图标）；
+   *   · 书签 `SET_INFO_WIN_BOOKMARK`、防窥 `SET_INFO_WIN_ANTIPEEP`、
+   *     定时 `SET_INFO_WIN_TIMER`：布尔，默认 **开**。
+   * ⚠️ 默认值的**权威单点**在本文件的注释 + 两处读取点（`MySetPage.aboutToAppear` 与
+   *    `ReaderPage3.aboutToAppear`）的 `getSync` 默认实参 —— 三处必须一致。
+   * ⚠️ 子开关只在主开关「显示阅读器信息窗」打开时出现在设置页；
+   *    主开关关掉**不清**子开关的值（用户下次打开还是原样）。
+   */
+  static readonly SET_INFO_WIN_TIME: string = 'setReaderInfoWinTime';
+  static readonly SET_INFO_WIN_BATTERY: string = 'setReaderInfoWinBattery';
+  static readonly SET_INFO_WIN_BOOKMARK: string = 'setReaderInfoWinBookmark';
+  static readonly SET_INFO_WIN_ANTIPEEP: string = 'setReaderInfoWinAntiPeep';
+  static readonly SET_INFO_WIN_TIMER: string = 'setReaderInfoWinTimer';
+
+  /**
+   * 「电量显示」三档模式的**取值归一化**（2026-10-19 二次改造）。
+   *
+   * 历史：这个键最初是布尔（true = 显示图标+百分比 / false = 不显示），
+   * 用户后来要求改成和时间一样的**三档循环**：`0 = 关闭`、`1 = 仅图标`、`2 = 图标+百分比`。
+   * 老机器里存的可能是 `boolean` ⇒ 读出来必须先归一化，否则 `true` 被当数字用会出错：
+   *   `true` → 2（= 原来的"图标+百分比"），`false` → 0（= 原来的"不显示"）。
+   * @param raw Preferences 里读到的原始值（number 或 boolean 或其它）
+   * @returns 0 / 1 / 2（**无法识别时回落 1 = 仅图标**，与用户 2026-10-19 定稿的默认值一致）
+   */
+  static infoBatteryMode(raw: Object): number {
+    if (typeof raw === 'boolean') {
+      return raw === true ? 2 : 0;
+    }
+    if (typeof raw === 'number') {
+      const n: number = Math.round(raw);
+      return n < 0 ? 0 : (n > 2 ? 2 : n);
+    }
+    return 1;
+  }
+
+  /**
+   * 阅读页「显示系统状态栏」（2026-10-19 新增，用户需求；**全局**设置，Preferences 同名键）。
+   *
+   * 开启后：阅读页不再隐藏状态栏，而是**真穿透** ——
+   *   ① `WindowAbility.toggleWindowSystemBar(['status'])`（names = 要**显示**的栏）；
+   *   ② `setWindowSystemBarProperties({ statusBarColor: '#00000000', statusBarContentColor })`
+   *      把状态栏底色设成全透明，窗口本身早就是 `setWindowLayoutFullScreen(true)`
+   *      （`EntryAbility.ets:278`）⇒ 状态栏区域露出的是**我们自己的阅读背景**。
+   *      依据：`@ohos.window.d.ts:442-450` 原文「Background color of the status bar. The value is
+   *      a hexadecimal RGB **or ARGB** color code … The default value is **'#66000000'**」
+   *      （默认值本身带 alpha ⇒ ARGB 的透明度生效）。
+   * 关闭后：维持旧行为 `toggleWindowSystemBar([])` 全隐藏。
+   * ⚠️ 开启时信息窗**左侧（时间 + 电量）不再显示**（用户拍板：与状态栏重复），右侧书签/定时/防窥保留。
+   * 默认值 **关**（`false`），保持老用户的全屏观感；存量用户无需迁移。
+   */
+  static readonly SET_READER_STATUS_BAR: string = 'setReaderStatusBar';
 
   /**
    * 防窥第 2 层「阅读防窥」开关（2026-10-08 拆层，默认开；VIP 特权）。

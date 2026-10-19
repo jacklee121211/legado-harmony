@@ -1,6 +1,16 @@
 /**
  * 阅读器「按键翻页」调度（2026-10-07 新增，用户需求：音量键翻页 + 智控键滑动翻页，
- * 开关在 设置-按键翻页 组，默认关闭）。
+ * 开关在 设置-功能-「音量键翻页」组，**2026-10-19 起默认开启**（原默认关））。
+ *
+ * ⚠️ 2026-10-19 变更（用户要求「智控键翻页直接删除，只保留音量键翻页」）：
+ *   设置页的「智控键翻页」**整行已删除**，音量键翻页并入「功能」组
+ *   （见 `pages/view/myCenter/MySetPage.ets` 的 `otherBaseList`）。
+ *   **本类底层逻辑按用户选择保留原样**（用户口径："只删设置页那一行，底层保留"）：
+ *     · 没有 UI 入口 ⇒ `isFpOn()` 读到的 Preferences 值不会再被新用户置 true ⇒ 智控键分支不可达；
+ *     · 历史遗留：本次改动**之前**已把「智控键翻页」拨开过的老用户，其 `setKeyFpTurn` 仍为
+ *       true，在支持该键的机型上会继续订阅（设置页已无开关可关）。本机实测不支持（见下），无影响。
+ *   若日后要彻底清理：删 `SMART_KEYS` / `fpSupported` / `queryFpSupported()` / `isFpOn()`
+ *   及 `refresh()` 里的智控键分支即可（`ReaderPage3` 只调 attachReader/detachReader，不受影响）。
  *
  * ── SDK 取证 ──────────────────────────────────────────────────────────────
  * · `inputConsumer.on('keyPressed', KeyPressedConfig, cb)`：`@ohos.multimodalInput.
@@ -53,7 +63,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { PreferencesUtil } from '@pura/harmony-utils';
 
-/** 按键翻页开关的 Preferences / AppStorage 同名键（默认关） */
+/** 按键翻页开关的 Preferences / AppStorage 同名键（**2026-10-19 起默认开**，用户口径） */
 export const KEY_KEY_VOL_TURN: string = 'setKeyVolTurn';
 export const KEY_KEY_FP_TURN: string = 'setKeyFpTurn';
 
@@ -84,11 +94,22 @@ export class ReaderKeyTurn {
   /** 智控键支持性缓存（null = 未查询；查询异步，完成后触发一次再对账） */
   private static fpSupported: boolean | null = null;
 
+  /**
+   * 音量键翻页开关当前值（Preferences，**默认开**）。
+   *
+   * ⚠️ 2026-10-19 用户口径变更：新装默认**开启**（原默认关）。
+   *   默认值是「本地从未存过该键」时才生效；用户自己关过 ⇒ 存的是 false，照旧关。
+   *   ⚠️ **老用户（升级安装）不能跟着变开** —— 由 `KeyVolDefaultMigration`（EntryAbility 启动时
+   *      调一次、幂等、带一次性标记）在**首次运行新版本**时显式写入 `false`，
+   *      之后每次版本更新都不再执行 ⇒ 用户配置不会被覆盖。详见该文件头。
+   *   ⚠️ 改默认值必须同步三处：本方法、`MySetPage.aboutToAppear` 的
+   *      `getSync(KEY_KEY_VOL_TURN, true)`、`MySetPage` 里 `@StorageLink(SET_KEY_VOL)` 的初值。
+   */
   static isVolOn(): boolean {
     try {
-      return PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) === true;
+      return PreferencesUtil.getSync(KEY_KEY_VOL_TURN, true) === true;
     } catch (e) {
-      return false;
+      return true;
     }
   }
 

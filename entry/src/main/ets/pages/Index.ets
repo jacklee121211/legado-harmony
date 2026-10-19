@@ -1397,6 +1397,9 @@ struct Main {
     WindowAbility.getInstance().restoreTopRect();
     WindowAbility.getInstance().toggleWindowSystemBar(['status', 'navigation'],
       this.getUIContext().getHostContext());
+    // 状态栏底色还原（2026-10-19）：「显示系统状态栏」开启时阅读页把状态栏设成了全透明，
+    // 若不还原，退出后书架/我的的状态栏也会跟着透明（那是全 App 外观变化，不在授权范围内）。
+    WindowAbility.getInstance().restoreStatusBarBackground();
     NightMode.setReaderActive(false);
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext);
   }

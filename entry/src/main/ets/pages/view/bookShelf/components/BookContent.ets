@@ -134,6 +134,13 @@ export default struct BookContent {
    *
    * 目标：给切回来的书单一次干净的入场动画。不能走清空+重查（冷启动那条路），
    * 因为冷启动时 dataSource 本来就是空的。切回来时书在且已渲染在终态。
+   *
+   * ⚠️ 2026-10-19 用户口径变更：「只保留冷启动进入动画，进入后 dock 切换回书架，
+   *    书架书籍无需动画。」⇒ 本方法的 `begin()` 会被 `EntranceWave.allowColdStartWave()`
+   *    **闸掉**（冷启动窗口早已过去），`entranceWaveId++` 仍照旧发出，子项拿到
+   *    `delayFor() === -1` 直接把 `entered` 置 true ⇒ 终态渲染、一帧动画都没有。
+   *    这里**不减代码**：闸门集中在 `EntranceWave.COLD_START_ONLY` 一个常量上，
+   *    改回 `false` 即完整恢复"dock 切回重播"的旧行为。
    */
   onDockReturn(): void {
     if (this.booksDataSource.totalCount() > 0) {

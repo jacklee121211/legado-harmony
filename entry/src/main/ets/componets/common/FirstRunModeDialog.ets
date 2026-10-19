@@ -49,7 +49,9 @@ const OPTION_TAG_OFFLINE: string = '简单极致';
 const OPTION_DESC_FULL: string = '部分个性化依赖网络链接的超精致阅读体验';
 const OPTION_DESC_OFFLINE: string = '缺少部分个性化却保证极致阅读的极简主义';
 /** 底部说明：先写"后续可在设置页更改"，再补一行"无广告"（用户要求分两行） */
-const FOOTER_HINT_SETTINGS: string = '后续可在「我的 → 设置 → 其他」中更改模式';
+// ⚠️ 2026-10-19：设置页原来的「其他」分组已改名为「功能」（用户要求），这里跟着改，
+//    否则首启引导会指路到一个不存在的分组名。
+const FOOTER_HINT_SETTINGS: string = '后续可在「我的 → 设置 → 功能」中更改模式';
 const FOOTER_HINT_NO_AD: string = '双模式下均不存在广告以及其他扰人因素';
 /** 第一行的模式名与短标签之间的分隔符（前后各一个空格，用户定稿写法） */
 const LABEL_TAG_SEP: string = ' · ';

@@ -24,8 +24,8 @@ import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog'
 // ── 字号阶梯（2026-10-06 统一标准，见 FontConstants「语义阶梯」段；本页文字只取这四档）──
 import FontConstants from '../../../common/constants/FontConstants'
-// ── 按键翻页（2026-10-07 新增）：音量键/智控键翻页开关，订阅调度见 utils/ReaderKeyTurn.ets ──
-import { ReaderKeyTurn, KEY_KEY_VOL_TURN, KEY_KEY_FP_TURN } from '../../../common/utils/ReaderKeyTurn'
+// ── 按键翻页（2026-10-07 新增；2026-10-19 智控键翻页入口删除，只剩音量键）：订阅调度见 utils/ReaderKeyTurn.ets ──
+import { ReaderKeyTurn, KEY_KEY_VOL_TURN } from '../../../common/utils/ReaderKeyTurn'
 // ── 防窥两层开关（2026-10-08 新增，VIP 特权）：真值/下沉逻辑全在 utils/AntiPeep.ets ──
 import { AntiPeep, KEY_ANTI_PEEP_CAPTURE, KEY_ANTI_PEEP_DLP } from '../../../common/utils/AntiPeep'
 import { VipManager } from '../../../common/utils/VipManager'
@@ -34,8 +34,23 @@ import { OfflineMode, STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/Off
 // ── 首次安装模式选择（2026-10-13 新增）：本页只用到「开发者重放」入口 ──────────
 import { FirstRunMode } from '../../../common/utils/FirstRunMode'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
-// ── 书架动画速度（2026-10-12）─────────────────────────────────────────────────
-import { EntranceWave } from '../../../common/utils/EntranceWave'
+// 2026-10-19：「书架动画速度」滑块按用户要求**整项删除**（连 `shelfAnimSpeed` 读写一起去掉）
+// ⇒ 不再 import EntranceWave；书架入场波次回归 `EntranceWave` 内置默认档（level 3 = 0.75x）。
+
+// ── 信息窗「时间显示」三档的显示文案（2026-10-19 新增）────────────────────────
+// 值的口径与阅读页一致（`ReaderPage3` 的 `infoWinTimeMode`）：0 = 关、1 = 时:分、2 = 时:分:秒。
+const INFO_TIME_MODE_LABELS: string[] = ['关闭', '时:分', '时:分:秒']
+export function infoTimeLabel(mode: number): string {
+  const i: number = mode < 0 ? 0 : (mode > 2 ? 2 : mode)
+  return INFO_TIME_MODE_LABELS[i]
+}
+
+/** 信息窗「电量显示」三档的显示文案（2026-10-19）：0 = 关闭、1 = 仅图标、2 = 图标+百分比 */
+const INFO_BATTERY_MODE_LABELS: string[] = ['关闭', '仅图标', '图标+百分比']
+export function infoBatteryLabel(mode: number): string {
+  const i: number = mode < 0 ? 0 : (mode > 2 ? 2 : mode)
+  return INFO_BATTERY_MODE_LABELS[i]
+}
 
 // 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`（被 Index.ets import 当组件用）。
 @Component
@@ -55,8 +70,28 @@ export default struct MySetPage{
   //  ⚠️ 这 6 个还都是 `@StorageLink`（内存态、无 putSync）⇒ 关掉重启即复原，本就形同虚设。
   /** 书架书名显示拓展名（2026-09-27，本项目自研功能：默认关；Preferences 持久化） */
   @StorageLink(MySetConstants.SET_EXT_NAME) setExtName: boolean = false
+  /**
+   * 阅读页「显示系统状态栏」（2026-10-19 新增，全局；默认关）。
+   * 开启后阅读页把状态栏设成全透明 + 保留显示（真穿透），且信息窗左侧时间/电量隐藏。
+   */
+  @StorageLink(MySetConstants.SET_READER_STATUS_BAR) showReaderStatusBar: boolean = false
+
+  // ── 信息窗元素子开关（2026-10-19 新增，用户需求）─────────────────────────────
+  // ⚠️ 声明位置必须在行表（`infoBaseList`）**之前**：行表初始化时会读这些状态。
+  // **默认值（2026-10-19 用户定稿）**：时间 = `时:分`、电量 = `仅图标`、
+  // 书签/防窥/定时 = 开；「显示系统状态栏」= 关（见 `showReaderStatusBar`）。
+  // ⚠️ 与 `ReaderPage3.aboutToAppear` 的 `getSync(...)` 默认实参必须逐一一致。
+  /** 时间显示：0 = 关，1 = 时:分，2 = 时:分:秒 */
+  @State infoWinTimeMode: number = 1
+  /** 电量显示：0 = 关，1 = 仅图标，2 = 图标+百分比 */
+  @State infoWinBatteryMode: number = 1
+  @State infoWinBookmarkShow: boolean = true
+  @State infoWinAntiPeepShow: boolean = true
+  @State infoWinTimerShow: boolean = true
   /** 阅读器信息窗（2026-10-07）：全屏阅读时的系统时间 + 防窥/定时实时信息；Preferences 持久化，默认开 */
-  @StorageLink(MySetConstants.SET_INFO_WIN) setInfoWin: boolean = false
+  // ⚠️ 2026-10-19 默认值对齐（用户口径：新装默认开）：初值给 `true`，
+  //    与 `aboutToAppear` 的 `getSync(SET_INFO_WIN, true)`、`ReaderPage3` 的回读三方一致。
+  @StorageLink(MySetConstants.SET_INFO_WIN) setInfoWin: boolean = true
 
   // ── 防窥两层开关（2026-10-08 拆层，VIP 特权）──────────────────────────────
   // ⚠️ 这两个 @StorageLink 绑的是**有效值**（非 VIP 恒 false、第 2 层还要求系统防窥开关已开），
@@ -88,7 +123,7 @@ export default struct MySetPage{
    * 离线模式（2026-10-13 新增，用户需求）：true = 离线模式（隐藏依赖网络的入口）。
    * 绑 AppStorage 广播键（OfflineMode.STORAGE_KEY_OFFLINE_MODE）⇒ 开关一拨，
    * 设置页自身 + 其它页（阅读器/主题页/我的）全部立即重渲染。
-   * ⚠️ `@Watch` 是必需的：本页的「其他」分组是**数组驱动**，光改状态不会重建数组
+   * ⚠️ `@Watch` 是必需的：本页的「功能」分组（2026-10-19 前叫「其他」）是**数组驱动**，光改状态不会重建数组
    *    ⇒ 防窥两行不会消失。见 onOfflineModeChanged()。
    */
   @StorageLink(STORAGE_KEY_OFFLINE_MODE) @Watch('onOfflineModeChanged') offlineOn: boolean = false
@@ -126,40 +161,61 @@ export default struct MySetPage{
     // 标定模式开关初值（2026-09-26 迁入：读 TtsHlCalibV3 的 dev 字段，与阅读页同一存储）
     this.calibDevOn = this.calibDevRead()
     // 书架拓展名开关初值（2026-09-27，默认关=隐藏后缀）
+    // ⚠️ 2026-10-19：这一行已从「书架」组并入「功能」组（阅读器信息窗下面）
+    //    ⇒ 行状态在下面 rebuildOtherList 之后统一回填（不再有 bookSetList）。
     this.setExtName = PreferencesUtil.getSync('setExtName', false) as boolean
-    this.bookSetList[0].toggleStatus = this.setExtName
-    // 书架动画速度初值（2026-10-12，默认 0=标准速度）
-    this.shelfAnimSpeed = PreferencesUtil.getSync('shelfAnimSpeed', 0) as number
-    AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
-    // 按键翻页开关初值（2026-10-07，默认关；Preferences 持久化，订阅调度在 ReaderKeyTurn）
-    this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, false) as boolean
-    this.setKeyFpTurn = PreferencesUtil.getSync(KEY_KEY_FP_TURN, false) as boolean
-    this.keyTurnSetList[0].toggleStatus = this.setKeyVolTurn
-    this.keyTurnSetList[1].toggleStatus = this.setKeyFpTurn
-    ReaderKeyTurn.queryFpSupported()
-    // 智控键可用性提示（2026-10-08）：探测异步，先按当前值回填一次，300ms 后再回填一次
-    // （真机实测探测 ~25ms 完成：`KeyTurn fpProbe … support=false`）。
-    this.applySmartKeyHint()
-    setTimeout((): void => {
-      this.applySmartKeyHint()
-    }, 300)
+    // 2026-10-19：书架动画速度整项删除 ⇒ 这里不再读写 `shelfAnimSpeed`
+    // （AppStorage 里若还留着老值，`EntranceWave.speedMultiplier()` 仍会读到 —— 见下方说明）。
+    // 按键翻页开关初值（2026-10-07；**2026-10-19 用户口径：新装默认开启**）
+    // Preferences 持久化，订阅调度在 ReaderKeyTurn（`isVolOn()` 的默认值必须同步为 true）。
+    // ⚠️ 2026-10-19：智控键翻页整行删除 ⇒ 只剩音量键一项，且它已并入「功能」组
+    //    ⇒ 行状态改由 findSetRow 回填（**必须**放在下面 rebuildOtherList 之后）。
+    this.setKeyVolTurn = PreferencesUtil.getSync(KEY_KEY_VOL_TURN, true) as boolean
     // 阅读器信息窗开关初值（2026-10-13 起**默认开**；用户要求"信息窗默认打开"）
     // ⚠️ 这里是默认值的**权威单点**，`ReaderPage3.aboutToAppear` 的回读用同一个 true。
     this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, true) as boolean
-    // ── 离线模式（2026-10-13）：先按落盘意图重建「其他」组 ──────────────────────
-    // ⚠️ 必须早于下面 findOtherRow 的写回：rebuildOtherList 决定本组渲染哪些行。
+    // ── 离线模式（2026-10-13）：先按落盘意图重建「功能」组 ──────────────────────
+    // ⚠️ 必须早于下面 findSetRow 的写回：rebuildOtherList 决定本组渲染哪些行。
     // 顺序：先同步 offlineOn（防 EntryAbility.init 尚未跑到 / 页面被直接拉起），
     // 再 rebuild，最后才回填各行 toggleStatus。
     this.offlineOn = OfflineMode.isOn()
     this.rebuildOtherList()
-    const offlineRow: SetList | null = this.findOtherRow(MySetConstants.SET_OFFLINE_MODE)
+    // 「信息」组同样要重建一次：构造时 `setGroupList` 里挂的是空的 `infoSetList`，
+    // 不重建这一组就整块不渲染（2026-10-19 新增）
+    this.rebuildInfoList()
+    // 音量键翻页（2026-10-19 迁入「功能」组第一行）：回填行状态
+    const volRow: SetList | null = this.findSetRow(MySetConstants.SET_KEY_VOL)
+    if (volRow !== null) { volRow.toggleStatus = this.setKeyVolTurn }
+    // 显示文件拓展名（2026-10-19 迁入「功能」组第 3 行）：回填行状态
+    const extRow: SetList | null = this.findSetRow(MySetConstants.SET_EXT_NAME)
+    if (extRow !== null) { extRow.toggleStatus = this.setExtName }
+    // 显示系统状态栏（2026-10-19 新增；默认关，读 Preferences 落盘值）
+    this.showReaderStatusBar = PreferencesUtil.getSync(MySetConstants.SET_READER_STATUS_BAR, false) as boolean
+    const statusBarRow: SetList | null = this.findSetRow(MySetConstants.SET_READER_STATUS_BAR)
+    if (statusBarRow !== null) { statusBarRow.toggleStatus = this.showReaderStatusBar }
+    // ── 信息窗元素子开关（2026-10-19）：各读各的 Preferences，行状态随之回填 ────
+    this.infoWinTimeMode =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIME, 1) as number
+    // 电量是三档（老机器里可能还是 boolean ⇒ 用 MySetConstants.infoBatteryMode 归一化）
+    this.infoWinBatteryMode = MySetConstants.infoBatteryMode(
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_BATTERY, 1))
+    this.infoWinBookmarkShow =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_BOOKMARK, true) as boolean
+    this.infoWinAntiPeepShow =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_ANTIPEEP, true) as boolean
+    this.infoWinTimerShow =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIMER, true) as boolean
+    this.syncInfoWinChildRows()
+    // 离线模式（2026-10-19 移入「关于」组第一行；findSetRow 会同时查两张表）
+    const offlineRow: SetList | null = this.findSetRow(MySetConstants.SET_OFFLINE_MODE)
     if (offlineRow !== null) { offlineRow.toggleStatus = this.offlineOn }
-    this.findOtherRow(MySetConstants.SET_INFO_WIN)!.toggleStatus = this.setInfoWin
+    const infoWinRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN)
+    if (infoWinRow !== null) { infoWinRow.toggleStatus = this.setInfoWin }
     // 防窥两层开关初值（2026-10-08）：先让 AntiPeep 复算（写 AppStorage 的**有效值**），
     // 再回填行状态；第 2 层的系统防窥开关是异步对账，稍后由 @StorageLink 自动刷新。
-    // ⚠️ 2026-10-13 离线模式：这两行可能已被过滤掉 ⇒ 用 findOtherRow + 判空，不再用下标。
-    const dlpRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_DLP)
-    const capRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_CAPTURE)
+    // ⚠️ 2026-10-13 离线模式：这两行可能已被过滤掉 ⇒ 用 findSetRow + 判空，不再用下标。
+    const dlpRow: SetList | null = this.findSetRow(MySetConstants.SET_ANTI_PEEP_DLP)
+    const capRow: SetList | null = this.findSetRow(MySetConstants.SET_ANTI_PEEP_CAPTURE)
     if (dlpRow !== null) { dlpRow.vipMark = true }
     if (capRow !== null) { capRow.vipMark = true }
     AntiPeep.refresh()
@@ -188,40 +244,18 @@ export default struct MySetPage{
    * 有效值会回弹为 false，行状态必须跟着回弹；阅读页眼睛图标改的也是同一份有效值。
    */
   private syncAntiPeepRows(): void {
-    const dlpRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_DLP)
-    const capRow: SetList | null = this.findOtherRow(MySetConstants.SET_ANTI_PEEP_CAPTURE)
+    const dlpRow: SetList | null = this.findSetRow(MySetConstants.SET_ANTI_PEEP_DLP)
+    const capRow: SetList | null = this.findSetRow(MySetConstants.SET_ANTI_PEEP_CAPTURE)
     if (dlpRow !== null) { dlpRow.toggleStatus = this.setAntiPeepDlp }
     if (capRow !== null) { capRow.toggleStatus = this.setAntiPeepCapture }
   }
 
   /**
-   * 智控键可用性文案（2026-10-08）：探测为"本机不支持"时，把「智控键翻页」那一行的
-   * 副标题换成实话 —— 依据官方《优先响应系统功能键开发指导》示例
-   * 「若不支持智控键上滑及智控键下滑按键，则关闭用户入口」，以及本机实测
-   * `KeyTurn fpProbe devices=9 support=false`（9 个输入设备全部 false）。
+   * ⚠️ 2026-10-19 删除：`applySmartKeyHint()` 与 `animSpeedLabel()`。
+   *   · 前者只服务「智控键翻页」那一行（整行已按用户要求删除）；
+   *   · 后者只服务「书架动画速度」滑块的右侧倍率文字（整项已按用户要求删除）。
+   *   底层能力未动：`ReaderKeyTurn` 的智控键订阅/探测代码保持原样（只是设置页没有入口了）。
    */
-  private applySmartKeyHint(): void {
-    if (this.keyTurnSetList.length < 2) {
-      return
-    }
-    const unsupported: boolean = ReaderKeyTurn.smartKeyUnsupported()
-    // 置灰 + 文案（渲染侧见 SetListView 的 `.opacity` / `Toggle.enabled`）
-    this.keyTurnSetList[1].disabled = unsupported
-    if (unsupported) {
-      this.keyTurnSetList[1].bottomText = ReaderKeyTurn.smartKeyHint()
-      // 不支持 ⇒ 开关显示为关（订阅已被闸门拦掉，显示"开"会骗人）
-      this.keyTurnSetList[1].toggleStatus = false
-    }
-  }
-
-  /**
-   * 书架动画速度档位 → 显示标签（2026-10-12）。
-   */
-  private animSpeedLabel(): string {
-    // 0→0(关), 1→0.25x, 2→0.5x, 3→0.75x, 4→1x, 5→1.25x, 6→1.5x
-    const mult = this.shelfAnimSpeed * 0.25
-    return mult === 0 ? '关闭' : `${mult.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x`
-  }
 
   /**
    * 标定模式（开发者）标志读写 —— 与 `ReaderPage3` 的 `saveCalib()/loadCalib()` 共用
@@ -267,34 +301,43 @@ export default struct MySetPage{
   //  · 「网络」整组删除 —— 「Web端口」文案写死「当前端口1122」但全工程没有任何服务端实现、
   //    「清除webview数据」「用户代理」的 case 都是空 break；
   //  · 「其他」里的「语言」删除 —— `languageSheet` 只有 4 行不可点的 Text，选完没有任何效果。
-  @State bookSetList: SetList[]=[
-    // 2026-10-08：本组只剩本项目自研的「显示文件拓展名」（消费者：`BookInfos.ets:28`
-    // 书架显示 + `TtsEngine.ets:3068` 听书标题）；其余 4 项假开关已删。
-    new SetList(false,'显示文件拓展名',this.setExtName,'','书架上书名是否显示 .txt 等后缀',MySetConstants.SET_EXT_NAME)
-  ]
+  // ── 2026-10-19 删除：「书架」组（`bookSetList`）────────────────────────────────
+  // 用户口径："显示文件拓展名放在阅读器信息窗下面。此时音量键翻页、阅读器信息窗、
+  // 显示文件拓展名、阅读防窥、防截屏 组成了功能区。"
+  // ⇒ 本组唯一一行（显示文件拓展名）已并入「功能」组（见 `otherBaseList`，消费者不变：
+  //   `BookInfos.ets:28` 书架显示 + `TtsEngine.ets:3068` 听书标题）。
 
-  // ── 书架动画速度（2026-10-12）：滑块 -2~+2，0=标准速度 ─────────────────
-  /** 动画速度档位（-2~+2，0=标准）；持久化到 Preferences，滑块一动就写 AppStorage 立即生效 */
-  @State shelfAnimSpeed: number = 3
+  // ── 音量键翻页（2026-10-07 新增；2026-10-19 迁入「功能」组第一行、**默认改为开启**）────
+  // 仅阅读页存活时订阅生效（官方要求"确定响应时才激活"，否则音量键失灵），
+  // 落盘 + 调度全部走 ReaderKeyTurn。
+  // ⚠️ 声明位置必须在 `otherBaseList` **之前** —— 下面的行表初始化时会读它。
+  // ⚠️ 2026-10-19 默认值对齐（用户口径：音量键翻页新装默认开）：初值 `true`，
+  //    与 `aboutToAppear` 的 `getSync(KEY_KEY_VOL_TURN, true)`、`ReaderKeyTurn.isVolOn()` 三方一致。
+  @StorageLink(MySetConstants.SET_KEY_VOL) setKeyVolTurn: boolean = true
 
   /**
-   * 「其他」分组的**基础**行表（全量 = 全部渲染；离线 = 滤掉防窥两行）。
+   * 「功能」分组的**基础**行表（全量 = 全部渲染；离线 = 滤掉防窥两行）。
+   *
+   * 行顺序（2026-10-19 用户最终指定）：
+   *   音量键翻页 → 显示文件拓展名 → 阅读防窥 → 防截屏/录屏。
+   *   · 「音量键翻页」原先在独立的「按键翻页」组（该组已按用户要求删除，
+   *     智控键翻页整行一并删除）。
+   *   · 「显示文件拓展名」原在独立的「书架」组（该组已删）⇒ 并入本组。
+   *   · 「离线模式」已移到「关于」组（`aboutSetList`）。
+   *   · **信息窗与「显示系统状态栏」已整体移到新的「信息」组**（`infoBaseList`）——
+   *     用户原话：「现有的功能区保留，我们新做一个信息区，在功能区下面…
+   *     因为都放在功能区里面，太拥挤了」。
+   *
    * ⚠️ 2026-10-13 离线模式：防窥两行会在离线时被滤掉 —— 因此本表的访问一律改用
-   *     `findOtherRow(storageName)` 按 `storageName` 查找，
+   *     `findSetRow(storageName)` 按 `storageName` 查找，
    *     **禁止再用 `otherSetList[1]` / `[2]` 这种下标**（过滤后下标整体前移，
-   *     会把 toggleStatus 错写到「阅读器信息窗」那一行上）。
+   *     会把 toggleStatus 错写到别的行上）。
    */
   private readonly otherBaseList: SetList[] = [
-    // ── 离线模式开关（2026-10-13 新增，用户要求放「其他」组**最上面**）──────────
-    // 放第一位：它是全局形态开关，比下面任何单个功能都"更高一层"。
-    new SetList(false,'离线模式',this.offlineOn,'',
-      '开启后隐藏依赖网络的功能入口（Web服务 / 测试账号 / 防窥 / AI听书 / 字体与材质方案 / 自定义主题）；关闭恢复全量模式',
-      MySetConstants.SET_OFFLINE_MODE),
-    // 阅读器信息窗（2026-10-13 起默认开）：说明文案随新增的左侧系统时间更新
-    // ⚠️ 第 1 个实参是 `showArrow`（见 SetListGroup.ets:62 构造签名），**不是**开关初值！
-    //    开关状态由第 3 个实参 `this.setInfoWin` 给。此处必须 false = 渲染 Toggle 开关，
-    //    传 true 会渲染成箭头 `>` ⇒ 整行变成可点击跳转样式（2026-10-13 用户实测发现）。
-    new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时左侧显示当前系统时间，右侧显示书签、定时与防窥的实时信息',MySetConstants.SET_INFO_WIN),
+    // 音量键翻页（2026-10-19 从「按键翻页」组迁入，本组第一行）
+    new SetList(false,'音量键翻页',this.setKeyVolTurn,'','阅读页内音量上/下键翻页；翻页时临时接管音量调节，退出阅读页即恢复',MySetConstants.SET_KEY_VOL),
+    // 显示文件拓展名（2026-10-19 从删掉的「书架」组并入）
+    new SetList(false,'显示文件拓展名',this.setExtName,'','书架上书名是否显示 .txt 等后缀',MySetConstants.SET_EXT_NAME),
     // ── 防窥两层（2026-10-08 新增，均 VIP 特权；用户设计：两个独立开关，可只开其一）──
     // 第 2 层默认开（系统能力不足/系统防窥开关未开时自动显示为关，见 AntiPeep）；
     // 第 1 层默认关。阅读页顶栏眼睛图标 = 第 2 层的第二个入口（同键同源）。
@@ -302,21 +345,90 @@ export default struct MySetPage{
     new SetList(false,'防截屏/录屏',this.setAntiPeepCapture,'','开启后本应用不可被截屏录屏，退到后台时最近任务卡片也会显示白屏/隐私蒙层',MySetConstants.SET_ANTI_PEEP_CAPTURE),
   ]
 
-  /** 「其他」组**当前渲染**的行（离线时不含防窥两行；由 rebuildOtherList() 重建） */
+  /** 「功能」组**当前渲染**的行（离线时不含防窥两行；由 rebuildOtherList() 重建） */
   @State otherSetList: SetList[] = []
 
   /**
-   * 按 storageName 取「其他」组里的一行（离线模式改造后**唯一**合法的访问方式）。
-   * 查的是 `otherBaseList`（始终含全部行）⇒ 即使离线时该行没被渲染，
-   * 也能安全写它的 toggleStatus，不会因过滤而指向错误的行。
+   * 「信息」分组的**基础**行表（2026-10-19 新增，用户需求）。
+   *
+   * 用户原话：「现有的功能区保留，我们新做一个信息区，在功能区下面，信息区里面第一条是
+   * 显示系统状态栏，然后第二条就是信息窗。…因为都放在功能区里面，太拥挤了」
+   * ⇒ 抽成独立一张卡片，位置在「功能」组**下面**、`震动反馈` 组上面。
+   *
+   * 行顺序：**显示系统状态栏（第 1 条）→ 阅读器信息窗（第 2 条，主开关）→ 5 个元素子项**。
+   *   · 子项只在主开关打开时渲染（`isRowVisible` 按 `setInfoWin` 过滤），
+   *     标题带「- 」前缀 + 缩进 20vp（层级感），见 `SetListGroup.SetList` 的 indent。
+   *   · 「时间显示」「电量显示」是多档值行 ⇒ `hideControl = true`（只右侧值 + 下划线）。
+   *   · 电量三档语义：0 = 关 / 1 = 仅图标 / 2 = 图标+百分比（`MySetConstants.infoBatteryMode`）。
    */
-  private findOtherRow(storageName: string): SetList | null {
+  private readonly infoBaseList: SetList[] = [
+    // ① 显示系统状态栏（全局、默认关）：阅读页把状态栏设成全透明 ⇒ 露出阅读背景
+    new SetList(false,'显示系统状态栏',this.showReaderStatusBar,'','阅读页内显示系统状态栏；状态栏背景与阅读背景融合。开启后信息窗左侧的时间与电量将隐藏',MySetConstants.SET_READER_STATUS_BAR),
+    // ② 阅读器信息窗（主开关，默认开）
+    // ⚠️ 第 1 个实参是 `showArrow`（见 SetListGroup.ets 构造签名），**不是**开关初值！
+    //    传 true 会渲染成箭头 `>` ⇒ 整行变成可点击跳转样式（2026-10-13 用户实测发现）。
+    new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时左侧显示当前系统时间，右侧显示书签、定时与防窥的实时信息',MySetConstants.SET_INFO_WIN),
+    // ③ 元素子项（主开关打开时才出现）
+    new SetList(false,'- 时间显示',false,infoTimeLabel(this.infoWinTimeMode),'',
+      MySetConstants.SET_INFO_WIN_TIME, true, true),
+    new SetList(false,'- 电量显示',false,infoBatteryLabel(this.infoWinBatteryMode),'',
+      MySetConstants.SET_INFO_WIN_BATTERY, true, true),
+    new SetList(false,'- 书签显示',this.infoWinBookmarkShow,'','',MySetConstants.SET_INFO_WIN_BOOKMARK, true),
+    new SetList(false,'- 防窥显示',this.infoWinAntiPeepShow,'','',MySetConstants.SET_INFO_WIN_ANTIPEEP, true),
+    new SetList(false,'- 定时显示',this.infoWinTimerShow,'','',MySetConstants.SET_INFO_WIN_TIMER, true),
+  ]
+
+  /** 「信息」组**当前渲染**的行（子项随主开关显隐；由 rebuildInfoList() 重建） */
+  @State infoSetList: SetList[] = []
+
+  /**
+   * 按 storageName 取**任意**一行的对象（行状态回填的**唯一**合法方式）。
+   *
+   * 查三张**基础表**（始终含全部行，与渲染过滤无关）：
+   *   ① `otherBaseList`（「功能」组：音量键翻页 / 显示文件拓展名 / 防窥两层）；
+   *   ② `infoBaseList`（「信息」组：显示系统状态栏 / 阅读器信息窗 + 5 个元素子项）；
+   *   ③ `aboutSetList`（「关于」组：离线模式 / 关于我们）。
+   * ⇒ 即使某行当前没被渲染（如离线时被滤掉的防窥两行、主开关关掉时的信息窗子项），
+   *   也能安全写它的 toggleStatus / rightText，不会因过滤而指向错误的行。
+   *
+   * ⚠️ 三张表是**分开的**（渲染上分属三个 ListItemGroup）⇒ 新增行时必须登记到正确的表，
+   *    否则这里查不到（返回 null，调用处已全部判空）。
+   */
+  private findSetRow(storageName: string): SetList | null {
     for (let i = 0; i < this.otherBaseList.length; i++) {
       if (this.otherBaseList[i].storageName === storageName) {
         return this.otherBaseList[i]
       }
     }
+    for (let i = 0; i < this.infoBaseList.length; i++) {
+      if (this.infoBaseList[i].storageName === storageName) {
+        return this.infoBaseList[i]
+      }
+    }
+    for (let i = 0; i < this.aboutSetList.length; i++) {
+      if (this.aboutSetList[i].storageName === storageName) {
+        return this.aboutSetList[i]
+      }
+    }
     return null
+  }
+
+  /**
+   * 把信息窗 5 个子项的行状态/右侧文案与页面状态对齐（2026-10-19 新增）。
+   * 四个布尔子项写 `toggleStatus`；「时间显示」是三档 ⇒ 走 `hideControl` 只显示 `rightText`。
+   * 主开关关掉时**只隐藏行、不重置子项值**（用户下次打开还是原样）。
+   */
+  private syncInfoWinChildRows(): void {
+    const tRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_TIME)
+    if (tRow !== null) { tRow.rightText = infoTimeLabel(this.infoWinTimeMode) }
+    const bRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_BATTERY)
+    if (bRow !== null) { bRow.rightText = infoBatteryLabel(this.infoWinBatteryMode) }
+    const bkRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_BOOKMARK)
+    if (bkRow !== null) { bkRow.toggleStatus = this.infoWinBookmarkShow }
+    const apRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_ANTIPEEP)
+    if (apRow !== null) { apRow.toggleStatus = this.infoWinAntiPeepShow }
+    const tmRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_TIMER)
+    if (tmRow !== null) { tmRow.toggleStatus = this.infoWinTimerShow }
   }
 
   /**
@@ -327,7 +439,7 @@ export default struct MySetPage{
    *   只有 `SetList` 有 `@Observed`）。官方原文 —— `arkts-state.md:103`
    *   「对嵌套对象的属性直接赋值**无法被框架观察到**，因此不会触发UI刷新」、
    *   `:110`「数组项中嵌套的属性赋值无法观察」。
-   *   ⇒ 只把 `setGroupList` 整体换成新数组时，外层 ForEach 的 key 仍是 `'其他'`（未变），
+   *   ⇒ 只把 `setGroupList` 整体换成新数组时，外层 ForEach 的 key 仍是 `'功能'`（未变），
    *     ArkUI **复用**旧的 ListItemGroup 组件，其内部 `setList` 的替换观察不到
    *     ⇒ 被滤掉的防窥两行**照旧渲染**（真机实测：两行没消失）。
    *   故改为：数据源保持全量，在遍历时跳过不可见行。
@@ -339,12 +451,27 @@ export default struct MySetPage{
    * 开关见 `OfflineMode.showReadingEnhancements()`（改 false 可一键全部隐藏）。
    */
   private isRowVisible(item: SetList): boolean {
+    // ── 信息窗元素子项（2026-10-19 新增）：只在主开关「显示阅读器信息窗」打开时出现 ──
+    // 用户口径：「显示阅读器信息窗需要增强，现在他作为主开关，点击之后，下面每行开头空两格，
+    // 列出所有元素」。主开关关掉 ⇒ 子项整批收起（值不丢，见 syncInfoWinChildRows 注释）。
+    if (MySetPage.isInfoWinChild(item.storageName) && !this.setInfoWin) {
+      return false
+    }
     if (!this.offlineOn || OfflineMode.showReadingEnhancements()) {
       return true
     }
     // 回退档（showReadingEnhancements() === false）：防窥两层整体不渲染
     return item.storageName !== MySetConstants.SET_ANTI_PEEP_DLP
       && item.storageName !== MySetConstants.SET_ANTI_PEEP_CAPTURE
+  }
+
+  /** 某个 storageName 是否属于「信息窗元素子项」（2026-10-19） */
+  private static isInfoWinChild(name: string): boolean {
+    return name === MySetConstants.SET_INFO_WIN_TIME
+      || name === MySetConstants.SET_INFO_WIN_BATTERY
+      || name === MySetConstants.SET_INFO_WIN_BOOKMARK
+      || name === MySetConstants.SET_INFO_WIN_ANTIPEEP
+      || name === MySetConstants.SET_INFO_WIN_TIMER
   }
 
   /**
@@ -363,13 +490,15 @@ export default struct MySetPage{
   }
 
   /**
-   * 重建「其他」组的渲染表。
+   * 重建「功能」组的渲染表。
    * ⚠️ 2026-10-13 修正：本方法**不再承担"隐藏防窥两行"的职责**（那改由渲染层的
    *    `isRowVisible` 负责，原因见该方法的注释）。这里只做「按基础表刷新一次数组」，
    *    保证 `otherSetList` 与 `otherBaseList` 同步（新增行时不至于漏渲染）。
    *
    *    仍然保留 `setGroupList` 的整体替换：它能让**行数变化**（如以后增删行）被感知，
    *    且对 `SetList` 自身的 `@Observed` 属性刷新没有副作用。
+   * ⚠️ 2026-10-19：组名「其他」→「功能」（用户要求改字样并提到正页最顶端），
+   *    这里的 groupValue 必须同步改，否则整体替换会**丢掉改名后的那一组**。
    */
   private rebuildOtherList(): void {
     const out: SetList[] = this.otherBaseList.slice()
@@ -377,13 +506,13 @@ export default struct MySetPage{
     const nextGroups: SetGroupList[] = []
     for (let i = 0; i < this.setGroupList.length; i++) {
       const g: SetGroupList = this.setGroupList[i]
-      nextGroups.push(g.groupValue === '其他' ? new SetGroupList('其他', out) : g)
+      nextGroups.push(g.groupValue === '功能' ? new SetGroupList('功能', out) : g)
     }
     this.setGroupList = nextGroups
   }
 
   /**
-   * 离线模式开关一变：重建「其他」组（刷新数组以驱动重渲染）+ 回填本行状态。
+   * 离线模式开关一变：重建「功能」组（刷新数组以驱动重渲染）+ 回填本行状态。
    *
    * ⚠️ 2026-10-13 修正：真正让防窥两行消失的是**渲染层的 `isRowVisible`**，
    *    本回调的作用是**触发一次重渲染**（`@Watch` 已由 `offlineOn` 变化触发，
@@ -391,10 +520,27 @@ export default struct MySetPage{
    */
   private onOfflineModeChanged(): void {
     this.rebuildOtherList()
-    const row: SetList | null = this.findOtherRow(MySetConstants.SET_OFFLINE_MODE)
+    const row: SetList | null = this.findSetRow(MySetConstants.SET_OFFLINE_MODE)
     if (row !== null) {
       row.toggleStatus = this.offlineOn
     }
+  }
+
+  /**
+   * 重建「信息」组的渲染表（2026-10-19 新增）。
+   * 用途与 `rebuildOtherList()` 同构：把 `infoSetList` 与 `infoBaseList` 对齐，并整体替换
+   * `setGroupList` 里那一组 —— 主开关「阅读器信息窗」一拨，5 个子项要立刻显/隐。
+   * ⚠️ 组名 `'信息'` 必须与 `setGroupList` 里的字符串**完全一致**，否则替换会落空。
+   */
+  private rebuildInfoList(): void {
+    const out: SetList[] = this.infoBaseList.slice()
+    this.infoSetList = out
+    const nextGroups: SetGroupList[] = []
+    for (let i = 0; i < this.setGroupList.length; i++) {
+      const g: SetGroupList = this.setGroupList[i]
+      nextGroups.push(g.groupValue === '信息' ? new SetGroupList('信息', out) : g)
+    }
+    this.setGroupList = nextGroups
   }
 
   /** 震动反馈组（2026-09-25 新增）：开关项；强度滑块单独渲染（见 build 末尾的自绘卡片） */
@@ -402,15 +548,14 @@ export default struct MySetPage{
     new SetList(false,'震动反馈',this.setHaptics,'','按键与滑动时的物理震动反馈',MySetConstants.SET_HAPTICS),
   ]
 
-  // ── 按键翻页组（2026-10-07 新增，用户指定放在震动管理旁，默认关）──────────────
-  // 仅阅读页存活时订阅生效（官方要求"确定响应时才激活"，否则音量键失灵），
-  // 落盘 + 调度全部走 ReaderKeyTurn；智控键仅支持的机型生效（supportKeysSync 探测）。
-  @StorageLink(MySetConstants.SET_KEY_VOL) setKeyVolTurn: boolean = false
-  @StorageLink(MySetConstants.SET_KEY_FP) setKeyFpTurn: boolean = false
-  @State keyTurnSetList: SetList[]=[
-    new SetList(false,'音量键翻页',this.setKeyVolTurn,'','阅读页内音量上/下键翻页；翻页时临时接管音量调节，退出阅读页即恢复',MySetConstants.SET_KEY_VOL),
-    new SetList(false,'智控键翻页',this.setKeyFpTurn,'','指纹键上/下滑翻页；仅支持的机型生效，不支持时开关保留但不动作',MySetConstants.SET_KEY_FP),
-  ]
+  // ── 2026-10-19 删除：独立的「按键翻页」组（`keyTurnSetList`）──────────────────
+  // 用户口径：
+  //   · 「智控键翻页直接删除，只保留音量键翻页」⇒ 智控键那一行整行删除
+  //     （连同 `setKeyFpTurn` 状态、`SET_KEY_FP` 的点击分支、`applySmartKeyHint()` 置灰逻辑）；
+  //   · 「音量键翻页开关放在阅读器信息窗上面」⇒ 音量键翻页已并入「功能」组第一行，
+  //     行表在 `otherBaseList`（`SET_KEY_VOL`），状态由 `findSetRow` 回填。
+  //   ⚠️ 底层**保留不动**（用户选择）：`ReaderKeyTurn` 里智控键的探测/订阅代码原样存在，
+  //      只是设置页不再有任何入口 ⇒ 新用户永远开不起来。
 
   /** 听书引擎组（2026-09-25 新增）：仅解锁后在 aboutToAppear 里填充并追加到分组列表 */
   @State engineSetList: SetList[]=[]
@@ -422,20 +567,35 @@ export default struct MySetPage{
    * ⇒ 做法是**做成一个标准设置组**（SetList + SetListView），而不是自绘一张卡片 ——
    *   这样宽度（外层 `padding 20` + `card_bg`）、圆角（20）、行高、字号（ITEM + CAPTION 副说明）
    *   全部自动继承其它行，只有一套样式。
-   * 单行组 ⇒ 渲染层命中"四角全圆"分支（`visibleRowsOf(group).length === 1`）。
+   *
+   * ⚠️ 2026-10-19 用户口径：「离线模式放在关于我们上面，和关于我们放在一个区域」
+   *   ⇒ 本表变成两行，顺序 = **离线模式（开关行）→ 关于我们（箭头行）**，
+   *     两张行拼成一张卡片（首行上圆角 / 末行下圆角，见 build 里该 ListItemGroup 的圆角分支）。
+   *   · 离线模式**从「功能」组搬来**（原在功能组末行）；行状态回填走 `findSetRow`（两张表都查）。
+   *   · 本组不参与离线过滤（`isRowVisible` 只作用于「功能」组）⇒ 离线时这一行**必须**仍在，
+   *     否则用户没有出口切回全量模式。
    */
-  private aboutSetList: SetList[] = [
+  private readonly aboutSetList: SetList[] = [
+    // 离线模式开关（2026-10-13 新增；2026-10-19 从「功能」组搬到这里，用户要求放在关于我们上面）
+    new SetList(false,'离线模式',this.offlineOn,'',
+      '开启后隐藏依赖网络的功能入口（Web服务 / 测试账号 / 防窥 / AI听书 / 字体与材质方案 / 自定义主题）；关闭恢复全量模式',
+      MySetConstants.SET_OFFLINE_MODE),
+    // 关于我们（showArrow = true ⇒ 箭头行，点击跳 AppRouter.push(RouteName.ABOUT)）
     new SetList(true, '关于我们', false, '',
       '联系我们 / 更新日志 / 隐私协议 / 开源许可', 'aboutUs'),
   ]
 
-  // 分组顺序（2026-10-08 用户重排）：书架 → 按键翻页 → 震动反馈 → 其他
-  // （听书引擎组解锁后 concat 到末尾，位置不变）
+  // 分组顺序（2026-10-19 用户最终形态）：功能 → 信息 → 震动反馈
+  //   （「听书引擎（进阶）」解锁后 concat 到末尾；「关于」与「登录」在 build 里按固定顺序排在最后）
+  //   · 「功能」＝ 音量键翻页 / 显示文件拓展名 / 阅读防窥 / 防截屏录屏；
+  //   · 「信息」＝（2026-10-19 用户新增）显示系统状态栏 / 阅读器信息窗 + 5 个元素子项
+  //     —— 用户原话「现有的功能区保留，我们新做一个信息区，在功能区下面…太拥挤了」；
+  //   · 原「按键翻页」组、「书架」组均已删除；「书架动画速度」滑块整项删除；
+  //   · 「离线模式」在「关于」组（`aboutSetList` 第一行）。
   @State setGroupList: SetGroupList[] = [
-    new SetGroupList('书架',this.bookSetList),
-    new SetGroupList('按键翻页',this.keyTurnSetList),
-    new SetGroupList('震动反馈',this.hapticSetList),
-    new SetGroupList('其他',this.otherSetList)
+    new SetGroupList('功能',this.otherSetList),
+    new SetGroupList('信息',this.infoSetList),
+    new SetGroupList('震动反馈',this.hapticSetList)
   ]
 
   // 定义分组设置头部（**说明级** 12 号：小标题不跟条目抢视觉，见 FontConstants 语义阶梯）
@@ -561,21 +721,22 @@ export default struct MySetPage{
                 //    为什么不靠"替换数据源"实现：`SetGroupList` 没有 `@Observed`
                 //    （见 `SetListGroup.ets:3`），其内部 `setList` 的替换观察不到 ——
                 //    官方 `arkts-state.md:103/:110` 明写「数组项中嵌套的属性赋值无法观察」，
-                //    且外层 ForEach 的 key（'其他'）不变 ⇒ 组件被复用、不会重读 `setList`。
+                //    且外层 ForEach 的 key（'功能'）不变 ⇒ 组件被复用、不会重读 `setList`。
                 //    真机实测：只替换数组时防窥两行**不消失**。
                 if (!this.isRowVisible(item)) {
                   // 空分支：此处不能写 `return`（ArkUI 的 itemGenerator 里 return 会破坏结构）
                 } else {
                 ListItem(){//设置内容，首尾裁剪
                   // 2026-10-08：单行分组（如删剩一项且无后续自绘滑块的）要**四角全圆**；
-                  // 「书架」/「震动反馈」例外 —— 它们下面还接一条自绘滑块行（占下圆角），
+                  // 「震动反馈」例外 —— 它下面还接一条自绘滑块行（占下圆角），
                   // 这里必须只给上圆角，否则两块拼不出完整卡片。
+                  // ⚠️ 2026-10-19：现在只剩「功能」/「震动反馈」两个分组 ——
+                  //    「书架」组已删除（其唯一一行并入「功能」组）⇒ 原先给「书架」的例外随之取消。
                   // ⚠️ 2026-10-13 离线模式：改用 `visibleRowsOf(group)` 判首尾/单行 ——
                   //    直接用 `group.setList` 会把它算成"含被隐藏行"的长度与下标，
                   //    导致离线时圆角画错行。
                   if (this.visibleRowsOf(group).length === 1
-                    && group.groupValue !== '震动反馈'
-                    && group.groupValue !== '书架'){
+                    && group.groupValue !== '震动反馈'){
                     SetListView({setList:item,topLeft:20,topRight:20,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
                       .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
@@ -597,41 +758,11 @@ export default struct MySetPage{
                 }
               }, (item: SetList): string => item.value)
 
-              // ── 书架动画速度滑块（2026-10-12）────────────────────────────────
-              // 在书架组"显示文件拓展名"下方，拼成一张卡片（上圆角=开关行，下圆角=本行）。
-              if (group.groupValue === '书架') {
-                ListItem() {
-                  Column({ space: 4 }) {
-                    Row() {
-                      Text('书架动画速度').fontSize(FontConstants.ITEM)
-                      Blank()
-                      Text(this.animSpeedLabel())
-                        .fontSize(FontConstants.CAPTION)
-                        .fontColor($r('app.color.text_tertiary'))
-                    }.width('100%')
-                    Slider({
-                      value: this.shelfAnimSpeed,
-                      min: 0,
-                      max: 6,
-                      step: 1,
-                      style: SliderStyle.InSet
-                    })
-                      .width('100%')
-                      .onChange((value: number, mode: SliderChangeMode) => {
-                        this.shelfAnimSpeed = Math.round(value)
-                        AppStorage.setOrCreate('shelfAnimSpeed', this.shelfAnimSpeed)
-                        if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                          PreferencesUtil.putSync('shelfAnimSpeed', this.shelfAnimSpeed)
-                        }
-                      })
-                  }
-                  .width('100%')
-                  .padding({ left: 20, right: 20, top: 12, bottom: 12 })
-                  .backgroundColor(ShelfColors.surface())
-                  .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
-                  .borderRadius({ bottomLeft: 20, bottomRight: 20 })
-                }.padding({ left: 20, right: 20 })
-              }
+              // ── 2026-10-19 删除：「书架动画速度」滑块（`group.groupValue === '书架'` 的整块）──
+              // 用户口径："直接删除这个选项吧，不要了，这个书架动画速度不要了"
+              // ⇒ 连 `shelfAnimSpeed` 的 Preferences / AppStorage 读写一起去掉（见 aboutToAppear 注释）。
+              // ⚠️ 书架入场波次本身没动：`EntranceWave.speedMultiplier()` 读不到 AppStorage 键时
+              //    回退内置默认档 3（= 0.75x），见 `common/utils/EntranceWave.ets:78`。
 
               // ── 震动强度滑块行（2026-09-25 新增）──────────────────────────────
               // 用户需求：「0-500 无极调整滑块（每 50 一个档，自由调节震动强度）」。
@@ -722,18 +853,46 @@ export default struct MySetPage{
         // 位置（用户第二次修正）：**在「登录」胶囊之上** —— 「登录」才是整页最下面那一项。
         // 所以「关于」没有进 `setGroupList`（那个数组在登录之前整体渲染，且离线时会重建），
         // 而是在这里按固定顺序单独渲染：…其它设置组 → 关于 → 登录。
-        // 对齐说明：用标准 `ListItemGroup` + `SetListView`（与「书架/其他」组同一组件）
+        // 对齐说明：用标准 `ListItemGroup` + `SetListView`（与「功能/震动反馈」组同一组件）
         // ⇒ 宽度（外层 padding 20 + surface 底）、圆角 20、材质（backgroundBlurStyle）、
         //    字号（ITEM + CAPTION 副说明）全部与其它元素完全一致，不存在自绘样式。
-        // 单行组 ⇒ 四角全圆（见上面 `visibleRowsOf(group).length === 1` 分支的同类判断）。
+        //
+        // ⚠️ 2026-10-19：本组由**单行**变**两行**（离线模式 → 关于我们，用户要求"放在一个区域"）
+        //   ⇒ 不能再写死四角全圆（那会让两行各自都是一张圆角卡片、中间断开）。
+        //   改为与上面「功能」组同一套首/中/尾圆角判定：首行只给上圆角、末行只给下圆角。
+        //   行数用 `aboutSetList.length`（本组无离线过滤 ⇒ 无需 visibleRowsOf）。
         ListItemGroup({ header: this.itemHead('关于') }) {
-          ForEach(this.aboutSetList, (item: SetList) => {
+          ForEach(this.aboutSetList, (item: SetList, index: number) => {
             ListItem() {
-              SetListView({ setList: item, topLeft: 20, topRight: 20, bottomLeft: 20, bottomRight: 20 })
-                .onClick(() => {
-                  Haptics.tap();
-                  this.itemOnclick(item.storageName)
-                })
+              if (this.aboutSetList.length === 1) {
+                SetListView({ setList: item, topLeft: 20, topRight: 20, bottomLeft: 20, bottomRight: 20 })
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.itemOnclick(item.storageName)
+                  })
+                  .gesture(LongPressGesture().onAction(() => { this.itemOnLongPress(item.storageName) }))
+              } else if (index === 0) {
+                SetListView({ setList: item, topLeft: 20, topRight: 20 })
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.itemOnclick(item.storageName)
+                  })
+                  .gesture(LongPressGesture().onAction(() => { this.itemOnLongPress(item.storageName) }))
+              } else if (index === this.aboutSetList.length - 1) {
+                SetListView({ setList: item, bottomLeft: 20, bottomRight: 20 })
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.itemOnclick(item.storageName)
+                  })
+                  .gesture(LongPressGesture().onAction(() => { this.itemOnLongPress(item.storageName) }))
+              } else {
+                SetListView({ setList: item })
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.itemOnclick(item.storageName)
+                  })
+                  .gesture(LongPressGesture().onAction(() => { this.itemOnLongPress(item.storageName) }))
+              }
             }.padding({ left: 20, right: 20 })
           }, (item: SetList) => item.value)
         }
@@ -822,10 +981,11 @@ export default struct MySetPage{
         AppRouter.push(RouteName.ABOUT)
         break;
       // 2026-10-08：`SET_REFRESH / SET_JUMP / SET_REPLACE / SET_TIP / SET_HEAD / SET_SEARCH`
-      // 六个 case 已随假开关一起删除（全仓零消费点，理由见本文件 bookSetList 上方的注释）。
-      // ── 离线模式（2026-10-13 新增）──────────────────────────────────────────
+      // 六个 case 已随假开关一起删除（全仓零消费点，理由见本文件 `otherBaseList` 上方的注释）。
+      // ── 离线模式（2026-10-13 新增；2026-10-19 行移到「关于」组）────────────────
       // 落盘 + 广播：OfflineMode.set 写 Preferences 与 AppStorage 同键，
-      // 本页的 @StorageLink(offlineOn) 随之触发 onOfflineModeChanged() 重建「其他」组。
+      // 本页的 @StorageLink(offlineOn) 随之触发 onOfflineModeChanged() 重建「功能」组
+      // （防窥两行是否渲染由 `isRowVisible` 决定；本行自己在「关于」组，不受影响）。
       // ⚠️ 与首启引导弹窗（`componets/common/FirstRunModeDialog.ets`）**同一入口**
       //    ⇒ 两处天然同步（首启选的模式 = 这里显示的开关状态），不存在两份状态互相覆盖。
       case MySetConstants.SET_OFFLINE_MODE:
@@ -834,11 +994,48 @@ export default struct MySetPage{
       case MySetConstants.SET_INFO_WIN:
         // 阅读器信息窗（2026-10-07）：Preferences 持久化；阅读页进场时读一次，
         // 开关只在设置页改 ⇒ 无需跨页广播。
-        // ⚠️ 2026-10-13：改用 findOtherRow（离线时下标会前移，原来写死的 [0] 会错位）。
+        // ⚠️ 2026-10-13：改用 findSetRow（离线时下标会前移，原来写死的 [0] 会错位）。
         this.setInfoWin = !this.setInfoWin
-        const infoRow: SetList | null = this.findOtherRow(MySetConstants.SET_INFO_WIN)
+        const infoRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN)
         if (infoRow !== null) { infoRow.toggleStatus = this.setInfoWin }
         PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN, this.setInfoWin)
+        // 2026-10-19：本行现在是**主开关** —— 一开一关要连带 5 个元素子项的显隐 ⇒
+        //   重建「信息」组数组（`isRowVisible` 按 setInfoWin 过滤子项）。
+        //   ⚠️ 主开关自己也在「信息」组里（不是「功能」组），所以重建的是 info 那一组。
+        this.rebuildInfoList()
+        break;
+      // ── 信息窗元素子项（2026-10-19 新增）────────────────────────────────────
+      // 四个布尔 + 一个三档；均为全局 Preferences，阅读页进场各读一次。
+      case MySetConstants.SET_INFO_WIN_TIME: {
+        // 三档循环：关(0) → 时:分(1) → 时:分:秒(2) → 关 …
+        this.infoWinTimeMode = (this.infoWinTimeMode + 1) % 3
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_TIME, this.infoWinTimeMode)
+        const timeRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_TIME)
+        if (timeRow !== null) { timeRow.rightText = infoTimeLabel(this.infoWinTimeMode) }
+        break;
+      }
+      case MySetConstants.SET_INFO_WIN_BATTERY:
+        // 三档循环（环序固定：图标+百分比(2) → 关闭(0) → 仅图标(1) → 图标+百分比 …
+        // 即 `(mode + 1) % 3`）。用户原话：「点击依次是图标+百分比，图标，关闭」。
+        // ⚠️ 默认档由用户 2026-10-19 定稿为 **1 = 仅图标**，所以从默认值点一下是"图标+百分比"。
+        this.infoWinBatteryMode = (this.infoWinBatteryMode + 1) % 3
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_BATTERY, this.infoWinBatteryMode)
+        this.syncInfoWinChildRows()
+        break;
+      case MySetConstants.SET_INFO_WIN_BOOKMARK:
+        this.infoWinBookmarkShow = !this.infoWinBookmarkShow
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_BOOKMARK, this.infoWinBookmarkShow)
+        this.syncInfoWinChildRows()
+        break;
+      case MySetConstants.SET_INFO_WIN_ANTIPEEP:
+        this.infoWinAntiPeepShow = !this.infoWinAntiPeepShow
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_ANTIPEEP, this.infoWinAntiPeepShow)
+        this.syncInfoWinChildRows()
+        break;
+      case MySetConstants.SET_INFO_WIN_TIMER:
+        this.infoWinTimerShow = !this.infoWinTimerShow
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_TIMER, this.infoWinTimerShow)
+        this.syncInfoWinChildRows()
         break;
       // ── 防窥两层（2026-10-08，VIP 特权）────────────────────────────────────
       // 非 VIP：开关不动，弹 VIP 弹窗并记下待办；开通成功后 onClose 里补开（用户第 4 点）。
@@ -890,32 +1087,23 @@ export default struct MySetPage{
         break;
       case MySetConstants.SET_KEY_VOL:
         // 音量键翻页（2026-10-07）：落盘 + 立即对账订阅（阅读页不在时 refresh 只记账不订阅）
+        // ⚠️ 2026-10-19：本行已并入「功能」组 ⇒ 行状态改用 findSetRow（不再用 keyTurnSetList[0]）。
         this.setKeyVolTurn = !this.setKeyVolTurn
-        this.keyTurnSetList[0].toggleStatus = this.setKeyVolTurn
+        const volRow: SetList | null = this.findSetRow(MySetConstants.SET_KEY_VOL)
+        if (volRow !== null) { volRow.toggleStatus = this.setKeyVolTurn }
         PreferencesUtil.putSync(KEY_KEY_VOL_TURN, this.setKeyVolTurn)
         ReaderKeyTurn.refresh()
         break;
-      case MySetConstants.SET_KEY_FP: {
-        // 智控键翻页（2026-10-07）：同上；本机不支持时**整行已置灰**（见 applySmartKeyHint），
-        // 这里再兜一道：置灰状态下点击不做任何事（官方要求使用前 supportKeysSync 探测，
-        // KEYCODE_FINGERPRINT_SLIDE_* 非全机型按键）。
-        if (ReaderKeyTurn.smartKeyUnsupported()) {
-          break
-        }
-        this.setKeyFpTurn = !this.setKeyFpTurn
-        this.keyTurnSetList[1].toggleStatus = this.setKeyFpTurn
-        PreferencesUtil.putSync(KEY_KEY_FP_TURN, this.setKeyFpTurn)
-        if (this.setKeyFpTurn) {
-          ReaderKeyTurn.queryFpSupported()
-        }
-        ReaderKeyTurn.refresh()
-        break;
-      }
+      // ── 2026-10-19 删除 case MySetConstants.SET_KEY_FP ────────────────────────
+      // 「智控键翻页」整行已按用户要求删除（只保留音量键翻页）⇒ 本页不再有任何行会点到
+      // 这个分支。底层 `ReaderKeyTurn` 的智控键逻辑按用户选择**保留**（无入口 ⇒ 不可达）。
       case MySetConstants.SET_EXT_NAME:
         // 书架书名拓展名（2026-09-27）：AppStorage（@StorageLink）即时驱动书架刷新，
         // Preferences 持久化跨启动（aboutToAppear 回读）。
+        // ⚠️ 2026-10-19：本行已并入「功能」组 ⇒ 行状态改用 findSetRow（原来按下标 [0] 取 bookSetList）。
         this.setExtName = !this.setExtName
-        this.bookSetList[0].toggleStatus = this.setExtName
+        const extRow: SetList | null = this.findSetRow(MySetConstants.SET_EXT_NAME)
+        if (extRow !== null) { extRow.toggleStatus = this.setExtName }
         PreferencesUtil.putSync('setExtName', this.setExtName)
         // ★ 2026-10-12：**开关一变就强制刷新听书迷你栏的书名**。
         //   背景：`ListenSession.begin()` 只在起播那一刻算过一次显示名，
@@ -925,6 +1113,14 @@ export default struct MySetPage{
         //   ⚠️ 必须传**刚落盘的新值**，不能让它自己再读一次 Preferences
         //   （putSync 与 getSync 之间存在时序窗口，读到的可能还是旧值）。
         ListenSession.refreshTitle(this.setExtName)
+        break;
+      case MySetConstants.SET_READER_STATUS_BAR:
+        // 显示系统状态栏（2026-10-19 新增）：全局开关，Preferences 持久化；
+        // 阅读页进场读一次（与「阅读器信息窗」同款：不需要跨页实时广播）。
+        this.showReaderStatusBar = !this.showReaderStatusBar
+        const statusBarRow: SetList | null = this.findSetRow(MySetConstants.SET_READER_STATUS_BAR)
+        if (statusBarRow !== null) { statusBarRow.toggleStatus = this.showReaderStatusBar }
+        PreferencesUtil.putSync(MySetConstants.SET_READER_STATUS_BAR, this.showReaderStatusBar)
         break;
       case MySetConstants.SET_CALIB_DEV:
         // 标定模式（2026-09-26 从阅读器-设置迁来）：写 TtsHlCalibV3 的 dev 字段，
