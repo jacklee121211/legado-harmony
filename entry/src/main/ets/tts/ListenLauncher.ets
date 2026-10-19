@@ -34,6 +34,10 @@ import { Books } from '../database/entities/Books';
 import { TtsEngine } from './TtsEngine';
 import { TtsPrefs, loadTtsPrefs } from './TtsPrefs';
 import { ListenSession } from './ListenSession';
+// 新格式（PDF/DOCX）：听书必须读**转换后的 epub**，不能读原始 .pdf/.docx
+import { BookSourceResolver } from '../common/format/BookSourceResolver';
+import { showMessage } from '../componets/common/promptShow';
+import { isPdfPath } from '../common/format/FormatFlags';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'listen';
@@ -60,7 +64,33 @@ export class ListenLauncher {
 
   /** 用一本书直接起播（书架侧无页面 ⇒ 回调一律 headless） */
   static startBook(context: common.UIAbilityContext, book: Books): void {
-    const path: string = book.bookUrl ?? '';
+    // ── 新格式（PDF/DOCX）路径解析（2026-10-19）────────────────────────────────
+    // 与阅读页**同一入口** `BookSourceResolver`：只有一边走会出现
+    // "ReaderKit 按 epub 排版、TTS 按原文件取正文"的错位（ReaderPage3 里记过同款教训）。
+    // ⚠️ 这里用**同步**的 `cachedReadablePath`：听书不能等十几秒转换。
+    //    未转换过 ⇒ 明确提示"先打开一次"，而不是让 bookParser 去解析 .pdf 然后报 1017010003。
+    let resolvedPath: string = book.bookUrl ?? '';
+    // PDF 的正文是「整页图片」，spine 里没有文字 ⇒ 听书无内容可读。
+    // 与其让 `getSpineItemContent` 返回 `<img>` 后被 TTS 过滤成空串、静默不出声，
+    // 不如在这里给一句明确提示（2026-10-19，PDF 走页图方案后的必然约束）。
+    if (isPdfPath(book.bookUrl ?? '')) {
+      hilog.warn(DOMAIN, TAG, 'listen: PDF 无文字层，暂不支持听书');
+      showMessage('PDF 是整页图片，暂不支持听书');
+      ListenSession.setExpanded(false);
+      return;
+    }
+    const needConvert: string | null = BookSourceResolver.epubPathFor(context, book);
+    if (needConvert !== null) {
+      const cached: string | null = BookSourceResolver.cachedReadablePath(context, book);
+      if (cached === null) {
+        hilog.warn(DOMAIN, TAG, 'listen: 未转换过的新格式，先打开一次');
+        showMessage('请先打开这本书完成一次准备，再开始听书');
+        ListenSession.setExpanded(false);
+        return;
+      }
+      resolvedPath = cached;
+    }
+    const path: string = resolvedPath;
     if (path.length === 0) {
       hilog.error(DOMAIN, TAG, 'book has empty bookUrl, ignore');
       ListenSession.setExpanded(false);

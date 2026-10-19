@@ -1,6 +1,7 @@
 import { BusinessError } from '@ohos.base';
 import fs, { Options } from '@ohos.file.fs';
 import { common, Context } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { chaptersItem } from 'ets/componets/dataList/ReaderChaptersItem';
 import { showMessage } from '../../componets/common/promptShow';
 import { picker } from '@kit.CoreFileKit';
@@ -11,6 +12,7 @@ import booksUtil from './booksUtils';
 import booksDao from '../../database/dao/BooksDao';
 import { AppUtil, PreferencesUtil } from '@pura/harmony-utils';
 import bookCover from './BookCover';
+import { BookSourceResolver } from '../format/BookSourceResolver';
 
 /**
  * ── T13/D-17b：把**模块顶层**的 `getContext()` + `context.filesDir` 改为惰性求值 ──────────
@@ -65,7 +67,15 @@ export class FileHandler {
     try {
       file = fs.openSync(srcUrl, fs.OpenMode.READ_WRITE);
       const dstPath = appCtx().filesDir + '/' + file.name; // file.name:《幽影之冰》.txt
-      await fs.copyFile(file.fd, dstPath, 0);
+      // ⚠️ 自拷贝防护（2026-10-19）：外部入口（分享/用其他应用打开）可能把**已经在沙箱里**的
+      //    文件再次送进来（例如从"最近文件"里重开）。此时 src==dst，
+      //    `fs.copyFile(fd, dstPath)` 会先截断目标再读源 ⇒ 文件被清零（书直接损坏）。
+      //    这里按路径相等直接跳过拷贝（文件已经就位）。
+      if (file.path === dstPath) {
+        hilog.info(0x0000, 'testTag', 'CopyFile: src==dst, skip copy %{public}s', dstPath);
+      } else {
+        await fs.copyFile(file.fd, dstPath, 0);
+      }
       // ── 书籍**自带封面**（2026-10-13，方案 C）──────────────────────────────
       // epub/mobi/azw/azw3 用 ReaderKit 的 `bookParser` 取书封并落成沙箱文件；
       // txt 没有封面 ⇒ 内部直接跳过。
@@ -74,6 +84,17 @@ export class FileHandler {
       // ⚠️ 提取失败/超时必须静默（`BookCover` 内部吞异常并返回 ''）——
       //    它只是"这本书没有自带封面"，绝不能把导入本身判成失败。
       const builtinCover: string = await bookCover.extractBuiltinCover(dstPath, file.name)
+      // ── 新格式（2026-10-19）：PDF / DOCX 的封面 ─────────────────────────────
+      // `BookCover` 只认 ReaderKit 能解析的 epub/mobi/azw/azw3（其 `COVER_BOOK_EXT`），
+      // 所以 PDF/DOCX 在这里补一手：
+      //   · PDF   → pdfService 渲染第 0 页（实测 ~60ms，见 PdfImporter.renderCover）
+      //   · DOCX  → 解压取 docProps/thumbnail.jpeg，退而取 word/media 首图
+      // 失败一律返回 ''（默认封面），绝不阻塞导入。
+      let coverPath: string = builtinCover
+      if (coverPath === '') {
+        coverPath = await BookSourceResolver.ensureBuiltinCover(
+          appCtx() as common.UIAbilityContext, dstPath, file.name)
+      }
       const book: Books = {
         bookName: file.name,
         bookUrl: dstPath,
@@ -93,8 +114,8 @@ export class FileHandler {
         isJoin: true,
         isLocalBook: true
       }
-      if (builtinCover !== '') {
-        book.builtinCoverUrl = builtinCover
+      if (coverPath !== '') {
+        book.builtinCoverUrl = coverPath
       }
       await booksUtil.addBooks(book)
       return true

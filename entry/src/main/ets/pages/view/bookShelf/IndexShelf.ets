@@ -19,6 +19,7 @@ import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 // ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
 import { Haptics } from '../../../common/utils/Haptics'
+import { importableExts } from '../../../common/format/FormatFlags'
 // ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
 import { PlugboardZone } from '../../../componets/plugboard/PlugboardZone'
 import { PlugZone } from '../../../componets/plugboard/PlugboardTypes'
@@ -674,13 +675,14 @@ export default struct IndexShelf {
    * 为什么抽成方法：「书籍导入」现在**直接**走这里（用户要求去掉二级菜单），
    * 不再经过「本地导入 / 网盘导入 / 网址导入」那一层。
    *
-   * 支持的后缀与 ReaderKit 官方支持列表一致：`txt / epub / mobi / azw / azw3`
-   * （官方文档 documentId：`开发指南/Reader_Kit_阅读服务/Reader_Kit简介/reader-introduction`）。
+   * 支持的后缀由 `FormatFlags.importableExts()` 统一给出：默认仍与 ReaderKit 官方列表一致
+   * （`txt / epub / mobi / azw / azw3`，官方 documentId
+   * `开发指南/Reader_Kit_阅读服务/Reader_Kit简介/reader-introduction`）；
+   * 2026-10-19 起可含 `pdf / docx / doc`（受 `FMT_MASTER_ENABLED` 等开关控制，关掉即回退）。
    */
   private async pickLocalBooks(): Promise<void> {
     try {
-      const fileResult = await FileHandler.documentPickerFile(undefined,
-        ['.txt', '.epub', '.mobi', '.azw', '.azw3'])
+      const fileResult = await FileHandler.documentPickerFile(undefined, importableExts())
       this.isShowImport = false
       if (fileResult.length === 0) {
         return

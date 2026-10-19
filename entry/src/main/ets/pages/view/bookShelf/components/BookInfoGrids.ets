@@ -2,6 +2,8 @@ import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
+import { BusinessError } from '@kit.BasicServicesKit'
+import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_SELF_VIEWER, isPdfPath } from '../../../../common/format/FormatFlags'
 import AppRouter, { RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
 import { ezCustomTransition } from '../../../../common/ezlt'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
@@ -237,6 +239,17 @@ export default struct BookInfoGrids{
     .padding({ left:8,right:8,bottom:5,top:5 })
     .onClick(()=>{
       Haptics.tap();
+      // PDF ⇒ 自研图片阅读页（2026-10-19，与列表模式 `BookInfos` 同款；理由见其注释）
+      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_SELF_VIEWER
+        && isPdfPath(this.book.bookUrl ?? '')) {
+        router.pushUrl({
+          url: 'pages/view/Reader/PdfReaderPage',
+          params: this.book
+        }).catch((e: BusinessError): void => {
+          console.error('open pdf reader failed: ' + JSON.stringify(e));
+        });
+        return;
+      }
       clickUtil.preventClick(()=>{
         // ── 需求第 6 项修复（2026-09-24）──────────────────────────────────────
         // 原来这里推的是 `RouteName.BOOK_DETAIL`（书籍详情页），与**列表模式**不一致：

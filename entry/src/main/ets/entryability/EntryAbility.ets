@@ -22,6 +22,10 @@ import { OfflineMode } from '../common/utils/OfflineMode';
 import { CalibMode } from '../common/utils/CalibMode';
 // VIP 启动自愈（2026-10-14）：付费用户卸载重装/换机后，把 IAP 已购记录查回来
 import { IapManager } from '../common/utils/IapManager';
+// 外部文件接收（2026-10-19 双响炮）：分享（sendData）与"用其他应用打开"（viewData）
+import { systemShare } from '@kit.ShareKit';
+import { IncomingFiles } from '../common/format/IncomingFiles';
+import { FMT_MASTER_ENABLED, FMT_SHARE_INTAKE_ENABLED } from '../common/format/FormatFlags';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -123,12 +127,73 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
+  /**
+   * 外部文件入口（**分享 / 用其他应用打开** 双响炮，2026-10-19）。
+   *
+   * 官方依据（documentId `FAQ/PDF文档解析服务_PDF_Kit/如何打开三方应用分享的PDF文件/faqs-pdf-6`）：
+   * 声明 `ohos.want.action.viewData` + `ohos.want.action.sendData` 后，
+   * 两种入口都通过 `systemShare.getSharedData(want)` 取记录（`SharedRecord.uri`）。
+   * 该 FAQ 的示例代码正是 `handleSharedData(want)` → `getSharedData` → `fileIo.copyFileSync` 进沙箱。
+   *
+   * 与 `captureQuickAction` 同一条约定：**只把意图写进 AppStorage，不在这里导入**
+   * （`onCreate` 阶段 DB 还没建表，见 `onWindowStageCreate` 里的 `DbUtil.initDB`）。
+   * 由 `BookContent.aboutToAppear` / `@StorageLink(INCOMING_TICK)` 消费。
+   *
+   * 解析失败必须静默 —— 绝大多数启动都没有分享内容，`getSharedData` 会 reject。
+   */
+  private captureIncomingFiles(want: Want): void {
+    if (!FMT_MASTER_ENABLED || !FMT_SHARE_INTAKE_ENABLED) {
+      return;
+    }
+    const collect: (data: systemShare.SharedData) => void = (data: systemShare.SharedData): void => {
+      try {
+        const uris: string[] = [];
+        const records: systemShare.SharedRecord[] = data.getRecords();
+        for (const r of records) {
+          const u: string = r.uri ?? '';
+          if (u.length > 0) {
+            uris.push(u);
+          }
+        }
+        if (uris.length > 0) {
+          hilog.info(0x0000, 'testTag', 'incoming files=%{public}d', uris.length);
+          IncomingFiles.push(uris);
+        }
+      } catch (e) {
+        hilog.warn(0x0000, 'testTag', 'incoming parse err');
+      }
+    };
+    try {
+      systemShare.getSharedData(want).then(collect).catch((e: BusinessError): void => {
+        // viewData（用其他应用打开）不是分享意图，getSharedData 会失败 ⇒ 回落到 want.uri
+        const u: string = want.uri ?? '';
+        if (u.length > 0) {
+          hilog.info(0x0000, 'testTag', 'incoming by viewData uri');
+          IncomingFiles.push([u]);
+        }
+      });
+    } catch (e) {
+      // 忽略：普通启动没有 uri
+    }
+    // 兜底：部分入口直接把 uri 放在 want.uri 上（与上面 catch 互补，去重由 IncomingFiles 负责）
+    try {
+      const direct: string = want.uri ?? '';
+      if (direct.length > 0) {
+        IncomingFiles.push([direct]);
+      }
+    } catch (e) {
+      // 忽略
+    }
+  }
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
     webview.WebviewController.initializeWebEngine() //初始化web控件
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
     AppUtil.init(this.context);
     WindowAbility.getInstance().initContext(this.context)
     this.captureQuickAction(want);
+    // 分享 / 用其他应用打开（2026-10-19）：只登记，由书架消费导入
+    this.captureIncomingFiles(want);
     // 标定模式全局信号（2026-10-10）：从 Preferences 回填到 AppStorage，
     // 让书架/我的/PlugboardZone 在冷启动时也能感知到用户开过标定模式。
     CalibMode.bootstrap()
@@ -155,6 +220,8 @@ export default class EntryAbility extends UIAbility {
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam) {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onNewWant');
     this.captureQuickAction(want);
+    // 应用已在后台时，从「文件管理 → 用其他应用打开」或分享面板进来走这里
+    this.captureIncomingFiles(want);
   }
 
   onDestroy() {

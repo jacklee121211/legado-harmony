@@ -393,6 +393,33 @@ struct Main {
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
   }
 
+  /**
+   * 返回键 / **侧滑返回** 的页面级拦截（2026-10-19，为了 PDF 放大态）。
+   *
+   * SDK 原文（`build-tools/.../declarations/common.d.ts:24694`）：
+   *   `onBackPress?(): void | boolean;`
+   *   「Invoked when a user clicks the back button on a router-managed page (a custom component decorated
+   *     with @Entry). The value true means that the page executes its own return logic…」
+   * 官方 FAQ（`FAQ/UI框架/组件使用/侧滑无法从首页退出应用/faqs-arkui-531`）原文：
+   *   「onBackPress：属于自定义组件的生命周期回调函数之一，当用户点击返回按钮或**侧滑返回**时触发，
+   *     仅 @Entry 装饰的自定义组件生效。返回 true 表示页面自己处理返回逻辑，不进行页面路由。」
+   *
+   * 为什么需要它：真机日志（`docs/日志.md` 15:47:18.953）实证 —— 放大态下一次 **18.5px** 的横向 pan
+   * 之后 3ms 就出现 `transition start … isPopPage: 1`，而 `NavDestination.onBackPressed` **没有触发**
+   * （日志里没有 `PDFZOOM` 行）⇒ 侧滑返回走的是 @Entry 页面这一层。
+   * ⇒ 在这里拦：放大中直接返回 true（页面自己处理 = 不路由返回），并通知阅读页复位 100%。
+   * 其它情况返回 false，保持系统默认返回行为不变。
+   */
+  onBackPress(): boolean {
+    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+      // 只消费、**不复位**（2026-10-19 用户反馈：「滑动的时候偶尔会触发重置 100%，
+      // 实际上滑动不能触发重置」）⇒ 放大态下这类返回事件一律静默吞掉。
+      console.info('PDFZOOM', 'entry onBackPress consumed (no reset)')
+      return true
+    }
+    return false
+  }
+
   onPageShow(): void {
     // 冷启动场景：@Watch 只在"绑定之后发生变化"时触发，
     // 快捷方式在 onCreate 里就写好了标记，所以这里也消费一次（幂等，见 consumeQuickAction）。
@@ -1582,6 +1609,19 @@ struct Main {
         // 飞行/返回期间让书架透出来（书从列表里起飞、降落回列表）；
         // 阅读期正文自身满屏底色，透明背景不影响阅读。
         .backgroundColor(Color.Transparent)
+        // ── PDF 放大态：把"返回"改成"恢复 100%"（2026-10-19 用户要求）─────────────
+        // 官方签名：`NavDestination.onBackPressed(callback: () => boolean)`
+        // （SDK `component/nav_destination.d.ts:720`，@since 10）——返回 **true = 消费本次返回**。
+        // 真机现象：放大后左右拖动会命中系统侧滑返回、把书划走；
+        // 放大中消费返回并给阅读页发"复位"信号；100% 时返回 false ⇒ 原有返回行为不变。
+        .onBackPressed(() => {
+          if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+            // 只消费、不再发"复位"信号：滑动不能触发回 100%（2026-10-19 用户反馈）
+            console.info('PDFZOOM', 'back consumed (no reset)')
+            return true
+          }
+          return false
+        })
         // customTransition 生效性与分支绑死：普通分支不挂它 ⇒ EXPLODE 完全不受影响
         .customTransition((op: NavigationOperation, isEnter: boolean)
           : Array<NavDestinationTransition> | undefined => {
@@ -1671,6 +1711,19 @@ struct Main {
         // 背景恒透明（2026-10-02 三层书模型）：飞行/返回期间由 Delegate 的书体块+封面
         // 自绘全部画面；落定后真阅读器自持底色 —— NavDestination 不设任何底色
         .backgroundColor(Color.Transparent)
+        // ── PDF 放大态：把"返回"改成"恢复 100%"（2026-10-19 用户要求）─────────────
+        // 官方签名：`NavDestination.onBackPressed(callback: () => boolean)`
+        // （SDK `component/nav_destination.d.ts:720`，@since 10）——返回 **true = 消费本次返回**。
+        // 真机现象：放大后左右拖动会命中系统侧滑返回、把书划走；
+        // 放大中消费返回并给阅读页发"复位"信号；100% 时返回 false ⇒ 原有返回行为不变。
+        .onBackPressed(() => {
+          if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+            // 只消费、不再发"复位"信号：滑动不能触发回 100%（2026-10-19 用户反馈）
+            console.info('PDFZOOM', 'back consumed (no reset)')
+            return true
+          }
+          return false
+        })
         // Step 6：尺寸变化（旋转/分屏）时同步 session，动画计算基准才不基于旧尺寸
         .onSizeChange((_old: SizeOptions, nv: SizeOptions) => {
           if ((param as ReaderRouteParam).longTakeTransitionParam !== undefined) {

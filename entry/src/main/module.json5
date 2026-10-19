@@ -100,8 +100,44 @@
             "actions": [
               "action.system.home"
             ]
+          },
+          // ── 「用其他应用打开」+「分享」双响炮（2026-10-19）────────────────────────
+          // 官方原文（documentId `FAQ/PDF文档解析服务_PDF_Kit/如何打开三方应用分享的PDF文件/faqs-pdf-6`）：
+          //   actions 需同时声明 `ohos.want.action.viewData`（用其他应用打开）与
+          //   `ohos.want.action.sendData`（分享），uris 里**穷举**支持的 utd。
+          // utd 取值已真机实测（PdfProbe 探针 2026-10-19 12:59:45）：
+          //   .pdf  → com.adobe.pdf
+          //   .docx → org.openxmlformats.wordprocessingml.document
+          //   .doc  → com.microsoft.word.doc
+          //   .epub → general.epub（SDK `@ohos.data.uniformTypeDescriptor.d.ts:409`）
+          // 接收代码在 `EntryAbility.captureIncomingFiles()` → AppStorage → 书架消费导入。
+          {
+            "actions": [
+              "ohos.want.action.viewData",
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              { "scheme": "file", "utd": "general.text", "maxFileSupported": 100 },
+              { "scheme": "file", "utd": "general.epub", "maxFileSupported": 100 },
+              { "scheme": "file", "utd": "com.adobe.pdf", "maxFileSupported": 100 },
+              { "scheme": "file", "utd": "org.openxmlformats.wordprocessingml.document", "maxFileSupported": 100 },
+              { "scheme": "file", "utd": "com.microsoft.word.doc", "maxFileSupported": 100 }
+            ]
           }
         ]
+      },
+      {
+        // ⚠️ POC 取证专用（2026-10-19）：验证「PDF 页图 → epub → ReaderKit」这条链路。
+        //    启动：hdc shell aa start -a ProbeAbility -b com.jk.reader
+        //    POC 结束后连同 pages/PdfProbePage.ets、rawfile/poc_pages.epub 一起删除。
+        "name": "ProbeAbility",
+        "srcEntry": "./ets/entryability/ProbeAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:icon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true
       }
     ],
     // ── 分享接收端（2026-09-30 回填，官方文档：
@@ -134,6 +170,22 @@
               {
                 "scheme": "file",
                 "utd": "general.epub",
+                "maxFileSupported": 100
+              },
+              // 2026-10-19：分享面板要收 pdf / docx / doc（utd 已真机实测，见 EntryAbility.skills 注释）
+              {
+                "scheme": "file",
+                "utd": "com.adobe.pdf",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "org.openxmlformats.wordprocessingml.document",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "com.microsoft.word.doc",
                 "maxFileSupported": 100
               }
             ]

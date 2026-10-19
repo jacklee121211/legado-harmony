@@ -16,6 +16,7 @@ import webCredential, { DevToken, DEVICE_COOKIE, PAIR_QUERY_KEY } from './WebCre
 import uploadSessions, { UploadInitResult, UploadSessionMeta, MAX_FILE_BYTES } from './UploadSession'
 import CommonConstants from '../../common/constants/CommonConstants'
 import bookCover from './BookCover'
+import { importableExts } from '../format/FormatFlags'
 /**
  * wifi传书 / 电脑阅读 · 内置 HTTP 服务（2026-09-30 回填，端口 1122）。
  *
@@ -1959,12 +1960,16 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             finally {
                 fs.closeSync(file);
             }
-            const ext: string = book.bookUrl.toLowerCase().endsWith('.epub') ? 'epub' : 'txt';
+            // 2026-10-19：按真实后缀命名下载文件（旧实现非 epub 一律按 txt 给，PDF 会成 `书.pdf.txt`）
+            const ext: string = WifiBookServer.realExt(book.bookUrl);
             // `respondRaw` 内部统一做头部净化（旧实现只过滤 " 和 \，书名里的换行可注入响应头）
             const name: string = WifiBookServer.safeFileName(book.bookName ?? 'book');
             WifiBookServer.noteTraffic(size);
-            WifiBookServer.respond(client, 200, 'application/octet-stream', new Uint8Array(buffer),
-                `attachment; filename="${name}.${ext}"`);
+            // ⚠️ 必须 **剥掉原名里的后缀** 再拼真实后缀：`bookName` 本身带 `.pdf`，
+            //    直接 `${name}.${ext}` 会下成 `pocpdf.pdf.pdf`（2026-10-19 真机实测到）。
+            const downloadName: string = WifiBookServer.stripExt(name) + '.' + ext;
+            WifiBookServer.respond(client, 200, WifiBookServer.mimeOfExt(ext), new Uint8Array(buffer),
+                `attachment; filename="${downloadName}"`);
         }
         catch (err) {
             WifiBookServer.respond(client, 500, 'text/plain; charset=utf-8', WifiBookServer.textBytes('read failed'));
@@ -2333,8 +2338,15 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
         try {
             const bytes: Uint8Array = WifiBookServer.readBookBytes(entryPath);
             const isTxt: boolean = entryPath.toLowerCase().endsWith('.txt');
+            // 2026-10-19：按**真实后缀**给 Content-Type / 文件名。
+            // 旧实现写死 `attachment; filename="${entryName}.epub"`（非 txt 一律当 epub），
+            // 于是 PDF/DOCX 书会被下成 `书.pdf.epub`（浏览器打不开）。
+            const ext: string = WifiBookServer.realExt(entryPath);
+            const mime: string = WifiBookServer.mimeOfExt(ext);
+            const downloadName: string = WifiBookServer.stripExt(entryName) + '.' + ext;
             WifiBookServer.noteTraffic(bytes.length);
-            WifiBookServer.respond(client, 200, isTxt ? 'text/plain; charset=utf-8' : 'application/octet-stream', bytes, isTxt ? undefined : `attachment; filename="${entryName}.epub"`);
+            WifiBookServer.respond(client, 200, isTxt ? 'text/plain; charset=utf-8' : mime, bytes,
+                isTxt ? undefined : `attachment; filename="${downloadName}"`);
         }
         catch (err) {
             WifiBookServer.respond(client, 500, 'text/plain; charset=utf-8', WifiBookServer.textBytes('read failed'));
@@ -2441,8 +2453,9 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             }
             const safeName: string = WifiBookServer.safeFileName(fileName);
             const lower: string = safeName.toLowerCase();
-            if (!lower.endsWith('.txt') && !lower.endsWith('.epub')) {
-                return { ok: false, reason: 'ext', msg: `${safeName} 不是 txt/epub`, existingId: -1 };
+            // 2026-10-19：与本地导入共用同一份白名单（txt/epub/mobi/azw/azw3 + pdf/docx/doc，受开关控制）
+            if (!WifiBookServer.isAllowedUploadExt(lower)) {
+                return { ok: false, reason: 'ext', msg: `${safeName} 不是支持的书籍格式`, existingId: -1 };
             }
             const ctx: common.UIAbilityContext | null = WifiBookServer.abilityContext;
             if (ctx === null) {
@@ -2531,6 +2544,52 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
         return s === '' ? `导入书籍_${Date.now()}.txt` : s;
     }
 
+    /** 真实后缀（含点，小写）；无后缀给 `.bin`（2026-10-19 新增） */
+    private static realExt(path: string): string {
+        const lower: string = (path ?? '').toLowerCase();
+        const i: number = lower.lastIndexOf('.');
+        if (i < 0 || i === lower.length - 1) {
+            return 'bin';
+        }
+        const e: string = lower.substring(i + 1);
+        return e.length > 0 && e.length <= 8 ? e : 'bin';
+    }
+
+    /** 剥掉末尾后缀（用于"书名 + 真实后缀"拼下载名，避免 `书.pdf.epub`） */
+    private static stripExt(name: string): string {
+        const i: number = name.lastIndexOf('.');
+        return i > 0 ? name.substring(0, i) : name;
+    }
+
+    /** 下载用的 Content-Type（PDF/EPUB/DOC 给真实类型，其余 octet-stream） */
+    private static mimeOfExt(ext: string): string {
+        if (ext === 'pdf') {
+            return 'application/pdf';
+        }
+        if (ext === 'epub') {
+            return 'application/epub+zip';
+        }
+        if (ext === 'doc') {
+            return 'application/msword';
+        }
+        if (ext === 'docx') {
+            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        }
+        return 'application/octet-stream';
+    }
+
+    /** 上传白名单判定（2026-10-19：与本地导入共用同一份后缀表，受开关控制） */
+    private static isAllowedUploadExt(name: string): boolean {
+        const lower: string = (name ?? '').toLowerCase();
+        const exts: string[] = importableExts();
+        for (const e of exts) {
+            if (lower.endsWith(e)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ── 分块上传 / 断点续传（用户明确要求「WiFi 传书应具备断点续传能力」）──────────
     /**
      * 开始（或复用）上传会话。
@@ -2542,8 +2601,9 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             const body = JSON.parse(bytesToUtf8(req.body)) as Record<string, string | number>;
             const name: string = WifiBookServer.safeFileName(String(body['name'] ?? ''));
             const lower: string = name.toLowerCase();
-            if (!lower.endsWith('.txt') && !lower.endsWith('.epub')) {
-                WifiBookServer.respondJsonCode(client, 400, false, '只支持 txt / epub', '');
+            // 2026-10-19：分块上传白名单与整包上传/本地导入共用（见 isAllowedUploadExt）
+            if (!WifiBookServer.isAllowedUploadExt(lower)) {
+                WifiBookServer.respondJsonCode(client, 400, false, '不支持的书籍格式', '');
                 return;
             }
             const size: number = Number(body['size'] ?? 0);

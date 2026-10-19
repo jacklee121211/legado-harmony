@@ -10,6 +10,9 @@ import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUti
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 import { FileHandler } from '../../../../common/utils/FileHandler'
+import { showMessage } from '../../../../componets/common/promptShow'
+// 外部文件接收（2026-10-19 双响炮）：EntryAbility 只登记，这里（DB 已就绪）才真正导入
+import { IncomingFiles, INCOMING_TICK } from '../../../../common/format/IncomingFiles'
 
 @Component
 export default struct BookContent {
@@ -29,9 +32,49 @@ export default struct BookContent {
 
   async aboutToAppear(): Promise<void> {
     await FileHandler.seedDefaultBook()
+    // 冷启动进来的「分享 / 用其他应用打开」文件（2026-10-19）：此时 DB 已就绪
+    await this.importIncomingFiles()
     this.getBookCount()
     if (this.bookList.length === 0) {
       this.getBookList()
+    }
+  }
+
+  /** 外部文件信号（应用已在后台时被唤起 ⇒ aboutToAppear 不会再跑，靠它） */
+  @StorageLink(INCOMING_TICK) @Watch('onIncomingFiles') incomingTick: number = 0
+
+  private onIncomingFiles(): void {
+    this.importIncomingFiles()
+  }
+
+  /**
+   * 导入"分享进来 / 用其他应用打开"的文件。
+   *
+   * ⚠️ 必须逐本 `await` 到"拷贝+写库"完成再刷书架（2026-09-24 导入竞态的老教训，
+   *    见 `IndexShelf.pickLocalBooks` 同款注释）；`CopyFile` 内部已 await 写库。
+   * ⚠️ 失败不弹第二次 toast：`CopyFile` 自己会 showMessage。
+   */
+  private async importIncomingFiles(): Promise<void> {
+    const uris: string[] = IncomingFiles.take()
+    if (uris.length === 0) {
+      return
+    }
+    let ok = 0
+    for (const uri of uris) {
+      try {
+        const success: boolean = await FileHandler.CopyFile(uri, this.currentIndex)
+        if (success) {
+          ok++
+        }
+      } catch (e) {
+        // CopyFile 内部已提示，这里只记日志
+        console.error('incoming import failed: ' + JSON.stringify(e))
+      }
+    }
+    if (ok > 0) {
+      showMessage(`已导入 ${ok} 个文件`)
+      // 广播书架刷新（与 WiFi 传书同一信号，见 WifiBookServer:2506）
+      this.isBookRefreshing = this.isBookRefreshing + 1
     }
   }
 

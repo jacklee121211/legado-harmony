@@ -3,6 +3,8 @@ import { resolveBookCover, coverCorners, stripBookExt } from "../../../../common
 import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
+import { BusinessError } from '@kit.BasicServicesKit'
+import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_SELF_VIEWER, isPdfPath } from '../../../../common/format/FormatFlags'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
 import { ezCustomTransition } from '../../../../common/ezlt'
 import booksDao from '../../../../database/dao/BooksDao'
@@ -267,6 +269,20 @@ export default struct BookInfos {
       }
     }.onClick(() => {
       Haptics.tap();
+      // ── PDF：走自研图片阅读页（2026-10-19 第二轮决策）────────────────────────
+      // 为什么 PDF 不走 ReaderPage3：ReaderKit 把页图画成 1/3.375 大小（见
+      // docs/PDF支持方案决策-2026-10-19.md §12），7 种写法都改不掉；改用自研页后
+      // 页面尺寸与手势完全可控，还顺带拿到 pinch 缩放。
+      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_SELF_VIEWER
+        && isPdfPath(this.book.bookUrl ?? '')) {
+        router.pushUrl({
+          url: 'pages/view/Reader/PdfReaderPage',
+          params: this.book
+        }).catch((e: BusinessError): void => {
+          console.error('open pdf reader failed: ' + JSON.stringify(e));
+        });
+        return;
+      }
       // todo: 暂时屏蔽书籍详情页
       // 迁 Navigation 第 3 期：阅读页已改为 NavDestination，改走路由门面。
       // 2026-09-24：书架→阅读器的"一镜到底"尝试已全部撤除，恢复内置系统转场。

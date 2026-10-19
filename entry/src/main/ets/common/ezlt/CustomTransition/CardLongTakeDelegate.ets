@@ -29,6 +29,15 @@ const RETURN_TO_PRE_PAGE_SCALE_VALUE: number = 0.85;
 export struct CardLongTakeDelegate {
   @BuilderParam contentBuilder: () => void;
   @ObjectLink longTakeSession: LongTakeSession;
+  /**
+   * PDF 放大态标志（由 ReaderPage3 写入 AppStorage）。
+   *
+   * 为什么要挂在**手势注册**上、而不是只在回调里 return：
+   * `PanGesture` 一旦被识别就会**吞掉本次触摸**，我们的缩放层就拿不到 ⇒ 真机表现正是
+   * 「把页面拖到最左、再往右划，手势失灵」。所以放大态直接把它改成 9 指（永远识别不了），
+   * 手势从源头上不存在，100% 时仍是 1 指、行为完全不变。
+   */
+  @StorageLink('PDF_ZOOM_ACTIVE') zoomActive: boolean = false;
 
   private rectWidth: number = 0;
   private scaleValue: number = 0;
@@ -42,6 +51,16 @@ export struct CardLongTakeDelegate {
   }
 
   private isGestureDisabled(): boolean {
+    // ── PDF 放大态：右滑返回手势让位（2026-10-19，用户顽疾的真凶）──────────────
+    // 真机取证（`docs/日志.md` 15:51:55）：放大后一次横向拖动 3ms 内就出现
+    // `transition start … isPopPage: 1, isCustomAnimation: 1`，却没有 `PDFZOOM`（onBackPress）行
+    // ⇒ 既不是系统返回，也不是 NavDestination 的 onBackPressed，而是**本类的 `ExitGestureStyle()`**：
+    //    `PanGesture({ direction: PanDirection.Right })` 在 `onActionStart` 里直接 `options?.pop()`。
+    //   也就是说"从左往右划 = 回书架"本来就是**我们自己的功能**，跟系统手势无关。
+    // 用户要求：非 100% 时四向滑动都作用于内容 ⇒ 放大态在这里禁用它；100% 时行为完全不变。
+    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+      return true;
+    }
     return (((this.longTakeSession.getTransitionParam().options?.isGestureEnabled != undefined)
       && (!this.longTakeSession.getTransitionParam().options?.isGestureEnabled))
       || (this.longTakeSession.getTransitionParam().snapShotComponentId != undefined))
@@ -50,7 +69,7 @@ export struct CardLongTakeDelegate {
   @Styles
   ExitGestureStyle() {
     .gesture(
-      PanGesture({ direction: PanDirection.Right })
+      PanGesture({ fingers: this.zoomActive ? 9 : 1, direction: PanDirection.Right })
         .onActionStart((event: GestureEvent) => {
           if (this.isGestureDisabled()) {
             return;
