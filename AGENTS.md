@@ -159,3 +159,13 @@ V2.0.2 封面圆角对齐 + 进场更顺
   `devecocli skills list / find / add --path`；**合并必须差异化，禁止 `--force` 覆盖**
   —— 技能内含 100+ MB 平台二进制（`heap_cluster.exe` 等），官方 tar 包**不含**，
   删了技能直接失效。完整流程见 `~/.dsh/AGENTS.md` 第 6 节。
+
+## 8. 截图/验证产物：一律放仓库外（2026-10-19 隐私事故后立的规矩）
+
+- **禁止**把截图、`ui layout` dump、录屏等验证产物放进仓库：`screenshots/`、`verify/`、`.cache/`
+  三条已写进 `.gitignore`，且 `.githooks/pre-commit` 会**硬拦**（命中即 `exit 1`，不进历史）。
+- 统一写到**仓库外**：`D:\Arkts\3.8.11\_dsh_shots\<日期>-<主题>\*.png`，命令里别再把输出指向仓库内。
+- 为什么这么严（真事）：2026-10-19 之前的 `screenshots/`、`verify/` 里有锁屏/桌面截图，
+  **包含家人的照片**，随"全量提交"进了 GitHub 历史；最后只能用 `git filter-branch` 重写历史 +
+  强推才清除 —— **所有 commit SHA 都变了**，别人得重新 clone。
+- 确实要往仓库里放图（例如文档配图）：先**脱敏**（裁掉壁纸/通知/人名/头像），再放 `docs/` 等允许目录。
