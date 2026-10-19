@@ -21,3 +21,4 @@ __pycache__/
 # 截图/临时产物：只用于本地验证，禁止入库（GITHUB 上不应出现）
 /screenshots/
 /.cache/
+/verify/
