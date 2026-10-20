@@ -23,7 +23,9 @@ import AppRouter, { RouteName } from '../common/router/AppRouter'
 import UiMotion from '../common/utils/UiMotion'
 import BookDetailPage from './view/BookDetailPage'
 import ReaderPage3 from './view/Reader/ReaderPage3'
+import PdfViewerPage from './view/Reader/PdfViewerPage'
 import {
+  PdfRouteParam,
   ReaderRouteParam,
   ReadStatisticsRouteParam,
   ReadStatsRouteParam,
@@ -169,6 +171,8 @@ struct Main {
   /** 阅读器一镜到底会话（官方库迁移 2026-10-02）。@State：Delegate 的 longTakeSession
    *  是 @ObjectLink，只接受父组件状态字段初始化 */
   @State readerLtSession: LongTakeSession = new LongTakeSession()
+  /** PDF 阅读页一镜到底会话（2026-10-20；与 readerLtSession 分开，两个页面不会同时存在） */
+  @State pdfLtSession: LongTakeSession = new LongTakeSession()
   /** 飞行层动画值：缩放（锚点取内容 (0,0)） */
   @State ltScale: number = 1
   /**
@@ -1423,9 +1427,69 @@ struct Main {
     ReaderPage3({ initParam: rp })
   }
 
+  /**
+   * PDF 阅读页的一镜到底内容（2026-10-20）。
+   * 与 `readerLtContent` 同款：Delegate 的 `contentBuilder` 箭头里只能调 @Builder 方法
+   * （直接实例化组件会被编译成普通函数调用 ⇒ "class constructor cannot called without 'new'"）。
+   */
+  @Builder
+  pdfLtContent(rp: PdfRouteParam) {
+    PdfViewerPage({ initParam: rp.bookData })
+  }
+
   @Builder
   appRoutes(name: string, param: object) {
-    if (name === RouteName.BOOK_DETAIL) {
+    if (name === RouteName.PDF_VIEWER) {
+      // ── PDF 阅读页（官方 PdfView，2026-10-20）──────────────────────────────
+      //
+      // ① 走 NavPathStack 而不是 router：`systemTransition` 只存在于 NavDestination 上
+      //    （SDK `component/nav_destination.d.ts:1065`，@since 14），router 页面拿不到转场动画。
+      // ② **与其它格式共用一镜到底**：真机反馈「PDF 的进入动画和其它格式不同」（2026-10-20 第 2 条）。
+      //    对齐方式与 READER 分支完全一致 —— 有 `longTakeTransitionParam` 时用官方
+      //    `LongTakeTransitionDelegate` 包裹，并**关掉系统转场**（`NavigationSystemTransitionType.NONE`，
+      //    SDK 原文 "No system transition animation"），否则两层动画叠加（依据见 READER 分支注释）。
+      // ③ `onDisAppear` 是全 App **唯一的**沉浸态恢复点（`releaseReaderImmersive`）——
+      //    上一版 PDF 分支没有它，退出后书架/主题/我的 全带黑色遮罩（2026-10-20 真机第 1 条）。
+      NavDestination() {
+        if ((param as PdfRouteParam).longTakeTransitionParam !== undefined) {
+          LongTakeTransitionDelegate({
+            longTakeSession: this.pdfLtSession,
+            contentBuilder: (): void => {
+              this.pdfLtContent(param as PdfRouteParam)
+            }
+          })
+        } else {
+          PdfViewerPage({ initParam: (param as PdfRouteParam).bookData })
+        }
+      }
+      .hideTitleBar(true)
+      .backgroundColor(Color.Transparent)
+      .onSizeChange((_old: SizeOptions, nv: SizeOptions) => {
+        if ((param as PdfRouteParam).longTakeTransitionParam !== undefined) {
+          this.pdfLtSession.setNewSize(nv)
+        }
+      })
+      .systemTransition((param as PdfRouteParam).longTakeTransitionParam !== undefined
+        ? NavigationSystemTransitionType.NONE
+        : UiMotion.pageTransition(UiMotion.T_READER))
+      .onDisAppear(() => {
+        // 与阅读器同款：返回转场结束后恢复系统栏/避让/状态栏底色（PDF 页自己不做）
+        setTimeout((): void => {
+          this.releaseReaderImmersive()
+        }, 80)
+      })
+      .onReady((navDestContext: NavDestinationContext) => {
+        const pp: PdfRouteParam = param as PdfRouteParam
+        if (pp.longTakeTransitionParam !== undefined) {
+          this.pdfLtSession.init(navDestContext, pp.longTakeTransitionParam, {
+            pop: (): void => {
+              this.pageStack.pop()
+            },
+            contentSizeUsePercent: true
+          })
+        }
+      })
+    } else if (name === RouteName.BOOK_DETAIL) {
       // ── 第 2 期：书籍详情页 ────────────────────────────────────────────
       // 原 `pages/view/BookDetailPage`（@Entry）已去掉 @Entry，参数经下面的 `@Prop bookData` 注入。
       // `.hideTitleBar(true)`：该页**自带标题栏**（原 @Entry 页面同样没有系统标题栏），保持外观一致。

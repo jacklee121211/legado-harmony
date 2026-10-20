@@ -4,14 +4,15 @@ import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import { BusinessError } from '@kit.BasicServicesKit'
-import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_SELF_VIEWER, isPdfPath } from '../../../../common/format/FormatFlags'
+import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_PDFVIEW, FMT_PDF_USE_SELF_VIEWER,
+  isPdfPath } from '../../../../common/format/FormatFlags'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
 import { ezCustomTransition } from '../../../../common/ezlt'
 import booksDao from '../../../../database/dao/BooksDao'
 import FontConstants from '../../../../common/constants/FontConstants'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
-import AppRouter, { RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
+import AppRouter, { PdfRouteParam, RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 
 @Component
@@ -269,10 +270,33 @@ export default struct BookInfos {
       }
     }.onClick(() => {
       Haptics.tap();
-      // ── PDF：走自研图片阅读页（2026-10-19 第二轮决策）────────────────────────
-      // 为什么 PDF 不走 ReaderPage3：ReaderKit 把页图画成 1/3.375 大小（见
-      // docs/PDF支持方案决策-2026-10-19.md §12），7 种写法都改不掉；改用自研页后
-      // 页面尺寸与手势完全可控，还顺带拿到 pinch 缩放。
+      // ── PDF：走**官方 PdfView 组件**页（2026-10-20 用户拍板：以官方为基础，推翻重做）──
+      // 旧方案（页图→epub→ReaderKit）真机实测 234 页 84.6 秒 / 278 页 65.2 秒，全程主线程串行；
+      // 新方案打开即首屏，没有"转换"这一步。开关 `FMT_PDF_USE_PDFVIEW` 置 false 即回退旧路径。
+      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_PDFVIEW
+        && isPdfPath(this.book.bookUrl ?? '')) {
+        // ── PDF 走 NavPathStack + **同一套一镜到底**（2026-10-20 第 2 条反馈修复）──────
+        // 真机现象：「进入动画和其它格式还是不同」。
+        // 根因（代码级）：PDF 分支只 `push(PDF_VIEWER, this.book)`，参数里**没有**
+        //   `longTakeTransitionParam` ⇒ `Index` 的 PDF 分支走系统默认转场；
+        //   而其它格式分支会先 `generateLongTakeParam()` 再放进 `ReaderRouteParam`，
+        //   于是 `LongTakeTransitionDelegate` + `LongTakeSession` 演一镜到底。
+        // ⇒ 这里与下面 READER 分支**完全同款**：拍封面几何 → 随路由带走 → delegate 演飞行。
+        // 任何一步失败（id 失效/量不到）都自然退回系统转场，不阻塞点书。
+        const pp: PdfRouteParam = { bookData: this.book };
+        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+          AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60));
+          const ltParam = ezCustomTransition.generateLongTakeParam(
+            this.getUIContext(), this.longtakeId, 4);
+          if (ltParam) {
+            pp.longTakeTransitionParam = ltParam;
+          }
+        }
+        if (!AppRouter.push(RouteName.PDF_VIEWER, pp)) {
+          console.error('open pdf viewer failed: route stack not ready');
+        }
+        return;
+      }
       if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_SELF_VIEWER
         && isPdfPath(this.book.bookUrl ?? '')) {
         router.pushUrl({

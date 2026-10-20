@@ -333,12 +333,23 @@ export class WindowAbility {
   }
 
   /**
-   * 退出阅读页时把状态栏底色**还原成系统默认**（2026-10-19）。
+   * 退出阅读页时把状态栏底色**还原成全透明**（2026-10-20 用户拍板 A 方案）。
    *
-   * 为什么必须有：本 App 之前从不改 `statusBarColor`（全仓 grep 零命中），一旦阅读页把它
-   * 设成透明，退出后书架/我的等页面的状态栏也会变成透明 —— 那是**全局外观变化**，
-   * 不在用户授权范围内。这里还原成 SDK 文档给的默认值 `'#66000000'`
-   * （`@ohos.window.d.ts:443`「The default value is '#66000000'」）⇒ 与改动前观感一致。
+   * ── 改版背景（2026-10-20 真机反馈）─────────────────────────────────────────
+   * 用户原话：「进入阅读器后返回书架，整个软件顶部，系统状态栏都有个灰色遮罩」。
+   * 日志与代码对得上（真机 `docs/日志.md` 16:42:28）：
+   * ```
+   * 16:42:27.309  setStatusBarTransparent(false) succeeded      ← 进阅读器设透明
+   * 16:42:28.234  restoreStatusBarBackground succeeded          ← 退出还原
+   * ```
+   * 而旧实现在这里写的是 `statusBarColor: '#66000000'` ——
+   * alpha `0x66` = **40% 不透明的纯黑**，铺满整个状态栏底色；书架是浅色底，
+   * 所以看上去就是"顶部一条灰遮罩"。
+   * ⇒ 这里改成 `'#00000000'`（全透明），让页面自己的背景透上来，顶部绝对干净。
+   *
+   * ⚠️ 为什么不是"啥都不设"：本 App 启动时 `EntryAbility` 就是
+   * `setWindowLayoutFullScreen(true)`（窗口铺满、内容延伸到状态栏区域），
+   * 状态栏必须有底色来源，不设就会退回系统默认的半透明黑（即刚修掉的灰遮罩）。
    */
   restoreStatusBarBackground(): void {
     if (!this.windowClass) {
@@ -346,9 +357,9 @@ export class WindowAbility {
     }
     try {
       this.windowClass.setWindowSystemBarProperties({
-        statusBarColor: '#66000000'
+        statusBarColor: '#00000000'
       }).then(() => {
-        hilog.info(0x0000, TAG, 'restoreStatusBarBackground succeeded');
+        hilog.info(0x0000, TAG, 'restoreStatusBarBackground(transparent) succeeded');
       }, (error: Error) => {
         hilog.error(0x0000, TAG, 'restoreStatusBarBackground failed: ' + JSON.stringify(error));
       });

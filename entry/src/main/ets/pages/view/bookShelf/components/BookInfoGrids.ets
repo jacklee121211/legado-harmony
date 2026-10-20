@@ -3,8 +3,9 @@ import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
 import { BusinessError } from '@kit.BasicServicesKit'
-import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_SELF_VIEWER, isPdfPath } from '../../../../common/format/FormatFlags'
-import AppRouter, { RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
+import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_PDFVIEW, FMT_PDF_USE_SELF_VIEWER,
+  isPdfPath } from '../../../../common/format/FormatFlags'
+import AppRouter, { PdfRouteParam, RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
 import { ezCustomTransition } from '../../../../common/ezlt'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
 import booksDao from '../../../../database/dao/BooksDao'
@@ -239,7 +240,26 @@ export default struct BookInfoGrids{
     .padding({ left:8,right:8,bottom:5,top:5 })
     .onClick(()=>{
       Haptics.tap();
-      // PDF ⇒ 自研图片阅读页（2026-10-19，与列表模式 `BookInfos` 同款；理由见其注释）
+      // PDF ⇒ 官方 PdfView 组件页（2026-10-20，与列表模式 `BookInfos` 同款；理由见其注释）
+      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_PDFVIEW
+        && isPdfPath(this.book.bookUrl ?? '')) {
+        // PDF：NavPathStack + **与其它格式同一套一镜到底**（2026-10-20，与列表模式同款；
+        // 根因见 `BookInfos` 该分支注释：不带 longTakeTransitionParam 就只会走系统默认转场）
+        const pp: PdfRouteParam = { bookData: this.book };
+        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+          AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60));
+          const ltParam = ezCustomTransition.generateLongTakeParam(
+            this.getUIContext(), this.longtakeId, 4);
+          if (ltParam) {
+            pp.longTakeTransitionParam = ltParam;
+          }
+        }
+        if (!AppRouter.push(RouteName.PDF_VIEWER, pp)) {
+          console.error('open pdf viewer failed: route stack not ready');
+        }
+        return;
+      }
+      // 回退分支①：自研图片阅读页（旧实验，默认关）
       if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_SELF_VIEWER
         && isPdfPath(this.book.bookUrl ?? '')) {
         router.pushUrl({

@@ -51,10 +51,21 @@ export const FMT_ZOOM_ENABLED: boolean = true;
 export const FMT_PDF_FIT_SCALE: number = 1.23;
 
 /**
- * PDF 用哪条渲染路径（2026-10-19 实测后定案）：
- *  false（默认）⇒ PDF 也走「页图 → epub → ReaderPage3」，与 txt/epub 完全同一套体验（推荐）；
- *  true        ⇒ 走自研图片阅读页 pages/view/Reader/PdfReaderPage（页面尺寸/手势完全可控，且自带 pinch 缩放）。
- * 两条路都已真机跑通（screenshots/fmt/30、31）。
+ * PDF 用哪条渲染路径：
+ *  true（**当前默认**，2026-10-20）⇒ 走**官方 PdfView 组件**（`pages/view/Reader/PdfViewerPage`）：
+ *      系统原生 PDF 预览，打开即首屏，没有"先转 epub"的 65~85 秒等待；
+ *  false ⇒ 回退到旧方案「页图 → epub → ReaderPage3」（保留完整代码，随时可切回）。
+ *
+ * 设计原则（用户 2026-10-20 拍板）：**以官方为基础，推翻重做**。
+ * 旧方案里我们自己设计的那套（fit 系数 / 原地缩放 / 100% 翻页门槛 / 手势拦截 / 长按下拉书签）
+ * 在新路径里**一律不启用**；只有确认官方实现有明显瑕疵时，才逐条搬回来。
+ */
+export const FMT_PDF_USE_PDFVIEW: boolean = true;
+
+/**
+ * PDF 用哪条渲染路径（旧字段，保留兼容）：
+ *  false（默认）⇒ PDF 也走「页图 → epub → ReaderPage3」，与 txt/epub 完全同一套体验；
+ *  true        ⇒ 走自研图片阅读页 pages/view/Reader/PdfReaderPage（页面尺寸/手势完全可控）。
  */
   export const FMT_PDF_USE_SELF_VIEWER: boolean = false;
 

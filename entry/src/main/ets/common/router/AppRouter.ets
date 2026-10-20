@@ -177,6 +177,22 @@ export interface ReaderRouteParam {
 }
 
 /**
+ * PDF 阅读页路由参数（2026-10-20）。
+ *
+ * 为什么需要它：其它格式的阅读页靠 `ReaderRouteParam.longTakeTransitionParam` 触发官方
+ * **一镜到底**转场（`LongTakeTransitionDelegate` + `LongTakeSession`）。PDF 上一版直接
+ * `AppRouter.push(PDF_VIEWER, this.book)` 只传了 `Books`（没有 `longTakeTransitionParam`）
+ * ⇒ 走系统默认转场 ⇒ 真机反馈「PDF 的进入动画和其它格式不同」（2026-10-20 第 2 条）。
+ * 这里把参数统一成带可选 `longTakeTransitionParam` 的结构，PDF 与其它格式共用同一套转场。
+ */
+export interface PdfRouteParam {
+  /** 书籍数据（必填） */
+  bookData: Books;
+  /** 一镜到底转场参数：书架点击时由 `ezCustomTransition.generateLongTakeParam()` 生成 */
+  longTakeTransitionParam?: LongTakeTransitionParam;
+}
+
+/**
  * 「读过/读完/书签」二级菜单（`pages/view/myCenter/readStatistics`）路由参数。
  *
  * 原实现是 `(router.getParams() as dataItem).value`（该文件 :35）。
@@ -231,6 +247,18 @@ export class RouteName {
   static readonly BOOK_DETAIL: string = 'BookDetailPage';
   /** 阅读页（`pages/view/Reader/ReaderPage3`） */
   static readonly READER: string = 'ReaderPage3';
+  /**
+   * PDF 阅读页（官方 PdfView，2026-10-20）。
+   *
+   * 为什么必须走 `NavPathStack` 而不是 `router.pushUrl`：
+   * 官方过渡动画属性 `systemTransition(type: NavigationSystemTransitionType)`
+   * （SDK `component/nav_destination.d.ts:1065`，@since 14）挂在 **`NavDestinationAttribute`** 上，
+   * `@Entry` 的 router 页面没有这个属性 ⇒ 走 router 进来的页面**没有转场动画**
+   * （真机实测：从书架进 PDF 是硬切，其它格式有 EXPLODE 动画）。
+   * ⇒ 与其它格式对齐：`AppRouter.push(RouteName.PDF_VIEWER, …)` + `Index.appRoutes` 里的
+   * `NavDestination` 分支，挂 `UiMotion.pageTransition(UiMotion.T_READER)`。
+   */
+  static readonly PDF_VIEWER: string = 'PdfViewerPage';
   /** 读过 / 读完 / 书签 二级菜单（`pages/view/myCenter/readStatistics`） */
   static readonly READ_STATISTICS: string = 'ReadStatistics';
   /** 阅读数据详情页（`pages/view/myCenter/ReadStatsPage`，2026-10-13 新增） */
