@@ -57,7 +57,14 @@ export default struct BookInfoDialogs{
   @State buttonListInfo:buttonList[] = [
     new buttonList(1,this.bookData.isTop?'取消置顶':'置顶',$r('sys.symbol.pin')),
     new buttonList(2,'移动至',$r('sys.symbol.folder')),
-    new buttonList(3,'加入书单',$r('sys.symbol.book')),
+    // ── 2026-10-19：移除「加入书单」入口（用户需求第 3 条）─────────────────────
+    // 用户原话：「删除单本书籍长按弹窗的加入书单入口」。
+    // 「删除所有书单入口…只针对入口，具体功能暂时不引用了，屏蔽入口。」
+    // ⇒ 只从菜单里去掉这一项；`openAddToBookList()` / `AddToBookListDialog` 组件
+    //   与 `worksListsDao` 全部保留，零功能删除。
+    // 想恢复入口：把 `new buttonList(3,'加入书单',$r('sys.symbol.book'))` 插回本数组
+    //   第 3 位即可（`buttonClick` 的 case 3 分支仍然完好）。
+    //   注意该项的 id 是 3，其它项 id 不变 ⇒ 恢复不会影响置顶/移动/删除/分享的绑定。
     new buttonList(4,'删除',$r('sys.symbol.trash')),
     new buttonList(6,'分享',$r('sys.symbol.share'))
   ]

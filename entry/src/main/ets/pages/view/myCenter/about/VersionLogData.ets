@@ -14,13 +14,13 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V2.1.8'
+export const APP_VERSION_FALLBACK: string = 'V2.2.0'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.1.8',
-    date: '2026-10-20',
+    version: 'V2.2.0',
+    date: '2026-10-21',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -59,6 +59,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '增加阅读信息窗开启后，左侧显示系统时间能力',
       '新增PDF/DOCX等格式接入以及浏览模式',
       '新增显示系统状态栏功能，天然透传，效果卓绝，新增信息窗的子选项，更精细化管理信息窗，优化设置页布局',
+      '超多细节改动与优化，首页布局完全重制，极致精简。',
     ]
   },
 ]

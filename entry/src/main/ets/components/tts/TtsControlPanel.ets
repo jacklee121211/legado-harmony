@@ -191,6 +191,19 @@ export struct TtsControlPanel {
    * 页面侧做**父子弹窗协调**：本面板（父）暂收 → 定时弹窗（子）打开 → 子关父回。
    */
   onOpenSleepTimer: () => void = (): void => {};
+  /**
+   * 「停止朗读」（2026-10-19 新增，用户要求）。
+   *
+   * 由页面侧注入：阅读页传 `exitListening()`（它还要复位沉浸层锚点、停掉定时刷新器），
+   * 缺省实现只调 `TtsEngine.stop('')`（书架等无页面场景也安全）。
+   *
+   * 为什么不直接在本组件里调 `TtsEngine.stop()`：页面还有**自己的**收尾动作
+   * （`ReaderPage3.exitListening():5371-5377` 复位 `followSuspended`/`immPageIdx`/
+   * 停 ticker），漏了会留下"已停止但仍显示沉浸听书"的脏状态。
+   */
+  onStopListening: () => void = (): void => {
+    TtsEngine.stop('');
+  };
   @State voiceSlot: number = 0;           // 0=旁白 1=对白 2=男生 3=女生
   @State showVoices: boolean = false;
   /**
@@ -262,6 +275,39 @@ export struct TtsControlPanel {
    * 详见 `onAiSwitchChange()` 的注释（为什么不用 `$$`）。
    */
   @State aiSwitchNonce: number = 0;
+  /**
+   * ── 顶栏 AI 开关的**真实值镜像**（2026-10-19 新增，修「开关自己跳到关」）─────
+   *
+   * ── 问题（用户真机反馈，原文）─────────────────────────────────────────────
+   *   「如果用 ai 语音读书，遇到了连接不上或者网络问题等，会进入垫片，并且此时
+   *     **ai 语音开关会被关闭**……因为开关关闭，用户再次开始岂不是变成华为 tts 了。」
+   *
+   * ── 根因（代码自身注释即证据，非推测）────────────────────────────────────
+   *   ① `prefs` 是 `@Link` 到一个**普通类实例**（`TtsPrefs`，非 `@Observed`），
+   *      改它的**字段**不产生任何观察者通知 ⇒ `build()` 不重跑；
+   *   ② Toggle 的 `isOn` 传的是**普通函数** `aiSwitchOn()`（不是 `$$` 双向绑定）；
+   *   ③ 而 ArkUI 的 `Toggle` 被用户拨动后**其内部 UI 状态立即改变**、且不会因为
+   *      `isOn` 表达式没变而自动弹回 —— 这条本文件 `onAiSwitchChange()` 的注释
+   *      （`aiSwitchNonce` 那段）已经写明：「ArkUI 的 `Toggle` 在用户拨动后
+   *      **其内部 UI 状态立即改变**，而 `isOn` 传的是 `aiSwitchOn()`（普通函数，
+   *      非状态变量）⇒ 组件不会因为 `prefs` 没变而自动弹回」。
+   *   ⇒ 显示值与真实值**脱钩**：一旦有任何一次拨动/重建没走完确认流程，
+   *      开关就停在被拨到的位置，而 `prefs.aiTtsEnabled` 其实没变。
+   *      **引擎侧从未写过这个字段**（全工程 4 个写入点全是用户动作，见
+   *      `toggleAiTts` / `saveAiTtsConfig` / `clearAiTtsConfig` / `onApplyAiProfile`），
+   *      所以"开关显示关着"≠"AI 被关掉了"。
+   *
+   * ── 修法 ───────────────────────────────────────────────────────────────────
+   *   Toggle 只认这个 **@State 镜像**（`@State` 变化必触发重绘，这是 V1 的确定语义）。
+   *   镜像在三个时机从 `prefs` **回读**：面板每次显示、5s 刷新器、以及每次改值之后。
+   *   ⇒ 开关永远反映真实生效值，用户看到的「关」就一定是真的关了。
+   *
+   * ── 一键回退 ───────────────────────────────────────────────────────────────
+   *   把 `Toggle({ isOn: this.aiSwitchMirror })` 改回 `isOn: this.aiSwitchOn()`，
+   *   并删掉 `syncAiSwitchMirror()` 的调用点即可（其余逻辑不变）。
+   *   回退后要验证：拨动开关后取消确认框，开关会停在拨动后的错误位置（旧 bug 复现）。
+   */
+  @State aiSwitchMirror: boolean = false;
   // AI 音色清单：从服务商拉取后缓存到 Preferences（见 AiVoiceCatalog.ets）
   @State aiCatalogVoices: AiVoiceOption[] = [];
   @State aiVoiceFetching: boolean = false;
@@ -356,6 +402,8 @@ export struct TtsControlPanel {
     this.refreshSilentMode(); // #3：进入面板先探一次静音状态
     // D3：回读引擎里的真实定时状态（旧实现只显示本地 @State，重开面板必显示「关」）
     this.syncSleepFromEngine();
+    // ★ 2026-10-19：AI 开关镜像也在这里对齐一次（面板每次打开都反映真实生效值）
+    this.syncAiSwitchMirror();
     // D3 功耗门禁：只有面板**正在显示**时才起 5s 刷新器（见 isShowListen 注释）
     this.startSleepTicker();
   }
@@ -400,6 +448,8 @@ export struct TtsControlPanel {
     const reqMin = TtsEngine.getSleepMinutesReq();
     this.sleepChap = reqChap;
     this.sleepMin = reqMin;
+    // 顺带对齐 AI 开关镜像（5s 一次，面板开着期间开关永远反映真实值）
+    this.syncAiSwitchMirror();
     const stopMs = TtsEngine.getSleepStopMs();
     const stopChap = TtsEngine.getSleepStopChapter();
     const parts: string[] = [];
@@ -591,13 +641,17 @@ export struct TtsControlPanel {
         if (r.index === 1) {
           this.doSwitchEngineWhilePlaying(value);
         } else {
-          // 用户取消：强制重绘，让开关弹回实际值
+          // 用户取消：开关弹回真实值（旧实现只自增 nonce，而同值 @State 不触发重绘
+          // ⇒ 开关停在拨动后的错误位置，正是"开关自己变了"的一个来源）
+          this.forceAiSwitchBack();
           this.aiSwitchNonce = this.aiSwitchNonce + 1;
         }
       }).catch(() => {
+        this.forceAiSwitchBack();
         this.aiSwitchNonce = this.aiSwitchNonce + 1;
       });
     } catch (e) {
+      this.forceAiSwitchBack();
       this.aiSwitchNonce = this.aiSwitchNonce + 1;
     }
   }
@@ -614,6 +668,7 @@ export struct TtsControlPanel {
     this.commitPrefs();
     // 原地接管：保留章/块/进度、睡眠定时、后台任务、播控会话
     TtsEngine.switchEnginePreservingPosition();
+    this.syncAiSwitchMirror();
     this.aiTtsHint = toAi
       ? '已切换到 AI 听书，从当前进度继续'
       : '已切换回华为本地 TTS，从当前进度继续';
@@ -628,7 +683,45 @@ export struct TtsControlPanel {
     return this.prefs.aiTtsEnabled;
   }
 
-  /** 顶栏开关切换（关→开前先校验配置；不满足则提示且**不落盘**，避免"开了没声"） */
+  /**
+   * 把 `prefs` 的**真实值**回读进 `aiSwitchMirror`（2026-10-19 新增）。
+   *
+   * 为什么必须有它：`aiSwitchOn()` 是普通函数、`prefs` 又不是 `@Observed`
+   * ⇒ 值变了界面不会自己刷新，Toggle 会停在被拨动的位置（详见 `aiSwitchMirror` 注释）。
+   * 现在 Toggle 只认 `@State aiSwitchMirror`，本方法负责把它与真相同步。
+   *
+   * 调用时机（三处，缺一不可）：
+   *  ① `aboutToAppear` —— 面板每次打开都对齐一次；
+   *  ② `syncSleepFromEngine`（5s 刷新器）—— 面板开着期间持续对齐；
+   *  ③ 每次改值之后（`toggleAiTts` / `doSwitchEngineWhilePlaying` /
+   *     `saveAiTtsConfig` / `clearAiTtsConfig` / `onApplyAiProfile`）。
+   */
+  private syncAiSwitchMirror(): void {
+    const real: boolean = this.aiSwitchOn();
+    // 只在真的不同才写：@State 赋值同值不触发重绘，但显式判一次更省心
+    if (this.aiSwitchMirror !== real) {
+      this.aiSwitchMirror = real;
+    }
+  }
+
+  /**
+   * 强制把开关**弹回真实值**（2026-10-19 新增）。
+   *
+   * 场景：用户拨了开关 → 弹确认框 → 点「取消」/弹框失败。此时 `prefs` 没变，
+   * 但 Toggle 的内部 UI 已经变成"拨动后"的样子，而 `aiSwitchMirror` 与真实值
+   * **相同** ⇒ 直接赋同值不触发重绘，开关会停在错误位置（这正是旧 bug）。
+   *
+   * ⇒ 两步写：先写成**错误值**（制造一次 @State 变化，强制重绘一次），
+   *   下一帧再写成真实值。两次都是 `@State` 赋值 ⇒ 必有重绘 ⇒ Toggle 被拉回。
+   */
+  private forceAiSwitchBack(): void {
+    const real: boolean = this.aiSwitchOn();
+    this.aiSwitchMirror = !real;
+    setTimeout((): void => {
+      this.aiSwitchMirror = real;
+    }, 0);
+  }
+
   private toggleAiTts(value: boolean): void {
     if (!this.aiSwitchEnabled()) {
       return;
@@ -642,10 +735,12 @@ export struct TtsControlPanel {
         : '请先填写接口地址与 API Key，再打开 AI 听书';
       this.prefs.aiTtsEnabled = false;
       this.commitPrefs();
+      this.syncAiSwitchMirror();
       return;
     }
     this.prefs.aiTtsEnabled = value;
     this.commitPrefs();
+    this.syncAiSwitchMirror();
     this.aiTtsHint = value ? '已切换到 AI 听书（下一段生效）' : '已切换回华为本地 TTS';
   }
 
@@ -696,6 +791,8 @@ export struct TtsControlPanel {
     }
     this.commitPrefs();
     this.aiTtsDirty = false;
+    // 上面可能把 `aiTtsEnabled` 自动关掉了 ⇒ 立刻同步开关显示
+    this.syncAiSwitchMirror();
     // 接口地址可能变了 ⇒ 清单指纹变化，重新回填
     this.reloadAiCatalog();
   }
@@ -718,6 +815,7 @@ export struct TtsControlPanel {
     this.prefs.aiExtraHeaders = '';
     this.prefs.aiTtsEnabled = false;
     this.commitPrefs();
+    this.syncAiSwitchMirror();
     this.aiTtsDirty = false;
     this.aiTtsHint = '已清空并关闭 AI 听书';
   }
@@ -1103,6 +1201,8 @@ export struct TtsControlPanel {
     // ② 同步草稿
     this.fillAiTtsDrafts();
     this.reloadAiCatalog();
+    // ③ 同步开关显示（上面可能刚把 aiTtsEnabled 打开）
+    this.syncAiSwitchMirror();
     if (canToggleNow) {
       this.aiTtsHint = '已套用方案「' + p.name + '」并开启 AI 听书';
     } else {
@@ -1834,7 +1934,7 @@ export struct TtsControlPanel {
           .fontSize(14)
           .fontColor(this.aiSwitchEnabled() ? this.fg() : this.fgSub())
           .opacity(this.aiSwitchEnabled() ? 1 : 0.4)
-        Toggle({ type: ToggleType.Switch, isOn: this.aiSwitchOn() })
+        Toggle({ type: ToggleType.Switch, isOn: this.aiSwitchMirror })
           .selectedColor(this.accent())
           .enabled(this.aiSwitchEnabled())
           .opacity(this.aiSwitchEnabled() ? 1 : 0.4)
@@ -1932,6 +2032,31 @@ export struct TtsControlPanel {
             } else {
               this.onStart();
             }
+          })
+
+        // ── 停止按钮（2026-10-19 新增，用户要求）──────────────────────────────
+        // 用户原话：「我们现在听书弹窗只有暂停播放，没有停止按钮，增加个 symbol 的
+        //   终止按钮，方便用户终止后重试」。
+        // 放在**暂停右侧**（用户指定位置）。
+        //
+        // 为什么必须是"停止"而不是再加一个暂停：暂停（`TtsEngine.pause()`）保留渲染器
+        // 与播放位置，是"歇一下"；停止（`TtsEngine.stop()`）走完整停播链 ——
+        // 清睡眠定时 / 停后台长时任务 / 销毁播控会话 / 作废在飞合成（`TtsEngine.ets:1721`）。
+        // 用户网络卡在垫片里时，只有"停止"能真正退出那一路状态，然后重新开播。
+        //
+        // 图标：`sys.symbol.stop_circle`（停止）。
+        // 证据：技能符号表 `hmos-arkui-develop-skill/references/quick-apis/17-resources.md`
+        //   「| stop_circle | 停止 |」。
+        // ⚠️ 不用 `$r()` 三元（IDE 资源检查器要求字面量，见上面主按钮那段注释）。
+        SymbolGlyph($r('sys.symbol.stop_circle'))
+          .fontSize(24)
+          .fontColor([this.navEnabled() ? this.fg() : this.fgSub()])
+          .opacity(this.navEnabled() ? 1 : 0.4)
+          .enabled(this.navEnabled())
+          .margin({ left: 14 })
+          .onClick(() => {
+            Haptics.tap();
+            this.onStopListening();
           })
 
         Blank()

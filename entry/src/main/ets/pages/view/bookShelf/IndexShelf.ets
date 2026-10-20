@@ -1,7 +1,7 @@
 import AppRouter, { RouteName, BookManageRouteParam } from '../../../common/router/AppRouter'
 import BookBodyContent from './components/BookBodyContent'
 import { FileHandler } from '../../../common/utils/FileHandler'
-import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
+import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
 import Dialog from '../../../componets/common/Dialog'
 import { showMessage } from '../../../componets/common/promptShow'
 import { bookShelfImport } from '../../../database/entities/Books'
@@ -14,6 +14,9 @@ import { IconTitleVo } from '../../../componetsmodel/IconTitleVo'
 import dialogTitleFuction from '../../../componets/common/dialogTitleFuction'
 import { ShelfSearchPanel } from './components/dialog/ShelfSearchPanel'
 import { ImportBookListDialog } from './components/dialog/ImportBookListDialog'
+import ShelfPrefs from '../../../common/utils/ShelfPrefs'
+// 三横面板（排序 + 列表/宫格）：2026-10-20 三横从 GroupType 搬到本组件后由这里打开
+import { GroupManageDialog } from '../../../componets/group/GroupManageDialog'
 import { LengthMetrics } from '@kit.ArkUI'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 // ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
@@ -48,7 +51,32 @@ export default struct IndexShelf {
    */
   titleArray: Array<string> = ['书架']
   @State bookTypeNumber: number = 2
-  @State EXHIBIT: string = '列表'
+  /**
+   * 展示形态（列表 / 宫格）。
+   *
+   * ── 2026-10-19 需求第 2 条 ────────────────────────────────────────────────
+   * 用户原话：「默认进入是宫格显示，而不再是列表，并且切换做好持久化，
+   *   而不是每次都重置为列表」。
+   * ⇒ ① 初值从 `ShelfPrefs` 读（默认宫格，见 `ShelfPrefs.isGrid()`）；
+   *   ② 切换时写回 `ShelfPrefs`。
+   * 回退：`ShelfPrefs.ENABLED = false` ⇒ 恒返回宫格默认，不读不写持久化。
+   *
+   * ⚠️ 2026-10-20：切换按钮已从顶栏第一行**搬进三横弹窗**
+   *   （`groupTypePanel.ExhibitSection`，用户：「把列表/宫格挪进三横的弹窗里面」）。
+   *   弹窗与书架不是父子关系 ⇒ 改走 AppStorage 广播：
+   *   弹窗写 `SHELF_EXHIBIT_GRID`，这里 `@Watch` 同步到 `EXHIBIT`。
+   */
+  @StorageLink('SHELF_EXHIBIT_GRID') @Watch('onGridModeChanged') gridMode: boolean = ShelfPrefs.isGrid()
+  /** 由 `gridMode` 驱动的展示形态（唯一渲染源） */
+  @State EXHIBIT: string = ShelfPrefs.isGrid() ? '宫格' : '列表'
+
+  /** AppStorage 的宫格开关变了 ⇒ 同步本页的展示形态（弹窗里点「列表/宫格」时触发） */
+  onGridModeChanged(): void {
+    const next: string = this.gridMode ? '宫格' : '列表'
+    if (this.EXHIBIT !== next) {
+      this.EXHIBIT = next
+    }
+  }
   @State @Watch('changeGroup') GROUP: string = '标签'
   /**
    * 右上角「更多」菜单（2026-09-21 精简）。
@@ -56,12 +84,32 @@ export default struct IndexShelf {
    * 全工程 grep `downloadFile|DownloadTask|@ohos.request.download` **零命中**，
    * 页面内的 `switch(index){case 5,6,7: break}` 与「全选」`onClick` 也都是空的。
    * ⚠️ 删掉后**索引整体前移一位**，`changeTheme()` 里的 case 必须同步。
+   *
+   * ── 2026-10-19：删掉「导入书单」入口（用户需求第 2 条）──────────────────────
+   * 用户原话：「删除导入书单」。
+   * ⇒ 从菜单里移除该项。**索引再次前移**：
+   *     0 = 书籍导入（直接走 pickLocalBooks，见 changeTheme case 0）
+   *     1 = 批量管理（原 case 2 ⇒ 现 case 1，`changeTheme()` 已同步）
+   * ⚠️ 被删掉的实现**保留在文件里**（`openImportListDialog` / `pickBookListLocal` /
+   *    `pasteBookImport` / `ImportBookListDialog` 组件），只是没有入口调用它们 ——
+   *    按用户要求「只针对入口，具体功能暂时不引用了，屏蔽入口」。
+   *    想恢复入口：把 `new IconTitleVo($r('app.media.import_book_svg'), '导入书单')`
+   *    加回本数组的**第 2 位**，并把 `changeTheme()` 的 case 1/2 还原即可。
    */
   private moreList: IconTitleVo[] = [
     new IconTitleVo($r('app.media.import_svg'), '书籍导入'),
-    new IconTitleVo($r('app.media.import_book_svg'), '导入书单'),
     new IconTitleVo($r('app.media.batch_svg'), '批量管理'),
   ]
+  /**
+   * 「⋯」菜单的内容层材质修饰器（2026-10-19）。
+   *
+   * 第二参数 `true` = **调用方已在 options 里给了 `systemMaterial`** ⇒ 材质生效时
+   * 内容层一个背景属性都不设（官方：「主动设置的背景色、背景模糊…不生效」）；
+   * 夜间 / 设备不支持材质时自动落回 `ShelfColors.surface()` 实底，不会透明露底。
+   * 语义与全局弹窗（`BookInfoDialogs` 等）完全一致 —— 这就是"统一风格"的落点。
+   */
+  private menuSurface: MaterialColumnModifier =
+    new MaterialColumnModifier(ShelfColors.surface(), true)
   changeGroup() {
     if (this.GROUP === '文件夹') {
       this.bookTypeNumber = 1
@@ -72,6 +120,109 @@ export default struct IndexShelf {
 
   @State isShowImport: boolean = false
   @State isShowCloudImport: boolean = false
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 排序（2026-10-19，需求第 3 / 6 条）
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 当前是否停在「最近」这个**虚拟 chip** 上。
+   *
+   * ── 「最近」是什么（与用户逐条敲定）──────────────────────────────────────
+   * 用户原话：「新增的最近和全部的区别是，全部以后是默认排序，最近继承现有的
+   *   点击之后所看书籍上移…最近只有一种排序就是最近↓，然后其他的标签包括后续用户
+   *   自定义的标签分组都会随着排序进行排序。」
+   * ⇒ · 「最近」**不是数据库里的分组**，它不落 `book_groups` 表（避免污染既有
+   *      `sortSystemChips` 五要素白名单与 `isLockedUnit` 判定）；
+   *    · 它是一个**虚拟 chip**：选中时把查询口径置成「全部书（bookGroup=2）」
+   *      且排序**锁死**为「最近阅读降序」；
+   *    · 其余 chip（全部 / 自定义分组…）走 `ShelfPrefs` 里的排序档。
+   *
+   * 初值：需求「首次安装默认都是在最近」⇒ `ShelfPrefs.isRecentChip()`（默认 true）。
+   *
+   * ⚠️ 2026-10-19：改用 `@StorageLink('SHELF_RECENT_CHIP')` 而不是纯 `@State`。
+   *   原因：排序面板挂在**分组管理弹窗**（`groupTypePanel`）里，它与本页不是父子关系，
+   *   一旦用户在里面排序就必须同时把「最近」退掉 —— 只有 AppStorage 这条公共通道能做到。
+   *   `@StorageLink` 的初值就是首次创建该 key 时的值 ⇒ 从持久化恢复。
+   */
+  @StorageLink('SHELF_RECENT_CHIP') onRecentChip: boolean = ShelfPrefs.isRecentChip()
+  /**
+   * 排序变更信号（自增触发子组件重查）。
+   *
+   * 为什么不直接用 `BOOK_IS_BOOK_REFRESHING`：那个信号是"**数据**变了"，
+   * 会连带重取 `bookCount` 等；排序变化只是"**顺序**变了"，用独立信号更精确。
+   * `BookContent` 已加同名 `@StorageLink`，见那边的注释。
+   */
+  @StorageLink('SHELF_SORT_TICK') sortTick: number = 0
+  /** 三横（≡）按钮的 Q弹缩放（2026-10-20 从 `GroupType` 搬到本组件） */
+  @State sortScale: number = 1
+  /** 排序/显示设置面板控制器（每次打开新建，理由见 GroupType 同款注释） */
+  private sortPanelDialog: CustomDialogController | null = null
+
+  /**
+   * 打开「显示设置」面板（排序 + 列表/宫格）。
+   *
+   * ⚠️ 2026-10-20：三横已移到本组件，所以这里自己 new 控制器。
+   *   每次都新建：SDK `custom_dialog_controller.d.ts:756` NOTE
+   *   「Custom dialog box parameters **do not support dynamic updates**」，
+   *   而且"每次进入记录一个排序快照"正是靠新实例的 `aboutToAppear` 实现
+   *   （见 `groupTypePanel.aboutToAppear` 的快照逻辑）。
+   */
+  private openSortPanel(): void {
+    this.sortPanelDialog = new CustomDialogController({
+      builder: GroupManageDialog({
+        // 分组列表已不再在面板里渲染（用户：「显示分组和隐藏分组也不在需要了」），
+        // 传空数组即可 —— 面板只读 `curSortKey/curSortDir/isGridMode` 这些全局态。
+        showGroupList: [],
+        currentIndex: this.currentIndex,
+        onClose: (): void => {
+          this.sortPanelDialog?.close()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      width: '90%',
+      customStyle: false,
+      cornerRadius: 20,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        // 遮罩/返回键：同样必须真的 close（工程既有约定，见 GroupType 同款注释）
+        this.sortPanelDialog?.close()
+      },
+    })
+    this.sortPanelDialog?.open()
+  }
+
+  /**
+   * 冷启动时从持久化恢复「当前选中的 chip」（2026-10-19 需求第 3 条）。
+   *
+   * ── 为什么必须在 aboutToAppear 里显式恢复，而不是靠 @StorageLink 的初值 ────
+   * `@StorageLink(key) x: T = init` 的 `init` **只在 AppStorage 中该 key 尚不存在时**
+   * 用于创建它；页面重建（切 tab、返回书架）时 key 已存在，初值表达式**不会再求值**。
+   * 而 `ShelfPrefs` 是磁盘持久化 —— 两者不是一个东西：
+   *   冷启动 ⇒ AppStorage 是空的 ⇒ 会走初值 ✓
+   *   但若用户上次停在「某分组」而这次冷启动，`isRecentChip()` 只能推出 true/false，
+   *   **推不出具体的 groupId** ⇒ 必须从 `ShelfPrefs.getCurrentChipId()` 显式还原。
+   * 官方依据（`@StorageLink` 语义）：documentId
+   *   `API参考/ArkUI_方舟UI框架/ArkTS组件/状态管理与渲染控制/状态管理V1装饰器/
+   *    StorageLink_AppStorage双向数据同步/ts-state-management-storagelink`，原文：
+   *   「若AppStorage中**已存在**该键名对应的属性，则@StorageLink装饰变量的本地初始值
+   *     将被AppStorage中对应属性的值**覆盖**；若AppStorage中不存在该键名对应的属性，
+   *     则以@StorageLink装饰变量的本地初始值在AppStorage中创建对应属性。」
+   * ⇒ 与上面分析一致：已存在时不会用我们的初值。
+   */
+  aboutToAppear(): void {
+    const savedChip: number | undefined = ShelfPrefs.getCurrentChipId()
+    if (savedChip === undefined) {
+      // 上次停在「最近」（或首次安装）⇒ 保持默认
+      this.onRecentChip = true
+    } else {
+      this.onRecentChip = false
+      this.bookTypeNumber = savedChip
+    }
+  }
+
   // 「导入书单」弹窗（2026-09-25 从贴底 bindSheet 升级为标准居中 @CustomDialog，
   //   见 components/dialog/ImportBookListDialog.ets；控制器每次打开新建）
   private importListDialog: CustomDialogController | null = null
@@ -237,6 +388,10 @@ export default struct IndexShelf {
                 EXHIBIT: this.EXHIBIT,
                 GROUP: this.GROUP,
                 bookTypeNumber: this.bookTypeNumber,
+                // ── 2026-10-19：「最近」虚拟 chip 状态 + 排序信号 ──────────────
+                // 「最近」= 全部书 + 锁死最近阅读降序；其余 chip 走 ShelfPrefs 的排序档。
+                onRecentChip: this.onRecentChip,
+                sortTick: this.sortTick,
                 // 搜索/更多图标：下移到「最近阅读」行尾（2026-09-29，见 build() 同日注释）
                 trailingActions: (): void => {
                   this.ShelfTopActions()
@@ -355,13 +510,41 @@ export default struct IndexShelf {
         //   这条路已在本工程验证成功三次（长按弹窗 / 加入书单 / 睡眠定时）。
         //   而且 `@CustomDialog` 还能拿到**真沉浸光感材质**（sheet 拿不到）。
 
+      // ══ 三横（≡）：只用来排序 + 列表/宫格 ═══════════════════════════════════
+      // 2026-10-20「终极简化」：从 `GroupType` 尾部搬到这里。
+      // 用户原话：「…下面一行的未分组后面接着搜索，搜索之后是三横…三横之后是更多」。
+      // ⇒ 本行的图标顺序固定为：🔍 → ≡ → ⋯（与用户指定一致）。
+      SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+        .fontSize(20)
+        .fontColor([this.trailingIconColor()])
+        .scale({ x: this.sortScale, y: this.sortScale })
+        .onClick(() => {
+          Haptics.tap();
+          runJellyClick((v: number) => {
+            this.sortScale = v
+          })
+          this.openSortPanel()
+        })
+        .clickEffect(UiMotion.CLICK)
+
       // ── 更多按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）────
       // 符号名 `more`（横向三点）同表查得；`more_fill` 也在表里（未用）。
       SymbolGlyph($r('sys.symbol.more'))
         .fontSize(20)        // ★ 2026-10-11：24→20，与下面"全部/本地"那行三横字号统一
         .fontColor([this.trailingIconColor()])
         .scale({ x: this.moreScale, y: this.moreScale })
-        .bindMenu(this.MenuBuilder())
+        .bindMenu(this.MenuBuilder(), {
+          // ★ 2026-10-19：**菜单的系统材质**——全局统一的材质来源。
+          // 官方：「菜单支持通过 ContextMenuOptions 中的 systemMaterial 字段设置沉浸光感效果」
+          // （documentId `开发指南/…/组件适配沉浸光感/arkts-immersive-light-sense-component-adaptation`）。
+          // `feedbackMaterial()` 就是工程里给「即时反馈类（Toast / 菜单）」准备的那一档（THICK /
+          // 按算力收敛），与全局弹窗走同一套决策点 ⇒ 观感对齐。
+          // 一键回退：把 `ImmersiveMaterialUtil.ENABLED` 改 false ⇒ 这里返回 undefined
+          //   ⇒ 组件回落到内容层 `menuSurface` 的实底色，与改造前一致。
+          systemMaterial: ImmersiveMaterialUtil.feedbackMaterial(),
+          // 圆角与内容层一致（官方默认 20vp，这里显式写死，避免不同设备/版本漂移）
+          borderRadius: 20,
+        })
         .bindSheet($$this.isShowImport, this.ImportDialog(), {
           // 书籍导入弹窗绑定元素
           height: 200,
@@ -397,12 +580,21 @@ export default struct IndexShelf {
           })
       })
     }
-    // 材质与「最近阅读」小气泡对齐（2026-09-23 用户反馈）：同一个配方 =
-    // 半透明面底 + COMPONENT_ULTRA_THICK 超厚模糊 + 圆角 20（取值见 BookBodyContent 同款注释）。
-    // 原来日间 Transparent / 夜间死色 #1F1F1F，两种模式都和最近阅读的观感对不上。
-    .backgroundColor(ShelfColors.surface())
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    // ── 2026-10-19：材质改走**官方的菜单系统材质**，不再自己手画底 ──────────────
+    // 用户原话：「更多点击之后出现的这个菜单弹窗…不是和我们全局一样的风格…应该就是换个材质的问题」。
+    // 根因：全局弹窗（@CustomDialog）走的是 `systemMaterial`（沉浸光感），而这里是自己拼的
+    //   「半透明面底 + COMPONENT_ULTRA_THICK」，所以观感对不上。
+    // 官方两条原文：
+    //   ① 「菜单支持通过 ContextMenuOptions 中的 systemMaterial 字段设置沉浸光感效果」
+    //      （documentId `开发指南/…/组件适配沉浸光感/arkts-immersive-light-sense-component-adaptation`）；
+    //   ② 同一篇：「沉浸光感开启后，**主动设置的背景色、背景模糊等自定义样式属性不生效**」
+    //      ⇒ 想拿到材质就必须把 `backgroundColor` / `backgroundBlurStyle` 让出来，不能并存。
+    //   `MenuOptions extends ContextMenuOptions`（SDK `common.d.ts:15637`），
+    //   而 `systemMaterial?: SystemUiMaterial;` @since 26.0.0（同文件 `:15594`）。
+    // ⇒ 内容层交给 `MaterialColumnModifier`：材质生效时**一个背景属性都不设**；
+    //   夜间/材质不可用时自动落回实底色，绝不会透明露底（见该修饰器 `applyNormalAttribute`）。
     .borderRadius(20)
+    .attributeModifier(this.menuSurface)
   }
   @Builder
   // 书籍导入UI盒子
@@ -654,11 +846,8 @@ export default struct IndexShelf {
         this.pickLocalBooks()
         break
       case 1:
-        // 导入书单弹窗（2026-09-25：标准居中 @CustomDialog）
-        Haptics.tap();
-        this.openImportListDialog()
-        break
-      case 2:
+        // ── 2026-10-19：原 case 2「批量管理」前移到 case 1 ────────────────────
+        // 因为「导入书单」（原 case 1）的入口已按用户需求删除，索引整体前移一位。
         // 迁 Navigation 第 4 期：管理页已改为 NavDestination，改走路由门面。
         AppRouter.push(RouteName.BOOK_MANAGE, {
           currentIndex: this.currentIndex,

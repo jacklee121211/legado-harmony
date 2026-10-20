@@ -308,27 +308,77 @@ class DbUtil {
     // 3.处理结果
     while (!result.isAtLastRow) {
       // 3.1 去下一行
-      result.goToNextRow();
+      // ⚠️ 2026-10-20：`goToNextRow()` 同样可能抛（结果集被并发关闭等），
+      //    同一类未捕获异常照样 = 进程被杀 ⇒ 这里也必须兜住。
+      try {
+        result.goToNextRow();
+      } catch (e) {
+        Logger.error(`[${CommonConstants.RDB_TAG}]`, 'goToNextRow 失败，终止本次解析',
+          JSON.stringify(e));
+        return arr;
+      }
       // 3.2 解析这行数据，转为对象
       let obj: ValuesBucket | Record<string, undefined> = {};
       columns.forEach(info => {
+        // ★★ 2026-10-20 闪退修复（真机实测）：**列不存在时必须跳过，不能直接取值** ★★
+        //
+        // ── 事故现象（`docs/日志.md:1030` / `:2081`）────────────────────────────
+        //   安装新版本后一进书架就闪退，`Kill Reason:Js Error`：
+        //     `GetColumnIndex:Failed, columnName : fil***, errCode : 0`
+        //     `GetLong:throw error: code = 14800013, message = Resultset is empty or
+        //      column index is out of bounds.`
+        //     `at anonymous entry (DbUtil.ets:318:26)`
+        //
+        // ── 根因 ──────────────────────────────────────────────────────────────
+        //   本方法的 `columns` 来自 `AppDatabaseUtil.getColumn()`，它返回的是
+        //   **`AppDatabase/index.ets` 编译期快照里的全部列名**，与实际数据库表结构
+        //   **完全脱钩**。一旦快照比真表多一列（新加的列还没 ALTER 成功、或 ALTER
+        //   被时序打断），`getColumnIndex()` 就返回 **-1**，而 `getLong(-1)` 会抛
+        //   `14800013` —— 这个异常**没有被任何 try/catch 接住**，直接冒泡到 NAPI 层
+        //   ⇒ 进程被系统杀掉（`RecordAppWithReason ... Kill Reason:Js Error`）。
+        //
+        // ── 为什么要在这一层兜 ────────────────────────────────────────────────
+        //   逐列 try/catch 或逐查询改调用点都治标：只要有一处查询漏改，仍然是闪退。
+        //   这里是所有 SQL 查询的**唯一收口**（`querySqlForList` / `queryForList` 都走它），
+        //   在此处"列不存在 ⇒ 置 undefined"能一次性消灭**整类**闪退。
+        //   ⚠️ 语义：缺列等价于"该字段没有值"，与 `buildValueBucket` 跳过 undefined 的
+        //     既有约定一致（`DbUtil.ets:299` 附近注释），读取方一律 `?? 0` 兜底。
+        let idx: number = -1;
+        try {
+          idx = result.getColumnIndex(info.columnName);
+        } catch (e) {
+          idx = -1;
+        }
+        if (idx < 0) {
+          // 列不在本次结果集里（表结构与快照不一致）⇒ 跳过该字段，不影响其他列
+          Logger.warn(`[${CommonConstants.RDB_TAG}]`,
+            `列不存在，已跳过: ${info.columnName}（表结构与快照不一致，检查 initBooksTable 的 ALTER）`);
+          return;
+        }
         let val: ValueType | Uint8Array | undefined = undefined;
-        switch (info.type) {
-          case ColumnType.LONG:
-            val = result.getLong(result.getColumnIndex(info.columnName));
-            break;
-          case ColumnType.DOUBLE:
-            val = result.getDouble(result.getColumnIndex(info.columnName));
-            break;
-          case ColumnType.STRING:
-            val = result.getString(result.getColumnIndex(info.columnName));
-            break;
-          case ColumnType.BLOB:
-            val = result.getBlob(result.getColumnIndex(info.columnName));
-            break;
-          case ColumnType.BOOLEAN:
-            val = !!result.getLong(result.getColumnIndex(info.columnName))
-            break;
+        try {
+          switch (info.type) {
+            case ColumnType.LONG:
+              val = result.getLong(idx);
+              break;
+            case ColumnType.DOUBLE:
+              val = result.getDouble(idx);
+              break;
+            case ColumnType.STRING:
+              val = result.getString(idx);
+              break;
+            case ColumnType.BLOB:
+              val = result.getBlob(idx);
+              break;
+            case ColumnType.BOOLEAN:
+              val = !!result.getLong(idx)
+              break;
+          }
+        } catch (e) {
+          // 单列取值失败（类型不符等）⇒ 置空即可，绝不让整条查询/整个进程失败
+          Logger.error(`[${CommonConstants.RDB_TAG}]`,
+            `取值失败，已置空: ${info.columnName}`, JSON.stringify(e));
+          val = undefined;
         }
         obj[info.name] = val === '' ? undefined : val;
       })

@@ -439,11 +439,63 @@ export function lookupOrigMs(timeMap: TimeMapEntry[], adjMs: number): number {
 }
 
 /**
+ * ── 无词级时间戳时的句起点估算（2026-10-19 新增，治「高亮永远钉在末句」）─────
+ *
+ * ── 问题（用户真机反馈，原文）─────────────────────────────────────────────
+ *   「开启沉浸听读之后，每次阅读高亮都是标记某一段的**最后一两句**，并且我发现
+ *     系统的播放组件，锁屏的播放组件都是这样，在显示歌词的时候也是这种感觉，
+ *     明明某一段刚开始，实际显示的却是最后的一两句。」
+ *
+ * ── 根因（读代码得出，非推测）──────────────────────────────────────────────
+ *   `TtsEngine.playChunk` 的播放回调是这样挑当前句的（`TtsEngine.ets:3442-3457`）：
+ *       for (let m = timeline.length - 1; m >= 0; m--) {
+ *         if (ms >= timeline[m].startAdjMs) { …选中这一句…; break; }
+ *       }
+ *   **从末尾往前**找第一个"已开始"的小句 ⇒ 只要所有小句的 `startAdjMs` 都等于 0，
+ *   它必然命中该块的**最后一句**。
+ *
+ *   而它们确实全是 0：
+ *     · 本地引擎 `TtsEngine.ets:2894` `chunk.words = [];`
+ *     · AI 引擎  `TtsEngine.ets:2918` `chunk.words = [];`
+ *     · 只有 Edge 是 `chunk.words = r.words;`（`TtsEngine.ets:2928`，有词级时间戳）
+ *   ⇒ `words` 空 ⇒ `alignWords()` 返回空数组 ⇒ 下面 `pushSentenceMark` 里找 `origMs`
+ *     的循环一次都不进 ⇒ `origMs` 停在 -1 ⇒ 落到 `aligned.length > 0 ? … : 0`
+ *     ⇒ **0** ⇒ `startAdjMs = lookupAdjMs(timeMap, 0) = 0`。
+ *
+ *   ⇒ 华为本地 TTS 与 AI 语音**必然**全句零时刻；Edge 不受影响。
+ *     锁屏/下拉播控中心的歌词同源（三处吃同一份 timeline/LRC，见
+ *     `TtsEngine.ets:3400-3434` 与 `lrcTagMs`），所以一起坏、一起好。
+ *
+ * ── 修法 ───────────────────────────────────────────────────────────────────
+ *   `words` 为空且**已知本块音频总时长**时，按"该句之前已消耗的可朗读字符占比"
+ *   线性估算该句起点：`estOrigMs = totalMs × (句前可朗读字符数 / 全块可朗读字符数)`。
+ *   朗读是匀速的，这个线性模型对 TTS 产物足够准（不需要精确到词）。
+ *
+ * ── 一键回退 ───────────────────────────────────────────────────────────────
+ *   两个入口的 `totalMs` 默认 `0` ⇒ 直接走旧公式（全 0）⇒ 与改动前逐字一致。
+ *   回退后要验证：高亮/歌词重新回到"总在末句"的旧行为。
+ */
+function countSpeakable(text: string, from: number, to: number): number {
+  let n = 0;
+  const end = Math.min(to, text.length);
+  for (let i = from; i < end; i++) {
+    const c = text.charAt(i);
+    if (!SENTENCE_PUNCT_RE.test(c) && !COMMA_PUNCT_RE.test(c)
+      && !CLOSING_QUOTE_RE.test(c) && !/\s/.test(c)) {
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
  * 句级文本时间线（拼接后时间轴）：供播放进度 → 当前句显示。
+ * @param totalMs 本块**拼接后**的音频总时长（ms）。`>0` 且无词级时间戳时启用
+ *   字符占比估算；`0`（默认）= 旧行为（全 0 时刻，即"总在末句"）。
  */
 export function buildSentenceTimeline(text: string, words: WordSpan[],
-  timeMap: TimeMapEntry[]): SentenceMark[] {
-  return buildTimeline(text, words, timeMap, false);
+  timeMap: TimeMapEntry[], totalMs: number = 0): SentenceMark[] {
+  return buildTimeline(text, words, timeMap, false, totalMs);
 }
 
 /**
@@ -461,21 +513,26 @@ export function buildSentenceTimeline(text: string, words: WordSpan[],
  * ⚠️ 只给歌词用。**不要**拿它当播放进度用：朗读浮条 / `onSegment` 仍是句级语义。
  */
 export function buildLyricTimeline(text: string, words: WordSpan[],
-  timeMap: TimeMapEntry[]): SentenceMark[] {
-  return buildTimeline(text, words, timeMap, true);
+  timeMap: TimeMapEntry[], totalMs: number = 0): SentenceMark[] {
+  return buildTimeline(text, words, timeMap, true, totalMs);
 }
 
 /**
  * 时间线生成器（句级 / 小句级共用同一套词级对齐与时间映射，故时间精度同源）。
  * @param splitOnClause true = 逗号类标点也断行（歌词用），false = 只在句末断行（播放用）
+ * @param totalMs 本块拼接后总时长（ms）；`>0` 且无词级时间戳时按字符占比估算句起点。
+ *   见 `buildSentenceTimeline` 上方那段根因说明。
  */
 function buildTimeline(text: string, words: WordSpan[], timeMap: TimeMapEntry[],
-  splitOnClause: boolean): SentenceMark[] {
+  splitOnClause: boolean, totalMs: number = 0): SentenceMark[] {
   const marks: SentenceMark[] = [];
   const aligned = alignWords(text, words);
   if (text.length === 0) {
     return marks;
   }
+  // 无词级时间戳 + 已知总时长 ⇒ 启用字符占比估算（否则沿用全 0 的旧行为）
+  const est: boolean = aligned.length === 0 && totalMs > 0;
+  const totalSpeakable: number = est ? countSpeakable(text, 0, text.length) : 0;
   let start = 0;
   for (let i = 0; i <= text.length; i++) {
     const isEnd = i >= text.length;
@@ -487,13 +544,15 @@ function buildTimeline(text: string, words: WordSpan[], timeMap: TimeMapEntry[],
       while (j < text.length && CLOSING_QUOTE_RE.test(text.charAt(j))) {
         j++;
       }
-      pushSentenceMark(marks, text, start, j, aligned, timeMap);
+      pushSentenceMark(marks, text, start, j, aligned, timeMap,
+        est, totalSpeakable, totalMs);
       start = j;
       i = j - 1;
     }
   }
   if (start < text.length) {
-    pushSentenceMark(marks, text, start, text.length, aligned, timeMap);
+    pushSentenceMark(marks, text, start, text.length, aligned, timeMap,
+      est, totalSpeakable, totalMs);
   }
   return marks;
 }
@@ -504,7 +563,8 @@ function sentenceEndAt(text: string, i: number): boolean {
 }
 
 function pushSentenceMark(marks: SentenceMark[], text: string, start: number, end: number,
-  aligned: AlignedWord[], timeMap: TimeMapEntry[]): void {
+  aligned: AlignedWord[], timeMap: TimeMapEntry[],
+  est: boolean = false, totalSpeakable: number = 0, totalMs: number = 0): void {
   const segText = text.substring(start, end);
   let hasSpeakable = false;
   for (let i = 0; i < segText.length; i++) {
@@ -527,7 +587,15 @@ function pushSentenceMark(marks: SentenceMark[], text: string, start: number, en
     }
   }
   if (origMs < 0) {
-    origMs = aligned.length > 0 ? aligned[aligned.length - 1].endMs : 0;
+    if (est && totalSpeakable > 0) {
+      // 无词级时间戳：按"本句之前已消耗的可朗读字符占比"估算起点。
+      // 为什么用**可朗读字符**而不是 `start / text.length`：标点/空白不发声，
+      // 用全长会把纯标点段和长空白算进时间，句起点整体后移（短块上误差可达 20%+）。
+      const before: number = countSpeakable(text, 0, start);
+      origMs = totalMs * Math.min(1, before / totalSpeakable);
+    } else {
+      origMs = aligned.length > 0 ? aligned[aligned.length - 1].endMs : 0;
+    }
   }
   const mark: SentenceMark = {
     text: segText.trim(),

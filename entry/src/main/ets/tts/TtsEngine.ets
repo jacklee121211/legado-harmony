@@ -3200,9 +3200,14 @@ export class TtsEngine {
       const points = computePausePoints(chunk.text, chunk.words);
       const spliced = applyPauses(pcm, decoded.sampleRate, points,
         prefs.pauseSentenceMs, prefs.pauseCommaMs, prefs.rate, prefs.volume);
-      const timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
+      // ⚠️ 必须传**拼接后**总时长：无词级时间戳时（本地/AI）时间线靠它按字符占比
+      //    估算每句起点。传 0 = 旧行为（全句零时刻 ⇒ 高亮/歌词总钉在末句）。
+      //    依据与根因链见 `PauseSplicer.buildSentenceTimeline` 上方那段注释。
+      const chunkMs: number = spliced.sampleRate > 0
+        ? spliced.pcm.length / spliced.sampleRate * 1000 : 0;
+      const timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap, chunkMs);
       const lyricMarks = LRC_CLAUSE_SPLIT
-        ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap)
+        ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap, chunkMs)
         : timeline;
       const out: PreparedChunk = {
         pcm: spliced.pcm,
@@ -3394,11 +3399,16 @@ export class TtsEngine {
           chunk.text.substring(0, 24),
           chunk.words[0]?.text ?? '', chunk.words[1]?.text ?? '', chunk.words[2]?.text ?? '');
       }
-      timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap);
+      // ⚠️ 必须传**拼接后**总时长：无词级时间戳时（本地/AI）时间线靠它按字符占比
+      //    估算每句起点。传 0 = 旧行为（全句零时刻 ⇒ 高亮/歌词总钉在末句）。
+      //    依据与根因链见 `PauseSplicer.buildSentenceTimeline` 上方那段注释。
+      const playChunkMs: number = spliced.sampleRate > 0
+        ? spliced.pcm.length / spliced.sampleRate * 1000 : 0;
+      timeline = buildSentenceTimeline(chunk.text, chunk.words, spliced.timeMap, playChunkMs);
       // 歌词行时间线：默认**小句**粒度（见 LRC_CLAUSE_SPLIT），只服务 LRC 行；
       // `timeline`（句级）仍然只服务播放进度/浮条，两者语义不许混用。
       lyricMarks = LRC_CLAUSE_SPLIT
-        ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap)
+        ? buildLyricTimeline(chunk.text, chunk.words, spliced.timeMap, playChunkMs)
         : timeline;
     }
     // ── 增量 LRC（播控中心歌词页，2026-09-24）────────────────────────────────

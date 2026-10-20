@@ -117,6 +117,16 @@ export class FileHandler {
       if (coverPath !== '') {
         book.builtinCoverUrl = coverPath
       }
+      // ── 文件大小（2026-10-19 新增，排序面板「文件大小」用）────────────────────
+      // 在**拷贝完成之后** stat 目标文件（dstPath），而不是 stat 源文件：
+      // 源可能是跨设备 URI，且目标大小才是我们真正占用的大小。
+      // 失败一律写 0（`buildOrderByClause` 的 case 4 会把 0 压到最后，不会污染排序）。
+      try {
+        book.fileSize = fs.statSync(dstPath).size;
+      } catch (e) {
+        book.fileSize = 0;
+        hilog.warn(0x0000, 'testTag', 'CopyFile: stat %{public}s failed, fileSize=0', dstPath);
+      }
       await booksUtil.addBooks(book)
       return true
     } catch (err) {

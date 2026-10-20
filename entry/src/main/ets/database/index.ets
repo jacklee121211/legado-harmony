@@ -7,7 +7,55 @@ import readRecordDao from './dao/ReadRecordDao'
 import readDailyDao from './dao/ReadDailyDao'
 
 class DataBase {
+  /**
+   * 建表 + 迁移的完成信号（2026-10-20 新增）。
+   *
+   * ── 为什么需要 ────────────────────────────────────────────────────────────
+   * `EntryAbility.onWindowStageCreate` 里是 `DbUtil.initDB(...).then(async () => {
+   *   await DataBase.initAllTable() ... })` —— **不 await 整个链**，UI 照常加载。
+   * 于是首屏（书架 `BookContent.aboutToAppear → getBookList`）可能在
+   * "建表 / 补列" **还没跑完**时就发出查询。真机日志证据（`docs/日志.md`）：
+   *   `19:46:16.193 duplicate column name: finishedTime ...`  ← 迁移还在跑
+   *   `19:46:16.195 查询成功！查询行数：`                      ← 书架已经在查了
+   *   33ms 后 `GetColumnIndex:Failed ...` → 闪退。
+   *
+   * 修法：暴露一个 Promise，任何"依赖表结构已就绪"的查询方先 `await` 它。
+   * ⚠️ 它**永不会 reject**（内部吞掉异常并 resolve）——
+   *   迁移失败时查询照样要能跑（缺列已由 `DbUtil.parseResultSet` 兜住），
+   *   绝不能因为迁移挂了就让首屏永远不加载。
+   */
+  private readyPromise: Promise<void> | null = null;
+  private readyResolve: (() => void) | null = null;
+
+  /** 等待建表/迁移完成（幂等，可重复调用） */
+  whenReady(): Promise<void> {
+    if (this.readyPromise === null) {
+      this.readyPromise = new Promise<void>((resolve: () => void) => {
+        this.readyResolve = resolve;
+      });
+      // 已就绪分支：initAllTable 可能**早于**本次调用完成 ⇒ 用一个标志补齐，
+      // 否则后来者会永远等下去（经典的"信号发完了才登记监听"竞态）。
+      if (this.initDone) {
+        this.readyResolve?.();
+      }
+    }
+    return this.readyPromise;
+  }
+
+  /** `initAllTable()` 是否已经跑完（含失败） */
+  private initDone: boolean = false;
+
   async initAllTable() {
+    try {
+      await this.doInitAllTable()
+    } finally {
+      // 无论成功失败都放行：迁移失败不该把首屏卡死
+      this.initDone = true
+      this.readyResolve?.()
+    }
+  }
+
+  private async doInitAllTable() {
     await BooksDao.initBooksTable()
     await BookGroupsDao.initGroupTable()
     await worksListsDao.initWorksListsTable()

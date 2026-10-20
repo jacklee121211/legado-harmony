@@ -110,6 +110,27 @@ export default class MySetConstants {
   static readonly SET_INFO_WIN_TIMER: string = 'setReaderInfoWinTimer';
 
   /**
+   * 书架顶栏「三段开关 + 三图标胶囊」是否融合成一条（2026-10-21 新增）。
+   *
+   * 用户原话：「两种都做，然后在设置页定时显示开关下面，增加一个
+   *   三段开关+三按钮胶囊融合开关，进行切换显示效果。」
+   * · 开 = 两者拼成一整条连续玻璃胶囊；
+   * · 关（**默认**）= 分开两段、中间留空隙。
+   * 落盘由 `ShelfPrefs.setHeaderMerged()` 负责（与书架其它偏好同一个 Preferences 文件）。
+   */
+  static readonly SET_HEADER_MERGED: string = 'setShelfHeaderMerged';
+
+  /**
+   * 「布局」组 → 首页三段按钮排序（2026-10-21 新增）。
+   *
+   * 用户原话：「这个新设置没法融入到信息里面去，那就隔开，叫做布局，
+   *   我们开一个布局的新区域。」
+   * 该行只是**载体**（`hideControl: true`，不画箭头/Toggle）；
+   * 真正的交互是自绘的 `ChipOrderSetting` 组件，落盘走 `ShelfPrefs.setChipOrder()`。
+   */
+  static readonly SET_CHIP_ORDER: string = 'setShelfChipOrder';
+
+  /**
    * 「电量显示」三档模式的**取值归一化**（2026-10-19 二次改造）。
    *
    * 历史：这个键最初是布尔（true = 显示图标+百分比 / false = 不显示），

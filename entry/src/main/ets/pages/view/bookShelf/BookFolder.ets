@@ -190,6 +190,15 @@ export default struct BookFolder {
     Haptics.tap()
     this.GROUP = '标签'
     this.bookTypeNumber = id
+    // ★ 2026-10-21：上报当前子分组名 —— 「返回分组列表」悬浮按钮靠它显示
+    //   `< 开心  返回分组列表`。
+    //   ⚠️ 这条路径（分组页点卡片进入）**不经过** `GroupType.onChipClicked`，
+    //     所以必须在这里单独写一次，否则从分组页进去时按钮不显示名字。
+    //   ⚠️ 同时要清掉「最近」态：`BookContentRefresh` 的按钮显示条件是
+    //     `!onRecentChip && bookTypeNumber !== 1 && 名字非空`，
+    //     若残留 `onRecentChip === true`，进来会被「最近」分支接管（显示全部书）。
+    AppStorage.setOrCreate<boolean>('SHELF_RECENT_CHIP', false)
+    AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', item.groupName ?? '')
   }
 
   build() {
@@ -274,6 +283,46 @@ export default struct BookFolder {
   //    sheet（当时还专门论证过它为什么必须是 @State 而非 @ObjectLink —— 因为它被本地
   //    整体赋值）。现在点击直接切分组（`openGroup()`），不再需要中间态。
 
+  /**
+   * 分组卡片封面的「多本叠加」装饰层（2026-10-21 新增）。
+   *
+   * 用户原话：「最近和全部里面的单本书籍看起来要比分组的书籍要宽厚一些，我建议给分组
+   *   里面的书籍封页增加一下宽度，不是正常的加宽，而是在下面增加一层或者两层，
+   *   像是两三本书叠加在一起，更符合分组的效果，建议是**右侧以及底部**进行多出来叠加效果。」
+   *
+   * ── 设计要点 ─────────────────────────────────────────────────────────────
+   * · **不改变封面本身尺寸**（仍是 88×120）—— 加宽会破坏与单本书封面的视觉一致性；
+   * · 在封面**右下方**错位叠 2 层"书页"，形成"一摞书"的观感；
+   * · 层次：最底层最大最淡 → 中间层 → 封面（最上、最亮）；
+   * · 用 `ShelfColors.skeleton()` 系列半透明白/黑，日夜自动跟随（与工程其它占位块同源）；
+   * · `HitTestMode.None` 让装饰层不抢触摸（否则会挡住卡片的点击/长按）。
+   *
+   * ── 为什么错位方向是"右下"而不是"左上"
+   * 封面左上角有「置顶」角标（`item.isTop`），左上叠层会压住它；
+   * 右下是空区，且符合"书叠在下面"的直觉（后放的书压在下面、露出来的是右下边）。
+   */
+  @Builder
+  FolderStackDecor() {
+    // 第 2 层（最底、偏移最大、最淡）
+    Row()
+      .width(88)
+      .height(120)
+      .borderRadius(coverCorners(88))
+      .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)')
+      .translate({ x: 10, y: 8 })
+      .zIndex(0)
+      .hitTestBehavior(HitTestMode.None)
+    // 第 1 层（中间、偏移中等）
+    Row()
+      .width(88)
+      .height(120)
+      .borderRadius(coverCorners(88))
+      .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.08)')
+      .translate({ x: 5, y: 4 })
+      .zIndex(1)
+      .hitTestBehavior(HitTestMode.None)
+  }
+
   @Builder
   bookInfoGrid(item: BookGroups) {
     Column({
@@ -282,6 +331,9 @@ export default struct BookFolder {
       Column() {
         Column() {
           Stack() {
+            // ── 2026-10-21：先画叠加装饰层（在封面**下面**）──────────────────
+            this.FolderStackDecor()
+
             Stack() {
               Stack() {
                 if (item.isTop) {

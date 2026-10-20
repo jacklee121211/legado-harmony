@@ -1,18 +1,23 @@
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
-import BookType from '../head/BookType'
+// ⚠️ 2026-10-20：`BookType` 已不再使用 —— 顶栏 chip 行整体换成官方 `SegmentButton`
+//    （封装见 `componets/common/GlassSegment.ets`）。`BookType` 组件本身保留
+//    （`GroupTypeSearch` 等其它地方仍在用）。
 import { GroupManageDialog } from './GroupManageDialog'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
 import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../common/utils/ImmersiveMaterialUtil'
-import UiMotion, { runJellyClick } from '../../common/utils/UiMotion'
-import { showMessage } from '../common/promptShow'
+// ⚠️ 2026-10-20：`runJellyClick` / `showMessage` / `Haptics` 在本文件已无调用点 ——
+//   三横按钮搬去 `IndexShelf`、chip 行换成 `GlassSegment`（震动在它内部做）、
+//   长按编辑弹窗的调用点随「显示分组」栏一起删除。保留 import 会触发 lint，故移除。
+import UiMotion from '../../common/utils/UiMotion'
 import { NightMode } from '../../common/utils/NightMode'
-// ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
-import { Haptics } from '../../common/utils/Haptics'
 // ★ 2026-10-11：分组行三横图标跟随主题色（与 IndexShelf.trailingIconColor 同款语义）
 import { ThemeItem } from '../../common/model/Theme'
 import { ThemeStorageKey } from '../../common/constants/Theme'
+import ShelfPrefs from '../../common/utils/ShelfPrefs'
+// 顶栏分段控件（2026-10-20：官方 SegmentButton 封装，带沉浸光感材质）
+import { GlassSegment } from '../common/GlassSegment'
 
 /**
  * 分组管理弹窗「停在分组行下面」的位置修正量（vp，**唯一可调点**）。
@@ -27,6 +32,44 @@ import { ThemeStorageKey } from '../../common/constants/Theme'
  *   只改这个常量即可（正值往下、负值往上），不要改别的地方。
  */
 const GROUP_PANEL_DY_FIX: number = 0
+
+/**
+ * 三个 chip 的**原始语义**顺序（下标即语义，永不变化）。
+ *
+ * 0 = 最近 · 1 = 全部 · 2 = 分组
+ * ⚠️ 必须与 `componets/myset/ChipOrderSetting.ets` 里的 `SEM_RECENT/SEM_ALL/SEM_GROUP`
+ *   以及 `CHIP_NAMES` **逐字一致**（两处都靠它做语义↔显示下标换算）。
+ * 放在模块级而不是 struct 静态成员：`GroupType` 是 `export default struct`，
+ * 组件实例内用 `CHIP_NAMES` 会报 `Cannot find name 'GroupType'`。
+ */
+const CHIP_NAMES: string[] = ['最近', '全部', '分组']
+
+/**
+ * 「最近」虚拟 chip 的**高亮哨兵值**（2026-10-19 二修）。
+ *
+ * ── 为什么必须是这样一个"怪值" ────────────────────────────────────────────
+ * `BookType` 判高亮只有一条规则：`index === bookTypeNumber`。
+ * 所有真实 chip 传的 `index` 都是**数据库 groupId**（`INTEGER PRIMARY KEY` 自增 ⇒ 恒为正）。
+ * ⇒ 只要哨兵取一个**永不可能成为 groupId 的大负数**，就能做到：
+ *    「最近」亮 · 所有真实分组灭，且不会误伤任何一格。
+ *
+ * ── 踩过的坑（务必别再复用 bookTypeNumber 的"口径值"做高亮）──────────────
+ * 上一版点「最近」时写 `bookTypeNumber = 2`（那是 `BooksDao.buildWhereClause` 里
+ * "不加分组条件 = 全部书"的 **bookGroup 口径**）。而 `BookGroupsDao.initGroupData`
+ * 的插入顺序是 `['分组','全部','未分组','本地','书单']` ⇒ **「全部」的 groupId 恰好是 2**
+ * ⇒ `2 === 2` ⇒ 点「最近」时「全部」也亮（用户反馈：
+ *   「点击最近，进入最近，但是全部还是被选定的状态」）。
+ *
+ * ── 为什么单独开一个 @State 而不是直接写进 bookTypeNumber ─────────────────
+ *   `bookTypeNumber` 在本工程里**身兼两职**：
+ *     ① 分组筛选 id（`BooksDao.buildWhereClause` 的 `bookGroup`）；
+ *     ② **多个分支判别值**（`=== 1` 分组 / `=== 5` 书单，见 `BookContentRefresh`、
+ *        `BookManageDialog`、`BookManagePage` 共 30+ 处）。
+ *   把 -9999 写进它会顺着路由流到管理页（`BookManagePage.routeParam.bookTypeNumber`），
+ *   那些 `=== 1 / === 5` 的判断全部落空 ⇒ 管理页空白。
+ * ⇒ 用独立的 `chipHighlightId` 专供高亮，只影响这一行的显色，零副作用。
+ */
+const RECENT_CHIP_ID: number = -9999
 
 @Component
 export default struct groupTypeComponent {
@@ -127,6 +170,78 @@ export default struct groupTypeComponent {
   @Link GROUP:string
   @State groupList:BookGroups[] = []
   @Link bookTypeNumber:number
+  /**
+   * 「最近」虚拟 chip 状态（2026-10-19 需求第 3 条）。
+   *
+   * ── 为什么是 `@Link` 而不是 `@Prop` ────────────────────────────────────────
+   * 本行要能**写回**它（点「最近」= 切到该 chip），@Prop 是单向副本写不生效
+   * （`BookFolder.openGroup` 的注释里记过同款坑）。
+   *
+   * ── 「最近」为什么不进数据库 ──────────────────────────────────────────────
+   * 用户：「新增的最近和全部的区别是，全部以后是默认排序，最近继承现有的点击之后
+   *   所看书籍上移…最近只有一种排序就是最近↓」。
+   * 若把它做成 `book_groups` 里的一行，会污染两处**硬编码白名单**：
+   *   · `GroupType.sortSystemChips()` 的 `order = ['全部','本地','书单','分组','未分组']`
+   *   · `isLockedUnit()` / `groupTypePanel.BASE_UNIT_NAMES`
+   * 且「最近」的查询口径是"全部书 + 锁死排序"，与任何真实分组都不同。
+   * ⇒ 做成**纯 UI 层虚拟 chip**，只存在于本行，零数据库迁移。
+   */
+  @StorageLink('SHELF_RECENT_CHIP') onRecentChip: boolean = true
+  /**
+   * 分组行**高亮基准**（2026-10-19 二修，专供 `BookType.index === chipHighlightId`）。
+   *
+   * 与 `bookTypeNumber` 分离的原因见 `RECENT_CHIP_ID` 的注释：
+   * `bookTypeNumber` 身兼"筛选 id + 分支判别值"两职，塞哨兵值会污染管理页。
+   * 取值：停在「最近」⇒ `RECENT_CHIP_ID`；否则 = 当前分组的真实 groupId。
+   */
+  @State chipHighlightId: number = -9999
+  /**
+   * 分段控件的选中下标（2026-10-20 新增，**必须是独立 `@State`**）。
+   *
+   * ⚠️ 为什么不能直接传 `this.chipSelectedIndex()`：
+   *   `@Prop` 只在**父组件 build 重跑**时重新取值，而 `chipSelectedIndex()` 是普通方法，
+   *   框架**追踪不到它内部读了 `onRecentChip` / `chipHighlightId`**（不是直接的状态读取）
+   *   ⇒ 传进去的值永不更新 ⇒ "点击后功能生效但按钮不切换"。
+   *   这与主题页 `modeSel` 是**同一个坑**，两处一起修。
+   * ⇒ 下标提升成 `@State`：`onChipClicked()` / `aboutToAppear()` 里显式同步。
+   */
+  @State chipSel: number = 0
+  /**
+   * 排序变更信号（透传给 `BookContent`）。
+   *
+   * ⚠️ 2026-10-19：排序区块最终放在**分组管理面板**里（`groupTypePanel.SortSection`），
+   * 因为需求原话是「在**隐藏分组下面**新建一个区域」——隐藏分组只存在于那个面板中。
+   * 本组件保留这个 `@Link` 只为把同一份状态透传给 `BookContent`（书架列表），
+   * 真正递增发生在 `groupTypePanel.selectSort()/resetSort()`（写 AppStorage）。
+   */
+  @StorageLink('SHELF_SORT_TICK') sortTick: number = 0
+  /**
+   * 内容区左右滑动请求切档（2026-10-21 新增）。
+   *
+   * `BookBodyContent` 在书籍区域上挂了 `PanGesture`，松手时把「+1 / -1」写进本键；
+   * 本组件 `@Watch` 收到后按当前下标偏移一档。
+   *
+   * ⚠️ 为什么用 AppStorage 而不是回调：手势在 `BookBodyContent`（孙子层），
+   *   而选中态由本组件持有，中间还隔着 `@BuilderParam` 链路 ⇒ 走公共通道最可靠
+   *   （与 `SHELF_RECENT_CHIP` / `SHELF_SORT_TICK` 同一套做法）。
+   */
+  @StorageLink('SHELF_CHIP_STEP') @Watch('onChipStep') chipStep: number = 0
+  /**
+   * 「跳到指定 chip」请求（2026-10-21 新增）。
+   *
+   * 用途：分组页的「返回分组列表」悬浮按钮（`BookContentRefresh`）需要**直接跳到**
+   * 「分组」chip（下标 2），而不是相对 ±1 偏移 ⇒ 单独一条通道。
+   * 与 `chipStep` 同样用「处理完复位成 -1」保证可重复触发（`@Watch` 只在值变化时跑）。
+   */
+  @StorageLink('SHELF_CHIP_GOTO') @Watch('onChipGoto') chipGoto: number = -1
+  /**
+   * 顶栏三段按钮排列（2026-10-21 新增）。
+   *
+   * 设置页「首页三段按钮排序」写这个键（`ChipOrderSetting.applyOrder`），
+   * 本组件 `@Watch` 收到后重算显示下标 —— 因为**排列变了，同一语义项的位置也变了**
+   * （例如「分组」从第 3 格跑到第 1 格，`chipSel` 必须跟着改，否则高亮会跳错格）。
+   */
+  @StorageLink('SHELF_CHIP_ORDER') @Watch('onChipOrderChanged') chipOrderKey: string = '0,1,2'
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('changeRefresh')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   /**
    * 分组管理弹窗控制器。
@@ -139,6 +254,14 @@ export default struct groupTypeComponent {
    */
   private groupPanelDialog: CustomDialogController | null = null
   aboutToAppear(): void {
+    // 高亮基准初始化（2026-10-19 二修）：与 `IndexShelf.aboutToAppear` 恢复出的状态对齐
+    //   · 停在「最近」 ⇒ 哨兵；否则用当前分组 id。
+    //   为什么不用 `onRecentChip` 直接推导 highlightId：它只是个布尔，推不出"停在哪个分组"；
+    //   而 `bookTypeNumber` 在「最近」态下**保持上次的值不变**（我们不再写 2），
+    //   所以这里只能按 `onRecentChip` 二选一。
+    this.chipHighlightId = this.onRecentChip ? RECENT_CHIP_ID : this.bookTypeNumber
+    // 分段控件下标同步（2026-10-20）：必须是 @State，见 chipSel 的注释
+    this.chipSel = this.chipSelectedIndex()
     this.getGroupList()
   }
   changeRefresh(){
@@ -149,6 +272,10 @@ export default struct groupTypeComponent {
       type:this.currentIndex
     }).then((val)=>{
       this.groupList = this.sortSystemChips(val)
+      // 分组列表到位后重算一次下标（「全部」「分组」的 groupId 要靠 groupList 才能反查）
+      this.chipSel = this.chipSelectedIndex()
+      // 上报当前分组名（「返回分组列表」悬浮按钮显示用，2026-10-21）
+      AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', this.currentGroupName())
     })
   }
 
@@ -160,25 +287,58 @@ export default struct groupTypeComponent {
    * `rest.indexOf(all)`（all 已被滤掉 ⇒ -1 ⇒ splice 位置错乱 + 全部丢失）——真机 18:2x
    * 复现"全部没了、书单改名后才出现全部"（改名后名字不再等于'书单'、works 找不到 ⇒ 走了
    * 原序分支）。这版对缺名系统行做兜底（找到几个排几个），customs 永远不会吞掉系统行。
+   *
+   * ══ 2026-10-20「终极简化」：本行**只留三个系统 chip，且不再显示自定义分组** ══
+   * 用户原话：
+   *   · 「所有的自定义分组创建后都不会在未分组后面进行显示了，只展示在分组里面」
+   *   · 「其实未分组也可以删除，因为在分组中有未分组的置顶目录」
+   * ⇒ 顶栏固定为：**最近 / 全部 / 分组**（「最近」由调用方单独渲染，见 build()）。
+   *   · 「未分组」——删除（它的内容在「分组」页里有置顶目录）；
+   *   · 「书单」「本地」——2026-10-19 已屏蔽，本次维持；
+   *   · **自定义分组一律不进本行**（只在「分组」页的分组卡片列表里出现）。
+   *
+   * 恢复方法：把 `TOP_CHIP_NAMES` 加回 '未分组' 即可；要恢复自定义分组在顶栏，
+   * 把下面 `customs` 那段重新 push 进 `result`（原实现见 git 历史）。
    */
   private sortSystemChips(list: BookGroups[]): BookGroups[] {
     const order: string[] = ['全部', '本地', '书单', '分组', '未分组']
     const systems: BookGroups[] = []
     for (const name of order) {
+      // ── 2026-10-19 需求第 1/5 条：「书单」入口屏蔽 ──────────────────────────
+      // 用户原话：「删除书单分组」「删除所有书单入口…只针对入口，具体功能暂时不引用了，屏蔽入口。」
+      // ⇒ 与「本地」同一手法：只在**渲染层**跳过，`book_groups` 那一行数据、`works_lists`
+      //   表、`WorksBookLists` 组件、`worksListsDao` 全部保留，随时可恢复。
+      // 回退：删掉下面这行 continue 即恢复入口。
+      if (name === '书单') {
+        continue
+      }
+      // ── 2026-10-19 需求第 4 条：「本地」入口屏蔽 ──────────────────────────
+      // 用户原话：「以前我们是有书源功能的，现在只有本地，所以这个功能意义就不大了，
+      //   我们可以直接把入口屏蔽掉也行。筛选能力作为保留完全可以。」
+      // ⇒ 只在**渲染层**跳过它；`BooksDao.buildWhereClause` 对 `bookGroup = 4` 的
+      //   `bookGroup = 4 or isLocalBook = true` 筛选逻辑**原样保留**，
+      //   将来做筛选器/恢复入口时可一键复用（不改数据库、不删行）。
+      // 回退：删掉下面这个 continue 即恢复入口。
+      if (name === '本地') {
+        continue
+      }
+      // ── 2026-10-20：删除「未分组」chip ─────────────────────────────────────
+      // 用户原话：「其实未分组也可以删除，因为在分组中有未分组的置顶目录」。
+      // ⇒ 只删**顶栏入口**；`bookGroup = 3`（未分组）的筛选口径与
+      //   `BookFolder` 里那张置顶的「未分组」卡片**都不动**，随时可恢复。
+      if (name === '未分组') {
+        continue
+      }
       const hit = list.find((g: BookGroups) => g.isSystem && g.groupName === name)
       if (hit !== undefined) {
         systems.push(hit)
       }
     }
-    const customs = list.filter((g: BookGroups) => !systems.includes(g))
-    const result: BookGroups[] = []
-    for (const g of systems) {
-      result.push(g)
-    }
-    for (const g of customs) {
-      result.push(g)
-    }
-    return result
+    // ── 2026-10-20：自定义分组**不再拼进顶栏** ─────────────────────────────────
+    // 用户原话：「所有的自定义分组创建后都不会在未分组后面进行显示了，只展示在分组里面」。
+    // ⇒ 这里只返回 systems（最近 / 全部 / 分组），customs 一律丢弃。
+    //   （`customs` 的过滤逻辑仍保留在上面注释里作参考，实际不再参与结果。）
+    return systems
   }
 
   /** 五个系统基础单元识别（锁定改名/删除/长按编辑，见各入口守卫） */
@@ -189,10 +349,13 @@ export default struct groupTypeComponent {
   /**
    * 打开「分组管理」面板（`@CustomDialog`）。
    *
-   * 位置：停在**分组行底边**下面。底边来自本行 `onAreaChange` 上报的
-   * `shelfGroupRowBottom`（窗口坐标，见 build() 里的注释），这里减去顶部安全区。
+   * ⚠️ 2026-10-20：由 `private` 改为 **public** —— 三横（≡）按钮已移到 `IndexShelf` 的
+   *   右侧动作区（用户要求「搜索之后是三横…三横之后是更多」），入口不再在本组件内。
+   *   调用方式：`IndexShelf` 通过 `@BuilderParam` 传进来的 builder 无法直接拿到子组件实例，
+   *   所以改用**回调注入**：`IndexShelf` 把 `openSortPanel` 这类动作作为参数传进来
+   *   （见 `BookBodyContent` 的 `onOpenSortPanel`）。本方法仍保留，供分组行内部复用。
    */
-  private openGroupPanel(): void {
+  openGroupPanel(): void {
     this.groupCoverShow = true
     this.groupPanelDialog = new CustomDialogController({
       builder: GroupManageDialog({
@@ -230,10 +393,241 @@ export default struct groupTypeComponent {
     this.groupPanelDialog.open()
   }
 
+  /**
+   * 顶栏 chip 的文字色（2026-10-20 二修）。
+   *
+   * 为什么不用 `$r('sys.color.font_primary')`：那是系统蓝黑色，
+   * `SegmentButton` 的默认值就是它 —— 真机上表现为"黑字 + 蓝色选中块"，
+   * 与我们的主题渐变完全不搭（用户截图反馈"效果很差"的直接原因之一）。
+   * ⇒ 选中态用**主题主色**（与改造前 `BookType` 的选中态一致），
+   *   未选中态用次级黑/白（保证在橙底上可读）。
+   */
+  private chipFontColor(selected: boolean): ResourceColor {
+    if (selected) {
+      return this.theme.mainColor
+    }
+    return NightMode.isDarkSurface()
+      ? 'rgba(248, 249, 250, 0.72)'
+      : 'rgba(0, 0, 0, 0.62)'
+  }
+
+  /**
+   * 内容区滑动请求切档（2026-10-21）。
+   *
+   * `chipStep` 是「+1 / -1」的**请求值**（不是累计计数）——
+   * `BookBodyContent` 每次滑动都写同一个 ±1，所以这里用 `@Watch` 触发即可。
+   * ⚠️ 不能把 `chipStep` 当计数器自增：`@Watch` 只在**值变化**时触发，
+   *   连续两次左滑都是 +1 ⇒ 第二次不会触发。修法：每次处理完把值**复位成 0**，
+   *   这样下一次 ±1 又构成"值变化"。
+   */
+  onChipStep(): void {
+    const step: number = this.chipStep
+    if (step === 0) {
+      return
+    }
+    // 先复位，保证下一次同样方向的滑动也能触发（见上面注释）
+    this.chipStep = 0
+    const next: number = this.chipSel + step
+    const max: number = this.chipLabels().length - 1
+    if (next < 0 || next > max) {
+      return
+    }
+    this.onChipClicked(next)
+  }
+
+  /**
+   * 排列变化时的处理（2026-10-21 新增）。
+   *
+   * 只做一件事：**重算显示下标**。
+   * 因为 `chipSel` 是"选中项在 `SegmentButton` 里的位置"，
+   * 而位置由排列决定 ⇒ 排列一改，同一个选中项就换了位置。
+   * 不重算的话，用户改完排序回到书架会看到"高亮跳到了别的格子上"。
+   */
+  onChipOrderChanged(): void {
+    this.chipSel = this.chipSelectedIndex()
+  }
+
+  /**
+   * 处理「跳到指定 chip」请求（2026-10-21）。
+   * 与 `onChipStep` 同一套复位策略：处理完置回 -1，下一次写同样的值也能触发。
+   *
+   * ⚠️ 2026-10-21：**入参改语义** —— `BookContentRefresh` 的「返回分组列表」按钮
+   *   传的是**语义下标** 2（=分组），不是显示位置。因为用户可在设置页任意排列，
+   *   「分组」可能在任意一格 ⇒ 必须先换算成显示下标再走 `onChipClicked`。
+   */
+  onChipGoto(): void {
+    const semantic: number = this.chipGoto
+    if (semantic < 0) {
+      return
+    }
+    this.chipGoto = -1
+    if (semantic > 2) {
+      return
+    }
+    this.onChipClicked(this.chipDisplayIndexOf(semantic))
+  }
+  /**
+   * 当前所在**真实分组**的名字（2026-10-21 新增，同日二修）。
+   *
+   * 供「返回分组列表」悬浮按钮显示"我在哪个分组"（如 `< 开心  返回分组列表`）。
+   *
+   * ── 二修：必须排除系统单元 ────────────────────────────────────────────────
+   * 用户反馈：「在全部里面，也有这个显示，这不需要，只在进入分组列表下面的**子分组**中
+   *   才有显示，而且显示的文字，< 后面应该是打开的子分组名称，比如 `< 开心 返回分组列表`。」
+   * 根因：`groupList` 里同时含系统单元（全部/分组）和真实分组（未分组/开心/快乐…），
+   *   旧实现只按 groupId 反查 ⇒ 停在「全部」时也能查到名字「全部」⇒ 按钮误显示。
+   * ⇒ 现在**额外排除系统单元**（`isSystem === true`）：只有用户自建的子分组才返回名字。
+   *   这样「全部」「分组」都不显示按钮，「未分组」「开心」「快乐」才显示。
+   *
+   * ⚠️ 「未分组」在库里是 `isSystem = true`（见 `BookGroupsDao.initGroupData`），
+   *   但它**确实是"装书的子分组"**（分组页里那张置顶卡片），用户点进去也该能返回
+   *   ⇒ 单独放行它（白名单 `ALLOW_SYSTEM_AS_SUBGROUP`）。
+   */
+  private currentGroupName(): string {
+    if (this.onRecentChip || this.chipHighlightId === RECENT_CHIP_ID) {
+      return ''
+    }
+    const hit = this.groupList.find((g: BookGroups) => g.groupId === this.chipHighlightId)
+    if (hit === undefined) {
+      return ''
+    }
+    const name: string = hit.groupName ?? ''
+    // 系统单元里只有「未分组」算"可进入的子分组"（分组页里有它的置顶卡片）
+    if (hit.isSystem && name !== '未分组') {
+      return ''
+    }
+    return name
+  }
+
   /** 关面板（面板里的 ✕ 按钮走这里） */
   private closeGroupPanel(): void {
     this.groupCoverShow = false
     this.groupPanelDialog?.close()
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SegmentButton 的「文案 / 选中下标 / 点击」三件套（2026-10-20 新增）
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * 顶栏三个 chip 的文案，**按用户配置的排列返回**（2026-10-21 新增）。
+   *
+   * 用户原话：「首页三段按钮排序…调整三个按钮的排序…六种组合…
+   *   并且用户应用后，这个开关下面会显示当前的排列。」
+   *
+   * ── 关键：语义下标 ≠ 显示下标 ──────────────────────────────────────────────
+   * · **语义下标**（`CHIP_NAMES` 的索引）：0=最近 / 1=全部 / 2=分组 —— 恒定不变，
+   *   `onChipClicked()`、`chipSelectedIndex()` 全部按它工作。
+   * · **显示下标**：用户在设置页排出来的顺序，只影响渲染位置。
+   * ⇒ 本方法把语义顺序按 `ShelfPrefs.getChipOrder()` 重排后返回；
+   *   点击时再用 `chipSemanticIndexAt(显示下标)` 反查回语义下标。
+   *
+   * ⚠️ 只含**系统单元**：用户已定「所有的自定义分组创建后都不会在未分组后面进行显示了，
+   *   只展示在分组里面」⇒ 自定义分组不参与本数组。
+   */
+  private chipLabels(): string[] {
+    const order: number[] = ShelfPrefs.getChipOrder()
+    const out: string[] = []
+    for (const semantic of order) {
+      out.push(CHIP_NAMES[semantic])
+    }
+    return out
+  }
+
+  /**
+   * 显示下标 → 语义下标（2026-10-21 新增）。
+   *
+   * `SegmentButton` 回传的是**显示位置**；而所有业务逻辑都按语义下标工作
+   * （0=最近 / 1=全部 / 2=分组）⇒ 必须在这里换算。
+   * 例：用户排成「分组·最近·全部」，则点第 0 格 → 语义 2（分组）。
+   */
+  private chipSemanticIndexAt(displayIndex: number): number {
+    const order: number[] = ShelfPrefs.getChipOrder()
+    if (displayIndex < 0 || displayIndex >= order.length) {
+      return -1
+    }
+    return order[displayIndex]
+  }
+
+  /**
+   * 语义下标 → 显示下标（2026-10-21 新增）。
+   * 用于把"当前选中哪一格"换算成 `SegmentButton` 认的显示位置。
+   */
+  private chipDisplayIndexOf(semanticIndex: number): number {
+    const order: number[] = ShelfPrefs.getChipOrder()
+    const i: number = order.indexOf(semanticIndex)
+    return i >= 0 ? i : 0
+  }
+
+  /**
+   * 当前选中项在 `SegmentButton` 里的**显示下标**（2026-10-21 改写）。
+   *
+   * 映射规则：
+   *   · `onRecentChip === true` 或 `chipHighlightId === RECENT_CHIP_ID` ⇒ 语义 0（最近）
+   *   · 否则按 groupList 里「全部」「分组」的 groupId 匹配 ⇒ 语义 1 / 2
+   *   · 都对不上（例如停在某个自定义分组）⇒ 兜底语义 0
+   * 得到**语义下标**后再用 `chipDisplayIndexOf()` 换算成显示位置
+   * （因为用户可在设置页任意排列，语义 ≠ 显示）。
+   */
+  private chipSelectedIndex(): number {
+    if (this.onRecentChip || this.chipHighlightId === RECENT_CHIP_ID) {
+      return this.chipDisplayIndexOf(0)
+    }
+    // 语义 1 = 全部 / 语义 2 = 分组
+    for (let semantic = 1; semantic <= 2; semantic++) {
+      const name: string = CHIP_NAMES[semantic]
+      const hit = this.groupList.find((g: BookGroups) =>
+        g.isSystem && g.groupName === name)
+      if (hit !== undefined && hit.groupId === this.chipHighlightId) {
+        return this.chipDisplayIndexOf(semantic)
+      }
+    }
+    return this.chipDisplayIndexOf(0)
+  }
+
+  /**
+   * 点了第 `index` 个 chip（`index` 是**显示位置**，2026-10-21 起可变）。
+   *
+   * ⚠️ 关键：入参是 `SegmentButton` 的显示下标，必须先换算成**语义下标**
+   *   （0=最近 / 1=全部 / 2=分组）再分发，否则用户一改排列就点错功能。
+   *
+   * 语义与改造前**逐条对齐**：
+   *   0 最近 ⇒ `onRecentChip = true` + 高亮基准置哨兵 + 持久化 undefined
+   *   1 全部 ⇒ 退出最近 + `bookTypeNumber = 全部.groupId` + 持久化
+   *   2 分组 ⇒ 退出最近 + `GROUP='文件夹'` + `bookTypeNumber = 分组.groupId` + 持久化
+   */
+  private onChipClicked(displayIndex: number): void {
+    const semantic: number = this.chipSemanticIndexAt(displayIndex)
+    if (semantic < 0) {
+      return
+    }
+    if (semantic === 0) {
+      // 2026-10-20：`chipSel` 必须**无条件**更新 —— 早先这里 `if (this.onRecentChip) return`
+      // 会跳过赋值，导致"已经是最近时再点最近"不刷新（虽无视觉变化，但保持状态一致）
+      this.onRecentChip = true
+      this.chipHighlightId = RECENT_CHIP_ID
+      this.chipSel = this.chipDisplayIndexOf(0)
+      // ★ 2026-10-21：清空分组名 —— 「最近」不是子分组，不应显示「返回分组列表」按钮
+      AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', '')
+      ShelfPrefs.setCurrentChipId(undefined)
+      return
+    }
+    // 真实系统单元（全部 / 分组）
+    const name: string = CHIP_NAMES[semantic]
+    const hit = this.groupList.find((g: BookGroups) => g.isSystem && g.groupName === name)
+    if (hit === undefined || hit.groupId === undefined) {
+      return
+    }
+    this.onRecentChip = false
+    this.GROUP = (name === '分组') ? '文件夹' : '标签'
+    this.bookTypeNumber = hit.groupId
+    this.chipHighlightId = hit.groupId
+    // ★ 2026-10-20：同步分段控件下标（缺这句 = "功能生效但按钮不动"）
+    // ★ 2026-10-21：用 `chipDisplayIndexOf` 换算成**显示位置**
+    this.chipSel = this.chipDisplayIndexOf(semantic)
+    // 上报当前分组名（2026-10-21：供「返回分组列表」按钮显示）
+    AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', this.currentGroupName())
+    ShelfPrefs.setCurrentChipId(hit.groupId)
   }
 
   /**
@@ -259,120 +653,56 @@ export default struct groupTypeComponent {
         justifyContent: FlexAlign.SpaceBetween
       }
     ) {
-      Scroll() {
-        Row({ space: 10 }) {
-          ForEach(this.groupList,(item:BookGroups)=>{
-            if (item.show) {
-              BookType({ title: item.groupName,
-                index:item.groupId,
-                bookTypeNumber:this.bookTypeNumber
-              }).onClick(() => {
-                Haptics.tap();
-                if (item.groupName === '分组') {
-                  this.GROUP = '文件夹'
-                } else {
-                  this.GROUP = '标签'
-                }
-                if (item.groupId){
-                  this.bookTypeNumber = item.groupId
-                }
-                })
-                // 2026-09-25 用户反馈：显示分组也要能长按编辑（原来只有管理面板里的能长按）
-                // ⚠️ 2026-10-01 五个系统单元锁定（用户定义）：全部/本地/分组/未分组
-                // **不再提供长按弹窗**；书单长按**直达封面样式弹窗**；只有自建分组/书单
-                // 仍走 FolderInfoDialog（且其中改名对系统单元再拦一层）。
-                .gesture(LongPressGesture({ repeat: false, duration: 500 })
-                  .onAction(() => {
-                    Haptics.tap();
-                    if (this.isLockedUnit(item)) {
-                      if (item.groupName === '书单') {
-                        this.openWorksCoverDialog(item)
-                      } else {
-                        showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
-                      }
-                      return
-                    }
-                    this.editChipGroup = item
-                    this.openChipEditDialog()
-                  }))
-              }
-            }, (item: BookGroups): string => item.groupId !== undefined
-              // 2026-10-01 键值并入显示字段：ForEach 键值相同的项**复用旧组件、不重绑数据**
-              // ⇒ 只用 'g'+groupId 时重命名后 chip 永远显示旧名（真机日志 2.md 17:05
-              // "重命名后没有立刻刷新"）。show 影响显隐 if 分支，一并并入。
-              // 同款修法见 BookContent.ets 键值注释。
-              ? 'g' + item.groupId + item.groupName + (item.show ? 'S' : 'H')
-              : item.groupName)
-          }
+      // ══ 2026-10-20：chip 行整体换成官方 **SegmentButton（胶囊类）** ══════════
+      // 用户原话：「顶部这三个，最近，全部，分组，可不可以换个组件？…我发现了一个组件，
+      //   很好…这个也是沉浸光感的，和我们的dock很像，你去找找呗，官方应该有实例。」
+      // ⇒ 组件 = `SegmentButton`（封装在 `componets/common/GlassSegment.ets`），
+      //   材质 = `ImmersiveMaterialUtil.segmentMaterial()`（真沉浸光感）。
+      //
+      // ── 为什么不再用 ForEach + BookType ──────────────────────────────────────
+      // `SegmentButton` 自己管"选中项胶囊 + 跟手拖拽动效 + 等分宽度"，比我们手画的
+      // `BookType`（每个 chip 各自 `.backgroundColor`）更接近系统观感，且支持光感。
+      // ⚠️ 代价：**不支持横向滚动、宽度等分**（官方：「不支持通用属性…根据按钮个数
+      //   平均分配每个按钮宽度」）。当前只有 3 项（最近/全部/分组），用户已确认可接受。
+      //
+      // ── 选中态怎么映射（关键）───────────────────────────────────────────────
+      // 旧实现用 `chipHighlightId`（哨兵 -9999 = 最近 / 真实 groupId）判亮。
+      // `SegmentButton` 只认**下标**，所以这里换算：
+      //   · `chipItems` 的顺序 = [最近, 全部, 分组]（系统单元，自定义分组已不进顶栏）；
+      //   · `chipSelectedIndex()` 把 `chipHighlightId` 反查成下标。
+      GlassSegment({
+        labels: this.chipLabels(),
+        // ★ 2026-10-20：传 **@State 变量** `chipSel`，不再传方法调用 `this.chipSelectedIndex()`
+        //   （方法返回值框架追踪不到 ⇒ 按钮永远停在初值，与主题页 `modeSel` 同一个坑）
+        selected: this.chipSel,
+        // 文字色必须显式给主题色：`SegmentButton` 默认用 `sys.color.font_primary`（系统蓝黑），
+        // 压在主题渐变彩带上既不像截图也压不住底色（2026-10-20 二修，见 GlassSegment 头注释）。
+        fontColor: this.chipFontColor(false),
+        selectedFontColor: this.chipFontColor(true),
+        onChange: (index: number): void => {
+          this.onChipClicked(index)
         }
-        .scrollBar(BarState.Off)
-        .scrollable(ScrollDirection.Horizontal)
-        Row(){
-          // ── 分组行尾部按钮（2026-09-25 换 SymbolGlyph；点击 Q弹缩放见 runJellyClick）──
-          // 2026-10-01：justifyContent End ⇒ 三横贴右边距（margin 15），与上一行
-          // 「最近阅读」行尾「更多」按钮中心（右边距 15+12=27vp）垂直对齐。
-          // ★ 2026-10-11：字号 24→20，颜色跟随主题色（与搜索/更多同款）。
-          SymbolGlyph($r('sys.symbol.line_3_horizontal'))
-            .fontSize(20)
-            .fontColor([this.groupIconColor()])
-            .scale({ x: this.groupRowScale, y: this.groupRowScale })
-            .onClick(()=>{
-              Haptics.tap();
-              runJellyClick((v: number) => {
-                this.groupRowScale = v
-              })
-              // 2026-09-23：不再是"置标志位让本组件换渲染"，而是**开一个 @CustomDialog**
-              this.openGroupPanel()
-            })
-            .clickEffect(UiMotion.CLICK)
-        }.width('10%')
-        .justifyContent(FlexAlign.End)
-        // 2026-10-01（用户，夜间模式反馈）：三横原来贴住胶囊右边缘（上一轮为对齐改成
-        // End+右padding 0），"没有间距"⇒ 往回来 8vp。列右内边距 8 ⇒ 图标右缘在
-        // 右边距 15+8=23vp 处，与上一行「更多」仍基本对齐（中心 35 vs 27，视觉可接受）。
-        // ★ 2026-10-11：right padding 8→10，与"更多"图标右 padding 10 对齐
-        //   ⇒ 三横右缘 = 屏右 - 15(margin) - 10(padding) = 屏右 - 25vp
-        //   = "更多"图标右缘（屏右 - 15 - 10）= **两图标同列右对齐**。
-        .padding({ right: 10 })
-      }.margin({ left: 15, right: 15, bottom: 10})
-        // ★ 2026-10-11：三胶囊配方完全统一（与左/右胶囊同款 0.55 透明兑底 + REGULAR）。
-        //   user 截图反馈下胶囊"几乎看不见"——盖在 Tabs 内容（浅色书封网格）+ 渐变底端
-        //   （接近白色）上时，单纯 REGULAR 模糊采样到浅色 → 朦胧出浅灰白，与页面背景
-        //   几乎融为一体。修法：加 0.55 透明兑底层让朦胧有"色感"统一，能被肉眼识别。
-        //   alpha=0.55 是 user 拍板的"折中"——足够识别但不压制 REGULAR 毛玻璃主效果。
-        //   ⚠️ 没用 `ShelfColors.surface()`（0.92）——之前 user 反馈"白卡片"。
-        //   容器高 = 15号字(18) + 8×2 = **34vp**（与左/右胶囊**完全等高**）。
-        //   ⚠️ 右 padding 仍为 0：三横列靠右贴边缘（End 对齐），不受 padding 影响。
-        // ── 2026-10-13（用户反馈）这一行胶囊比上一行「最近阅读」更白更"实"、不透 ──────────
-        // 根因**不是**配方不同：两处原本逐字一样（`0.15` + `COMPONENT_REGULAR`）。实测（亮色真机）：
-        //   · 本行 y≈400 背后渐变 `#FFC49E`，上一层 y≈210 背后 `#FFA162`（更橙）
-        //     ⇒ 同样的奶白糊叠在更亮的底上，结果冲到 `#FFFFF0`（绿通道顶满）；
-        //   · 本行胶囊 46.3vp 高、满宽，面积约为上胶囊 1.8 倍 ⇒ 同白度块头大就更"实"。
-        // ── 调参记录（**真机逐个量过，别重复试错**）───────────────────────────────
-        //   ① 兑底 alpha `0.15 → 0.06`：几乎无效（`#FFFFF0 → #FFFFEC`，差 4/255）
-        //   ② 模糊档 `COMPONENT_REGULAR → COMPONENT_THIN`：也只差 9/255（`→ #FFFFE7`）
-        //   ⇒ 结论：**白味来自 `BlurStyle.COMPONENT_*` 这档系统材质本身**（浅色下≈50% 不透明奶白），
-        //     调 alpha 或调档位都动不了它。要真"透"就必须**换掉这种模糊方式**。
-        //   ③ 改用 `backgroundEffect`（`common.d.ts:17946`，`BackgroundEffectOptions`
-        //      字段 = radius/saturation/brightness/color）—— 半径与染色都由我们给，
-        //      不再有系统那层固定的奶白 ⇒ 渐变能透上来，观感贴近上胶囊。
-        // ⚠️ 上胶囊（`BookBodyContent.ets:84`）**不动** —— 用户对它满意。
-        // 回退：删掉下面这行，恢复 `.backgroundColor(0.15) + .backgroundBlurStyle(COMPONENT_REGULAR)`。
-        // 配方唯一真源：`ImmersiveMaterialUtil.glassOptions()`（书架三胶囊共用，调参只改那一处）
-        .backgroundEffect(ImmersiveMaterialUtil.glassOptions())
-        .borderRadius(20)
-        .padding({ left: 12, right: 0, top: 8, bottom: 8 })
-        // ★ 2026-09-23 用户反馈：「这一行下面没空间，和下面的书籍叠加了」。
-        //   本栏与书籍列表是同一个 Stack 里的两层（本栏 zIndex 999 浮在上面）
-        //   ⇒ 把**实测高度**上报，由 `BookBodyContent` 给列表让位（不写死数字）。
-        .onAreaChange((_o: Area, n: Area) => {
-          AppStorage.setOrCreate('shelfGroupRowH', Number(n.height))
-          // ★ 2026-09-23 新增：把本行的**窗口坐标底边**也上报 —— 分组管理弹窗要停在它下面。
-          //   `Area.globalPosition` 依据（SDK `component/units.d.ts:2110-2119`）原文：
-          //     「Position of the top-left corner of the target element in the **current window
-          //       coordinate system**.」（单位 vp）
-          //   弹窗侧用它算 `offset.dy`（见 `openGroupPanel()`）。
-          AppStorage.setOrCreate('shelfGroupRowBottom', Number(n.globalPosition.y) + Number(n.height))
-        })
+      })
+      .layoutWeight(1)
+      // ★ 2026-10-21：**去掉左右内边距**（原来是 `left:15, right:8`）。
+      //   用户反馈：「三段开关距离左屏幕远，但是三图标又距离右屏幕近…建议整体往左一点，
+      //   两边距离一样」。
+      //   根因：外层 `BookBodyContent` 已有 `.padding({left:15, right:15})`，
+      //   这里再叠加 `left:15` ⇒ 左侧实际间距 **30vp**，而右侧只有外层 15vp ⇒ 明显不对称。
+      //   ⇒ 本层不再加任何水平内边距，左右都只由外层 15vp 决定 ⇒ 两边严格相等。
+      //   （`right:8` 那个"给三横图标让位"的旧用意已不存在：三横已搬到外层右侧动作区。）
+      // ══ 高度上报（保留）══════════════════════════════════════════════════════
+      // 旧实现把这一串挂在"胶囊 Column"上，换成 `SegmentButton` 后材质由组件自己管，
+      // 但**实测高度上报必须保留** —— `BookContentRefresh` 靠 `shelfGroupRowH` 给列表让位，
+      // 删了会导致第一行书被顶栏压住（2026-09-23 真机踩过）。
+      .onAreaChange((_o: Area, n: Area) => {
+        AppStorage.setOrCreate('shelfGroupRowH', Number(n.height))
+        // 把本行的**窗口坐标底边**也上报 —— 三横弹窗要停在它下面。
+        //   `Area.globalPosition` 依据（SDK `component/units.d.ts:2110-2119`）原文：
+        //     「Position of the top-left corner of the target element in the **current window
+        //       coordinate system**.」（单位 vp）
+        AppStorage.setOrCreate('shelfGroupRowBottom', Number(n.globalPosition.y) + Number(n.height))
+      })
+    }
   }
 }

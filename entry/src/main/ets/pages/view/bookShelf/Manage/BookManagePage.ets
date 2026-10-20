@@ -796,10 +796,16 @@ export default struct BookManagePage {
   }
   // 底部操作栏（2026-09-30 v3 回填：图标全面 symbol 化 + 新增「分享」）
   // symbol 名全部经 SDK 符号表（sysResource.js，4042 项）核实存在。
+  //
+  // ── 2026-10-19：移除「加入书单」入口（用户需求第 4 条）──────────────────────
+  // 用户原话：「删除管理页的加入书单入口」「只针对入口，具体功能暂时不引用了，屏蔽入口。」
+  // ⇒ 两个数组都去掉 id=3 那一项；`openAddToBookList()` 与 `AddToBookListDialog` 保留。
+  // ⚠️ 恢复时注意：`id` 是**语义键**不是下标（`buttonClick` 的 switch 按 id 分发），
+  //    所以删掉 id 3 不会影响置顶(1)/移动(2)/隐藏(4)/删除(5)/分享(6) 的绑定，
+  //    但**布局列数会变**（`columns:this.bookTypeNumber===1?5:4`），恢复时把 length 调回去即可。
   @State buttonListInfo5:buttonList[] = [
     new buttonList(1,'置顶',$r('sys.symbol.pin')),
     new buttonList(2,'移动至',$r('sys.symbol.folder')),
-    new buttonList(3,'加入书单',$r('sys.symbol.book')),
     new buttonList(4,'隐藏分组',$r('sys.symbol.eye_slash')),
     new buttonList(5,'删除',$r('sys.symbol.trash')),
     new buttonList(6,'分享',$r('sys.symbol.share'))
@@ -808,7 +814,6 @@ export default struct BookManagePage {
   @State buttonListInfo4:buttonList[] = [
     new buttonList(1,'置顶',$r('sys.symbol.pin')),
     new buttonList(2,'移动至',$r('sys.symbol.folder')),
-    new buttonList(3,'加入书单',$r('sys.symbol.book')),
     new buttonList(5,'删除',$r('sys.symbol.trash')),
     new buttonList(6,'分享',$r('sys.symbol.share'))
   ]

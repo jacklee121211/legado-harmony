@@ -749,6 +749,11 @@ export default struct ReaderPage3 {
       onOpenSleepTimer: (): void => {
         // 定时入口迁入听书面板（2026-10-07 用户设计）：听书=父窗，定时弹窗=子窗
         this.openSleepTimerDialog();
+      },
+      // 「停止朗读」（2026-10-19）：面板播放行的停止按钮 ⇒ 走页面完整收尾
+      // （`exitListening` 会 `TtsEngine.stop('')` + 复位沉浸锚点 + 停定时刷新器）
+      onStopListening: (): void => {
+        this.exitListening();
       }
     }),
     autoCancel: true,

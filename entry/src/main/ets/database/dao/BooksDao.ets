@@ -7,6 +7,7 @@ import { Books } from '../entities/Books';
 import { BooksTypeSearchParams } from '../types/BooksType';
 import { ColumnInfo, ColumnType } from '../types/ColumnInfo';
 import { PreferencesUtil } from '@pura/harmony-utils';
+import fs from '@ohos.file.fs';
 // 诊断打点（2026-10-12）：`getLastReadBook()` 的书名键/命中行
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
@@ -33,6 +34,11 @@ interface CountRow {
   cnt: number
 }
 
+/** `PRAGMA table_info` 的单行（只需要列名，用于判断列是否存在） */
+interface ColumnNameRow {
+  name: string
+}
+
 /** 单值 COUNT 查询的列描述（`ADBUtil.getColumn` 只认快照里的列，聚合列必须自己给） */
 const COUNT_COLUMN: ColumnInfo[] = [
   { name: 'cnt', columnName: 'cnt', type: ColumnType.LONG }
@@ -40,6 +46,110 @@ const COUNT_COLUMN: ColumnInfo[] = [
 
 class BooksDao {
   TABLE_NAME: string = 'books'
+
+  /**
+   * 书架排序 SQL 子句（**唯一真源**，2026-10-19 新增）。
+   *
+   * ── 为什么要抽出来 ────────────────────────────────────────────────────────
+   * 需求第 6 条：排序面板有 5 个档位（首字母 / 导入时间 / 最近阅读 / 格式 / 文件大小）
+   * 且**每档双向**。原实现把 ORDER BY 写死在 `search()` 和 `searchPage()` **两处**，
+   * 文件里已有一条注释警告「两处 ORDER BY 必须同步改，否则书架与管理页顺序会不一致」
+   * （`:245-246`）。档位从 1 个变 10 个组合后，两处手抄必然分叉 ⇒ 收敛成这一个方法。
+   *
+   * ── 口径（逐条与用户敲定）────────────────────────────────────────────────
+   * · 用户原话：「最近只有一种排序就是最近↓，然后其他的标签包括后续用户自定义的
+   *   标签分组都会随着排序进行排序。」
+   *   ⇒ `RECENT_READ` 档**恒为**"最近阅读降序"，面板不给它反向（见 `groupTypePanel.SortSection`）。
+   *   这里为通用性仍保留 dir 参数，但调用方对 RECENT_READ 固定传 DESC。
+   * · `isTop DESC` **永远排最前**：置顶是用户显式操作，不能被排序档冲掉
+   *   （与改造前 `isTop DESC, …` 的既有语义一致）。
+   * · `RECENT_READ` 的"没读过用 createTime 兜底"口径沿用 `:122` 与 `:247` 的既有实现。
+   * · 首字母（拼音）**不在 SQL 里做** —— SQLite 没有拼音排序规则，具体见
+   *   `BookContent.getBookList()` 的注释（用官方 `intl.Collator` 在内存里排）。
+   *   这里给它一个稳定的兜底序（bookName），保证分页时不抖动。
+   *
+   * @param key 排序档位（`SortKey` 的数值，避免 DAO 反向依赖 UI 层枚举）
+   * @param desc true = 降序
+   */
+  private buildOrderByClause(key: number | undefined, desc: boolean): string {
+    const dir: string = desc ? 'DESC' : 'ASC';
+    // 0 = 首字母 / 1 = 导入时间 / 2 = 最近阅读 / 3 = 格式 / 4 = 文件大小
+    switch (key) {
+      case 1:
+        // 导入时间：稳定、无并列（createTime 是毫秒时间戳）
+        return ` isTop DESC, createTime ${dir}`;
+      case 2:
+        // 最近阅读：读过的用 durChapterTime，没读过的用 createTime 兜底（既有口径）
+        return ` isTop DESC, CASE WHEN durChapterTime = 0 THEN createTime ELSE durChapterTime END ${dir}, createTime DESC`;
+      case 3:
+        // 格式：按扩展名排序。
+        // ⚠️ 这里**不能**用 `reverse()`/正则 —— SQLite 没有这两个函数（只有 instr/substr/
+        //    replace 等内建）。原稿写过 `reverse_suffix()` 是**错的**，会在运行时直接抛
+        //    "no such function"，整条查询失败 ⇒ 书架空白。
+        // ⇒ 改用 `CASE` 枚举工程实际支持的导入后缀（与 `FormatFlags.importableExts()`
+        //    白名单一致：txt/epub/mobi/azw/azw3/pdf/docx/doc），按扩展名字母序给定固定名次。
+        //    未知后缀排最后。
+        return ` isTop DESC, CASE
+          WHEN bookUrl LIKE '%.azw' THEN 'azw'
+          WHEN bookUrl LIKE '%.azw3' THEN 'azw3'
+          WHEN bookUrl LIKE '%.doc' THEN 'doc'
+          WHEN bookUrl LIKE '%.docx' THEN 'docx'
+          WHEN bookUrl LIKE '%.epub' THEN 'epub'
+          WHEN bookUrl LIKE '%.mobi' THEN 'mobi'
+          WHEN bookUrl LIKE '%.pdf' THEN 'pdf'
+          WHEN bookUrl LIKE '%.txt' THEN 'txt'
+          ELSE 'zzz' END ${dir}, bookName ASC`;
+      case 4:
+        // 文件大小：0 表示"大小未知/未回填"⇒ 无论升降序都压到最后，避免脏数据占首位
+        return ` isTop DESC, CASE WHEN fileSize IS NULL OR fileSize = 0 THEN 1 ELSE 0 END ASC, fileSize ${dir}, bookName ASC`;
+      case 0:
+      default:
+        // 首字母（拼音）：SQL 侧无法拼音排序 ⇒ 只给 bookName 做**稳定兜底**，
+        // 真正的顺序由调用方用 intl.Collator 在内存里重排（见 BookContent）。
+        return ` isTop DESC, bookName ${dir}`;
+    }
+  }
+
+  /**
+   * 确保 `books` 表存在指定列；缺了就 ALTER 补上（**幂等、自愈**，2026-10-20）。
+   *
+   * ── 为什么不能只靠 "ALTER 报错就 catch 掉" ────────────────────────────────
+   * 原来两处迁移都写成「`try { ALTER ... } catch (e) { }`」并把异常注释成"列已存在"，
+   * 这个写法有两个盲区（2026-10-20 真机闪退的间接原因）：
+   *   ① **无法区分**"列已存在"（正常）与"ALTER 因别的原因失败"（异常）——
+   *      后者会让表**永久缺列**，而代码以为已经建好了；
+   *   ② 没有任何**产线证据**：真机上到底是哪条 ALTER 失败、错在哪儿，日志里看不出来。
+   *
+   * ── 现在的做法 ────────────────────────────────────────────────────────────
+   * 先查 `PRAGMA table_info(books)` 拿**真实列名**，只在确实缺列时才 ALTER：
+   *   · 不存在 ⇒ 执行 ALTER，并把结果记进日志（成功/失败都记）；
+   *   · 已存在 ⇒ 什么都不做（不再制造 duplicate column 噪音）。
+   * 无论 ALTER 成败，本次调用都**不抛异常**（迁移失败不应阻断启动）；
+   * 下次启动会**再检查一次** ⇒ 天然自愈。
+   *
+   * 依据：`PRAGMA table_info` 是 SQLite 的标准内省语句——
+   *   documentId `FAQ/本地数据和文件/本地数据库管理/关系型数据库RDB支持哪些搜索能力/
+   *   faqs-local-database-management-23` 原文：「SQL查询：SQLite 支持标准的 SQL 查询语法…」
+   */
+  private async ensureColumn(columnName: string, columnDef: string): Promise<void> {
+    try {
+      const infoRows: ColumnInfo[] = [
+        { name: 'name', columnName: 'name', type: ColumnType.STRING }
+      ];
+      const rows: ColumnNameRow[] = await DbUtil.querySqlForList<ColumnNameRow>(
+        `PRAGMA table_info(${this.TABLE_NAME})`, infoRows);
+      const exists: boolean = rows.some((r: ColumnNameRow) => r.name === columnName);
+      if (exists) {
+        return;
+      }
+      await DbUtil.executeSql(
+        `ALTER TABLE ${this.TABLE_NAME} ADD COLUMN ${columnName} ${columnDef}`);
+      console.info('TagInfo', `ensureColumn: 已补列 ${columnName}`);
+    } catch (e) {
+      // 补列失败不影响启动；下次启动会重试（自愈）
+      console.info('TagInfo', `ensureColumn failed: ${columnName}`, JSON.stringify(e));
+    }
+  }
 
   // 创建books数据表
   async initBooksTable() {
@@ -49,16 +159,16 @@ class BooksDao {
         return
       }
       await DbUtil.createTable(createSql)
-      // ── finishedTime 列迁移（2026-09-21）──────────────────────────────────
+      // ── 后加列的迁移（幂等自愈，2026-10-20 重写）────────────────────────────
       // `CREATE TABLE IF NOT EXISTS` 对**已存在**的表不会补列，而本工程
       // `AppDatabase/index.ets` 的 `formatVersion` 固定为 1、**没有任何 upgrade 路径**
-      // （全文件无 ALTER/version 分支）。所以后加的列必须在这里显式补。
-      // 对"列已存在"的报错**必须容忍** —— 新装用户走 createSql 建好列后会命中这里。
-      try {
-        await DbUtil.executeSql('ALTER TABLE books ADD COLUMN finishedTime INTEGER NOT NULL DEFAULT 0')
-      } catch (e) {
-        // 列已存在（新装/已迁移）⇒ 正常情况，忽略
-      }
+      // ⇒ 后加的列必须在这里显式补。
+      // ⚠️ 必须用 `ensureColumn()`（先 PRAGMA 查真实列名再补），
+      //    不要退回 "try ALTER / catch 吞掉" 的写法 —— 理由见 ensureColumn 的注释。
+      await this.ensureColumn('finishedTime', 'INTEGER NOT NULL DEFAULT 0')
+      // 2026-10-19 排序面板「文件大小」用；缺它会直接导致书架查询闪退
+      // （`getColumnIndex` 返回 -1 的连锁，修复见 `DbUtil.parseResultSet`）。
+      await this.ensureColumn('fileSize', 'INTEGER NOT NULL DEFAULT 0')
       await AppDatabaseUtil.existsTable(this.TABLE_NAME)
       return
     } catch (err) {
@@ -104,24 +214,19 @@ class BooksDao {
         sql += ` WHERE ${whereClause.join(' AND ')}`;
       }
       sql += ` ORDER BY`;
-      if (order !== undefined) {
-        // ── 「最近阅读」（现唯一可用的排序档）──────────────────────────────
-        // 2026-10-13 两件事一起做：
-        // ① **修排序**：让**最新导入的书排最前**。
-        //    旧：`isTop DESC, durChapterTime DESC`
-        //      · 本地导入的书 `durChapterTime = 0`（`FileHandler.CopyFile` 显式写 0）
-        //        ⇒ DESC 里 0 最小 ⇒ 新书被压到**所有读过的书之后**，导入完要往下翻才找得到。
-        //    新：把"最后活动时间"统一成一个派生值再排 ——
-        //      · 读过的书（durChapterTime > 0）用 durChapterTime；
-        //      · 从没读过的书（= 0）用 createTime（`BooksDao.insert:282` 写的导入时刻）。
-        //      ⇒ 新导入的书 createTime 最大 ⇒ 紧跟置顶之后排第一。
-        //    依据（RDB 底层是 SQLite，支持标准 SQL 表达式）：documentId
-        //    `FAQ/本地数据和文件/本地数据库管理/关系型数据库RDB支持哪些搜索能力/faqs-local-database-management-23`
-        //    原文「SQL查询：SQLite 支持标准的 SQL 查询语法…」
-        // ② **清死代码**：`case 1`（更新排序）/ `case 2`（手动排序）已无 UI 入口，删除。
-        sql += ` isTop DESC, CASE WHEN durChapterTime = 0 THEN createTime ELSE durChapterTime END DESC, createTime DESC`;
+      // ── 2026-10-19：排序统一走 `buildOrderByClause()`（唯一真源）──────────────
+      // 优先用新的 `sortKey` / `sortDir`；只有它们都没传时才回落到旧的 `order` 语义
+      // （传了 = 最近阅读，不传 = 导入时间），保证既有调用点行为不变。
+      // ⚠️ 与 `searchPage()` 必须走同一个方法 —— 否则书架与管理页顺序分叉
+      //    （该坑在旧注释与 `docs/标准-弹窗与按钮统一规范.md` 里都记过）。
+      if (param?.sortKey !== undefined) {
+        sql += this.buildOrderByClause(param.sortKey, (param.sortDir ?? 1) === 1);
+      } else if (order !== undefined) {
+        // 旧语义：「最近阅读」。其口径与 SortKey.RECENT_READ（2）逐字一致。
+        sql += this.buildOrderByClause(2, true);
       } else {
-        sql += ` isTop DESC, createTime DESC`;
+        // 旧语义：导入时间降序。与 SortKey.IMPORT_TIME（1）降序一致。
+        sql += this.buildOrderByClause(1, true);
       }
 
       const bookDbList = await DbUtil.querySqlForList<Books>(sql, column);
@@ -236,17 +341,15 @@ class BooksDao {
       }
 
       sql += ` ORDER BY`;
-      if (order !== undefined) {
-        // ── 2026-10-13 与 `search()` 保持**逐字一致**的「最近阅读」排序 ────────
-        // 本方法是书架实际走的查询（`BookContent.ets:117`），所以这里是用户
-        // 「导入后要往下翻才看得到新书」的**直接**根因所在。
-        // 修法与理由见 `search()` 里同段注释：没读过的书用 createTime 参与排序
-        // ⇒ 最新导入的排在置顶之后的第一位。
-        // ⚠️ 两处 ORDER BY 必须同步改，否则书架（searchPage）与管理页（search）
-        //    的"最近阅读"顺序会不一致。
-        sql += ` isTop DESC, CASE WHEN durChapterTime = 0 THEN createTime ELSE durChapterTime END DESC, createTime DESC`;
+      // ── 2026-10-19：与 `search()` **走同一个方法**（唯一真源）────────────────
+      // 这里原本是手抄的一份 ORDER BY，文件里早有注释警告两处必须同步。
+      // 现在档位从 1 个变 5×2 个组合，手抄必然分叉 ⇒ 统一调 `buildOrderByClause()`。
+      if (param?.sortKey !== undefined) {
+        sql += this.buildOrderByClause(param.sortKey, (param.sortDir ?? 1) === 1);
+      } else if (order !== undefined) {
+        sql += this.buildOrderByClause(2, true);
       } else {
-        sql += ` isTop DESC, createTime DESC`;
+        sql += this.buildOrderByClause(1, true);
       }
 
       // pageSize <= 0 ⇒ 不加 LIMIT（全量）。管理页需要列出全部书籍，
@@ -262,6 +365,68 @@ class BooksDao {
     } catch (err) {
       console.log("TagInfo", JSON.stringify(err))
       return [];
+    }
+  }
+
+  /**
+   * 存量书的 `fileSize` 回填（2026-10-19 新增，一次性）。
+   *
+   * ── 为什么需要 ────────────────────────────────────────────────────────────
+   * `fileSize` 是后加的列，老库里全为 0 ⇒ 排序面板的「文件大小」对存量书无效
+   * （`buildOrderByClause` 的 case 4 会把 0 压到最后，表现为"点了没反应"）。
+   * 首次启动时本方法逐本 `fs.statSync` 回填一次，之后由 `FileHandler.CopyFile`
+   * 在导入时直接写入。
+   *
+   * ── 设计取舍 ──────────────────────────────────────────────────────────────
+   * · 只处理 `fileSize = 0` 且 `isLocalBook = 1` 的行：网络书源的书没有本地文件，
+   *   本来就不该有大小；
+   * · 用 Preferences 一次性标志去重，避免每次冷启动都扫一遍；
+   * · `statSync` 失败（文件已被用户删除）→ 写 0，**不阻塞**其他书；
+   * · 全程 `await` 串行 + try/catch：回填只是"让排序更准"，
+   *   任何一步失败都不该拖慢/搞崩书架首屏。
+   *
+   * 一键回退：删掉 `BookContent.aboutToAppear` 里对它的调用即可，
+   * 存量书的大小排序会退回"全部按 0 压最后"的行为。
+   */
+  async backfillFileSize(): Promise<void> {
+    // 一次性标志（与工程既有命名风格一致，见 `KEY_BOOKTYPE_MERGED`）
+    const KEY: string = 'shelfFileSizeBackfilledV1';
+    try {
+      if (PreferencesUtil.getSync(KEY, false) === true) {
+        return;
+      }
+      // 只查"缺大小 + 本地书"的行，避免全表扫
+      const rows: Books[] = await DbUtil.querySqlForList<Books>(
+        `SELECT id, bookUrl FROM ${this.TABLE_NAME} WHERE isLocalBook = 1 AND (fileSize IS NULL OR fileSize = 0)`,
+        AppDatabaseUtil.getAssignColumn(this.TABLE_NAME, ['id', 'bookUrl', 'fileSize']));
+      let fixed: number = 0;
+      for (const row of rows) {
+        const id: number | undefined = row.id;
+        const path: string | undefined = row.bookUrl;
+        if (id === undefined || path === undefined || path.length === 0) {
+          continue;
+        }
+        let size: number = 0;
+        try {
+          size = fs.statSync(path).size;
+        } catch (e) {
+          // 文件不存在（用户删了文件没删书）⇒ 保持 0
+          size = 0;
+        }
+        try {
+          // 只写这一列，不动其他字段（避免把内存里的旧快照覆盖回去）
+          await DbUtil.executeSql(
+            `UPDATE ${this.TABLE_NAME} SET fileSize = ${Math.floor(size)} WHERE id = ${Math.floor(id)}`);
+          fixed++;
+        } catch (e) {
+          // 单行失败不影响其余
+        }
+      }
+      // 只有在**确实扫过**之后才置标志：否则一次异常会导致以后永不回填
+      PreferencesUtil.putSync(KEY, true);
+      console.log('TagInfo', `backfillFileSize: 处理 ${rows.length} 本，成功 ${fixed} 本`);
+    } catch (err) {
+      console.log('TagInfo', 'backfillFileSize Error', JSON.stringify(err));
     }
   }
 

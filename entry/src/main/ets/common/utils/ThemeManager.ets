@@ -11,6 +11,9 @@ export class ThemeManager {
   ]
 
   init() {
+    // ⚠️ 2026-10-21：曾加过一段"内置主题配色版本迁移"（刷新已装机器的旧配色），
+    //   后按用户口径**删除** —— 项目尚未上架，没有老用户数据要兼容。
+    //   改 `ThemeColor` 常量即可，重装/清数据后生效。
     PersistentStorage.persistProp<ThemeItem>(ThemeStorageKey.THEME, {text: '主题1', mainColor: ThemeColor.ORANGE.mainColor, secondColor: ThemeColor.ORANGE.secondColor})
     PersistentStorage.persistProp<string>(ThemeStorageKey.THEMELISTSTR, JSON.stringify(this.themeList))
 

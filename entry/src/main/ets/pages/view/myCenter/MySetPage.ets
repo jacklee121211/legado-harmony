@@ -2,10 +2,13 @@ import MySetConstants from '../../../common/constants/MySetConstants'
 import { Attribute } from '../../../common/utils/Attribute'
 import { SetList, SetGroupList } from '../../../componets/dataList/SetListGroup'
 import { SetListView } from '../../../componets/myset/SetListView'
+// 首页三段按钮排序控件（2026-10-21 新增）
+import { ChipOrderSetting } from '../../../componets/myset/ChipOrderSetting'
 import { TabHeader } from '../../../componets/common/TabHeader'
 // 2026-10-13：「关于我们」入口从「我的」页迁到本页最底部，需要路由门面
 import AppRouter, { RouteName } from '../../../common/router/AppRouter'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
+// （2026-10-21：曾为「书架顶栏融合」开关引入 ShelfPrefs，该开关已移除 ⇒ import 一并删除）
 import { Haptics } from '../../../common/utils/Haptics'
 import { PreferencesUtil } from '@pura/harmony-utils'
 // ── 听书双引擎（2026-09-25 新增）──────────────────────────────────────────────
@@ -88,6 +91,7 @@ export default struct MySetPage{
   @State infoWinBookmarkShow: boolean = true
   @State infoWinAntiPeepShow: boolean = true
   @State infoWinTimerShow: boolean = true
+  // （2026-10-21 删除 `headerMergedOn`：融合开关已按用户要求移除，顶栏固定分离式）
   /** 阅读器信息窗（2026-10-07）：全屏阅读时的系统时间 + 防窥/定时实时信息；Preferences 持久化，默认开 */
   // ⚠️ 2026-10-19 默认值对齐（用户口径：新装默认开）：初值给 `true`，
   //    与 `aboutToAppear` 的 `getSync(SET_INFO_WIN, true)`、`ReaderPage3` 的回读三方一致。
@@ -206,6 +210,7 @@ export default struct MySetPage{
     this.infoWinTimerShow =
       PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIMER, true) as boolean
     this.syncInfoWinChildRows()
+    // （2026-10-21 删除顶栏融合的回填：开关已移除）
     // 离线模式（2026-10-19 移入「关于」组第一行；findSetRow 会同时查两张表）
     const offlineRow: SetList | null = this.findSetRow(MySetConstants.SET_OFFLINE_MODE)
     if (offlineRow !== null) { offlineRow.toggleStatus = this.offlineOn }
@@ -376,6 +381,10 @@ export default struct MySetPage{
     new SetList(false,'- 书签显示',this.infoWinBookmarkShow,'','',MySetConstants.SET_INFO_WIN_BOOKMARK, true),
     new SetList(false,'- 防窥显示',this.infoWinAntiPeepShow,'','',MySetConstants.SET_INFO_WIN_ANTIPEEP, true),
     new SetList(false,'- 定时显示',this.infoWinTimerShow,'','',MySetConstants.SET_INFO_WIN_TIMER, true),
+    // ── 2026-10-21：曾加过「书架顶栏融合」开关，后按用户口径**删除** ──────────
+    // 用户原话：「点击书架顶栏融合开关没用，而且看来也融合不了，索性去掉开关，不融合了。」
+    // ⇒ 开关行、`SET_HEADER_MERGED` 常量、`headerMergedOn` 状态、switch 分支全部移除；
+    //   书架顶栏固定为**分离式**（两段独立胶囊 + 中间留空隙）。
   ]
 
   /** 「信息」组**当前渲染**的行（子项随主开关显隐；由 rebuildInfoList() 重建） */
@@ -585,16 +594,35 @@ export default struct MySetPage{
       '联系我们 / 更新日志 / 隐私协议 / 开源许可', 'aboutUs'),
   ]
 
-  // 分组顺序（2026-10-19 用户最终形态）：功能 → 信息 → 震动反馈
+  /**
+   * 「布局」组（2026-10-21 新增）。
+   *
+   * 用户原话：「这个新设置没法融入到信息里面去，那就隔开，叫做布局，
+   *   我们开一个布局的新区域。」
+   *
+   * 为什么用一行 `SetList` 作载体：`ListItemGroup` 需要 `setList` 非空才会渲染那一组，
+   * 而本组真正的内容是自绘的 `ChipOrderSetting`（见 build 里 `groupValue === '布局'` 分支）。
+   * 这一行设 `hideControl: true` ⇒ 只显示标题、不画箭头/Toggle，纯占位。
+   */
+  @State layoutSetList: SetList[] = [
+    // 参数顺序：showArrow, value, toggleStatus, rightText, bottomText,
+    //          storageName, indent, hideControl
+    new SetList(false, '首页三段按钮排序', false, '', '',
+      MySetConstants.SET_CHIP_ORDER, false, true),
+  ]
+
+  // 分组顺序（2026-10-19 用户最终形态）：功能 → 信息 → 布局 → 震动反馈
   //   （「听书引擎（进阶）」解锁后 concat 到末尾；「关于」与「登录」在 build 里按固定顺序排在最后）
   //   · 「功能」＝ 音量键翻页 / 显示文件拓展名 / 阅读防窥 / 防截屏录屏；
   //   · 「信息」＝（2026-10-19 用户新增）显示系统状态栏 / 阅读器信息窗 + 5 个元素子项
   //     —— 用户原话「现有的功能区保留，我们新做一个信息区，在功能区下面…太拥挤了」；
+  //   · 「布局」＝（2026-10-21 用户新增）首页三段按钮排序（三按钮 + 子气泡选排列）；
   //   · 原「按键翻页」组、「书架」组均已删除；「书架动画速度」滑块整项删除；
   //   · 「离线模式」在「关于」组（`aboutSetList` 第一行）。
   @State setGroupList: SetGroupList[] = [
     new SetGroupList('功能',this.otherSetList),
     new SetGroupList('信息',this.infoSetList),
+    new SetGroupList('布局',this.layoutSetList),
     new SetGroupList('震动反馈',this.hapticSetList)
   ]
 
@@ -717,13 +745,19 @@ export default struct MySetPage{
 
             if(group.setList){
               ForEach(group.setList,(item:SetList)=>{
-                // ⚠️ 2026-10-13 离线模式：不可见行**在渲染层跳过**。
-                //    为什么不靠"替换数据源"实现：`SetGroupList` 没有 `@Observed`
-                //    （见 `SetListGroup.ets:3`），其内部 `setList` 的替换观察不到 ——
-                //    官方 `arkts-state.md:103/:110` 明写「数组项中嵌套的属性赋值无法观察」，
-                //    且外层 ForEach 的 key（'功能'）不变 ⇒ 组件被复用、不会重读 `setList`。
-                //    真机实测：只替换数组时防窥两行**不消失**。
-                if (!this.isRowVisible(item)) {
+                // ⚠️ 2026-10-21：「布局」组**不走通用行渲染**。
+                //   该组的 `layoutSetList` 只是一行**占位载体**（ListItemGroup 需要非空才渲染），
+                //   真正的内容是下方自绘的 `ChipOrderSetting`。
+                //   若这里不跳过，会多渲染一行只有标题的空行（与自绘卡片重复）。
+                if (group.groupValue === '布局') {
+                  // 空分支：跳过（内容由下方专门分支渲染）
+                } else if (!this.isRowVisible(item)) {
+                  // ⚠️ 2026-10-13 离线模式：不可见行**在渲染层跳过**。
+                  //    为什么不靠"替换数据源"实现：`SetGroupList` 没有 `@Observed`
+                  //    （见 `SetListGroup.ets:3`），其内部 `setList` 的替换观察不到 ——
+                  //    官方 `arkts-state.md:103/:110` 明写「数组项中嵌套的属性赋值无法观察」，
+                  //    且外层 ForEach 的 key（'功能'）不变 ⇒ 组件被复用、不会重读 `setList`。
+                  //    真机实测：只替换数组时防窥两行**不消失**。
                   // 空分支：此处不能写 `return`（ArkUI 的 itemGenerator 里 return 会破坏结构）
                 } else {
                 ListItem(){//设置内容，首尾裁剪
@@ -763,6 +797,35 @@ export default struct MySetPage{
               // ⇒ 连 `shelfAnimSpeed` 的 Preferences / AppStorage 读写一起去掉（见 aboutToAppear 注释）。
               // ⚠️ 书架入场波次本身没动：`EntranceWave.speedMultiplier()` 读不到 AppStorage 键时
               //    回退内置默认档 3（= 0.75x），见 `common/utils/EntranceWave.ets:78`。
+
+              // ── 2026-10-21：首页三段按钮排序已迁到独立的「布局」分组 ──────────────
+              // 用户原话：「这个新设置没法融入到信息里面去，那就隔开，叫做布局，
+              //   我们开一个布局的新区域。」
+              // ⇒ 已从「信息」组移出，见下方 `group.groupValue === '布局'` 分支。
+
+              // ══ 布局组：首页三段按钮排序（2026-10-21 新增）══════════════════════════
+              // 用户原话：「…那就隔开，叫做**布局**，我们开一个布局的新区域。」
+              //
+              // 本组只有这一项，且是**自绘控件**（`ChipOrderSetting`：三按钮 + 子气泡选排列）——
+              // `SetList` 只支持"标题 + Toggle/箭头/右文字"，装不下这种交互。
+              //
+              // 卡片圆角：本组只有一行，所以**四角全圆**（20）。
+              // 标题行与控件放在同一张卡片里（`card_bg`），与「震动强度」滑块行同一套视觉语言。
+              if (group.groupValue === '布局'){
+                ListItem(){
+                  Column({ space: 12 }){
+                    Row(){
+                      Text('首页三段按钮排序').fontSize(FontConstants.ITEM)
+                      Blank()
+                    }.width('100%')
+                    ChipOrderSetting()
+                  }
+                  .width('100%')
+                  .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                  .backgroundColor($r('app.color.card_bg'))
+                  .borderRadius(20)
+                }.padding({left:20,right:20})
+              }
 
               // ── 震动强度滑块行（2026-09-25 新增）──────────────────────────────
               // 用户需求：「0-500 无极调整滑块（每 50 一个档，自由调节震动强度）」。
@@ -1037,6 +1100,7 @@ export default struct MySetPage{
         PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_TIMER, this.infoWinTimerShow)
         this.syncInfoWinChildRows()
         break;
+      // （2026-10-21 删除 `SET_HEADER_MERGED` 分支：融合开关已移除）
       // ── 防窥两层（2026-10-08，VIP 特权）────────────────────────────────────
       // 非 VIP：开关不动，弹 VIP 弹窗并记下待办；开通成功后 onClose 里补开（用户第 4 点）。
       // 已开通：把**目标值**下发给 AntiPeep（第 2 层由它异步对账系统防窥开关）。

@@ -368,6 +368,54 @@ export default class ImmersiveMaterialUtil {
   }
 
   /**
+   * **分段按钮（SegmentButton）背景板**的沉浸光感材质（2026-10-20 新增）。
+   *
+   * ── 用途 ──────────────────────────────────────────────────────────────────
+   * 书架顶栏的「最近 / 全部 / 分组」与主题页的「亮色 / 自动 / 暗色」，
+   * 统一用官方 `SegmentButton`（胶囊类）承载，材质从这里取。
+   *
+   * ── 为什么用 THIN/ULTRA_THIN 而不是 THICK ─────────────────────────────────
+   * 官方「组件适配沉浸光感」对**按钮与选择类**的原文：
+   *   「沉浸式系统材质通常使用较薄的材质样式（ULTRA_THIN或THIN），在保持组件背景通透的
+   *     同时，通过 ImmersiveOptions 中的交互形变（interactive）和点光源（lightEffect）
+   *     为按压、触摸等操作提供灵动的视觉反馈，**替代组件默认的按压态和悬浮态效果**。」
+   * ⇒ 分段按钮正属此类，且 `interactive: true` 会带来"选中块跟手拖拽"的动效
+   *   （官方：「分段按钮开启沉浸光感后，**支持选中项背景跟随手指拖拽**，否则不支持」）。
+   *
+   * ── 关于「必须在标题栏/TabBar」的文档冲突（2026-10-20 记录）───────────────
+   * API 参考 `ohos-arkui-advanced-segmentbutton` 对 `backgroundSystemMaterial` 写：
+   *   「需要将组件放置在 Navigation 或 NavDestination 的标题栏，或横向 Tabs 的
+   *     底部 TabBar 中，沉浸光感效果才会生效。」
+   * 但开发指南 `arkts-immersive-light-sense-component-adaptation` 对分段按钮只写：
+   *   「应用级开关处于 ENABLE 模式下，分段按钮默认开启沉浸光感…」
+   *   —— **没有**这条位置限制（那条限制写在「其余组件」一节，针对通用 `systemMaterial`）。
+   * 且**真机反证**：华为官方阅读器（`com.huawei.hmsapp.books`）在同一位置（自绘顶栏、
+   *   上方还有一行标题）确实呈现沉浸光感效果 —— 用户实测确认。
+   * ⇒ 按项目规则「真机实测 > 官方文档」，本条以实测为准，**照常传材质**。
+   *   ⚠️ 本机无法验证，需真机确认；若某机型上真的不生效，`SegmentButton` 侧还有
+   *      `backgroundBlurStyle` 兜底（见调用点），不会变成白板。
+   */
+  static segmentMaterial(): uiMaterial.ImmersiveMaterial | undefined {
+    if (!ImmersiveMaterialUtil.isOn()) {
+      return undefined;
+    }
+    return new uiMaterial.ImmersiveMaterial({
+      style: ImmersiveMaterialUtil.isHighEnd()
+        ? uiMaterial.ImmersiveStyle.THIN
+        : uiMaterial.ImmersiveStyle.ULTRA_THIN,
+      // 让材质自动适配背景反色（官方：材质够薄时生效）——
+      // 顶栏压着主题渐变彩带，反色能让文字/图标在任何主题色上都可读。
+      colorInvert: true,
+      // 交互形变 + 点光源：按压有光感反馈，且选中块可跟手拖拽（分段按钮特性）
+      interactive: true,
+      lightEffect: {},
+      // 关掉材质自带阴影（与底部 dock 同款取舍，理由见 tabsFloatingStyle 的注释：
+      // applyShadow 默认 true 会铺一层很宽的柔和暗影，比"轻盈悬浮"重得多）
+      applyShadow: false,
+    });
+  }
+
+  /**
    * **即时反馈**（Toast / 菜单）的材质。
    * 官方默认档位是 THICK；这里同样按算力收敛一档，省电。
    */

@@ -115,6 +115,22 @@ export class Books {
   isJoin: boolean = false
   //是否本地导入
   isLocalBook: boolean = false
+  /**
+   * 书籍文件大小（字节，2026-10-19 新增）。
+   *
+   * ── 为什么必须入库而不是每次 stat ─────────────────────────────────────────
+   * 需求第 6 条要求按「文件大小」排序。若排序时逐本 `fs.statSync`，
+   * 上百本会出现明显卡顿，且排序面板里来回点 ↑/↓ 会反复读盘。
+   * ⇒ 导入时写一次（`FileHandler.CopyFile` 拷贝完成后 stat 目标文件），
+   *   存量书由 `BooksDao.backfillFileSize()` 回填一次。
+   *
+   * ⚠️ 声明成**可选**（`?`）：工程内多处 `Books` 字面量（`booksUtils.ets`、
+   *    `FileHandler.ets` 等）不带该字段；读取处一律 `?? 0` 兜底。
+   *    同文件 `finishedTime?: number = 0` 即此写法先例。
+   * ⚠️ 本列**不进** `BooksDao.getPartialColumn()` 白名单（与 `builtinCoverUrl` 同理），
+   *    只经 `insert` / `update`（全列）写入 —— 与导入路径一致。
+   */
+  fileSize?: number = 0
 }
 
 export class bookShelfImport {

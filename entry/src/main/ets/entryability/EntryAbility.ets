@@ -242,6 +242,12 @@ export default class EntryAbility extends UIAbility {
       const t = (AppStorage.get<number>('BOOK_IS_BOOK_GROUPS_REFRESHING') ?? 0) + 1
       AppStorage.setOrCreate('BOOK_IS_BOOK_GROUPS_REFRESHING', t)
     })
+    // ★ 2026-10-20 闪退修复（必读）：**先把"就绪等待者"登记上**，再让 UI 继续加载。
+    //   书架 `BookContent.aboutToAppear` 会 `await DataBase.whenReady()`（见那边注释），
+    //   这里提前调一次 `whenReady()` 只是**创建并持有 Promise**，不改任何时序，
+    //   作用是保证"信号发出前监听方一定已登记"这条契约成立（避免永远等下去）。
+    //   真机事故证据见 `docs/日志.md`：迁移未完成时书架已开始查询 ⇒ GetColumnIndex(-1) ⇒ 闪退。
+    DataBase.whenReady()
     // ── 离线模式（2026-10-13）：把落盘意图灌进 AppStorage，供各页 @StorageLink 订阅 ──
     //    必须在首屏渲染前调用，否则首帧会按默认「全量模式」渲染再闪一下。
     OfflineMode.init();

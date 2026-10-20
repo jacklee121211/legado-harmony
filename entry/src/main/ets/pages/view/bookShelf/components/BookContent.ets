@@ -1,9 +1,12 @@
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
-import { Haptics } from '../../../../common/utils/Haptics';
+import ShelfPrefs, { SortDir, SortKey } from '../../../../common/utils/ShelfPrefs'
 import BasicDataSource from '../../../../common/LazyIDataSource/BasicDataSource'
 import { ThemeItem } from '../../../../common/model/Theme'
 import booksDao from '../../../../database/dao/BooksDao'
+// 建表/迁移就绪信号（2026-10-20 闪退修复，见 aboutToAppear 注释）
+import DataBase from '../../../../database/index'
 import { Books } from '../../../../database/entities/Books'
+import { BooksTypeSearchParams } from '../../../../database/types/BooksType'
 import BookInfoGrids from './BookInfoGrids'
 import BookInfos from './BookInfos'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
@@ -13,6 +16,7 @@ import { FileHandler } from '../../../../common/utils/FileHandler'
 import { showMessage } from '../../../../componets/common/promptShow'
 // 外部文件接收（2026-10-19 双响炮）：EntryAbility 只登记，这里（DB 已就绪）才真正导入
 import { IncomingFiles, INCOMING_TICK } from '../../../../common/format/IncomingFiles'
+import { intl } from '@kit.LocalizationKit'
 
 @Component
 export default struct BookContent {
@@ -31,13 +35,37 @@ export default struct BookContent {
   @State entranceWaveId: number = 0
 
   async aboutToAppear(): Promise<void> {
+    // ★★ 2026-10-21：**只在"手里没数据"时才显示 loading** ★★
+    // 用户录像反馈：「三段切换，会有一个巨大的加载中一闪而过。」
+    // 根因：切档会让 `BookContent` 销毁重建（`BookContentRefresh` 的分支变了），
+    //   新实例 `bookList = []` ⇒ 若此时无条件置 `isLoading = true`，就会闪一个大 loading。
+    // ⇒ 只有 `bookList` 为空（真正的首次加载/冷启动）才置 true；
+    //   有数据时全程静默查询，配合父级淡入淡出，切换观感连续。
+    // ★ 2026-10-21 三修：**再用"延迟显示"兜一层** —— 即使首帧无数据，
+    //   只要查询在 250ms 内回来，`showLoadingUi` 就永远不会变 true ⇒ 一帧都不闪。
+    //   这样"快速连点切换"也完全看不到 loading（见 `showLoadingUi` 的注释）。
+    if (this.bookList.length === 0) {
+      this.isLoading = true
+      this.scheduleLoadingUi()
+    }
+    // ★★ 2026-10-20 闪退修复：**必须先等建表/补列完成** ★★
+    // 真机证据（`docs/日志.md`）：
+    //   `19:46:16.193 duplicate column name: finishedTime` ← 迁移还在跑
+    //   `19:46:16.195 查询成功！查询行数：`                   ← 本组件已经在查了
+    //   `19:46:16.246 GetColumnIndex:Failed, columnName : fil***` → `Kill Reason:Js Error`
+    // `whenReady()` 永不 reject（迁移失败也放行），所以不会把首屏卡死；
+    // 它只保证"表结构已定"这个前提成立，缺口由 `DbUtil.parseResultSet` 兜底。
+    await DataBase.whenReady()
     await FileHandler.seedDefaultBook()
     // 冷启动进来的「分享 / 用其他应用打开」文件（2026-10-19）：此时 DB 已就绪
     await this.importIncomingFiles()
+    // 存量书的文件大小回填（2026-10-19，排序面板「文件大小」用；内部有一次性标志，
+    // 只有首次真的会扫一遍。失败/超时都不阻塞书架首屏，见该方法的注释）
+    await booksDao.backfillFileSize()
     this.getBookCount()
-    if (this.bookList.length === 0) {
-      this.getBookList()
-    }
+    // 无论有无旧数据都查一次（`isLoading` 已在方法开头按"有无数据"决定过，
+    // 有数据时不会显示 loading ⇒ 切档无闪烁）
+    this.getBookList()
   }
 
   /** 外部文件信号（应用已在后台时被唤起 ⇒ aboutToAppear 不会再跑，靠它） */
@@ -79,9 +107,11 @@ export default struct BookContent {
   }
 
   async getBookCount(){
+    // 与列表**同一份查询口径**（2026-10-19）：否则「最近」模式下
+    // 续页门槛用的是分组计数，`onReachEnd` 会算错 ⇒ 翻页提前停止。
     this.bookCount =  await booksDao.getBookCount({
       type:this.currentIndex,
-      bookGroup:this.bookTypeNumber,
+      bookGroup: this.onRecentChip ? 2 : this.bookTypeNumber,
     })
   }
   @State bookCount:number = 0
@@ -93,7 +123,24 @@ export default struct BookContent {
   @Prop @Watch('changeBookType') EXHIBIT:string
   @Prop @Watch('changeBookType')searchValue:string
   @Prop @Watch('changeBookType')currentIndex: number
-  @Prop @Watch('changeBookType')bookTypeNumber:number
+  @Prop @Watch('changeBookType') bookTypeNumber:number
+  /**
+   * 排序变更信号（2026-10-19）。
+   *
+   * ⚠️ 为什么用 `@StorageLink` 而不是 `@Prop`：
+   *   排序面板最终挂在**分组管理弹窗**里（`groupTypePanel.SortSection`，需求指定的
+   *   "隐藏分组下面"），它与书架列表**不是父子关系**（一个是 @CustomDialog 内容、
+   *   一个是页面内的 List）⇒ 只能靠 AppStorage 这条公共通道广播。
+   *   面板里 `SHELF_SORT_TICK++`，这里 `@Watch` 重查并按新顺序渲染。
+   * **弹窗不会关**（用户要求），所以这是唯一的驱动路径。
+   */
+  @StorageLink('SHELF_SORT_TICK') @Watch('changeBookType') sortTick: number = 0
+  /**
+   * 「最近」chip 状态的**跨组件**通道（同上原因，面板里一排序就要退出「最近」）。
+   * 与 `IndexShelf` / `GroupType` 的 `@Link onRecentChip` 是**同一份语义**，
+   * 但那条链只覆盖"分组行 → 页面"；分组管理弹窗不在这条链上 ⇒ 补一条 AppStorage。
+   */
+  @StorageLink('SHELF_RECENT_CHIP') @Watch('changeBookType') onRecentChip: boolean = true
   //更新数据累加刷新数据页面
   @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch("isRefresh")isBookRefreshing: number = 0
   /**
@@ -163,34 +210,174 @@ export default struct BookContent {
     }
   }
 
-  async getBookList(){
-    const list: Books[] = await booksDao.searchPage({
-      type:this.currentIndex,
-      bookGroup:this.bookTypeNumber,
-      order:this.searchValue
-    }, this.currentPage)
-    this.bookList = list
-    // ── 开一波「渐次入场」（2026-09-24）──────────────────────────────────────
-    // ★ 位置很关键：必须在**数据就绪的这一刻**才 begin()。
-    //   `EntranceWave.delayFor()` 以 `Date.now()` 起算；若在发起查询之前就 begin()，
-    //   查询耗时会被算进波次窗口，前几项的延迟被白白吃掉（甚至整波已经过半）。
-    // ★ 先 begin() 再 ++waveId：这样子组件的 `@Watch` 一触发，读到的就是刚开的这一波。
-    // ★ `animateOnNextLoad`：只有"冷启动 / 切分类 / 切分组 / 切列表↔宫格"才开波次；
-    //   纯数据刷新（删除 / 置顶 / 导入 / 移动分组）不开（见该字段注释）。
-    if (this.animateOnNextLoad) {
-      shelfEntrance.begin()
-      this.entranceWaveId++
+  /**
+   * 组装查询参数（**唯一真源**，`getBookList` / `loadMoreBooks` / `getBookCount` 三处共用）。
+   *
+   * ── 2026-10-19 需求第 3 / 6 条 ─────────────────────────────────────────────
+   * 用户原话：「最近只有一种排序就是最近↓，然后其他的标签包括后续用户自定义的标签分组
+   *   都会随着排序进行排序。」
+   * ⇒ 两条互斥路径：
+   *   ① `onRecentChip` ⇒ **全部书 + 锁死最近阅读降序**（不受排序面板影响）；
+   *   ② 否则          ⇒ 按 `bookTypeNumber` 分组 + `ShelfPrefs` 的档位与方向。
+   * `bookGroup = 2` 在 `BooksDao.buildWhereClause` 里表示"不加分组条件"= 全部书
+   * （原文见该方法的注释：「`bookGroup = 2` → 不加分组条件（"全部"）」）。
+   */
+  private buildQueryParams(): BooksTypeSearchParams {
+    if (this.onRecentChip) {
+      return {
+        type: this.currentIndex,
+        bookGroup: 2,
+        sortKey: SortKey.RECENT_READ,
+        sortDir: SortDir.DESC
+      };
     }
-    this.animateOnNextLoad = true
-    // ★ LazyForEach 的数据源（2026-09-24 起真正启用）。
-    //   改前：`ForEach(this.bookList, …)` 会**一次性创建全部**列表项，书架上百本时
-    //   冷启动要建上百个节点。官方《LazyForEach：数据懒加载》原文：
-    //     「当 LazyForEach 用于滚动容器时，框架会根据滚动容器可视区域按需创建组件，
-    //       当组件滑出可视区域外时，框架会销毁并回收组件以降低内存占用。」
-    this.booksDataSource.resetAllData(list)
+    return {
+      type: this.currentIndex,
+      bookGroup: this.bookTypeNumber,
+      sortKey: ShelfPrefs.getSortKey(),
+      sortDir: ShelfPrefs.getSortDir()
+    };
+  }
+
+  /**
+   * 首字母（拼音）排序 —— **在内存里排**，SQL 侧排不了。
+   *
+   * ── 为什么必须用官方能力而不是自建拼音表 ──────────────────────────────────
+   * 用户裁定：「就用你说的官方原生能力，然后我们进行手动测试」。
+   * 官方取证：
+   *   · SDK `@ohos.intl.d.ts:1506` `export class Collator`，
+   *     `:1527 constructor(locale: string | Array<string>, options?: CollatorOptions)`，
+   *     `:1542 compare(first: string, second: string): number`；
+   *   · `CollatorOptions.collation`（`:1461`）的官方取值表里明确包含
+   *     `:1438`「**pinyin**: Pinyin sorting.」与 `:1432`「**gb2312**: Pinyin sorting,
+   *       only for Chinese.」
+   *   ⇒ 用 `collation: 'pinyin'` 让系统做汉字拼音排序，不需要任何映射表。
+   *
+   * ⚠️ 【待验证】本机无法验证 `pinyin` 这个 collation 在鸿蒙设备上对**中英混排书名**
+   *   的实际顺序（属系统行为，只能在真机上手动确认）。若真机上退化成码点序，
+   *   改 `collation` 为 `'gb2312'` 即可（同一取舍表的另一项），
+   *   或退回到 `Transliterator('Any-Latn')` 先转拼音再比（官方 FAQ
+   *   `FAQ/无障碍和本地化/本地化开发_Localization/如何使用实现汉字转拼音/faqs-localization-11`
+   *   给出的写法：`i18n.Transliterator.getInstance('Any-Latn').transform('中国')`）。
+   *
+   * ⚠️ 只在**当前页**内排序：分页是 SQL 侧 LIMIT，跨页的全局拼音序无法在内存里保证。
+   *   这是当前架构的已知限制，真机上若觉得"翻页后顺序跳"再单独讨论（需要落拼音列）。
+   */
+  private sortByPinyin(list: Books[], dir: SortDir): Books[] {
+    try {
+      const collator = new intl.Collator('zh-Hans', { collation: 'pinyin' });
+      const sorted: Books[] = list.slice();
+      sorted.sort((a: Books, b: Books): number => {
+        const r: number = collator.compare(a.bookName ?? '', b.bookName ?? '');
+        return dir === SortDir.ASC ? r : -r;
+      });
+      return sorted;
+    } catch (e) {
+      // 设备不支持该 collation ⇒ 保持 SQL 侧给的 bookName 序，绝不抛到界面上
+      console.error('sortByPinyin failed: ' + JSON.stringify(e));
+      return list;
+    }
+  }
+
+  async getBookList(){
+    // ★ 2026-10-21 二修：**不再在查询开始时置 isLoading**。
+    //
+    // ── 一修为什么不行（真机录像实证）─────────────────────────────────────────
+    // 一修写的是「进方法先 `isLoading = true`，build 走加载中分支」。
+    // 但用户录像显示：三段切换时**一个巨大的"加载中"一闪而过**。
+    // 根因有两层：
+    //   ① `BookContentRefresh` 的分支（`onRecentChip` / `bookTypeNumber`）不同时，
+    //      `BookContent` 会**销毁重建** ⇒ 新实例 `bookList = []`、`isLoading = false`，
+    //      随即 `aboutToAppear` 调本方法又置 true ⇒ 一帧 loading 大图标；
+    //   ② 就算不重建，每次查询都闪一次 loading 也是噪音。
+    //
+    // ── 现在的做法 ────────────────────────────────────────────────────────────
+    // 查询全程**不动 `isLoading`**，只在"确实没有数据可显示"时才让 build 显示 loading
+    //   （判断写在 build 里：`isLoading && bookList.length === 0`）。
+    // 这样：
+    //   · 有旧数据（切档场景）⇒ 继续显示旧列表，查完静默替换（父级还有淡入淡出兜着）；
+    //   · 真正首次加载（冷启动）⇒ `bookList` 为空，`aboutToAppear` 里显式置一次
+    //     `isLoading = true`，用户看到正常的加载提示。
+    try {
+      const params: BooksTypeSearchParams = this.buildQueryParams();
+      let list: Books[] = await booksDao.searchPage(params, this.currentPage)
+      // 首字母档：SQL 只能给 bookName 兜底序，真正的拼音序在这里做（见 sortByPinyin 注释）
+      if (!this.onRecentChip && ShelfPrefs.getSortKey() === SortKey.PINYIN) {
+        list = this.sortByPinyin(list, ShelfPrefs.getSortDir());
+      }
+      this.bookList = list
+      // ── 开一波「渐次入场」（2026-09-24）──────────────────────────────────────
+      // ★ 位置很关键：必须在**数据就绪的这一刻**才 begin()。
+      //   `EntranceWave.delayFor()` 以 `Date.now()` 起算；若在发起查询之前就 begin()，
+      //   查询耗时会被算进波次窗口，前几项的延迟被白白吃掉（甚至整波已经过半）。
+      // ★ 先 begin() 再 ++waveId：这样子组件的 `@Watch` 一触发，读到的就是刚开的这一波。
+      // ★ `animateOnNextLoad`：只有"冷启动 / 切分类 / 切分组 / 切列表↔宫格"才开波次；
+      //   纯数据刷新（删除 / 置顶 / 导入 / 移动分组）不开（见该字段注释）。
+      if (this.animateOnNextLoad) {
+        shelfEntrance.begin()
+        this.entranceWaveId++
+      }
+      this.animateOnNextLoad = true
+      // ★ LazyForEach 的数据源（2026-09-24 起真正启用）。
+      //   改前：`ForEach(this.bookList, …)` 会**一次性创建全部**列表项，书架上百本时
+      //   冷启动要建上百个节点。官方《LazyForEach：数据懒加载》原文：
+      //     「当 LazyForEach 用于滚动容器时，框架会根据滚动容器可视区域按需创建组件，
+      //       当组件滑出可视区域外时，框架会销毁并回收组件以降低内存占用。」
+      this.booksDataSource.resetAllData(list)
+    } finally {
+      // 只有真正"加载完"才放开；同时**取消待显示的 loading**
+      // （数据在 250ms 内回来 ⇒ 定时器被取消 ⇒ 一帧 loading 都不显示）
+      this.isLoading = false
+      this.cancelLoadingTimer()
+    }
   }
 
   @State isLoading: boolean = false
+  /**
+   * **UI 上实际显示的 loading 标志**（2026-10-21 新增，解决"快速切换仍闪"）。
+   *
+   * ── 为什么不能直接用 `isLoading` ──────────────────────────────────────────
+   * 用户反馈：「点击得快还是会有这个加载中…就没法在快速切换的时候完全删除吗」。
+   * 根因：切档会重建 `BookContent`（分支变了），新实例 `bookList = []`
+   *   ⇒ `isLoading && bookList.length === 0` 成立 ⇒ 立刻闪一帧 loading。
+   *   而查询本身可能只要 20~50ms ⇒ 这一帧纯属"来得太快"的噪音。
+   *
+   * ── 做法：**延迟显示**（业界标准，避免闪烁）──────────────────────────────
+   * 需要 loading 时**不立刻显示**，先挂一个 `LOADING_DELAY_MS` 定时器；
+   *   · 数据在延迟内回来（快速切换）⇒ 取消定时器 ⇒ **一帧都不显示**；
+   *   · 数据确实慢（>延迟）⇒ 到点才显示 loading（用户需要"有反馈"）。
+   * ⇒ 快速连点完全无感，慢查询仍有提示。
+   */
+  @State showLoadingUi: boolean = false
+  /** 延迟显示 loading 的定时器句柄（-1 = 无） */
+  private loadingTimer: number = -1
+  /** 延迟阈值（ms）：低于它的查询不显示 loading。250 是"人类感知卡顿"的经验下限 */
+  private static readonly LOADING_DELAY_MS: number = 250
+
+  /** 取消待显示的 loading（数据已就绪时调用） */
+  private cancelLoadingTimer(): void {
+    if (this.loadingTimer !== -1) {
+      clearTimeout(this.loadingTimer)
+      this.loadingTimer = -1
+    }
+    if (this.showLoadingUi) {
+      this.showLoadingUi = false
+    }
+  }
+
+  /** 需要 loading 时调用：延迟 `LOADING_DELAY_MS` 后才真正显示 */
+  private scheduleLoadingUi(): void {
+    if (this.loadingTimer !== -1) {
+      return
+    }
+    this.loadingTimer = setTimeout(() => {
+      this.loadingTimer = -1
+      // 到点时若仍在加载中，才显示（数据已回来的话 isLoading 已是 false）
+      if (this.isLoading) {
+        this.showLoadingUi = true
+      }
+    }, BookContent.LOADING_DELAY_MS)
+  }
   @State currentPage:number = 1
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
@@ -199,11 +386,7 @@ export default struct BookContent {
       this.isLoading = true;
       this.currentPage += 1;
 
-      const moreBooks = await booksDao.searchPage({
-        type:this.currentIndex,
-        bookGroup:this.bookTypeNumber,
-        order:this.searchValue,
-      }, this.currentPage);
+      const moreBooks = await booksDao.searchPage(this.buildQueryParams(), this.currentPage);
       if (moreBooks.length > 0) {
         this.bookList.push(...moreBooks);
         // ★ 追加分页**刻意不开新波次**（需求第 7 点）：
@@ -235,13 +418,28 @@ export default struct BookContent {
     return prefix + key;
   }
   build() {
-    if (this.isLoading) {
-      Row(){
+    // ★★ 2026-10-21：**只在"首次加载"时显示 loading，切换档位时不闪** ★★
+    // 用户反馈：「三段切换，会有一个巨大的加载中一闪而过，有点难受。」
+    // 根因：`isLoading` 一置 true 就把整屏内容换成 `LoadingProgress`（还占满宽度）
+    //   ⇒ 每次切档都闪一下大图标。
+    // ⇒ 两条修正：
+    //   ① 只有 `bookList` 还是空（真正的首次加载）才显示 loading；
+    //      已有数据时静默查询、查完直接替换（配合父级淡入淡出，观感连续）；
+    //   ② loading 态也**不再撑满整屏**（去掉 `width('50%')`，改为居中小尺寸），
+    //      万一真出现也不刺眼。
+    if (this.showLoadingUi && this.bookList.length === 0) {
+      Row({ space: 8 }) {
         LoadingProgress()
           .color(this.theme.mainColor)
-          .width('50%')
+          .width(24)
+          .height(24)
         Text('加载中...')
+          .fontSize(13)
+          .fontColor(ShelfColors.textSub())
       }
+      .justifyContent(FlexAlign.Center)
+      .width('100%')
+      .margin({ top: 120 })
     } else if (this.bookList.length === 0){
       Column() {
         Image($r('app.media.no_record')).width(200).height(200)
