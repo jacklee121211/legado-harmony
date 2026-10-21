@@ -9,10 +9,14 @@ import { Haptics } from '../../../../../common/utils/Haptics';
 import PaddingConstants from '../../../../../common/constants/PaddingConstants'
 import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
 import booksUtils from '../../../../../common/utils/booksUtils'
-import addBookTypeDialog from '../../../../../componets/common/addBookTypeDialog'
+import addBookTypeDialog, { AddGroupChannel } from '../../../../../componets/common/addBookTypeDialog'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
+// 三选项确认框（2026-10-22 新增）：分组管理模式下点分组 → 删除 / 解散 / 取消
+import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
+// 2026-10-22 分组管理「删除」需要取组内书籍 id + 逐本删除（见 doDeleteGroup）
+import BooksDao from '../../../../../database/dao/BooksDao'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
@@ -26,6 +30,26 @@ export default struct BookSelectGroupDialog{
   currentIndex:number = 0
   Ids:number|number[] = 0
   isMoveStatus:number = 0
+  /**
+   * **分组管理模式**（2026-10-22 新增，用户需求第 1 条）。
+   *
+   * ── 用户原话 ──────────────────────────────────────────────────────────────
+   * 「用户在分组状态下，也就是三段开关的分组开关下，点击更多，在书籍导入/批量管理之下
+   *   应该增加一个分组管理，点击之后进入移动至分组的弹窗，虽然我们复用移动至分组的弹窗，
+   *   但是和移动至分组不一样，我们的弹窗是分组管理，里面有默认的未分组，还有新建分组，
+   *   这个和移动至分组很像，但是我们因为没有选定书籍，所以我们点击除了未分组以外的
+   *   其他分组，都是弹窗询问是否删除或者解散该分组，该弹窗有三个选项，删除，解散，取消，
+   *   删除顾名思义是包含书籍全删除，解散则是解散分组书籍保留，和现有逻辑应该相同。」
+   *
+   * ── 与「移动至分组」的差异（三处，其余全部复用）───────────────────────────
+   *   ① 标题：「移动分组」→「分组管理」；
+   *   ② 「未分组」格：移动模式下点它 = 把书移到未分组；本模式下**点击无反馈**
+   *      （未分组不是 `book_groups` 里的真实行，没有可删除/解散的实体）；
+   *   ③ 其余分组格：移动模式下点它 = 移到该组；本模式下点它 = 弹三选一
+   *      （删除 / 解散 / 取消）。
+   * 新建分组（「+」格）、列表预取、新建后的真开真关重开 —— **完全共用**。
+   */
+  isManageMode: boolean = false
   moveGroup:Function = ()=>{
 
   }
@@ -111,7 +135,8 @@ export default struct BookSelectGroupDialog{
   build() {
     Column() {
       Column(){
-        Text('移动分组')
+        // 2026-10-22：分组管理模式标题不同（其余结构完全一致）
+        Text(this.isManageMode ? '分组管理' : '移动分组')
           .fontSize(16)
           .fontWeight(700)
           .lineHeight(24)
@@ -135,7 +160,14 @@ export default struct BookSelectGroupDialog{
             this.title()
           }
           ForEach(this.groupList,(item:BookGroups)=>{
-            if (item.groupId && !item.isSystem && item.show && this.oldGroupId !== item.groupId) {
+            // ── 2026-10-22：分组管理模式下**隐藏的分组也要显示** ────────────────
+            // 本模式是"管理全部分组"，若沿用移动模式的 `item.show` 过滤，
+            // 用户被隐藏的分组将**永远无法删除/解散**（设置页的"显示/隐藏分组"两栏
+            // 已在 2026-10-20 按用户要求删除，见 `groupTypePanel` 的注释）
+            // ⇒ 管理模式下不看 `show`，其余条件（真实分组、非系统、非当前组）不变。
+            if (item.groupId && !item.isSystem
+              && (this.isManageMode || item.show)
+              && this.oldGroupId !== item.groupId) {
               GridCol(){
                 this.title(item)
               }
@@ -219,6 +251,15 @@ export default struct BookSelectGroupDialog{
       Text('未分组').fontSize(14).maxLines(1)
     }
     .onClick(()=>{
+      // ── 2026-10-22：分组管理模式下「未分组」**点击完全无反馈**（用户拍板）────────
+      // 理由：「未分组」不是 `book_groups` 里的一行（`bookGroup = 3` 是 books 表的特殊值，
+      //   见 `bookGroupUtils.dissolveIfEmpty` 注释③），没有可删除/解散的实体；
+      //   而本模式下也没有"选定的书籍"可以移动 ⇒ 它只作为**默认项占位**显示。
+      // ⚠️ 连 `Haptics.tap()` 都不做：震了却什么都不发生，用户会当成"点了没反应"的 bug。
+      //   回退：删掉下面这个 return 即恢复"移到未分组"的旧语义。
+      if (this.isManageMode) {
+        return
+      }
       Haptics.tap();
       this.moveGroupId = 3
       this.moveTitle = '未分组'
@@ -249,6 +290,14 @@ export default struct BookSelectGroupDialog{
     .onClick(()=>{
       Haptics.tap();
       if(!item){
+        // ── 2026-10-22：分组管理模式的「+」走**连续创建**通道（不关父弹窗）──────
+        // 用户要求：「每次创建后底部的父弹窗需要实时更新，不然用户不清楚是否真正创建成功」
+        // ⇒ 父弹窗必须**留在屏幕上**，所以不能走下面的"子开父退"（那会把父弹窗关掉，
+        //   实例一销毁就再也刷不了列表）。这里改成规范 §4.3 的"二级短确认框"叠加方式。
+        if (this.isManageMode) {
+          this.openManageAddTypeDialog()
+          return
+        }
         // v3.21 出规则：子弹窗（新建分组）出现 ⇒ 父弹窗（移动分组）退出；
         // 子关闭/确定后由 onCancel/onAccept 重开父弹窗
         this.controller?.close()
@@ -256,6 +305,12 @@ export default struct BookSelectGroupDialog{
         return
       }
       if (item.groupId) {
+        // ── 2026-10-22：分组管理模式 ⇒ 弹「删除 / 解散 / 取消」三选一 ──────────
+        if (this.isManageMode) {
+          // 每次点击都新建 controller（builder 参数不支持动态更新，见 openManageDialog 注释）
+          this.openManageDialog(item)
+          return
+        }
         this.moveGroupId = item.groupId
         this.moveTitle = item.groupName
         this.clickBookTypeDialog?.open()
@@ -273,13 +328,149 @@ export default struct BookSelectGroupDialog{
       bottom:8
     })
   }
+  // ══════════════════════════════════════════════════════════════════════════
+  // 分组管理模式：连续创建（2026-10-22 新增，用户需求第 3 条）
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 连续创建用的新建分组弹窗（**每次点「+」都新建**）。
+   *
+   * ── 用户原话 ──────────────────────────────────────────────────────────────
+   * 「新建分组弹窗不用点完确定取消，而是可以连续创建，比如输入 1，点击确定，1 已经被
+   *   创建了，但是这个弹窗没动，只是输入框重制了，可以继续输入，并且内部的内容从
+   *   请输入分组名称变成了创建成功，可继续输入创建。这个逻辑就避免有的用户想要一次性
+   *   多创建，反复打开弹窗问题。**但是每次创建后底部的父弹窗需要实时更新**，不然用户
+   *   会不清楚是否真正创建成功。」
+   *
+   * ── 与「移动至分组」那条路径的三处差异 ──────────────────────────────────────
+   *   ① **父弹窗不关**：`addBookTypeDialog` 的 `keepOpen = true` ⇒ 确定后不 close 自己；
+   *      这里也**不**调用 `this.controller?.close()`（那是"子开父退"，会销毁父实例，
+   *      列表就再也刷不出来了）；
+   *   ② **每次创建后当场重查父弹窗的列表**：`await this.getGroupListAsync()` 直接写回
+   *      `this.groupList`（父实例还活着，写入**是有效的** —— 这与 `onGroupCreated` 那条
+   *      "实例已销毁、写了没用"的坑刚好相反，见该字段注释）；
+   *   ③ **关闭权仍归调用方**：用户点「取消」才真正关闭，走 `cancel()` → `onCancel()`。
+   *
+   * ── 为什么"父弹窗还活着"这件事必须由本方法保证 ────────────────────────────
+   * `@CustomDialog` 的 `@State` 在弹窗 close 之后**实例就没了**，此后任何 `this.groupList = …`
+   * 都写在一个死实例上（2026-10-13 踩过：新建分组后列表永远看不到新组）。
+   * ⇒ 连续创建的前提就是"父弹窗一直在"，本方法靠"不关父弹窗"满足它。
+   */
+  private manageAddTypeDialog: CustomDialogController | null = null
+
+  private openManageAddTypeDialog(): void {
+    this.bookType = ''
+    // 每次打开都从"未创建成功"起步（避免上次的成功提示串到新一次）
+    AppStorage.setOrCreate<boolean>(AddGroupChannel.KEY_OK, false)
+    this.manageAddTypeDialog = new CustomDialogController({
+      builder: addBookTypeDialog({
+        // 连续创建模式（见 addBookTypeDialog 类注释）
+        keepOpen: true,
+        // 创建成功后的输入框提示（用户原话给的文案）
+        doneHint: '创建成功，可继续输入创建',
+        // ⚠️ 不再传 `bookType`：它是子弹窗的 `@StorageLink`（AppStorage 通道），
+        //    传参会触发 lint「mandatory to specify」/ 且方法内 new 时 @Link 会崩溃
+        //    （真机证据见 addBookTypeDialog 文件头）。
+        // 用户点「取消」= 结束连续创建 ⇒ 关闭子弹窗（关闭权在本侧，持有 controller）
+        cancel: (): void => {
+          this.manageAddTypeDialog?.close()
+          this.manageAddTypeDialog = null
+          this.bookType = ''
+        },
+        // 每次点「确定」都会回调这里 —— 建组 + **当场刷新父弹窗列表**
+        confirm: (): void => {
+          this.createGroupKeepOpen().catch((e: Error): void => {
+            console.error('createGroupKeepOpen failed: ' + e.message)
+          })
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 20,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 遮罩/返回键：等同于"结束连续创建"
+      cancel: (): void => {
+        this.manageAddTypeDialog?.close()
+        this.manageAddTypeDialog = null
+        this.bookType = ''
+      }
+    })
+    this.manageAddTypeDialog.open()
+  }
+
+  /**
+   * 建一个分组，然后**立刻刷新父弹窗的列表**（不关任何弹窗）。
+   *
+   * 校验与提示口径与 `onAccept()` 完全一致（空名 / 重名），只是不涉及任何 close/open：
+   *   · 空名 ⇒ toast「分组名称不能为空」，不建组、不显示成功提示；
+   *   · 重名 ⇒ toast「已存X分组」，不建组、不显示成功提示；
+   *   · 成功 ⇒ toast「已添加X分组」+ 重查列表 + 广播 + 置 `manageCreateOk = true`。
+   */
+  private async createGroupKeepOpen(): Promise<void> {
+    const newName: string = this.bookType.trim()
+    if (newName.length === 0) {
+      AppStorage.setOrCreate<boolean>(AddGroupChannel.KEY_OK, false)
+      showMessage('分组名称不能为空')
+      return
+    }
+    // 重名判据用**当前列表**（`groupList` 每次创建后都会重查，所以是最新的）
+    const dup: BookGroups | undefined =
+      this.groupList.find((g: BookGroups): boolean => g.groupName === newName)
+    if (dup !== undefined) {
+      AppStorage.setOrCreate<boolean>(AddGroupChannel.KEY_OK, false)
+      showMessage(`已存${newName}分组`)
+      return
+    }
+    const bookGroups: BookGroups = new BookGroups()
+    bookGroups.groupName = newName
+    bookGroups.groupType = this.currentIndex
+    // ⚠️ 必须 await：紧接着就要重查列表，不等待提交会漏掉刚建的这一组
+    await BookGroupsDao.insert(bookGroups)
+    showMessage(`已添加${newName}分组`)
+    // ① 当场重查父弹窗列表（父实例仍存活 ⇒ 这次写入**是有效的**）
+    await this.getGroupListAsync()
+    // ② 广播：书架分组行 / 分组卡片重查（规范第 5 节）
+    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    // ③ 告诉子弹窗"这次真的成功了" ⇒ placeholder 切到「创建成功，可继续输入创建」
+    AppStorage.setOrCreate<boolean>(AddGroupChannel.KEY_OK, true)
+  }
+
+  /**
+   * `getGroupList()` 的 **await 版**（2026-10-22 新增，供连续创建用）。
+   *
+   * 原 `getGroupList()` 是 fire-and-forget（`.then` 里赋值），调用方拿不到"已经刷新完"
+   * 的时点；连续创建要求"创建完 ⇒ 列表立刻是最新的"，所以必须能 await。
+   */
+  private async getGroupListAsync(): Promise<void> {
+    try {
+      const list: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      this.groupList = list
+    } catch (e) {
+      console.error('getGroupListAsync failed: ' + JSON.stringify(e))
+    }
+  }
+
   //添加分组弹窗
-  @State bookType:string = ''
+  /**
+   * 新建分组的输入内容 —— **`@StorageLink`（AppStorage 通道），不是普通 `@State`**。
+   *
+   * ⚠️ 2026-10-22 真机崩溃后的连带修改：
+   *   子弹窗 `addBookTypeDialog` 的 `bookType` 已从 `@Link` 改为 `@StorageLink`
+   *   （原因见该文件头 `AddGroupChannel`：方法内 new controller 时 `@Link` 无父组件可绑 ⇒
+   *   真机 `SyntaxError: undefined 'bookType' … must be defined` ⇒ 杀进程）。
+   *   `@Link` 那套是"父 @State ↔ 子 @Link"的双向绑定，改成 AppStorage 后，
+   *   **父级这一侧也必须挂同一个 key**，否则两边读写的是两份不同的数据
+   *   （父读到空串 ⇒ 永远提示「分组名称不能为空」）。
+   */
+  @StorageLink(AddGroupChannel.KEY_TEXT) bookType: string = ''
   addBookType: CustomDialogController | null = new CustomDialogController({
     builder: addBookTypeDialog({
       cancel: ()=> { this.onCancel() },
-      confirm: ()=> { this.onAccept() },
-      bookType: this.bookType
+      confirm: ()=> { this.onAccept() }
+      // ⚠️ 不再传 `bookType`：它已是子弹窗的 `@StorageLink`（同一个 AppStorage key）
     }),
     cancel: this.onCancel,
     autoCancel: true,
@@ -382,6 +573,149 @@ export default struct BookSelectGroupDialog{
         break
     }
     showMessage(`已移动到${this.moveTitle}`)
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 分组管理模式：删除 / 解散（2026-10-22 新增，用户需求第 1 条）
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 三选一确认弹窗（**每次点击都新建**）。
+   *
+   * ⚠️ 为什么不能用字段初始化器 new 一个复用：
+   *   SDK `custom_dialog_controller.d.ts:756` NOTE 原文「Custom dialog box parameters
+   *   **do not support dynamic updates**」⇒ 复用实例的话，标题里的分组名永远是
+   *   **第一次点的那一个**。这与工程既有做法一致（`BookInfoDialogs.openRenameDialog()`、
+   *   `GroupType.openGroupPanel()` 都是"打开瞬间新建"）。
+   */
+  private manageDialog: CustomDialogController | null = null
+
+  /**
+   * 打开「删除 / 解散 / 取消」三选一。
+   *
+   * 语义（用户原话）：「删除顾名思义是包含书籍全删除，解散则是解散分组书籍保留，
+   *   和现有逻辑应该相同」。
+   *   · **删除** = 组内书籍**一起删掉** + 删掉分组行 ⇒ 走 `booksUtils.delBooksById`（书籍）
+   *     + `bookGroupUtils.delGroupById`（分组行）。`delBooksById` 内部已处理书签/进度/
+   *     封面文件等派生数据的清理（见该方法注释），比裸删行安全得多。
+   *   · **解散** = 分组行删掉、组内书籍**保留**并落到「未分组」（`bookGroup = 3`）
+   *     ⇒ 与工程既有「解散分组」**完全同一条实现**：`bookGroupUtils.delGroupById`
+   *     内部就是「删分组行 + `BooksDao.queryBookByGroup(Ids, 3)`」
+   *     （`bookGroupUtils.ets:35-42`，即 `FolderInfoDialog.disbandGroup()` 用的同一个方法）。
+   *
+   * ── 为什么必须等写库提交完再广播 ────────────────────────────────────────────
+   * 规范第 5 节第 2 条「广播必须发生在 DB 提交之后」。
+   * 本次一并把底层两处**裸调**修成 `await`（不 await 就会"删了分组还在 / 书没进未分组"）：
+   *   · `bookGroupUtils.delGroupById` —— 原来两行 DAO 调用全裸调；
+   *   · `BooksDao.queryBookByGroup` —— 原来 `forEach` 里裸调 `this.update(item)`。
+   * ⇒ 现在 `await bookGroupUtils.delGroupById(...)` 返回时，写库**确实已提交**。
+   */
+  private openManageDialog(item: BookGroups): void {
+    if (item.groupId === undefined) {
+      return
+    }
+    const gid: number = item.groupId
+    const gname: string = item.groupName ?? ''
+    this.manageDialog = new CustomDialogController({
+      builder: ThreeActionDialog({
+        title: `「${gname}」要怎么处理？`,
+        rawTitle: true,
+        hintPrimary: '删除：分组和组内书籍一起删除',
+        hintSecondary: '解散：只解散分组，书籍保留并移至未分组',
+        primaryText: '删除',
+        secondaryText: '解散',
+        cancelText: '取消',
+        onPrimary: (): void => {
+          this.doDeleteGroup(gid, gname).catch((e: Error): void => {
+            console.error('deleteGroup in manage mode failed: ' + e.message)
+          })
+        },
+        onSecondary: (): void => {
+          this.doDissolveGroup(gid, gname).catch((e: Error): void => {
+            console.error('dissolveGroup in manage mode failed: ' + e.message)
+          })
+        },
+        onCancel: (): void => {
+          // 取消 = 什么都不做（本弹窗是叠在分组管理之上的二级短确认框，规范 §4.3）
+          this.manageDialog = null
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 遮罩/返回键：同一条收尾路径（只清引用，分组管理弹窗本身不动）
+      cancel: (): void => {
+        this.manageDialog = null
+      }
+    })
+    this.manageDialog.open()
+  }
+
+  /** 删除：组内书籍全删 + 分组行删除（await 到底后再广播） */
+  private async doDeleteGroup(groupId: number, groupName: string): Promise<void> {
+    try {
+      // ① 先取组内书籍 id（用精准 `bookGroup IN (…)`，不叠加 bookType —— 口径见
+      //    `bookGroupUtils.dissolveIfEmpty` 注释①，`searchPage` 会因 bookType 漏书）
+      const bookIds: number[] = await BooksDao.queryBooksByGroupId([groupId])
+      // ② 逐本删（`delBooksById` 内部清理书签/进度/封面，必须 await 完再继续）
+      if (bookIds.length > 0) {
+        await booksUtils.delBooksById(bookIds)
+      }
+      // ③ 再删分组行（此时组内已无书，内部"书置 3"是幂等的空操作）
+      await bookGroupUtils.delGroupById(groupId)
+      showMessage(bookIds.length > 0
+        ? `已删除「${groupName}」及 ${bookIds.length} 本书`
+        : `已删除「${groupName}」`)
+    } catch (e) {
+      console.error('doDeleteGroup failed: ' + JSON.stringify(e))
+      showMessage('删除失败')
+    } finally {
+      this.afterGroupChanged()
+    }
+  }
+
+  /** 解散：只删分组行，组内书籍保留并落到「未分组」（`bookGroup = 3`） */
+  private async doDissolveGroup(groupId: number, groupName: string): Promise<void> {
+    try {
+      // 与 `FolderInfoDialog.disbandGroup()` **同一条实现**（用户：「和现有逻辑应该相同」）。
+      // `delGroupById` 内部 = 「组内书置 3」+「删分组行」，且 2026-10-22 已改为逐个 await
+      // ⇒ 本方法 resolve 时写库**确实已提交**，随后的广播才读得到新数据。
+      await bookGroupUtils.delGroupById(groupId)
+      showMessage(`已解散「${groupName}」，书籍已移至未分组`)
+    } catch (e) {
+      console.error('doDissolveGroup failed: ' + JSON.stringify(e))
+      showMessage('解散失败')
+    } finally {
+      this.afterGroupChanged()
+    }
+  }
+
+  /**
+   * 分组变更后的收尾：重查本弹窗的分组列表 + 广播两个刷新信号。
+   *
+   * 三个信号各自的作用（与工程既有约定一致，见规范第 5 节）：
+   *   · `BOOK_IS_BOOK_GROUPS_REFRESHING` ⇒ 书架分组行 / 分组卡片重查；
+   *   · `isBookRefreshing`（`BOOK_IS_BOOK_REFRESHING`）⇒ 书架书列表重查
+   *     （删除路径下书籍确实变了；解散路径下书籍的 `bookGroup` 也变了）；
+   *   · 本弹窗自己的 `groupList` 也要重查 —— 它已经被销毁过（`onGroupCreated` 的
+   *     同款问题），所以**不能在这里写**，必须交给持有 controller 的调用方重开。
+   *
+   * ⇒ 用 `onGroupCreated` 这条**既有**的"真开真关"通道通知调用方重开（它本来就做
+   *   「close → 重新预取分组 → new controller → open」这件事，语义完全吻合）。
+   */
+  private afterGroupChanged(): void {
+    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    this.isBookRefreshing++
+    if (this.onGroupCreated !== null) {
+      this.onGroupCreated()
+      return
+    }
+    // 兜底（未传 onGroupCreated 的宿主）：关掉自己，让宿主自行处理
+    this.onClose()
   }
 
   /**

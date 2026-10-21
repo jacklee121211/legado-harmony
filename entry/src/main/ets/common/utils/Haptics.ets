@@ -82,13 +82,29 @@ export class Haptics {
   /** 设置页持久化键（与 MyCenter 的 'MyUserName' 同一个 preferences 实例） */
   static readonly KEY_ENABLED: string = 'HapticsEnabled';
   static readonly KEY_STRENGTH: string = 'HapticsStrength';
-  /** 滑块 UI 用：0-500，每 50 一档；默认 250（中等强度） */
+  /**
+   * 滑块 UI 用：0-500，每 50 一档；**默认 500（满强度）**。
+   *
+   * ⚠️ 2026-10-22 用户口径变更（上架前定稿）：「震动强度 500，震感第三档」。
+   *   原来 250 = 中等强度 ⇒ 改为上限 500（`intensity = 500/5 = 100`，即
+   *   `VibratePreset.intensity` 的合法上限，见文件头 `@ohos.vibrator.d.ts:628-635`）。
+   *   默认值只在**本地从未写过该键**时生效（`getSync(key, def)` 语义，见
+   *   `harmony-utils PreferencesUtil.ets:105-109`）⇒ 用户调过的值不受影响。
+   */
   static readonly STRENGTH_MAX: number = 500;
   static readonly STRENGTH_STEP: number = 50;
-  static readonly STRENGTH_DEFAULT: number = 250;
+  static readonly STRENGTH_DEFAULT: number = 500;
   /** 震感模式持久化键（0-500，每 50 一档 → 10 种官方效果拼配，见 MODE_TABLE） */
   static readonly KEY_MODE: string = 'HapticsMode';
-  static readonly MODE_DEFAULT: number = 250;
+  /**
+   * 震感模式默认值 = **第三档**（`MODE_TABLE[2]` = '利落'，`EFFECT_CLOCK_TIMER`）。
+   *
+   * 换算链（与 `modeIndex()` 逐字一致）：
+   *   `idx = round(mode / 50)` ⇒ `clamp(1, 10)` ⇒ `-1` 得到 0 基下标。
+   *   要落在第 3 档（下标 2）⇒ `round(mode/50) = 3` ⇒ **mode = 150**。
+   *   （原默认 250 ⇒ round(5)=5 ⇒ 下标 4 = 第 5 档「轻柔」，与本次要求不符。）
+   */
+  static readonly MODE_DEFAULT: number = 150;
 
   /**
    * 震感模式表（10 档，全部由官方预置效果拼配，用户要求"比如清脆，线性等等"）。

@@ -113,7 +113,7 @@ export default struct groupTypePanel {
   // 书籍排序区块（2026-10-19 需求第 6 条）
   // ══════════════════════════════════════════════════════════════════════════
   /** 当前排序档位（本地可观察副本，与 ShelfPrefs 同步） */
-  @State curSortKey: SortKey = SortKey.RECENT_READ
+  @State curSortKey: SortKey = SortKey.IMPORT_TIME
   /** 当前排序方向 */
   @State curSortDir: SortDir = SortDir.DESC
   /**
@@ -123,8 +123,12 @@ export default struct groupTypePanel {
    * ⇒ 快照在 `aboutToAppear` 取一次；本面板每次打开都是**新实例**
    *   （调用方 `GroupType.openGroupPanel()` 每次 new CustomDialogController，
    *   理由见那里的注释）⇒ 「每次进入」天然等于「每次新实例」。
+   *
+   * ⚠️ 2026-10-22：初值由 `RECENT_READ` 改为 `IMPORT_TIME`，与
+   *   `ShelfPrefs.getSortKey()` 的新默认值对齐（用户：「书籍排序默认是导入时间」）。
+   *   这只是**首帧占位**，`aboutToAppear` 会立刻用持久化值覆盖 ⇒ 不会误导用户。
    */
-  private snapSortKey: SortKey = SortKey.RECENT_READ
+  private snapSortKey: SortKey = SortKey.IMPORT_TIME
   private snapSortDir: SortDir = SortDir.DESC
   /** 排序变更信号：自增后 `BookContent`（书架）会重查并按新顺序渲染 */
   @StorageLink('SHELF_SORT_TICK') shelfSortTick: number = 0

@@ -147,20 +147,27 @@ export default class ShelfPrefs {
   // ── 排序 ────────────────────────────────────────────────────────────────
 
   /**
-   * 当前排序档位。默认「最近阅读」——
-   * 需求第 3 条：「最近只有一种排序就是最近↓」，即默认状态与「最近」一致。
+   * 当前排序档位。**默认「导入时间」**（2026-10-22 用户口径，上架前定稿）。
+   *
+   * ⚠️ 历史口径变更：
+   *   · 2026-10-19：默认 `RECENT_READ`（理由：「最近只有一种排序就是最近↓」）；
+   *   · 2026-10-22：改为 `IMPORT_TIME`（用户原话：「书籍排序默认是导入时间」）。
+   *   只改默认值，不改任何查询口径 —— `BooksDao.buildOrderByClause(1, desc)` 早就存在，
+   *   且 `search()` 未传 sortKey 时的旧回落分支用的就是「导入时间降序」
+   *   （`BooksDao.ets:229` `this.buildOrderByClause(1, true)`）⇒ 行为一致、零迁移。
+   *   ⚠️ 默认值只在**本地从未写过该键**时生效（`getSync(key, def)` 语义）⇒ 用户调过的不受影响。
    */
   static getSortKey(): SortKey {
     if (!ShelfPrefs.ENABLED) {
-      return SortKey.RECENT_READ;
+      return SortKey.IMPORT_TIME;
     }
     try {
       const v = PreferencesUtil.getSync(ShelfPrefs.K_SORT_KEY,
-        SortKey.RECENT_READ as number, ShelfPrefs.PREF_NAME);
-      const n: number = typeof v === 'number' ? v : SortKey.RECENT_READ;
-      return (n >= 0 && n <= SortKey.FILE_SIZE) ? n as SortKey : SortKey.RECENT_READ;
+        SortKey.IMPORT_TIME as number, ShelfPrefs.PREF_NAME);
+      const n: number = typeof v === 'number' ? v : SortKey.IMPORT_TIME;
+      return (n >= 0 && n <= SortKey.FILE_SIZE) ? n as SortKey : SortKey.IMPORT_TIME;
     } catch (e) {
-      return SortKey.RECENT_READ;
+      return SortKey.IMPORT_TIME;
     }
   }
 

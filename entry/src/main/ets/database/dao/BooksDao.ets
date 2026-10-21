@@ -641,6 +641,16 @@ class BooksDao {
   }
 
   //分组删除情况下根据删除分组id查询书籍更新未分组
+  /**
+   * 把指定分组下的所有书籍挪到 `updateGroupId`（通常 3 = 未分组）。
+   *
+   * ⚠️ 2026-10-22 改为**逐个 await**（原实现 `forEach` 裸调 `this.update(item)`）：
+   *   裸调 ⇒ 本方法 resolve 时写库**尚未提交**，而调用方（`bookGroupUtils.delGroupById`
+   *   → 分组管理「解散」/「删除」）紧接着就广播刷新信号 ⇒ 书架重查读到**旧** `bookGroup`
+   *   ⇒ 表现为"解散了分组，书却不在未分组里 / 要手动刷新才对"。
+   *   这与 `docs/标准-弹窗与按钮统一规范.md` 第 5 节第 2 条
+   *   「广播必须发生在 DB 提交之后」是同一个坑（同类修法见 `isTopBook` 2026-09-29）。
+   */
   async queryBookByGroup(groupId: number[],updateGroupId: number) {
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
@@ -648,10 +658,11 @@ class BooksDao {
       predicates.in('bookGroup', groupId)
       const bookDbList = await DbUtil.queryForList<Books>(predicates, column)
       if (bookDbList.length > 0) {
-        bookDbList.forEach((item) => {
+        // for-of + await（不用 forEach：回调里的 await 不会被外层等待）
+        for (const item of bookDbList) {
           item.bookGroup = updateGroupId
-          this.update(item)
-        })
+          await this.update(item)
+        }
       }
     } catch (e) {
       console.log('TagInfo, Error, ', JSON.stringify(e))

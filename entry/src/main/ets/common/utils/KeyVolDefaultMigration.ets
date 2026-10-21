@@ -49,11 +49,16 @@
  * 把 `ENABLED` 改成 `false` ⇒ 完全不迁移（新默认值对所有人生效，含老用户）。
  * 已经迁移过的机器：删掉 Preferences 键 `keyVolDefaultMigratedV1` 与
  * `setKeyVolTurn` 后重启即回到"新装"状态（开发者调试用）。
+ * ⚠️ 2026-10-22：本文件现在承载**两个**迁移 —— `KeyVolDefaultMigration`（音量键翻页）
+ *    与文件末尾的 `HapticsDefaultMigration`（震动强度 / 震感模式），两者共用末尾的
+ *    模块级 `isUpgradeInstall()` 判定与 `UPGRADE_TOLERANCE_MS` 容差，各自有独立标记键。
  */
 import { bundleManager } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { PreferencesUtil } from '@pura/harmony-utils';
 import { KEY_KEY_VOL_TURN } from './ReaderKeyTurn';
+// 「震动强度 / 震感模式」默认值迁移共用同一套升级判定（见文件末尾的 HapticsDefaultMigration）
+import { Haptics } from './Haptics';
 
 /** 一次性迁移标记：true = 本机已执行过本迁移（**唯一**阻止重复执行的闸门） */
 export const KEY_MIGRATED_V1: string = 'keyVolDefaultMigratedV1';
@@ -89,7 +94,7 @@ export class KeyVolDefaultMigration {
         return;
       }
       // ③④⑤ 判定老/新用户
-      const upgrade: boolean = KeyVolDefaultMigration.isUpgradeInstall();
+      const upgrade: boolean = isUpgradeInstall();
       if (upgrade) {
         // 老用户：显式写入 false，等价于"维持老版本的默认关"。
         // 同步 AppStorage（键名与 Preferences 键同名），避免首帧按新默认 true 渲染一下。
@@ -106,31 +111,118 @@ export class KeyVolDefaultMigration {
       hilog.warn(0x0000, TAG, 'keyVolMigrate failed, will retry next launch');
     }
   }
+}
+/**
+ * 本次安装是否是「从旧版本升级上来」（= 老用户）。
+ *
+ * 抽成**模块级函数**（2026-10-22）供本文件里的多个迁移共用 ——
+ * 判定口径与证据见 `KeyVolDefaultMigration.isUpgradeInstall` 上方注释
+ * （`BundleInfo.firstInstallTime` / `updateTime`，容差 60s，读不到按老用户）。
+ *
+ * @returns true = 老用户（升级/读不到信息，保守按老用户处理）；false = 新装
+ */
+function isUpgradeInstall(): boolean {
+  try {
+    const info: bundleManager.BundleInfo =
+      bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+    const first: number | undefined = info.firstInstallTime;
+    const updated: number = info.updateTime;
+    if (first === undefined || first <= 0) {
+      // 取不到首次安装时间（可选字段）⇒ 保守判为老用户
+      hilog.warn(0x0000, TAG, 'defaultMigrate: firstInstallTime unavailable -> treat as upgrade');
+      return true;
+    }
+    const delta: number = updated - first;
+    hilog.info(0x0000, TAG,
+      'defaultMigrate: firstInstallTime=%{public}s updateTime=%{public}s delta=%{public}s',
+      String(first), String(updated), String(delta));
+    return delta > UPGRADE_TOLERANCE_MS;
+  } catch (e) {
+    // 读取失败 ⇒ 保守判为老用户
+    hilog.warn(0x0000, TAG, 'defaultMigrate: getBundleInfoForSelfSync threw -> treat as upgrade');
+    return true;
+  }
+}
+
+/**
+ * 「震动强度 / 震感模式」默认值的一次性迁移（2026-10-22 新增，上架前定稿）。
+ *
+ * ── 用户原话 ──────────────────────────────────────────────────────────────
+ * 「新安装用户的…震动强度 500，震感第三档」。
+ * 用户随后确认（2026-10-22 追问）：**只对新装生效** ——
+ * 「与音量键翻页一致」，老用户若从未动过滑块不能被一起改掉。
+ *
+ * ── 为什么必须显式写旧默认值 ──────────────────────────────────────────────
+ * 两个键的默认值已改成 `Haptics.STRENGTH_DEFAULT = 500` /
+ * `Haptics.MODE_DEFAULT = 150`（见 `Haptics.ets`）。而
+ * `PreferencesUtil.getSync(key, defValue)` 在**键从未写入过**时返回 `defValue`
+ * （`oh_modules/@pura/harmony-utils/.../PreferencesUtil.ets:105-109` 转发
+ * `preferences.getSync`）⇒ 绝大多数老用户从没拖过滑块、本地**没有**这两个键
+ * ⇒ 直接改默认值会让他们一起变成 500/第三档，正是用户要避免的"手感被改"。
+ *
+ * ── 处理（每个安装**只跑一次**）─────────────────────────────────────────────
+ *   ① 标记 `hapticsDefaultMigratedV1` 已存在 ⇒ 直接返回（以后版本更新不再执行）；
+ *   ② 某键**已存在**（用户自己调过）⇒ 一律不动，尊重用户选择；
+ *   ③ 判定为**升级安装** ⇒ 给缺失的键显式写入**旧默认值**
+ *      （强度 250 / 震感 250，即改造前的 `STRENGTH_DEFAULT` / `MODE_DEFAULT`）；
+ *   ④ 判定为**新装** ⇒ 不写，让 `Haptics` 里的新默认值（500 / 150）生效；
+ *   ⑤ 最后写标记。失败则不写标记（下次启动重试），且绝不抛异常影响启动。
+ *
+ * ── 一键回退 ───────────────────────────────────────────────────────────────
+ * 把 `ENABLED` 改成 `false` ⇒ 完全不迁移（新默认值对所有人生效）。
+ * 已迁移过的机器：删掉 Preferences 键 `hapticsDefaultMigratedV1` 与
+ * `HapticsStrength` / `HapticsMode` 后重启即回到"新装"状态（开发者调试用）。
+ */
+export class HapticsDefaultMigration {
+  /** 一键回退开关（`false` = 不迁移，新默认值对所有人生效） */
+  static readonly ENABLED: boolean = true;
+
+  /** 一次性迁移标记（唯一阻止重复执行的闸门） */
+  static readonly KEY_MIGRATED_V1: string = 'hapticsDefaultMigratedV1';
 
   /**
-   * 本次安装是否是「从旧版本升级上来」（= 老用户）。
-   * @returns true = 老用户（升级/读不到信息，保守按老用户处理）；false = 新装
+   * 改造**之前**的默认值 —— 老用户缺键时要写回这两个值。
+   * ⚠️ 必须写成**字面量**，不能引用 `Haptics.STRENGTH_DEFAULT`（那已经是新值 500）：
+   *    这里表达的是"历史默认"，与当前默认值是两件事。
    */
-  private static isUpgradeInstall(): boolean {
+  private static readonly LEGACY_STRENGTH: number = 250;
+  private static readonly LEGACY_MODE: number = 250;
+
+  /**
+   * 启动时调用一次（`EntryAbility.onWindowStageCreate` 里，与音量键翻页迁移并排）。
+   * 幂等：已迁移过的机器直接返回，**不会**因为版本更新再覆盖用户配置。
+   */
+  static runOnce(): void {
+    if (!HapticsDefaultMigration.ENABLED) {
+      return;
+    }
     try {
-      const info: bundleManager.BundleInfo =
-        bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
-      const first: number | undefined = info.firstInstallTime;
-      const updated: number = info.updateTime;
-      if (first === undefined || first <= 0) {
-        // 取不到首次安装时间（可选字段）⇒ 保守判为老用户
-        hilog.warn(0x0000, TAG, 'keyVolMigrate: firstInstallTime unavailable -> treat as upgrade');
-        return true;
+      // ① 标记已在 ⇒ 本机迁移过，永久跳过
+      if (PreferencesUtil.hasSync(HapticsDefaultMigration.KEY_MIGRATED_V1) === true) {
+        return;
       }
-      const delta: number = updated - first;
-      hilog.info(0x0000, TAG,
-        'keyVolMigrate: firstInstallTime=%{public}s updateTime=%{public}s delta=%{public}s',
-        String(first), String(updated), String(delta));
-      return delta > UPGRADE_TOLERANCE_MS;
+      // ③④ 判定老/新用户（新装 ⇒ 什么都不写，直接用新默认值）
+      const upgrade: boolean = isUpgradeInstall();
+      if (upgrade) {
+        // ② 逐个键判断：用户调过的**不覆盖**
+        if (PreferencesUtil.hasSync(Haptics.KEY_STRENGTH) !== true) {
+          PreferencesUtil.putSync(Haptics.KEY_STRENGTH, HapticsDefaultMigration.LEGACY_STRENGTH);
+        }
+        if (PreferencesUtil.hasSync(Haptics.KEY_MODE) !== true) {
+          PreferencesUtil.putSync(Haptics.KEY_MODE, HapticsDefaultMigration.LEGACY_MODE);
+        }
+        hilog.info(0x0000, TAG,
+          'hapticsMigrate: upgrade install -> legacy defaults written (strength=%{public}d mode=%{public}d)',
+          HapticsDefaultMigration.LEGACY_STRENGTH, HapticsDefaultMigration.LEGACY_MODE);
+      } else {
+        hilog.info(0x0000, TAG,
+          'hapticsMigrate: fresh install -> keep new defaults (strength=%{public}d mode=%{public}d)',
+          Haptics.STRENGTH_DEFAULT, Haptics.MODE_DEFAULT);
+      }
+      PreferencesUtil.putSync(HapticsDefaultMigration.KEY_MIGRATED_V1, true);
     } catch (e) {
-      // 读取失败 ⇒ 保守判为老用户
-      hilog.warn(0x0000, TAG, 'keyVolMigrate: getBundleInfoForSelfSync threw -> treat as upgrade');
-      return true;
+      // 迁移失败**不写标记** ⇒ 下次启动重试；任何情况下都不阻断启动
+      hilog.warn(0x0000, TAG, 'hapticsMigrate failed, will retry next launch');
     }
   }
 }

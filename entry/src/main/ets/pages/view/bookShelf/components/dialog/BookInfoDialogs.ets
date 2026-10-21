@@ -293,8 +293,20 @@ export default struct BookInfoDialogs{
       .margin(20)
       // v3.21：移除按钮区上下两条 Divider（用户反馈"上下各有一条灰色的线"）
       // 图标区间距与长按分组弹窗同规范（grid_row.d.ts:371 gutter.y；组与取消键间距 24）
+      //
+      // ══ 2026-10-22 修「底部四个按钮左对齐」══════════════════════════════════
+      // ── 根因（不是样式问题，是列数写死）─────────────────────────────────────
+      // 这里原来写死 `columns: 5`，而 2026-10-19 按用户要求删掉「加入书单」入口后
+      // `buttonListInfo` 只剩 **4 项**（置顶 / 移动至 / 删除 / 分享，见字段注释）。
+      // `GridRow` 的列是**等分容器宽度**的（SDK `component/grid_row.d.ts:114-117` 原文
+      // 「The width of each column is the content area size of the **GridRow** component
+      //   minus the gutter of the grid child components, and then divided by the total
+      //   number of columns」）⇒ 5 等分里只填了 4 格，**最右一格留空** ⇒ 整排视觉左偏。
+      // ── 修法 ────────────────────────────────────────────────────────────────
+      // 列数改为**跟随实际按钮数**（`this.buttonListInfo.length`）⇒ 4 项 = 4 等分 = 铺满。
+      // ⚠️ 不要再写死数字：将来加回「加入书单」时数组变 5 项，列数自动跟上，无需再改这里。
       GridRow({
-        columns:5,
+        columns: this.buttonListInfo.length,
         gutter:{ x:0, y:12 }
       }){
         ForEach(this.buttonListInfo,(item:buttonList)=>{

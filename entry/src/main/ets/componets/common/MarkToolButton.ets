@@ -35,5 +35,11 @@ export default struct MarkToolButton {
       })
       this.onTap()
     })
+    // ── 2026-10-22：撑满所在格（`GridCol`）宽度，让"图标+文字"整组在格内**居中** ──
+    // 根因：本组件原来不设宽 ⇒ 宽度 = 内容宽（wrap-content），由 `GridCol` 按**起始边**
+    //   摆放 ⇒ 每格右侧留一段空白，整排视觉偏左（用户反馈「底部四个按钮现在是左对齐」）。
+    // `Column` 的默认 `alignItems` 就是 `HorizontalAlign.Center` ⇒ 撑满后自然居中，
+    // 零副作用（`FolderInfoDialog` 的 8 键 4 列网格同样因此更整齐）。
+    .width('100%')
   }
 }

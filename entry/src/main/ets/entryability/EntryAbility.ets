@@ -19,7 +19,7 @@ import { AntiPeep } from '../common/utils/AntiPeep';
 // 离线模式（2026-10-13）：手动切换的「全量/离线」模式，隐藏依赖网络的入口（见 utils/OfflineMode.ets）
 import { OfflineMode } from '../common/utils/OfflineMode';
 // 音量键翻页默认值一次性迁移（2026-10-19）：新装默认开、老用户保持关（见该文件头）
-import { KeyVolDefaultMigration } from '../common/utils/KeyVolDefaultMigration';
+import { KeyVolDefaultMigration, HapticsDefaultMigration } from '../common/utils/KeyVolDefaultMigration';
 // 标定模式全局信号（2026-10-10）：冷启动回填到 AppStorage
 import { CalibMode } from '../common/utils/CalibMode';
 // VIP 启动自愈（2026-10-14）：付费用户卸载重装/换机后，把 IAP 已购记录查回来
@@ -256,6 +256,12 @@ export default class EntryAbility extends UIAbility {
     //    幂等：迁移过的机器靠 Preferences 标记跳过 ⇒ 以后版本更新不会覆盖用户配置。
     //    同样必须早于首屏渲染（设置页首帧要按迁移后的值渲染）。
     KeyVolDefaultMigration.runOnce();
+    // ── 「震动强度 / 震感模式」默认值一次性迁移（2026-10-22）─────────────────────
+    //    新默认值 = 强度 500 / 震感第三档（用户上架前定稿）；**只对新装生效**，
+    //    老用户（升级安装）若从未拖过滑块，显式写回改造前的 250 / 250（不改变手感）。
+    //    幂等：独立标记键 `hapticsDefaultMigratedV1` ⇒ 以后版本更新不再执行。
+    //    同样必须早于首屏渲染（设置页首帧要按迁移后的值渲染）。
+    HapticsDefaultMigration.runOnce();
     WindowAbility.getInstance().setWindowStage(windowStage);
     // 一镜到底官方库初始化（2026-10-02 迁移 @hmanimations/ezcustomtransition，
     // skill: hmos-arkui-longtake-transition Step 2 —— 缺它转场 API 全部不可用）

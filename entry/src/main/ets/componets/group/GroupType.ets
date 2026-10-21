@@ -631,8 +631,15 @@ export default struct groupTypeComponent {
   }
 
   /**
-   * 分组行尾部"三横"图标颜色（2026-10-11：与搜索/更多同款主题色跟随）。
-   * 与 IndexShelf.trailingIconColor() 语义一致：亮色档=主题主色、暗色档=浅色对比色。
+   * 分组行尾部"三横"图标颜色。
+   *
+   * ⚠️ 2026-10-22：本方法**当前没有任何调用点**（三横按钮已搬到 `IndexShelf` 右侧动作区，
+   *   见 `IndexShelf.ShelfTopActions()`），属遗留死代码，保留只为"想恢复时不用重写"。
+   *
+   * ⚠️ 它与 `IndexShelf.trailingIconColor()` **已不再同款**：那一处 2026-10-22 按用户要求
+   *   改成了**中性色**（`ShelfColors.icon()`，日间黑/夜间白），因为"跟随主题色"在玻璃胶囊上
+   *   实测只有 1.30~1.54:1（远低于图标门槛 3:1，用户反馈"顺色、看不清"）。
+   *   若将来把三横搬回本组件，**请直接用 `ShelfColors.icon()`**，不要用本方法。
    */
   private groupIconColor(): string {
     return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : this.theme.mainColor

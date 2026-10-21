@@ -42,6 +42,18 @@ export struct ListenDock {
   @StorageLink('listenExpanded') expanded: boolean = false;
   @StorageLink('listenPlaying') playing: boolean = false;
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem;
+  /**
+   * App 级夜间开关（2026-10-22 新增，**图标日夜切换的必要条件**）。
+   *
+   * ⚠️ 为什么必须挂这个 `@StorageLink`：
+   *   `appIcon()` 读的是 `NightMode.isDarkSurface()`（普通方法调用），框架**追踪不到**
+   *   它内部读了哪个状态 ⇒ 用户切换日/夜间时本组件不会重渲染，图标就停在旧的那张
+   *   （要等下次切页签、builder 重建才会变）。
+   *   `@StorageLink(NightMode.KEY)` 是工程既有的"夜间重绘信号"（`BookContent` /
+   *   `GroupType` / `IndexShelf` 等 10+ 个组件都这么写）⇒ 挂上它，值一变就重跑 build。
+   *   字段本身不参与渲染，只为**触发重绘**（与 `BookContent.nightOn` 同一用法）。
+   */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false;
 
   aboutToAppear(): void {
     // ★ 判别打点（2026-10-09 排查"切页签圆形闪"）：
@@ -57,6 +69,40 @@ export struct ListenDock {
   /** 未播放色：与底部页签未选中态同源（深浅档各自取色） */
   private idleColor(): string {
     return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.90)' : '#000000';
+  }
+
+  /**
+   * 圆形里的 App 图标 —— **日间/夜间两套**（2026-10-22 用户设计）。
+   *
+   * ── 用户原话 ──────────────────────────────────────────────────────────────
+   * 「我们现在 minibar 的图标，是最新的图标，我想设计一下，日间和夜间分别是两个图标，
+   *   日间就是现在这个新的图标，夜间就是和启动画面一样的那个图标」
+   * 「新图标是一只猫一本书，老图标只有一只黑猫」
+   *
+   * ── 两张图的实体与来源（已逐一核对，别再搞混）──────────────────────────────
+   * · **新**（猫 + 打开的书）→ `app.media.foreground`
+   *   = `AppScope/resources/base/media/foreground.png`（232×232，透明底）。
+   *   它同时是**分层图标的前景层**（`AppScope/.../layered_image.json`
+   *   的 `"foreground": "$media:foreground"`）。**日间用这张**（= 改造前唯一那张）。
+   * · **老**（只有一只黑猫）→ `app.media.cat_black`
+   *   = `entry/.../media/cat_black.png`，源文件是 `entry/.../media/icon.png`
+   *   （1024×1024，也就是 `module.json5` 的 `"startWindowIcon": "$media:icon"`
+   *   —— **启动画面显示的就是这张**，用户说的"和启动画面一样"即指它）。
+   *   **夜间用这张**。
+   *
+   * ⚠️ 为什么夜间要另存一份 `cat_black.png` 而不是直接用 `app.media.icon`：
+   *   ① 那张是 **1024×1024 / 1.1 MB**，而本圆只有 56vp，且下方 `.syncLoad(true)`
+   *      **同步加载**（官方：`image.d.ts:1136`「During synchronous loading, the UI thread
+   *      is blocked」）⇒ 每次切页签重建都要在主线程解码 1.1 MB，白白掉帧；
+   *      另存的这份已用高质量双三次插值缩到 **232×232 / 78 KB**（与 `foreground`
+   *      同尺寸，两者切换时缩放基准一致，不会一大一小），**透明通道保留**（已验 A=0）。
+   *   ② `app.media.icon` 是"应用图标"语义，将来改包图标会连带动到 minibar；
+   *      独立命名后两者互不影响。
+   *
+   * 回退：让本方法恒 `return $r('app.media.foreground')` ⇒ 恢复"只有一张新图标"的旧行为。
+   */
+  private appIcon(): Resource {
+    return NightMode.isDarkSurface() ? $r('app.media.cat_black') : $r('app.media.foreground');
   }
 
   private seekChapter(delta: number): void {
@@ -114,7 +160,11 @@ export struct ListenDock {
         //
         //   `ImageFit.Contain`（不用 Cover）：前景图自带透明留白，Cover 会裁掉留白、
         //      把猫放大出界；Contain 完整装进圆形区域。
-        Image($r('app.media.foreground'))
+        //
+        // ★ 2026-10-22：图标改成**日间/夜间两套**（用户设计），取哪张见 `appIcon()`。
+        //   日间 = 猫+书（`foreground`，即改造前唯一那张）；夜间 = 黑猫（`cat_black`，
+        //   与启动画面同一张）。两张都是 232×232 透明底 ⇒ 切换时不会跳大小。
+        Image(this.appIcon())
           .width(CIRCLE_SIZE)
           .height(CIRCLE_SIZE)
           .objectFit(ImageFit.Contain)

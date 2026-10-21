@@ -32,13 +32,26 @@ class bookGroupUtils{
     BookGroupsDao.insert(books)
   }
   //删除分组
+  /**
+   * 删除分组行 + 组内书籍落到「未分组」（`bookGroup = 3`）。
+   *
+   * ⚠️ 2026-10-22 改为**逐个 await**（原实现两行全是裸调）：
+   *   `BookGroupsDao.deleteBook(Ids)` 与 `BooksDao.queryBookByGroup(Ids, 3)` 都是 async，
+   *   裸调 ⇒ 本方法立刻 resolve，调用方紧接着广播刷新时**写库可能还没提交**
+   *   ⇒ 界面重查读到旧数据（"删了分组还在 / 书还在旧分组里"）。
+   *   这正是 `docs/标准-弹窗与按钮统一规范.md` 第 5 节第 2 条
+   *   「广播必须发生在 DB 提交之后」点名的那类坑（同 `updatePartialGroup` 2026-10-01 的修法）。
+   *
+   * ⚠️ 顺序：**先搬书、再删分组行**（与 `BooksDao.queryBookByGroup` 的语义一致 ——
+   *   它按 `bookGroup IN (…)` 找书，不依赖分组行是否存在，但先搬后删语义更清晰）。
+   */
   async delGroupById(id:number|number[]){
     let Ids = toolsUtils.numberArrays(id)
     if (Ids.length === 0) return
-    //删除分组
-    BookGroupsDao.deleteBook(Ids)
     //同时更新书籍分组为未分组
-    BooksDao.queryBookByGroup(Ids, 3)
+    await BooksDao.queryBookByGroup(Ids, 3)
+    //删除分组
+    await BookGroupsDao.deleteBook(Ids)
   }
 
   /**

@@ -17,6 +17,10 @@ import { ImportBookListDialog } from './components/dialog/ImportBookListDialog'
 import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 // 三横面板（排序 + 列表/宫格）：2026-10-20 三横从 GroupType 搬到本组件后由这里打开
 import { GroupManageDialog } from '../../../componets/group/GroupManageDialog'
+// 分组管理弹窗（2026-10-22 新增）：复用「移动至分组」组件 + 打开前预取分组
+import BookSelectGroupDialog from './components/dialog/BookSelectGroupDialog'
+import bookGroupUtils from '../../../common/utils/bookGroupUtils'
+import { BookGroups } from '../../../database/entities/BookGroups'
 import { LengthMetrics } from '@kit.ArkUI'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 // ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
@@ -83,23 +87,72 @@ export default struct IndexShelf {
    * 「下载管理」已删：`DownloadManagementPage` 里是三组硬编码「斗破苍穹」假列表，
    * 全工程 grep `downloadFile|DownloadTask|@ohos.request.download` **零命中**，
    * 页面内的 `switch(index){case 5,6,7: break}` 与「全选」`onClick` 也都是空的。
-   * ⚠️ 删掉后**索引整体前移一位**，`changeTheme()` 里的 case 必须同步。
    *
    * ── 2026-10-19：删掉「导入书单」入口（用户需求第 2 条）──────────────────────
    * 用户原话：「删除导入书单」。
-   * ⇒ 从菜单里移除该项。**索引再次前移**：
-   *     0 = 书籍导入（直接走 pickLocalBooks，见 changeTheme case 0）
-   *     1 = 批量管理（原 case 2 ⇒ 现 case 1，`changeTheme()` 已同步）
    * ⚠️ 被删掉的实现**保留在文件里**（`openImportListDialog` / `pickBookListLocal` /
    *    `pasteBookImport` / `ImportBookListDialog` 组件），只是没有入口调用它们 ——
    *    按用户要求「只针对入口，具体功能暂时不引用了，屏蔽入口」。
    *    想恢复入口：把 `new IconTitleVo($r('app.media.import_book_svg'), '导入书单')`
-   *    加回本数组的**第 2 位**，并把 `changeTheme()` 的 case 1/2 还原即可。
+   *    加回本数组即可。
+   *
+   * ⚠️ **2026-10-22 起分发改成按标题匹配**（`changeTheme(title)`）：因为「分组管理」
+   *    只在分组状态下出现（`visibleMoreList()`），项数会变 ⇒ 下标不再稳定，
+   *    写 `case 0 / case 1` 迟早错位（这正是本节历史上的三次踩坑来源）。
+   */
+  /**
+   * 右上角「更多」菜单项。
+   *
+   * ── 2026-10-22：图标全部改为**系统符号**（用户要求「全改成 symbol」）────────────
+   * 原来三项都是 `Image` 加载的 SVG 位图，而三张源文件规格互不一致
+   * （20×20/0.88、16×16/0.88、24×24/**0.65**）⇒ 被 `Image` 强行缩进 20×20 框后
+   * 视觉大小与灰度都对不上（`fillColor` 改不了图形自身的 `fill-opacity`）。
+   * 详见 `dialogTitleFuction` 文件头的对照表。
+   *
+   * 符号名**逐个核实自 SDK 真源** `sysResource.js`（317 KB 全表）：
+   * ```
+   * square_and_arrow_down: 125832677,   ← 书籍导入（方框 + 下箭头 = 导入语义）
+   * list_checkmark:        125835983,   ← 批量管理（清单 + 勾选 = 批量勾选语义）
+   * folder:                125831897,   ← 分组管理（文件夹）
+   * ```
+   * ⇒ 三项同源（同一套 symbol 字体）、同字号（`dialogTitleFuction` 统一 18）、
+   *   同色（与文字共用 `fgColor()`）⇒ 不会再出现"这一项偏大偏灰"。
+   *
+   * 构造参数：`new IconTitleVo(旧SVG, 文案, 系统符号)` —— 第 1 个传 `undefined`
+   * 表示"不再需要旧位图"，渲染时走 `SymbolGlyph` 分支。
    */
   private moreList: IconTitleVo[] = [
-    new IconTitleVo($r('app.media.import_svg'), '书籍导入'),
-    new IconTitleVo($r('app.media.batch_svg'), '批量管理'),
+    new IconTitleVo(undefined, '书籍导入', $r('sys.symbol.square_and_arrow_down')),
+    new IconTitleVo(undefined, '批量管理', $r('sys.symbol.list_checkmark')),
+    // ── 2026-10-22 新增「分组管理」（用户需求第 1 条）──────────────────────────
+    // 用户原话：「用户在分组状态下，也就是三段开关的分组开关下，点击更多，在书籍导入/
+    //   批量管理之下应该增加一个分组管理，点击之后进入移动至分组的弹窗，虽然我们复用
+    //   移动至分组的弹窗，但是和移动至分组不一样，我们的弹窗是分组管理…」
+    // ⚠️ 本项**只在「分组」状态下出现**（见 `visibleMoreList()`）⇒ 数组下标与
+    //   `changeTheme()` 的 case 不再一一对应，所以分发改成**按标题**匹配。
+    new IconTitleVo(undefined, '分组管理', $r('sys.symbol.folder')),
   ]
+
+  /**
+   * 「分组」状态判定（2026-10-22）：三段开关停在「分组」上。
+   *
+   * `bookTypeNumber === 1` 就是「分组」这个系统单元的 groupId ——
+   * 依据 `BookGroupsDao.initGroupData()` 的插入顺序 `['分组','全部','未分组','本地','书单']`
+   * （`BookGroupsDao.ets:221`）⇒ 分组=1 / 全部=2 / 未分组=3 / 本地=4 / 书单=5，
+   * 与 `BookContentRefresh` 里 `bookTypeNumber === 1` 判「分组页」的口径**完全一致**。
+   * 「最近」态下 `bookTypeNumber` 保持上次的值 ⇒ 必须同时排除 `onRecentChip`。
+   */
+  private inGroupState(): boolean {
+    return !this.onRecentChip && this.bookTypeNumber === 1
+  }
+
+  /** 当前实际渲染的「更多」菜单项（分组管理只在分组状态下出现） */
+  private visibleMoreList(): IconTitleVo[] {
+    if (this.inGroupState()) {
+      return this.moreList
+    }
+    return this.moreList.filter((it: IconTitleVo): boolean => it.title !== '分组管理')
+  }
   /**
    * 「⋯」菜单的内容层材质修饰器（2026-10-19）。
    *
@@ -331,12 +384,44 @@ export default struct IndexShelf {
   private scrollController: Scroller = new Scroller();
 
   /**
-   * 搜索/更多图标颜色（2026-10-11：与下面"全部/本地"那行三横同款主题色跟随）。
-   * 亮色档=主题主色（与 HdsTabs dock 选中态同语义），暗色档=浅色对比色保留夜间可读性。
-   * GroupType.ts 的 groupIconColor() 同样配方。
+   * 书架顶部**三个图标**（🔍 搜索 / ≡ 排序 / ⋯ 更多）的颜色。
+   *
+   * ── 2026-10-22 改回**中性色**（用户要求）────────────────────────────────────
+   * 用户原话：「我需要优化的是书架顶部的三个图标，搜索，排序，更多这三个」+
+   *   「正常日间黑色，夜间白色就行」。
+   *
+   * ── 改造前为什么"顺色、看不清"（实测数字）───────────────────────────────────
+   * 旧实现日间返回 `this.theme.mainColor`（2026-10-11 那版的"跟随主题色"），
+   * 而这三个图标压在**玻璃胶囊**上：`ImmersiveMaterialUtil.glassOptions()` 的
+   * `color: 'rgba(255, 255, 255, 0.35)'` 叠在页面顶部**主题渐变**（起点就是 `mainColor`）上
+   * ⇒ 底色本身就被主题色染过一遍，再拿同一个 `mainColor` 画图标，等于**同色压同色**。
+   *
+   * 按 WCAG 2.x 公式实算（玻璃层先与主题色 alpha 合成，再算对比度）：
+   *
+   * | 主题 | 胶囊实际底色 | 旧（主题色） | 改为黑色 |
+   * |---|---|---|---|
+   * | 粉 | `#FFBAC6` | **1.30:1** | **13.10:1** |
+   * | 红 | `#F58585` | **1.54:1** | **8.59:1** |
+   * | 黄 | `#FFBA59` | **1.30:1** | **12.43:1** |
+   * | 蓝 | `#69B4FF` | **1.54:1** | **9.54:1** |
+   * | 绿 | `#71CDA7` | **1.42:1** | **10.98:1** |
+   *
+   * 图标门槛 3:1 —— 旧实现**五套主题全部不达标**（最低 1.30:1），这就是用户说的"顺色"。
+   *
+   * ── 现在 ──────────────────────────────────────────────────────────────────
+   * 日间近黑 / 夜间近白，与 `ShelfColors.icon()` 同一档（该方法是全工程图标的既有基准，
+   * 其注释已记录"夜间不给色会画成黑色 ⇒ 深色底上完全看不见"这个真机教训）：
+   *   · 日间 `rgba(19, 19, 19, 0.88)` —— 与主题色的色相无关，任何主题下都 ≥ 8.5:1；
+   *   · 夜间 `rgba(248, 249, 250, 0.88)` —— 深色渐变上 14:1 级别。
+   *
+   * ⚠️ 这里**不再跟随主题色**。想要"主题感"，主题色已经通过整页渐变 + 三段开关的选中态
+   *   表达了；顶部功能图标属于"工具"，用中性色换取可读性是正确的取舍。
+   *
+   * 回退：把方法体改回 `return NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : this.theme.mainColor`
+   *   即恢复 2026-10-11 那版"跟随主题色"的行为。
    */
   private trailingIconColor(): string {
-    return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : this.theme.mainColor
+    return ShelfColors.icon()
   }
 
   build() {
@@ -566,19 +651,22 @@ export default struct IndexShelf {
   @Builder
   MenuBuilder() {
     Column() {
-      ForEach(this.moreList, (item: IconTitleVo, index) => {
+      ForEach(this.visibleMoreList(), (item: IconTitleVo, index) => {
         dialogTitleFuction({
           title: item.title,
-          icon: item.icon,
-          isBorder: this.moreList.length !== index + 1,
+          // 2026-10-22：改传**系统符号**（`symbol` 优先于旧 `icon`，见 dialogTitleFuction）
+          symbol: item.symbol,
+          // 2026-10-22：分隔线按**实际渲染条数**判最后一项（分组状态下多一项「分组管理」）
+          isBorder: this.visibleMoreList().length !== index + 1,
           // 菜单内容已铺半透明深底（见本 @Builder 的注释）⇒ 文字/图标同步转浅
           nightStyle: NightMode.isDarkSurface()
         })
           .onClick(() => {
             Haptics.tap();
-            this.changeTheme(index)
+            // 2026-10-22：改传**标题**而非下标 —— 项数随状态变化，下标会错位
+            this.changeTheme(item.title)
           })
-      })
+      }, (item: IconTitleVo): string => item.title)
     }
     // ── 2026-10-19：材质改走**官方的菜单系统材质**，不再自己手画底 ──────────────
     // 用户原话：「更多点击之后出现的这个菜单弹窗…不是和我们全局一样的风格…应该就是换个材质的问题」。
@@ -835,17 +923,17 @@ export default struct IndexShelf {
   }
 
 
-  changeTheme(themeNum: number) {
-    // 右上角更多（索引与 moreList 对齐，见其注释）
-    switch (themeNum) {
-      case 0:
+  changeTheme(title: string) {
+    // 右上角更多（**按标题分发**，2026-10-22 起；项数会随状态变化，下标不可靠）
+    switch (title) {
+      case '书籍导入':
         // 书籍导入 → **直接衔接本地导入**（用户要求：去掉二级菜单，化繁为简）。
         // 原来这里 `isShowImport = true` 弹出一个「本地导入/网盘导入/网址导入」二级菜单，
         // 而其中「网盘导入」是空壳、「网址导入」的 `ConfirmCallback` 从未赋值
         // （输完网址点确定只关弹窗）⇒ 只剩本地导入是真功能，直接做掉。
         this.pickLocalBooks()
         break
-      case 1:
+      case '批量管理':
         // ── 2026-10-19：原 case 2「批量管理」前移到 case 1 ────────────────────
         // 因为「导入书单」（原 case 1）的入口已按用户需求删除，索引整体前移一位。
         // 迁 Navigation 第 4 期：管理页已改为 NavDestination，改走路由门面。
@@ -855,7 +943,77 @@ export default struct IndexShelf {
           bookTypeNumber: this.bookTypeNumber
         } as BookManageRouteParam)
         break
+      case '分组管理':
+        // 2026-10-22 新增（用户需求第 1 条）：复用「移动至分组」弹窗，进**分组管理模式**
+        this.openGroupManageDialog().catch((e: Error): void => {
+          console.error('openGroupManageDialog failed: ' + e.message)
+        })
+        break
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 「分组管理」弹窗（2026-10-22 新增，用户需求第 1 条）
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 打开分组管理：**复用 `BookSelectGroupDialog`**，只把 `isManageMode` 置 true。
+   *
+   * ── 为什么与 `BookInfoDialogs.openMoveGroupDialog()` 一样"打开瞬间新建 controller"──
+   * SDK `custom_dialog_controller.d.ts:756` NOTE 原文「Custom dialog box parameters
+   * **do not support dynamic updates**」⇒ 参数（含 `isManageMode`）只在创建时固化；
+   * 而且每次打开都重新预取分组（`prefetchGroups`）⇒ 首帧就有完整列表、且是当次最新。
+   *
+   * ── 三条关闭路径（与工程统一口径一致）────────────────────────────────────────
+   *   · 「取消」按钮 ⇒ 弹窗回调 `onClose` ⇒ 本方法 close 它（关闭权归持有 controller 的一侧）；
+   *   · 遮罩 / 返回键 ⇒ options 的 `cancel` ⇒ 同样 close；
+   *   · 新建分组成功后 ⇒ `onGroupCreated` ⇒ close 旧实例 → 重新预取 → new → open
+   *     （与 `openMoveGroupDialog` 的「真开真关」完全同款，理由见那边注释）。
+   *   · 删除/解散成功后 ⇒ `BookSelectGroupDialog.afterGroupChanged()` 也走 `onGroupCreated`
+   *     这条通道重开（分组列表已变，必须重建实例才看得到）。
+   */
+  private groupManageDialog: CustomDialogController | null = null
+
+  private async openGroupManageDialog(): Promise<void> {
+    const groups: BookGroups[] = await bookGroupUtils.prefetchGroups(this.currentIndex)
+    const dlg = new CustomDialogController({
+      builder: BookSelectGroupDialog({
+        // 本模式下点「未分组」无反馈、点其它分组弹三选一（见组件内 isManageMode 注释）
+        isManageMode: true,
+        // 没有选定书籍 ⇒ 不传 Ids / oldGroupId（保持默认 0，两个分支都不会用到）
+        currentIndex: this.currentIndex,
+        // 分组管理不"移动"，`moveGroup` 不会被调用；给空实现保持签名完整
+        moveGroup: (): void => {},
+        onClose: (): void => {
+          this.groupManageDialog?.close()
+          this.groupManageDialog = null
+        },
+        // 新建分组 / 删除 / 解散成功后：真开真关（重新预取分组再开）
+        onGroupCreated: (): void => {
+          this.groupManageDialog?.close()
+          this.groupManageDialog = null
+          this.openGroupManageDialog().catch((e: Error): void => {
+            console.error('openGroupManageDialog after change failed: ' + e.message)
+          })
+        },
+        presetGroups: groups
+      }),
+      height: 400,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      // 材质与「移动至分组」弹窗完全同款（内容层已让出背景，见 BookSelectGroupDialog 的 surface）
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      cancel: (): void => {
+        this.groupManageDialog?.close()
+        this.groupManageDialog = null
+      }
+    })
+    this.groupManageDialog = dlg
+    dlg.open()
   }
 
   /**
