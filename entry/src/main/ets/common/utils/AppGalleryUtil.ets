@@ -1,4 +1,4 @@
-import { updateManager, commentManager } from '@kit.AppGalleryKit'
+import { commentManager } from '@kit.AppGalleryKit'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
@@ -8,31 +8,30 @@ import CommonConstants from '../constants/CommonConstants'
 
 /**
  * ── 应用市场（AppGallery Kit）统一封装 ─────────────────────────────────────────
- * 覆盖三件事：
- *   1. 检查更新 —— updateManager.checkAppUpdate / showUpdateDialog
- *   2. 应用内评分弹窗 —— commentManager.showCommentDialog
- *   3. 跳转应用市场应用详情页（写评论 / 通用详情）
+ * 覆盖两件事：
+ *   1. 应用内评分弹窗 —— commentManager.showCommentDialog
+ *   2. 跳转应用市场应用详情页（检查更新 / 写评论）
+ *
+ * ⚠️ 2026-10-21 用户简化：**「检查更新」不再先查后弹窗**，改为直接进应用市场详情页
+ * （`updateManager.checkAppUpdate` / `showUpdateDialog` 整条路径已删除 ——
+ *  未上架或网络抖动时它只能给"暂时无法检查更新"，点了等于没反应）。
+ *  用户原话：「点击之后进入应用商店的应用界面」。
  *
  * ══ 取证（全部来自本机 SDK，非记忆）═════════════════════════════════════════
  *
- * 【updateManager】`<DEVECO_SDK_HOME>\default\hms\ets\api\@hms.core.appgalleryservice.updateManager.d.ts`
- *   @syscap SystemCapability.AppGalleryService.Distribution.Update
- *   @stagemodelonly
- *   @since 5.0.0(12)
- *   function checkAppUpdate(context: common.UIAbilityContext): Promise<CheckUpdateResult>;
- *   function showUpdateDialog(context: common.UIAbilityContext): Promise<ShowUpdateResultCode>;
- *   枚举：UpdateAvailableCode { LATER_VERSION_EXIST = 1, LATER_VERSION_NOT_EXIST = 0 }
- *        ShowUpdateResultCode { SHOW_DIALOG_SUCCESS = 0, SHOW_DIALOG_FAILURE = 1 }
- *   错误码：401 / 1009400001 SA connect error / 1009400002 Request to service error /
- *          1009400003 Network error / 1009400004 The application is not in the foreground /
- *          1009400005 Not agreeing to the privacy agreement / 1009400006 Time limited / 1009400007 Other error
- *
- * 【commentManager】`...\api\@hms.core.appgalleryservice.commentManager.d.ts`
+ * 【commentManager】`<DEVECO_SDK_HOME>\default\hms\ets\api\@hms.core.appgalleryservice.commentManager.d.ts`
  *   @syscap SystemCapability.AppGalleryService.Distribution.Comment
  *   @stagemodelonly
  *   @since 6.0.0(20)
  *   function showCommentDialog(context: common.UIExtensionContext | common.UIAbilityContext): Promise<void>;
  *   错误码：1021500001~1021500009（详见下方 switch 注释）
+ *
+ * 【跳转应用详情】官方文档原文（documentId
+ *   `FAQ/应用市场服务_AppGallery_Kit/如何拉起应用市场并跳转至应用详情/faqs-appgallery-31`）：
+ *   「构造拼接bundleName的DeepLink链接，其中bundleName为需要打开的应用包名，其格式为：
+ *     store://appgallery.huawei.com/app/detail?id= + bundleName」
+ *   「在应用中调用context.startAbility()方法，拉起应用市场应用详情页」
+ *   代码原文：`action: 'ohos.want.action.appdetail'`
  *
  * 【canIUse】`...\openharmony\ets\api\@internal\full\global.d.ts:374`
  *   `export declare function canIUse(syscap: string): boolean;`  @since 11
@@ -44,9 +43,7 @@ import CommonConstants from '../constants/CommonConstants'
  * ══ 官方硬约束（决定"未上架能不能用"）══════════════════════════════════════
  *  开发指南/AppGallery_Kit_应用市场服务/应用市场更新功能/store-update 原文：
  *    「应用市场更新功能为**已上架应用**提供版本检测、显示更新提醒能力。」
- *    「约束与限制：… **应用已在应用市场上架。**」
- *  ⇒ 未上架时 checkAppUpdate 会失败或恒返回 LATER_VERSION_NOT_EXIST。
- *    因此本类所有调用**必须**能优雅降级，不允许把失败抛给用户。
+ *  ⇒ 未上架时找不到商店条目，`openStore()` 会失败并返回 false（调用方给中性提示即可）。
  *
  * ══ 真机实测修正（2026-10-18，`docs/日志.md` 原文）═════════════════════════
  *  原推断「未上架 ⇒ 1021500003 连不上应用市场」被真机**推翻**：
@@ -72,13 +69,9 @@ const APPGALLERY_ENABLED: boolean = true
 
 /** 应用评论服务 syscap（.d.ts @syscap 原文） */
 const SYSCAP_COMMENT: string = 'SystemCapability.AppGalleryService.Distribution.Comment'
-/** 应用市场更新功能 syscap（.d.ts @syscap 原文） */
-const SYSCAP_UPDATE: string = 'SystemCapability.AppGalleryService.Distribution.Update'
 
 /** commentManager 起始版本 6.0.0(20) ⇒ API 20 */
 const MIN_API_COMMENT: number = 20
-/** updateManager 起始版本 5.0.0(12) ⇒ API 12 */
-const MIN_API_UPDATE: number = 12
 
 /** 本应用包名（与 AppScope/app.json5 的 bundleName 一致；改包名时这里必须同步） */
 const BUNDLE_NAME: string = 'com.jk.reader'
@@ -89,16 +82,6 @@ const BUNDLE_NAME: string = 'com.jk.reader'
  * ⇒ 华为的账号级限制是一年，本地记到一年即可，不必永久拉黑用户。
  */
 const REVIEW_COOLDOWN_MS: number = 365 * 24 * 60 * 60 * 1000
-
-/** 检查更新的业务结果（把 SDK 的枚举 + 各类异常收敛成调用方好用的三态） */
-export enum UpdateCheckState {
-  /** 有新版本 */
-  HAS_UPDATE = 0,
-  /** 已是最新 */
-  LATEST = 1,
-  /** 无法检查（未上架 / 网络 / 服务不可用 / 能力缺失）—— 调用方应提示"暂时无法检查" */
-  UNAVAILABLE = 2
-}
 
 /** 跳转应用市场的目标页 */
 export enum StorePage {
@@ -148,81 +131,7 @@ export class AppGalleryUtil {
     return canIUse(SYSCAP_COMMENT)
   }
 
-  /** 检查更新是否可用（syscap + 版本 + 总开关） */
-  static canCheckUpdate(): boolean {
-    if (!APPGALLERY_ENABLED) {
-      return false
-    }
-    if (!AppGalleryUtil.apiAtLeast(MIN_API_UPDATE)) {
-      return false
-    }
-    return canIUse(SYSCAP_UPDATE)
-  }
-
-  // ── 1. 检查更新 ─────────────────────────────────────────────────────────
-
-  /**
-   * 检查是否有新版本。**永不抛异常**，失败一律返回 UNAVAILABLE。
-   * 官方约束：仅已上架应用可用；本地版本须低于在架版本且签名一致；不支持邀请/公开测试。
-   */
-  static async checkUpdate(context: common.UIAbilityContext): Promise<UpdateCheckState> {
-    if (!AppGalleryUtil.canCheckUpdate()) {
-      hilog.info(0x0000, TAG, 'checkUpdate skipped: capability unavailable')
-      return UpdateCheckState.UNAVAILABLE
-    }
-    try {
-      const result: updateManager.CheckUpdateResult = await updateManager.checkAppUpdate(context)
-      if (result.updateAvailable === updateManager.UpdateAvailableCode.LATER_VERSION_EXIST) {
-        hilog.info(0x0000, TAG, 'checkUpdate: LATER_VERSION_EXIST')
-        return UpdateCheckState.HAS_UPDATE
-      }
-      hilog.info(0x0000, TAG, 'checkUpdate: LATER_VERSION_NOT_EXIST')
-      return UpdateCheckState.LATEST
-    } catch (e) {
-      const err = e as BusinessError
-      // 1009400001 SA 未连接（模拟器 / 能力缺失）、1009400003 网络错误、1009400007 其他
-      // 未上架场景最可能落在 1009400002（Request to service error）或 1009400007
-      hilog.warn(0x0000, TAG, `checkUpdate failed, code=${err.code}, msg=${err.message}`)
-      return UpdateCheckState.UNAVAILABLE
-    }
-  }
-
-  /**
-   * 拉起系统升级弹窗。**永不抛异常**。
-   * 返回 true = 弹窗已成功显示；false = 无法显示（调用方应给本地提示）。
-   */
-  static async showUpdateDialog(context: common.UIAbilityContext): Promise<boolean> {
-    if (!AppGalleryUtil.canCheckUpdate()) {
-      return false
-    }
-    try {
-      const code: updateManager.ShowUpdateResultCode = await updateManager.showUpdateDialog(context)
-      const ok: boolean = code === updateManager.ShowUpdateResultCode.SHOW_DIALOG_SUCCESS
-      hilog.info(0x0000, TAG, `showUpdateDialog resultCode=${code}, ok=${ok}`)
-      return ok
-    } catch (e) {
-      const err = e as BusinessError
-      hilog.warn(0x0000, TAG, `showUpdateDialog failed, code=${err.code}, msg=${err.message}`)
-      return false
-    }
-  }
-
-  /**
-   * 「检查更新」一键流程：先查 → 有更新则拉起系统升级弹窗。
-   * 返回最终状态，供 UI 决定提示文案。
-   */
-  static async checkAndPromptUpdate(context: common.UIAbilityContext): Promise<UpdateCheckState> {
-    const state: UpdateCheckState = await AppGalleryUtil.checkUpdate(context)
-    if (state === UpdateCheckState.HAS_UPDATE) {
-      const shown: boolean = await AppGalleryUtil.showUpdateDialog(context)
-      if (!shown) {
-        hilog.warn(0x0000, TAG, 'update dialog not shown, fallback to store page')
-      }
-    }
-    return state
-  }
-
-  // ── 2. 应用内评分弹窗 ───────────────────────────────────────────────────
+  // ── 1. 应用内评分弹窗 ───────────────────────────────────────────────────
 
   /**
    * 拉起应用内评分弹窗。**永不抛异常**。

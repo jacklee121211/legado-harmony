@@ -20,7 +20,7 @@ export const APP_VERSION_FALLBACK: string = 'V2.2.0'
 export const VERSION_LOGS: VersionEntry[] = [
   {
     version: 'V2.2.0',
-    date: '2026-10-21',
+    date: '2026-10-22',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',

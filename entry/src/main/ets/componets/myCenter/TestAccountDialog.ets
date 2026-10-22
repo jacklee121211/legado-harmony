@@ -129,7 +129,7 @@ export struct TestAccountDialog {
           this.confirm()
         })
 
-      Text('账号密码登录 · 请妥善保管账号信息')
+      Text('仅供内部测试功能使用，用户无需登录')
         .fontSize(10)
         .fontColor(this.subColor())
         .width('100%')

@@ -1,5 +1,9 @@
 import MySetConstants from '../../../common/constants/MySetConstants'
 import { Attribute } from '../../../common/utils/Attribute'
+// ── 加入 QQ 群（2026-10-21 新增）：跳转走系统 openLink ────────────────────────
+import { common } from '@kit.AbilityKit'
+import { BusinessError } from '@kit.BasicServicesKit'
+import { hilog } from '@kit.PerformanceAnalysisKit'
 import { SetList, SetGroupList } from '../../../componets/dataList/SetListGroup'
 import { SetListView } from '../../../componets/myset/SetListView'
 // 首页三段按钮排序控件（2026-10-21 新增）
@@ -22,7 +26,7 @@ import { CalibMode } from '../../../common/utils/CalibMode'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 // ── 测试账号（2026-09-28 迁入）：登录下线后，测试登录+彩蛋解锁入口迁到本页顶部 ──
-import UiMotion from '../../../common/utils/UiMotion'
+import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog'
 // ── 字号阶梯（2026-10-06 统一标准，见 FontConstants「语义阶梯」段；本页文字只取这四档）──
@@ -40,8 +44,46 @@ import { VipDialog } from '../../../componets/myCenter/VipDialog'
 // 2026-10-19：「书架动画速度」滑块按用户要求**整项删除**（连 `shelfAnimSpeed` 读写一起去掉）
 // ⇒ 不再 import EntranceWave；书架入场波次回归 `EntranceWave` 内置默认档（level 3 = 0.75x）。
 
-// ── 信息窗「时间显示」三档的显示文案（2026-10-19 新增）────────────────────────
-// 值的口径与阅读页一致（`ReaderPage3` 的 `infoWinTimeMode`）：0 = 关、1 = 时:分、2 = 时:分:秒。
+// ── 喵阅官方 QQ 群（2026-10-21 新增，2026-10-22 改为优先调起 QQ App）──────────
+//
+// 三级链路：**① QQ App 群卡片 → ② 邀请链接（浏览器/H5）→ ③ 群号兜底**。
+//
+// ① `mqqapi://card/show_pslcard?...&card_type=group` —— QQ 自己声明的 scheme。
+//    ⚠️ 真机实证（Mate 80 Pro Max，2026-10-22）：`aa start -A ohos.want.action.viewData -U`
+//    该 URI 后 QQ 前台显示「喵阅软件交流群 / 群号:526836555」⇒ 直达群资料页，**不经浏览器**。
+//    ⚠️ 为什么必须用 mqqapi 而不是 https 邀请链接：
+//       `bm dump -n com.tencent.mqq` 里 QQ 声明的 `https` host 只有
+//       `qm.qq.com`（pathRegex `\b(auth|share)\b`）与 `qqso.qianbao.qq.com`，
+//       **不含 `qun.qq.com`** ⇒ https 邀请链接必然由浏览器接管（这就是"点开只跳浏览器"的根因）。
+//
+// ② 邀请链接：QQ 未安装 / scheme 拉不起来时的第二级，走系统 openLink（浏览器打开 H5 分享页）。
+//
+// ③ 群号 `526836555`：前两级都失败时按钮下方常驻展示，用户可手动搜索加群。
+const QQ_GROUP_CODE: string = '526836555'
+
+/** ① QQ App 群卡片 Deep Link（`card_type=group` + `uin=群号` 即群资料页） */
+const QQ_GROUP_SCHEME: string = `mqqapi://card/show_pslcard?src_type=internal&version=1&uin=${QQ_GROUP_CODE}&card_type=group&source=qrcode&_wv=1`
+
+/** ② 邀请链接（用户给定，原样保留 percent-encoded 的 `%2B`/`%2F` 与 base64 的 busi_data） */
+const QQ_GROUP_URL: string = 'https://qun.qq.com/universal-share/share?ac=1&authKey=d5vyZIDihejxMq67Ib9Ae05s1scbFNo4yvjkoNqcoGgnHOX0Lkf%2BabPN/bIEuAi1&busi_data=eyJncm91cENvZGUiOiI1MjY4MzY1NTUiLCJ0b2tlbiI6IlN0K0p0L3o1NWwwdEEvTEdKc0IvNXF5UGQrTDEvczUwbmxSNklXL0NGK0duWEJRVWhaeEFBVlMzTEN0anlHeUwiLCJ1aW4iOiIxNzMzODIyODc3In0=&data=uZnXBzbs3rpves1K30ISR1NR7hDg8V5OeQJ4wKxXtAklswbrdGD99qm8H5Sr-UW3FknXRZksOM8gssRqKN2leg&svctype=4&tempid=h5_group_info'
+
+/**
+ * 冷启动补发的时间点（毫秒，相对于首次 startAbility）。
+ * 空数组 `[]` = 关闭补发（一键回退开关，退回"只发一次"的行为）。
+ *
+ * 为什么是两档（2026-10-22 真机实证，用户拍板方案 B）：
+ *   QQ 群卡片冷启动会卡在「加载中」，但**进程其实活着**（`pidof` 有值）。
+ *   此时手动补发一次**立刻进群**（实测），说明补发有效，只是**时机**要对：
+ *     · 1.5s：QQ 仍在初始化，这次常被吞（用户实测仍卡）
+ *     · 卡 12s 后补发：必定成功
+ *   单档延迟无法覆盖"初始化耗时不确定"，故取两档：
+ *     1.5s —— 抢早，若 QQ 初始化快则用户几乎无感；
+ *     4.0s —— 兜底，覆盖初始化较慢的情况。
+ *   两次之间若第一次已成功进群，第二次只会再压一层群页（用户已接受的代价）。
+ */
+const QQ_RETRY_DELAYS_MS: number[] = [1500, 4000]
+
+// ── 信息窗「时间显示」三档的显示文案（2026-10-19 新增）────────────────────────// 值的口径与阅读页一致（`ReaderPage3` 的 `infoWinTimeMode`）：0 = 关、1 = 时:分、2 = 时:分:秒。
 const INFO_TIME_MODE_LABELS: string[] = ['关闭', '时:分', '时:分:秒']
 export function infoTimeLabel(mode: number): string {
   const i: number = mode < 0 ? 0 : (mode > 2 ? 2 : mode)
@@ -641,6 +683,120 @@ export default struct MySetPage{
   private testAccountDialog: CustomDialogController | null = null
 
   /**
+   * 「加入QQ群」按钮的 Q 弹缩放值（2026-10-21 新增）。
+   * 按「按钮三件套」规范自驱 `.scale()`，配方与 `webServiceItem` 同款（runJellyClick）。
+   */
+  @State qqScale: number = 1
+
+  /**
+   * 打开喵阅官方 QQ 群（2026-10-21 新增）。
+   *
+   * 为什么用 `openLink` 而不是 startAbility / App 内 Web：
+   *   · `openLink(link, options?, callback?): Promise<void>` `@since 12`
+   *     （证据：`sdk\default\openharmony\ets\api\application\UIAbilityContext.d.ts:299`）；
+   *     `OpenLinkOptions.appLinkingOnly` 默认 **false** ⇒ 无 App Linking 匹配时回落
+   *     Deep Linking（证据：`@ohos.app.ability.OpenLinkOptions.d.ts` 注释原文
+   *     "The default value is **false**"）⇒ 装了 QQ 就调 QQ，没装则由系统按 scheme 处理。
+   *   · 与本工程既有先例一致：`ContactPage.ets:86`（加 QQ 群外链）、
+   *     `TtsControlPanel.ets:1049`（AI 音色清单外链）。
+   *   · App 内 Web 要额外处理加载态/返回/权限，成本与收益不匹配（同 TtsControlPanel 结论）。
+   *
+   * 失败只提示、不抛 —— 它只是个可选入口（无网/无浏览器时用户至少知道原因）。
+   */
+  /**
+   * 加入喵阅官方 QQ 群（2026-10-21 新增；2026-10-22 改为**优先调起 QQ App** + 冷启动补发）。
+   *
+   * 三级链路（前一级失败才走下一级）：
+   *   ① `startAbility` + `mqqapi://card/show_pslcard?...&card_type=group` → QQ App 群资料页
+   *   ② `openLink(https 邀请链接)` → 浏览器打开 H5 分享页（QQ 没装 / scheme 无效时）
+   *   ③ 都失败 → toast 提示，按钮下方常驻的「QQ群号」让用户手动搜
+   *
+   * ── 为什么 ① 用 `startAbility` 隐式 Want（官方依据）────────────────────────
+   *   `开发指南/Ability_Kit_程序框架服务/应用间跳转/拉起指定应用/使用Deep_Linking实现应用间跳转/deep-linking-startup`
+   *   原文：「startAbility() 接口是将应用链接放入 Want 中，通过调用隐式 Want 匹配的方法触发应用跳转。」
+   *   示例：`let want: Want = { uri: 'link://www.example.com' }; context.startAbility(want)`
+   *   ⇒ scheme 由系统在本地已安装应用的 skills.uris 里匹配，命中 `mqqapi` 即拉起 QQ。
+   *
+   * ── 为什么不再用 https 邀请链接调 QQ（真机实证，2026-10-22）──────────────
+   *   `bm dump -n com.tencent.mqq` 显示 QQ 声明的 `https` host 只有 `qm.qq.com`
+   *   （pathRegex `\b(auth|share)\b`）与 `qqso.qianbao.qq.com`，**没有 `qun.qq.com`**
+   *   ⇒ 邀请链接必然落到浏览器（这就是之前"点开只跳浏览器"的根因）。
+   *   而 `aa start -A ohos.want.action.viewData -U 'mqqapi://card/show_pslcard?...'`
+   *   真机实测直接进 QQ 并显示「喵阅软件交流群 / 群号:526836555」。
+   *
+   * ── 为什么要在 1.5s / 4s 各**补发一次**（2026-10-22 真机 A/B 实证）──────────
+   *   QQ 冷启动时会把 URI 存进 `localStorage.jumpWantUri` 却**不消费**，导致永久卡在
+   *   「加载中」。QQ 自己的日志原文：
+   *     `NtStartup Ability onCreate, want uri:mqqapi://card/show_pslcard?..., reason:1`
+   *     `NtStartup Ability onWindowStageCreate, this.localStorage jumpWantUri:mqqapi://...`
+   *   此后整份 hilog 再无 `jumpWantUri` 的消费记录；同时 QQ 自身报
+   *     `QMMKV: use mmkv before init!!!` / `NTKernel: load config error. group_id:101468`
+   *   对照实验（同一台 Mate 80 Pro Max，同一 URI）：
+   *     · 冷启动 + 裸 URI                        → +30s 仍卡「加载中」
+   *     · 冷启动 + 补 action/entities            → +28s 仍卡（⇒ 与 Want 参数无关）
+   *     · 冷启动 + **隔 2s 重发一次**            → 直达群资料页 ✅
+   *     · 不带 scheme、让 QQ 自己冷启动          → +8s 正常（⇒ QQ 冷启动本身没坏）
+   *     · 冷启动 + `mqqapi://setting`（非群卡片）→ +12s 正常（⇒ **只有群卡片路径会卡**）
+   *     · 卡住 12s 后补发                        → 立刻进群（⇒ 补发有效，只差时机）
+   *   ⇒ 卡点在 QQ「冷启动消费 jumpWantUri」这条路径，不在我们这侧。
+   *
+   *   ⚠️ 补发的**代价**（已知、已接受，用户 2026-10-22 拍板方案 B）：
+   *     热启动时每次补发都会**多压一层群页**，用户可能要按多次返回才回 QQ 消息列表。
+   *     实测：单发按 1 次返回即回消息列表；双发按 1 次仍在群页、按 2 次才回。
+   *     为什么不做「只在冷启动时补发」：判断 QQ 是否在运行需要 `appManager.isAppRunning()`
+   *     / `getRunningProcessInformation()`，两者都要求 `ohos.permission.GET_RUNNING_INFO`，
+   *     而该权限 `availableLevel: system_basic` + `availableType: ENTERPRISE_NORMAL`
+   *     （证据：`sdk\default\openharmony\toolchains\lib\PermissionDefinitions.json`），
+   *     官方 FAQ `faqs-appgallery-78` 明确「企业类应用权限不在自助ACL列表中，需要先申请
+   *     企业发布证书」，且企业类应用「不会上架华为应用市场」⇒ 为这一个按钮不值得，故不做判断。
+   *
+   *   一键回退：把 `QQ_RETRY_DELAYS_MS` 置为空数组 `[]` 即关闭补发（退回"只发一次"）。
+   *
+   * 全部失败只提示、不抛 —— 它只是个可选入口。
+   */
+  private async openQqGroup(): Promise<void> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
+    // ① 优先调起 QQ App
+    try {
+      await ctx.startAbility({ uri: QQ_GROUP_SCHEME })
+    } catch (e) {
+      const err = e as BusinessError
+      // 16000019 No matching ability（QQ 未安装）等 ⇒ 落到第 ② 级
+      hilog.info(0x0000, 'MySetPage', `qq scheme failed, code=${err.code}, try browser`)
+      this.openQqGroupInBrowser(ctx)
+      return
+    }
+    // ①-b 冷启动补发（两档，见 QQ_RETRY_DELAYS_MS 注释）：
+    //     QQ 群卡片冷启动会吞掉首次 jumpWantUri 并卡「加载中」，但进程是活的；
+    //     初始化完成后补发即可走 onNewWant 正常进群。失败静默 —— 它只是尽力而为。
+    for (const delay of QQ_RETRY_DELAYS_MS) {
+      setTimeout((): void => {
+        ctx.startAbility({ uri: QQ_GROUP_SCHEME }).catch((err: BusinessError) => {
+          hilog.info(0x0000, 'MySetPage', `qq retry(${delay}ms) skipped, code=${err.code}`)
+        })
+      }, delay)
+    }
+  }
+
+  /** ② 浏览器兜底：打开 QQ 群邀请页；再失败则提示群号 */
+  private openQqGroupInBrowser(ctx: common.UIAbilityContext): void {
+    ctx.openLink(QQ_GROUP_URL).catch((err: BusinessError) => {
+      hilog.warn(0x0000, 'MySetPage', `qq url failed, code=${err.code}`)
+      // ③ 群号兜底（按钮下方常驻，这里只补一句提示）
+      this.toast(`打开失败，请手动搜索 QQ群：${QQ_GROUP_CODE}`)
+    })
+  }
+
+  /** showToast 会抛异常 ⇒ 按本页既有写法包 try/catch（同 `devResetFirstRun`） */
+  private toast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message })
+    } catch (e) {
+      // 提示失败不影响主流程
+    }
+  }
+
+  /**
    * 开发者入口：重放首启引导弹窗（2026-10-13 新增）。
    *
    * 用户要求「这个模块天然支持一键开关（给我们，也就是开发者保留天然开关）」
@@ -971,27 +1127,74 @@ export default struct MySetPage{
         //     ⇒ 这两种时机入口**照旧显示**，符合"其他时机不消失"）。
         //   ⚠️ 不能用 `VipManager.isVip()` 当条件 —— 邀请码/购机 IAP 都会置 VIP，会误藏入口。
         //   ⚠️ 2026-10-13 离线模式：再叠加 `!this.offlineOn`（用户要求离线时隐藏测试账号入口）。
-        if (!this.offlineOn && this.loginType !== 'test') {
+        //
+        // ── 2026-10-21：本行改**双胶囊**（用户需求）────────────────────────────
+        // 「加入QQ群」放「登录」左侧，两个胶囊整体在行内居中（大小不强求一致）。
+        //   · 外层的 `!this.offlineOn` 是本行总闸（离线模式整行隐藏，与测试账号同口径）；
+        //   · 「登录」仍按 `loginType !== 'test'` 单独判隐 —— 测试账号登录后只藏登录，
+        //     QQ群按钮照旧显示（用户口径："其他时机均不消失"）。
+        if (!this.offlineOn) {
           ListItem() {
-            Row({ space: 8 }) {
-              SymbolGlyph($r('sys.symbol.person'))
-                .fontSize(18)
-                .fontColor([this.theme.mainColor])
-              Text('登录')
-                .fontSize(FontConstants.ITEM)
-                .fontWeight(FontConstants.W_TITLE)
-                .fontColor($r('app.color.text_primary'))
+            Column({ space: 10 }) {
+              Row({ space: 12 }) {
+                // ── 加入QQ群 ──────────────────────────────────────────────────
+                // ⚠️ 图标用 `app.media.QQ_blue`（真企鹅 SVG，24×24，fill #188BFF）而不是
+                //    `sys.symbol.*`：**系统符号表里没有 QQ/企鹅**（实测 sysResource.js 的
+                //    `symbol` 段共 4043 个符号名，按 `qq|penguin|tencent` 检索 0 命中；
+                //    只有 `wechat` / `wechat_fill`）⇒ 这是本项目「三件套」中唯一可用
+                //    的图标来源，其余两件（Haptics + runJellyClick + clickEffect）照旧齐全。
+                Row({ space: 6 }) {
+                  Image($r('app.media.QQ_blue'))
+                    .width(18)
+                    .height(18)
+                    .scale({ x: this.qqScale, y: this.qqScale })
+                  Text('加入QQ群')
+                    .fontSize(FontConstants.VALUE)
+                    .fontWeight(FontConstants.W_TITLE)
+                    .fontColor($r('app.color.text_primary'))
+                }
+                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                .borderRadius(22)
+                .backgroundColor($r('app.color.card_bg'))
+                .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+                .clickEffect(UiMotion.CLICK)
+                .onClick(() => {
+                  Haptics.tap()
+                  runJellyClick((v: number): void => { this.qqScale = v })
+                  this.openQqGroup()
+                })
+
+                // ── 登录（测试账号入口，条件同 2026-10-13 口径）────────────────
+                if (this.loginType !== 'test') {
+                  Row({ space: 8 }) {
+                    SymbolGlyph($r('sys.symbol.person'))
+                      .fontSize(18)
+                      .fontColor([this.theme.mainColor])
+                    Text('登录')
+                      .fontSize(FontConstants.ITEM)
+                      .fontWeight(FontConstants.W_TITLE)
+                      .fontColor($r('app.color.text_primary'))
+                  }
+                  .padding({ left: 28, right: 28, top: 12, bottom: 12 })
+                  .borderRadius(22)
+                  .backgroundColor($r('app.color.card_bg'))
+                  .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+                  .clickEffect(UiMotion.CLICK)
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.openTestAccountDialog()
+                  })
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+
+              // ── QQ群号（2026-10-21 用户要求）────────────────────────────────
+              // 兜底：跳转失败（没装 QQ / 无网 / 链接过期）时，用户至少能手动搜索加群。
+              Text(`QQ群号：${QQ_GROUP_CODE}`)
+                .fontSize(FontConstants.CAPTION)
+                .fontColor($r('app.color.text_tertiary'))
             }
-            .justifyContent(FlexAlign.Center)
-            .padding({ left: 28, right: 28, top: 12, bottom: 12 })
-            .borderRadius(22)
-            .backgroundColor($r('app.color.card_bg'))
-            .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-            .clickEffect(UiMotion.CLICK)
-            .onClick(() => {
-              Haptics.tap();
-              this.openTestAccountDialog()
-            })
           }
           .width('100%')
           .padding({ top: 16, bottom: 4 })

@@ -11,7 +11,7 @@ import type { common } from '@kit.AbilityKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 // 版本兜底常量与更新日志同源（都由 `scripts/sync-version.ps1` 从 git 提交备注生成）
 import { APP_VERSION_FALLBACK } from './VersionLogData'
-import AppGalleryUtil, { UpdateCheckState, StorePage, CommentResult } from '../../../../common/utils/AppGalleryUtil'
+import AppGalleryUtil, { StorePage, CommentResult } from '../../../../common/utils/AppGalleryUtil'
 import RatingPromptDialog from './RatingPromptDialog'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 
@@ -28,8 +28,6 @@ export default struct AboutPage {
 
   /** 版本名（来自 AppScope/app.json5 的 versionName，运行时读取，不硬编码） */
   @State versionName: string = ''
-  /** 检查更新进行中（防重复点击） */
-  @State checkingUpdate: boolean = false
 
   /**
    * 评分引导弹窗（2026-10-13 新增）。
@@ -87,7 +85,8 @@ export default struct AboutPage {
           Column({ space: 16 }) {
             // ── 第一组：检查更新 / 评分评价 / 更新日志 ──────────────────────
             Column() {
-              this.row(this.checkingUpdate ? '检查中…' : '检查更新', (): void => {
+              // 2026-10-21：点击直接进应用市场详情页（不再先查更新），见 onCheckUpdate
+              this.row('检查更新', (): void => {
                 this.onCheckUpdate()
               }, this.versionName)
               Divider().color(this.nightOn ? '#2A2A2C' : '#F0F0F0')
@@ -204,29 +203,25 @@ export default struct AboutPage {
     }, delayMs)
   }
 
-  /** 「检查更新」 */
+  /**
+   * 「检查更新」（2026-10-21 用户简化：**直接进应用市场详情页**，不再先查后弹窗）。
+   *
+   * 为什么这么改（用户原话：「点击之后进入应用商店的应用界面」）：
+   *   · 原来走 `updateManager.checkAppUpdate` → 有新版才 `showUpdateDialog`，
+   *     未上架/网络抖动时只能给"暂时无法检查更新"，用户点了等于没反应；
+   *   · 直接进详情页，用户自己就能看到版本与更新按钮，一次点击到位。
+   *
+   * 官方依据（documentId `FAQ/应用市场服务_AppGallery_Kit/如何拉起应用市场并跳转至应用详情/faqs-appgallery-31`）：
+   *   构造 `store://appgallery.huawei.com/app/detail?id=<bundleName>`，
+   *   以 `action: 'ohos.want.action.appdetail'` 调 `context.startAbility(want)`。
+   *   实现在 `AppGalleryUtil.openStore()`（那里有完整取证与一键回退开关）。
+   */
   private async onCheckUpdate(): Promise<void> {
-    if (this.checkingUpdate) {
-      return
+    const opened: boolean = await AppGalleryUtil.openStore(this.hostContext(), StorePage.DETAIL)
+    if (!opened) {
+      // 拉不起来（应用市场被卸载 / 未上架找不到条目）⇒ 中性提示，不暴露错误码
+      this.toast('请前往应用市场查看更新')
     }
-    this.checkingUpdate = true
-    const state: UpdateCheckState = await AppGalleryUtil.checkAndPromptUpdate(this.hostContext())
-    this.checkingUpdate = false
-    if (state === UpdateCheckState.HAS_UPDATE) {
-      // showUpdateDialog 成功时系统弹窗已接管；失败则由 AppGalleryUtil 内部记录，
-      // 这里再兜一层：直接跳应用详情页让用户手动更新。
-      const opened: boolean = await AppGalleryUtil.openStore(this.hostContext(), StorePage.DETAIL)
-      if (!opened) {
-        this.toast('请前往应用市场更新')
-      }
-      return
-    }
-    if (state === UpdateCheckState.LATEST) {
-      this.toast('已是最新版本')
-      return
-    }
-    // 未上架 / 无网络 / 服务不可用 ⇒ 中性提示（这里**不**暴露错误码）
-    this.toast('暂时无法检查更新')
   }
 
   /**
