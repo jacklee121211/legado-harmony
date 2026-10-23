@@ -526,8 +526,26 @@ export default struct ReaderPage3 {
    */
   @State readerViewW: number = 0;
   @State readerViewH: number = 0;
-  private readonly isWideDevice: boolean =
-    deviceInfo.deviceType === 'tablet' || deviceInfo.deviceType === '2in1';
+  /**
+   * 是否启用「**手动方向锁 + 顶栏横竖屏按钮**」（2026-10-24 收窄为**仅平板**）。
+   *
+   * ── 为什么 2in1 被摘出去（用户 2026-10-24 拍板：按官方推荐 + 按我的推荐）──────
+   *   PC / 二合一是**自由窗口**设备：窗口宽高由用户拖拽决定，不存在"设备横竖屏"这个
+   *   概念。对它 `setPreferredOrientation(LANDSCAPE|PORTRAIT)` 等于**强行改窗口方向** ——
+   *   · 用户拖着竖长窗口看书时会突然被转成横屏；
+   *   · 官方对 2in1 的推荐是**跟随窗口、不做方向锁**（窗口模式本身已表达方向）；
+   *   ⇒ 2in1 上：**不锁方向、不显示旋转按钮**，ReaderKit 直接按当前窗口尺寸排版
+   *     （`onViewportChanged` / `applyViewportNow` 已保证窗口一变就重排）。
+   *
+   * ── 平板为什么保留 ────────────────────────────────────────────────────────
+   *   平板是**全屏 + 可自动旋转**的设备，而 ReaderKit 原生 surface 在**自动旋转后
+   *   不会重新分配**（真机实证：旋转后仍按竖屏 1840px 渲染进 2800px 窗口 ⇒ 占宽 65.7%）。
+   *   所以必须"禁自动旋转 + 由按钮手动切换"，把重建时机掌握在自己手里。
+   *
+   * 回退：把 `deviceType === 'tablet'` 改回
+   *       `deviceType === 'tablet' || deviceType === '2in1'` 即恢复 2in1 也锁方向。
+   */
+  private readonly useManualOrientation: boolean = deviceInfo.deviceType === 'tablet';
   /** 当前是否横屏（切换按钮的图标与目标方向都依赖它） */
   @State readerLandscape: boolean = false;
   // ⚠️ 亮暗色重构（2026-09-23）：`colorMode` 从 `@StorageLink('colorMode')`（与系统深浅色
@@ -3694,16 +3712,30 @@ export default struct ReaderPage3 {
   }
 
   async aboutToAppear() {
-    // ── 平板 / 2in1：阅读页锁定当前方向，禁止自动旋转（2026-10-23 用户方案 B）──
+    // ── 仅**平板**：阅读页锁定当前方向，禁止自动旋转（2026-10-23 方案 B；2026-10-24 收窄为仅平板）──
     //   根因：ReaderKit 原生 surface 在自动旋转后不重新分配 ⇒ 挤压/空白/行距异常
     //   （截图实证：文字占宽度 65.7% = 竖屏 1840px ÷ 横屏 2800px）。
     //   对策：自动旋转一律禁止，改由顶栏「横竖屏」按钮手动切换 —— 那样切换时机
-    //   完全由我们控制，可以在切换后主动重建组件（见 `toggleReaderOrientation()`）。
-    //   手机（phone）不走这里：`EntryAbility` 已把它锁成 PORTRAIT。
+    //   完全由我们控制（见 `toggleReaderOrientation()`）。
+    //   手机（phone）：`EntryAbility` 已把它锁成 PORTRAIT，不走这里。
+    //   **2in1**：自由窗口设备，**不锁方向**（窗口宽高由用户拖拽决定，锁方向等于
+    //     强行改窗口方向，官方推荐是跟随窗口），排版由 `applyViewportNow()` 跟随窗口尺寸。
     //   退出阅读页时在 `aboutToDisappear()` 恢复 `AUTO_ROTATION`。
-    if (this.isWideDevice) {
-      const info = display.getDefaultDisplaySync();
-      this.readerLandscape = info.width > info.height;
+    if (this.useManualOrientation) {
+      // ── 2026-10-24 修：方向判定改用**应用窗口**宽高，不再用 display ──────────
+      //   旧实现 `display.getDefaultDisplaySync()` 的 width/height 是**屏幕**属性，
+      //   2in1 窗口化时窗口可以是"竖长条"而屏幕是横的 ⇒ 判反 ⇒ 锁反方向 ⇒
+      //   进书第一帧就是横竖错配（正是"横屏渲染异常"的第二个来源）。
+      //   `windowWidth`/`windowHeight`（AppStorage，px）才是窗口真实尺寸。
+      //   取不到（≤0，极早期）时退回 display，行为与旧版一致。
+      const curW: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+      const curH: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+      if (curW > 0 && curH > 0) {
+        this.readerLandscape = curW > curH;
+      } else {
+        const info = display.getDefaultDisplaySync();
+        this.readerLandscape = info.width > info.height;
+      }
       WindowAbility.getInstance().setOrientationDirect(
         this.readerLandscape ? window.Orientation.LANDSCAPE : window.Orientation.PORTRAIT);
     }
@@ -3840,12 +3872,53 @@ export default struct ReaderPage3 {
     // 真正的跳转要等 ReaderKit 就绪并产生第一次 pageShow（见 tryBookmarkJump）。
     this.bmJumpIndex = temp.bmChapterIndex ?? -1
     this.bmJumpNode = temp.bmNode ?? -1
-    this.readerSetting = PreferencesUtil.getSync(`ReaderSetting_${this.bookData.bookName}`,
-      this.readerSetting) as readerCore.ReaderSetting;
+    // ⚠️⚠️ 2026-10-23 自愈（事故修复，勿删）⚠️⚠️
+    //   事故：应用接续的早期实现（`Index.applyContinueLayout`）用
+    //   `PreferencesUtil.putSync(\`ReaderSetting_${name}\`, JSON.stringify({...}))`
+    //   把这一整块**覆盖成了 3 个字段的 JSON 字符串** —— 而本处的读取契约是
+    //   "存一个 readerSetting **对象**"。于是读回来是个 string ⇒ 下面所有
+    //   `readerSetting.fontSize/lineHeight/pagingMode…` 全是 undefined ⇒
+    //   引擎收到非法配置 ⇒ **进书黑屏，且已落盘所以退出重进也黑**（用户实测）。
+    //   修复：① 源头不再从外部写这块（接续改为走 ReaderRouteParam 内存下发）；
+    //        ② 这里做类型体检，读到的不是"带 fontSize/lineHeight 的对象"就
+    //          **丢弃并用默认值重建**，让已被污染的书自动恢复。
+    const loaded: Object = PreferencesUtil.getSync(`ReaderSetting_${this.bookData.bookName}`,
+      this.readerSetting) as Object;
+    let usable: boolean = false;
+    if (loaded !== null && loaded !== undefined && typeof loaded === 'object') {
+      const cand = loaded as readerCore.ReaderSetting;
+      usable = (typeof cand.fontSize === 'number' && typeof cand.lineHeight === 'number');
+    }
+    if (usable) {
+      this.readerSetting = loaded as readerCore.ReaderSetting;
+    } else {
+      hilog.error(0x0000, 'testTag',
+        'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
+        this.bookData.bookName);
+      // 顺手把脏数据覆盖成合法值，避免每次进书都走这里
+      PreferencesUtil.putSync(`ReaderSetting_${this.bookData.bookName}`, this.readerSetting);
+    }
     // ⚠️ readerSetting 是**按书持久化**的 ⇒ 存量值会覆盖上面的新默认值。
     //    所有字段级纠正统一走 migrateReaderSetting()（版本化迁移 + scaledDensity 刷新），
     //    不要再在这里散落 ad-hoc 修正。
     this.migrateReaderSetting();
+    // ── 应用接续（2026-10-24）：字体 / 背景 / 日夜间**在内存里**套用 ──────────
+    // ⚠️ 必须放在 `migrateReaderSetting()` **之后**：迁移会做版本化纠正，先套接续值
+    //    会被迁移覆盖。也**必须**放在 `this.readerSetting = ...` 读持久位之后。
+    // ⚠️ 只改这三个（用户拍板）：字体、背景、日/夜；
+    //    **字号/行距一律不动** ⇒ 每块屏幕按自己尺寸排版，布局不变。
+    if (temp.continueFontName !== undefined && temp.continueFontName.length > 0) {
+      this.readerSetting.fontName = temp.continueFontName;
+    }
+    if (temp.continueFontPath !== undefined && temp.continueFontPath.length > 0) {
+      this.readerSetting.fontPath = temp.continueFontPath;
+    }
+    if (temp.continueNightMode !== undefined) {
+      this.readerSetting.nightMode = temp.continueNightMode;
+    }
+    if (temp.continueThemeBgImg !== undefined && temp.continueThemeBgImg.length > 0) {
+      this.readerSetting.themeBgImg = temp.continueThemeBgImg;
+    }
     // ── 自定义背景色的恢复（2026-09-25）──────────────────────────────────────
     // 必须在 `migrateReaderSetting()` **之后**（要读迁移后的 themeColor 当初始值）、
     // 在下面 `startPlay()` **之前**（`startPlay` 里的 `setPageConfig(readerSetting)`
@@ -3924,11 +3997,21 @@ export default struct ReaderPage3 {
     // `domPos` 是字符级 DOM 锚点（与排版无关）⇒ 跨设备、跨字号、跨翻页模式都精确。
     const cSpine: number = temp.continueSpine ?? -1;
     if (cSpine >= 0) {
+      hilog.info(0x0000, 'ContinueIdx',
+        'startPlay from CONTINUE: spine=%{public}d domPos=%{public}s book=%{public}s',
+        cSpine, temp.continueDomPos ?? '', this.bookData.bookName);
       this.startPlay(this.bookData.bookUrl ?? '', cSpine, temp.continueDomPos ?? '');
     } else {
+      hilog.info(0x0000, 'ContinueIdx',
+        'startPlay from LOCAL: spine=%{public}d domPos=%{public}s book=%{public}s',
+        this.bookData.localBookDurChapterPos?.resourceIndex ?? 0,
+        this.bookData.localBookDurChapterPos?.startDomPos ?? '', this.bookData.bookName);
       this.startPlay(this.bookData.bookUrl ?? '', this.bookData.localBookDurChapterPos?.resourceIndex ?? 0,
         this.bookData.localBookDurChapterPos?.startDomPos ?? '');
     }
+    // ── 应用接续（2026-10-24）：本页进入 ⇒ 向系统声明"可接续" ─────────────────
+    // 官方 `setMissionContinueState(ACTIVE)`：非此页时系统不显示接续入口。
+    ContinueBridge.setMissionActive(this.getUIContext().getHostContext() as common.UIAbilityContext, true);
     // 桌面快捷方式「快速听书」：等就绪后自动开播（见 autoStartListenWhenReady）
     if (temp.quickListen === true) {
       this.autoStartListenWhenReady(0);
@@ -4032,6 +4115,52 @@ export default struct ReaderPage3 {
           e instanceof Error ? e.message : String(e));
       }
       this.effectiveBookPath = usePath;
+      // ★★ 2026-10-23 修「非冷启动二次进书被拉抻」的**唯一根因**（真机日志铁证）★★
+      //
+      // ── 现象 ────────────────────────────────────────────────────────────────
+      //   冷启动 → 竖屏进书（正常）→ 退回书架 → **书架横置** → 横屏进书 ⇒ 整页被横向拉抻。
+      //   反过来（先横屏进书、退回、书架竖置后竖屏进书）同样复现。
+      //   冷启动第一次进书永远正常 —— 因为那时 `readerSetting` 里还没有上一次的残留值。
+      //
+      // ── 根因（`docs/日志.md` 同机复现，2026-10-23 21:10:04 那次）─────────────────
+      //     `startPlay: viewPort=1840 x 2800 , window=2800 x 1840`
+      //                ↑ 竖屏旧值（错）      ↑ 横屏新值（对）
+      //     `setPageConfig width is 1244.444`   ← 第一次（对）
+      //     `setPageConfig width is 817.7778`   ← 第二次把旧值又写回去了（错）
+      //   即：**书架已经识别横屏（window 对），但排版视口用的是上一次进书的竖屏值。**
+      //   引擎按 2800 宽排版、却画进 1840 宽的表面 ⇒ 横向拉抻。
+      //
+      // ── 为什么 `@Watch` 救不了 ───────────────────────────────────────────────
+      //   `readerSetting.viewPortWidth/Height` 全工程只有两处赋值：
+      //     · `applyViewportNow()`（由 `@Watch('onViewportChanged')` 驱动）
+      //     · `windowSizeCb`（由 `WindowAbility.onWindowSizeChange` 的 150ms 防抖驱动）
+      //   两者都只在"窗口尺寸**发生变化**"时触发。而第二次进书时**窗口尺寸早就稳定了**
+      //   （书架期间就转好了），所以进书瞬间 `@Watch` 一次都不会触发 ⇒
+      //   `readerSetting` 全程停留在**上一次进书**的尺寸上。
+      //   ⇒ 修法必须**在 `startPlay` 之前主动校准一次**，不能指望监听。
+      //
+      // ── 取值口径 ─────────────────────────────────────────────────────────────
+      //   `windowWidth/windowHeight`（AppStorage，单位 **px**）由
+      //   `WindowAbility.initWindowSize()` 在启动时就写入、`onWindowSizeChange` 持续维护
+      //   ⇒ 进书瞬间它一定已是**当前真实窗口**尺寸（日志里 `window=2800 x 1840` 即为证）。
+      //   `ReaderSetting.viewPortWidth/Height` 官方口径也是 **px**
+      //   （documentId `…/readerCore_阅读核心能力/reader-read-core`：「排版视口宽度，单位：px」）。
+      //   取不到（≤0，极早期）时不覆盖，保持原值（与旧行为一致，不引入新风险）。
+      const bootW: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+      const bootH: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+      if (bootW > 0 && bootH > 0) {
+        if (this.readerSetting.viewPortWidth !== bootW
+          || this.readerSetting.viewPortHeight !== bootH) {
+          hilog.info(0x0000, 'testTag',
+            'startPlay: viewPort STALE %{public}d x %{public}d -> corrected to %{public}d x %{public}d',
+            this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight, bootW, bootH);
+          this.readerSetting.viewPortWidth = bootW;
+          this.readerSetting.viewPortHeight = bootH;
+        }
+        // 方向状态与密度同源刷新：`aboutToAppear` 里已调 `syncReaderViewSize()` 更新组件尺寸，
+        // 这里补齐 `readerSetting` 一侧，保证两者**同一时刻指向同一对值**（防撕裂）。
+        this.refreshScaledDensity();
+      }
       // 诊断（2026-10-19）：新版式排查用 —— 页图被渲染成"原始像素尺寸"时，第一嫌疑是 viewPort 传错单位
       hilog.info(0x0000, 'testTag',
         'startPlay: viewPort=%{public}d x %{public}d , window=%{public}d x %{public}d , bookPath=%{public}s',
@@ -4065,6 +4194,11 @@ export default struct ReaderPage3 {
       this.readerComponentController.registerBookParser(this.BookHandler);
       this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
       this.readerComponentController.setPageConfig(this.readerSetting);
+      // 应用接续观测（2026-10-24）：**真正下发给引擎**的落点是什么。
+      // 与 `startPlay from CONTINUE/LOCAL` 那两行对起来看，就能区分
+      // 「参数没传到」/「传到了但引擎按自己的排版重算」两种失败。
+      hilog.info(0x0000, 'ContinueIdx',
+        'engine.startPlay: spine=%{public}d domPos=%{public}s', resourceIndex || 0, domPos);
       this.readerComponentController.startPlay(resourceIndex || 0, domPos);
       this.CatalogList.pushAllData(this.BookHandler?.getCatalogList() || []); //获取目录列表
       // 单源目录（M3，2026-10-05）：把手机端目录**标题**发布成快照，供电脑端 `GET /toc` 用。
@@ -4852,6 +4986,11 @@ export default struct ReaderPage3 {
         return;
       }
       this.bookData.localBookDurChapterPos = data;
+      // 应用接续观测（2026-10-24）：引擎**实际落点**。与 `engine.startPlay` 一比即知
+      // 接续的 domPos 有没有被采纳（若两者 spine 相同但 domPos 不同 ⇒ 引擎重算了）。
+      hilog.info(0x0000, 'ContinueIdx',
+        'engine.pageShow: spine=%{public}d startDomPos=%{public}s',
+        data.resourceIndex, data.startDomPos);
       // 应用接续（2026-10-24）：每次翻页把"此刻读到哪儿"登记到 AppStorage，
       // 供 `EntryAbility.onContinue()` 打包进 wantParam（不落盘，微秒级）。
       this.publishContinueState();
@@ -5025,50 +5164,149 @@ export default struct ReaderPage3 {
    *   旋转瞬间若走了别的 `setPageConfig()` 入口（本文件有 30+ 处），
    *   带的就是**上一次的旧尺寸**。
    *
-   * ── 做法 ──────────────────────────────────────────────────────────────────
-   *   ① **立即**把最新宽高写进 `readerSetting`（同步、无延迟）
-   *      ⇒ 之后**任何**一处 `setPageConfig(this.readerSetting)` 都自带正确尺寸，
-   *        彻底消除"旧尺寸 + 新方向"的组合；
-   *   ② 重排本身做 **180ms 防抖**合并（日志实证一次旋转会连推 6 次 config、
-   *      每次重排整本书 ⇒ 卡顿 + 闪），只在稳定后重排一次。
+   * ── 做法（2026-10-24 修订）─────────────────────────────────────────────────
+   *   ① @Watch 里**只做计时器合流**，不同步任何状态（原①"立即写 readerSetting"
+   *      在撕裂态下等于把**错的**尺寸写进去，已废弃）；
+   *   ② 合流后 `applyViewportNow()` **重新从 AppStorage 读一对值**，
+   *      同一时刻写进 `readerSetting` + 原生组件显式宽高，并刷新密度与方向状态；
+   *   ③ 重排本身仍做 **180ms 防抖 + 450ms 兜底**（日志实证一次旋转会连推
+   *      6 次 config、每次重排整本书 ⇒ 卡顿 + 闪），只在稳定后重排一次。
    */
   onViewportChanged(): void {
-    const w: number = this.windowWidth;
-    const h: number = this.windowHeight;
+    // ⚠️⚠️ 2026-10-24 修「平板横屏渲染异常」的**核心一处**：@Watch 里绝不能再直接取宽高。
+    //
+    // ── 根因：撕裂尺寸（torn state）──────────────────────────────────────────
+    //   `windowWidth` / `windowHeight` 是**两个独立的 AppStorage 键**，而 AppStorage
+    //   没有"批量写"，`WindowAbility.onWindowSizeChange` 只能分两次 set：
+    //     AppStorage.setOrCreate('windowWidth',  size.width)    ← 第一次
+    //     AppStorage.setOrCreate('windowHeight', size.height)   ← 第二次
+    //   本组件两个字段**都挂了 @Watch** ⇒ 一次旋转会**先**回调一次，此刻
+    //   `windowWidth` 已是新值、`windowHeight` 还是旧值。
+    //   旧实现在那次回调里立刻 `syncReaderViewSize(newW, oldH)` 并把
+    //   `readerSetting.viewPortHeight` 写成旧值 ⇒ 原生组件被摆成
+    //   「**新的宽 + 旧的（竖屏）高**」 ⇒ 横屏下高度按竖屏算 = 内容被裁切/压扁。
+    //   这就是用户报的「平板端横屏状态下渲染异常」的代码级解释
+    //   （与另一路"surface 不重新分配"是两个独立成因，两者都已处理）。
+    //
+    // ── 做法 ─────────────────────────────────────────────────────────────────
+    //   ① @Watch 里**只重置计时器**，不同步任何状态；
+    //   ② 0ms 后执行：两个键在同一个同步回调里连续写入 ⇒ 宏任务必然排在两者之后，
+    //      此时读到的一定是**同一时刻的一对值**；
+    //   ③ 一次旋转无论触发 2 次还是 6 次 @Watch，最终只 `applyViewportNow()` 一次。
+    if (this.viewportSyncTimer !== -1) {
+      clearTimeout(this.viewportSyncTimer);
+    }
+    this.viewportSyncTimer = setTimeout(() => {
+      this.viewportSyncTimer = -1;
+      this.applyViewportNow('watch');
+    }, 0);
+  }
+
+  /**
+   * 把「当前真实窗口尺寸」一次性应用到阅读器：视口参数 + 原生组件显式尺寸 + 方向/密度状态。
+   *
+   * **所有入口统一走这里**（@Watch 合流、手动切方向后的轮询），保证任何路径下
+   * 算出来的尺寸都来自**同一时刻的两个值**，不会再出现撕裂组合。
+   */
+  private applyViewportNow(tag: string): void {
+    // 重新从 AppStorage 读，而不是用 `this.windowWidth` 字段
+    // （@StorageLink 本地字段与 AppStorage 之间存在时序差，详见 registerListener 注释）
+    const w: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+    const h: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
     if (w <= 0 || h <= 0) {
       return;
     }
-    // ① 立即同步，保证后续任何 setPageConfig 都是正确尺寸
+    // ① 立即同步视口参数，保证之后任何 setPageConfig 都自带正确尺寸
     this.readerSetting.viewPortWidth = w;
     this.readerSetting.viewPortHeight = h;
-    // ①' **官方标准解法**：同步更新原生组件的显式宽高（vp）
+    // ①' 密度跟着刷新（旋转 / 2in1 窗口缩放后 scaledDensity 可能变，
+    //    旧实现只在字段初始化时算一次 ⇒ 一直是旧值，px↔vp 换算基准就错了）
+    this.refreshScaledDensity();
+    // ①'' 方向状态由**真实窗口宽高**派生，不再依赖本地布尔翻转（防按钮与实际画面脱钩）
+    this.syncReaderLandscape();
+    // ② **官方标准解法**：同步原生组件的显式宽高（vp）
     //    尺寸状态一变 ⇒ ArkUI 重新布局 `ReadPageComponent` ⇒ 原生 surface 按新尺寸
     //    重新分配（这是修好"挤压/留白"的关键，详见 `readerViewW` 的注释）。
     this.syncReaderViewSize(w, h);
-    // ② 重排防抖：一次旋转只重排一次
+    // ③ 重排防抖：一次旋转只重排一次
     if (this.viewportTimer !== -1) {
       clearTimeout(this.viewportTimer);
     }
     this.viewportTimer = setTimeout(() => {
       this.viewportTimer = -1;
-      this.pushViewportConfig('debounce180');
+      this.pushViewportConfig(tag + '-180');
     }, 180);
-    // ③ **二次兜底**（2026-10-23 用户截图实证后补）：
-    //   截图现象 = 文字只在左侧一部分换行 + 行距被拉开巨大空白（竖屏）、
-    //   文字横向被拉宽（横屏）⇒ **内容按旧视口排版后被拉伸，而不是按新视口重排**。
-    //   原因：180ms 时 ArkUI 可能**还没完成**新尺寸的布局，此刻推 config
-    //   引擎拿到的仍是过渡态尺寸 ⇒ 必须等布局稳定后再补推一次。
-    //   两次都推是无害的（`setPageConfig` 幂等，尺寸相同时引擎不会重出纹理），
-    //   但能保证"最后一次下发的尺寸 = 最终窗口尺寸"。
+    // ④ 二次兜底：180ms 时 ArkUI 可能**还没完成**新尺寸布局，稳定后再补推一次
+    //    （`setPageConfig` 幂等，尺寸没变不会重出纹理）
     if (this.viewportRetryTimer !== -1) {
       clearTimeout(this.viewportRetryTimer);
     }
     this.viewportRetryTimer = setTimeout(() => {
       this.viewportRetryTimer = -1;
-      this.pushViewportConfig('retry450');
+      this.pushViewportConfig(tag + '-450');
     }, 450);
   }
 
+  /**
+   * 原生阅读组件的尺寸绑定方式（2026-10-24 A/B 开关）。
+   *
+   * `true`  = **官方 ReaderKit 方式**：`.width('100%').height('100%')` 跟随父容器，
+   *           由 ReaderKit 自己按 surface 实测尺寸排版（官方示例即如此）。
+   * `false` = 旧做法：绑死 `readerViewW/H`（按窗口 px 手算的 vp 数值）。
+   *
+   * 真机表现对比见 `build()` 里 ReadPageComponent 处的长注释。
+   * 回退只需改这一个布尔。
+   */
+  private readonly sizeByPercent: boolean = true;
+
+  /** 原生组件宽度（见 `sizeByPercent`） */
+  private compWidth(): Length {
+    return this.sizeByPercent ? '100%' : this.readerViewW;
+  }
+
+  /** 原生组件高度（见 `sizeByPercent`） */
+  private compHeight(): Length {
+    return this.sizeByPercent ? '100%' : this.readerViewH;
+  }
+
+  /**
+   * 刷新 ReaderKit 的 `scaledDensity`（2026-10-24 新增）。
+   * ReaderKit 的 `viewPortWidth` / 字号都以 **px** 为基准，密度变了而这里不更新，
+   * 引擎换算出来的物理尺寸就会整体偏移（横屏 / 2in1 拖动窗口后尤其明显）。
+   */
+  private refreshScaledDensity(): void {
+    try {
+      const d = display.getDefaultDisplaySync();
+      const sd: number = d.scaledDensity > 0 ? d.scaledDensity : 1;
+      if (this.readerSetting.scaledDensity !== sd) {
+        this.readerSetting.scaledDensity = sd;
+        hilog.info(0x0000, 'testTag', 'refreshScaledDensity -> %{public}f', sd);
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'refreshScaledDensity failed: %{public}s',
+        e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /**
+   * 把 `readerLandscape` 同步成**真实窗口**的宽高比（2026-10-24 新增）。
+   *
+   * 旧实现只在 `aboutToAppear` 和按钮点击时赋值 ⇒ 一旦系统侧旋转没成功、
+   * 或用户用系统手势/外接键盘触发旋转，`readerLandscape` 就与真实方向**永久脱钩**：
+   * 图标反向、点一次"转过去"实际是转回来，表现就是「切换按钮异常」。
+   */
+  private syncReaderLandscape(): void {
+    const w: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+    const h: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+    if (w <= 0 || h <= 0) {
+      return;
+    }
+    const land: boolean = w > h;
+    if (this.readerLandscape !== land) {
+      this.readerLandscape = land;
+      hilog.info(0x0000, 'testTag', 'syncReaderLandscape -> %{public}s', String(land));
+    }
+  }
   /** 把当前 `readerSetting`（已含最新视口尺寸）下发给 ReaderKit */
   private pushViewportConfig(tag: string): void {
     try {
@@ -5116,11 +5354,26 @@ export default struct ReaderPage3 {
 
   /** 视口重排防抖计时器（见 `onViewportChanged()`） */
   private viewportTimer: number = -1;
-  /** 视口重排二次兜底计时器（见 `onViewportChanged()` ③） */
+  /** 视口重排二次兜底计时器（见 `applyViewportNow()` ④） */
   private viewportRetryTimer: number = -1;
+  /**
+   * `windowWidth` / `windowHeight` 两个 `@Watch` 的**合流计时器**（2026-10-24 新增）。
+   * 0ms 即可：两个键在同一个同步回调里连续写入，宏任务必然在两者都落定后执行。
+   * 详见 `onViewportChanged()` 的根因注释。
+   */
+  private viewportSyncTimer: number = -1;
+  /** 手动切方向后「等真实尺寸翻转」的轮询计数（见 `waitForOrientationFlip()`） */
+  private rotatePollTimer: number = -1;
+  private rotatePollAttempt: number = 0;
+  /**
+   * 注册到 `WindowAbility` 的尺寸变化回调句柄（2026-10-24 新增）。
+   * 存成字段是为了在 `aboutToDisappear` 里用**同一个引用**精确注销
+   * （见 `WindowAbility.offWindowSizeChange()` 的注释：不注销会导致陈旧回调堆积）。
+   */
+  private windowSizeCb: (() => void) | null = null;
 
   /**
-   * 手动切换横竖屏（2026-10-23 用户设计：防窥左侧的 symbol 按钮，仅平板 / 2in1）。
+   * 手动切换横竖屏（2026-10-23 用户设计：防窥左侧的 symbol 按钮，**仅平板**）。
    *
    * ── 为什么只要"切方向 + 同步显式尺寸"，不需要销毁重建 ────────────────────
    *   前几轮走过两条弯路，都失败且副作用严重，**不要再回去**：
@@ -5140,37 +5393,88 @@ export default struct ReaderPage3 {
    *     「将播放窗口的尺寸定义为 @State 状态，并设置到 XComponent 组件上」
    *     「在监听窗口变化的回调中，动态调整 XComponentWidth 和 XComponentHeight」。
    *
-   * ── 流程 ──────────────────────────────────────────────────────────────────
-   *   ① 切方向（`setPreferredOrientation`）
-   *   ② 等旋转动画结束、窗口尺寸稳定（420ms）→ `syncReaderViewSize()` 同步显式宽高
-   *   ③ 再等 260ms 兜底同步一次 + 补推一次排版参数（幂等，尺寸没变不会重出纹理）
+   * ── 流程（2026-10-24 重做：不再靠固定 sleep 猜时机）────────────────────────
+   *   ① 切方向（`setPreferredOrientation`）并**等它的 Promise resolve**；
+   *   ② `waitForOrientationFlip()` **轮询真实窗口宽高**（100ms × 至多 12 次 = 1.2s），
+   *      确认"真的翻过来了"才继续 —— 转得慢不会误判、转得快不白等；
+   *   ③ 确认后统一走 `applyViewportNow()`：一次性写视口 + 原生组件显式宽高 + 密度 + 方向状态，
+   *      内部再带 180ms 主推 + 450ms 兜底（幂等）。
+   *   超时（1.2s 仍未翻转）也按**当时的真实尺寸**同步一次，绝不把状态卡死。
    *
-   * 回退：把顶栏那个 `SymbolGlyph` 的 `if (this.isWideDevice)` 删掉即恢复
+   * 回退：把顶栏那个 `SymbolGlyph` 的 `if (this.useManualOrientation)` 删掉即恢复
    *   "没有切换按钮"（此时阅读页仍锁定方向，只是没法手动转）。
    */
   private toggleReaderOrientation(): void {
-    if (!this.isWideDevice) {
+    if (!this.useManualOrientation) {
       return;
     }
     Haptics.tap();
-    const targetLandscape: boolean = !this.readerLandscape;
+    // ── 2026-10-24 重做：目标方向取「**真实窗口**宽高比」的反面 ────────────────
+    //   旧实现用 `!this.readerLandscape` 做目标 —— 而 `readerLandscape` 只在
+    //   `aboutToAppear` 与上一次点击时赋值，一旦系统侧旋转没成功（或用户用系统手势、
+    //   外接键盘触发过旋转），它与真实方向就**永久脱钩**：
+    //   按钮显示"横屏"其实已是竖屏 ⇒ 点一下的目标仍是横屏 ⇒ 系统收到"已经是横屏了"
+    //   ⇒ 画面不动，用户看到的就是「切换按钮点了没反应 / 切反了」。
+    //   现在目标一律由**当前真实窗口**推导，永远自洽。
+    const curW: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+    const curH: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+    const curLandscape: boolean = (curW > 0 && curH > 0) ? (curW > curH) : this.readerLandscape;
+    const targetLandscape: boolean = !curLandscape;
+    // 乐观更新图标状态（`syncReaderLandscape()` 会在尺寸真正翻转后再校正一次）
     this.readerLandscape = targetLandscape;
+    // 清掉上一次可能还在跑的轮询
+    if (this.rotatePollTimer !== -1) {
+      clearTimeout(this.rotatePollTimer);
+      this.rotatePollTimer = -1;
+    }
+    this.rotatePollAttempt = 0;
+    // ① 切方向 —— **等它 resolve 再确认**（旧实现发完就 sleep 420ms，纯猜）
     WindowAbility.getInstance().setOrientationDirect(
-      targetLandscape ? window.Orientation.LANDSCAPE : window.Orientation.PORTRAIT);
-    // ② 等旋转动画结束、窗口尺寸稳定后，同步原生组件的显式宽高。
-    //   ★ 这才是官方标准解法（见 `readerViewW` 字段注释）：尺寸状态一变，
-    //     ArkUI 会重新布局 `ReadPageComponent`，原生 surface 按新尺寸重新分配。
-    //   ★ **不再销毁重建组件、不再换 controller** —— 那套做法会导致
-    //     背景/材质丢失（新 controller 是全新实例，所有排版与主题设置都要重配）、
-    //     以及反复注册把 ReaderKit 原生状态搞坏（黑屏）。
-    setTimeout(() => {
-      this.syncReaderViewSize();
-      // 尺寸落定后再补一次排版参数（幂等，尺寸没变时引擎不会重出纹理）
-      setTimeout(() => {
-        this.syncReaderViewSize();
-        this.pushViewportConfig('afterRotate');
-      }, 260);
-    }, 420);
+      targetLandscape ? window.Orientation.LANDSCAPE : window.Orientation.PORTRAIT
+    ).then((): void => {
+      // ② 轮询等「窗口尺寸真的翻过来」，翻到了才同步尺寸与排版参数
+      this.waitForOrientationFlip(targetLandscape);
+    }).catch((e: Error): void => {
+      hilog.warn(0x0000, 'testTag', 'toggleReaderOrientation failed: %{public}s', e.message);
+      this.syncReaderLandscape();
+    });
+  }
+
+  /**
+   * 轮询等待窗口尺寸真的翻转到目标方向（2026-10-24 新增）。
+   *
+   * ── 为什么必须轮询，而不是固定 sleep ──────────────────────────────────────
+   *   `setPreferredOrientation()` 只表示"请求已受理"，**不保证已经转完**
+   *   （窗口模式受限、系统策略、分屏等都可能拒绝或延迟）。固定 420ms 有两个坏处：
+   *     · 转得慢的设备 → 420ms 时尺寸还是旧值 ⇒ 把旧尺寸同步给原生组件 ⇒ 挤压；
+   *     · 转得快的设备 → 白等 420ms，用户看到明显的空窗期。
+   *   轮询到"真的翻了"立刻同步，既正确又快。
+   *
+   * ── 上限 ─────────────────────────────────────────────────────────────────
+   *   100ms × 12 = **1.2s**；超时也照样同步一次（拿当时的真实值），不会卡死状态。
+   */
+  private waitForOrientationFlip(targetLandscape: boolean): void {
+    if (this.disposed) {
+      return;
+    }
+    const w: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+    const h: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+    const nowLandscape: boolean = (w > 0 && h > 0) ? (w > h) : this.readerLandscape;
+    if (nowLandscape === targetLandscape || this.rotatePollAttempt >= 12) {
+      if (this.rotatePollAttempt >= 12 && nowLandscape !== targetLandscape) {
+        hilog.warn(0x0000, 'testTag',
+          'waitForOrientationFlip: 超时未翻转（target=%{public}s, now=%{public}s），按当前真实尺寸同步',
+          String(targetLandscape), String(nowLandscape));
+      }
+      // 尺寸已翻转 ⇒ 一次性应用（内部含 180/450ms 两次幂等重推）
+      this.applyViewportNow('afterRotate');
+      return;
+    }
+    this.rotatePollAttempt++;
+    this.rotatePollTimer = setTimeout(() => {
+      this.rotatePollTimer = -1;
+      this.waitForOrientationFlip(targetLandscape);
+    }, 100);
   }
 
   private registerListener(): void {
@@ -5184,7 +5488,13 @@ export default struct ReaderPage3 {
       hilog.warn(0x0000, 'testTag', 'on(resourceRequest) 注册失败: %{public}s',
         e instanceof Error ? e.message : String(e));
     }
-    WindowAbility.getInstance().onWindowSizeChange(() => {
+    // ⚠️⚠️ 2026-10-24：回调**必须先存字段再注册** —— 退出时要用同一个引用精确注销。
+    //   旧实现直接写内联箭头函数，退出时无从注销，`WindowAbility.sizeCallbacks` 只增不减，
+    //   于是"进过几次阅读页就堆积几个陈旧回调"，退出后它们仍在跑并且对着已释放的
+    //   controller 调 `setPageConfig` ⇒ 排版参数被多个陈旧实例反复覆盖 ⇒ 挤压/留白。
+    //   真机日志实证：退出阅读页后 1.2s 仍出现 `syncReaderViewSize`（见
+    //   `WindowAbility.offWindowSizeChange()` 的注释）。
+    this.windowSizeCb = (): void => {
       // ⚠️ 2026-10-23 修「竖屏偶尔整页被挤压」：**必须读 AppStorage 里的最新值**，
       //   不能用 `this.windowWidth` —— 它是 `@StorageLink`，其本地字段的同步更新
       //   与监听器回调之间存在时序差，旋转瞬间可能读到**旋转前的旧值**
@@ -5208,7 +5518,8 @@ export default struct ReaderPage3 {
           console.error('onWindowSizeChange, error ' + JSON.stringify(e));
         }
       }
-    });
+    };
+    WindowAbility.getInstance().onWindowSizeChange(this.windowSizeCb);
   }
 
   /**
@@ -5369,14 +5680,44 @@ export default struct ReaderPage3 {
   }
 
   aboutToDisappear(): void {
-    // ★ 应用接续（2026-10-24）：退出阅读页就清掉"当前阅读态"登记 ——
-    //   否则用户在书架上还能把一本**已经退出的书**接续过去（EntryAbility.onContinue
-    //   会误判"正在阅读"而返回 AGREE）。放在最前：后面几处会提前 return / 释放资源。
-    ContinueBridge.clear();
-    // ★ 平板 / 2in1：退出阅读页恢复**自由旋转**（2026-10-23）。
+    // ★ 应用接续（2026-10-24）：离开阅读页 ⇒ 声明"不可接续"。
+    //   ⚠️ 只关开关、**不删阅读态** —— 键回落场景：用户读到某处 → 退回书架 →
+    //      立刻发起接续。旧实现在这里 `clear()` 会让那条路直接 REJECT，
+    //      而留一份几百字节的 AppStorage 快照毫无代价（真正的门禁是 mission state）。
+    ContinueBridge.leaveReader(this.getUIContext().getHostContext() as common.UIAbilityContext);
+    // ★ 2026-10-24：清掉本页所有延时/轮询计时器
+    //   （尺寸合流 viewportSyncTimer + 重排防抖 viewportTimer + 兜底 viewportRetryTimer
+    //    + 旋转轮询 rotatePollTimer）。
+    //   为什么必须清：这些回调都会去调 `pushViewportConfig()` / `syncReaderViewSize()`，
+    //   而 `aboutToDisappear` 之后 `releaseBook()` 会释放控制器 ⇒ 迟到的回调
+    //   对着已释放的控制器 `setPageConfig` 会报错刷日志（历史上有过这类噪声）。
+    if (this.viewportSyncTimer !== -1) {
+      clearTimeout(this.viewportSyncTimer);
+      this.viewportSyncTimer = -1;
+    }
+    if (this.viewportTimer !== -1) {
+      clearTimeout(this.viewportTimer);
+      this.viewportTimer = -1;
+    }
+    if (this.viewportRetryTimer !== -1) {
+      clearTimeout(this.viewportRetryTimer);
+      this.viewportRetryTimer = -1;
+    }
+    if (this.rotatePollTimer !== -1) {
+      clearTimeout(this.rotatePollTimer);
+      this.rotatePollTimer = -1;
+    }
+    // ★ 2026-10-24：注销尺寸变化回调（**必须与 registerListener 的注册配对**）。
+    //   不注销的后果见 `WindowAbility.offWindowSizeChange()` 注释：
+    //   陈旧回调会对着已释放的 controller 调 `setPageConfig`，排版参数被反复覆盖。
+    if (this.windowSizeCb !== null) {
+      WindowAbility.getInstance().offWindowSizeChange(this.windowSizeCb);
+      this.windowSizeCb = null;
+    }
+    // ★ 仅**平板**：退出阅读页恢复**自由旋转**（2026-10-23；2026-10-24 收窄为仅平板）。
     //   进入阅读页时锁了方向（见 `aboutToAppear`），这里必须还原，
-    //   否则书架等页面也会被锁死。
-    if (this.isWideDevice) {
+    //   否则书架等页面也会被锁死。2in1 从未锁方向 ⇒ 无需还原。
+    if (this.useManualOrientation) {
       WindowAbility.getInstance().setOrientationDirect(window.Orientation.AUTO_ROTATION);
     }
     // ★ 退出阅读页 ⇒ 清掉"PDF 放大中"这个全局标志（2026-10-19）：
@@ -5613,6 +5954,10 @@ export default struct ReaderPage3 {
         if (cur !== null) {
           this.lastAudioPos = cur;
         }
+        // 应用接续（2026-10-24）：听书每推进一句就刷新接续落点。
+        // 官方体验建议要求同步「阅读**及听书**进度」，这是听书侧唯一的可靠打点
+        // （`onProgress` 是句内逐字符，太密；这里按句触发，频率刚好）。
+        this.publishListenState();
         this.scrollMiniBar(0);
         this.syncImmersivePage();
         this.updateHighlight();
@@ -7055,28 +7400,45 @@ export default struct ReaderPage3 {
         // PDF 原地放大（2026-10-19 用户方案）：缩放直接作用在阅读器本体上，
         // 不用进出任何"独立图片页"。`pdfZoomPct` 100 时这两个 transform 都是 identity。
         //
-        // ⚠️⚠️ 2026-10-23 **官方标准解法**（不要再改回 `.width('100%')`）：
-        //   官方最佳实践《视频类应用横竖屏切换》
-        //   （documentId `最佳实践/影音娱乐/视频类应用横竖屏切换/bpta-landscape-and-portrait-development`）
-        //   对原生渲染组件要求把宽高定义成 `@State` 并**绑定具体数值**：
-        //     「将播放窗口的尺寸定义为 @State 状态，并设置到 XComponent 组件上」
-        //     `XComponent({...}).width(this.xComponentWidth).height(this.xComponentHeight)`
-        //     「在监听窗口变化的回调中，动态调整 XComponentWidth 和 XComponentHeight」
+        // ── 尺寸绑定方式：**改为跟随官方 ReaderKit 示例**（2026-10-24）─────────────
+        // 官方文档（documentId `…/ReadPageComponent_阅读页组件/reader-api-readpagecomponent`）
+        // 明确写：本组件「支持适配不同的设备屏幕尺寸（Phone、PC/2in1、Tablet，
+        // **包括横竖屏适配**）」，而**官方示例并没有给它绑死宽高**，只套了
+        // `Stack() { ReadPageComponent({...}) }.width('100%').height('100%')`。
         //
-        //   为什么百分比不行（真机实测 + 截图实证）：
-        //     `'100%'` 只是让 ArkUI 按父容器裁剪/拉伸，**不会让原生 surface 按新尺寸
-        //     重新分配** ⇒ 旋转后画面仍按旧尺寸渲染 —— 竖屏进书再切横屏时
-        //     左侧正常、右侧留白，留白宽度正是「旧竖屏宽 ÷ 新横屏宽」的差额。
-        //   绑具体数值后：尺寸一变 ArkUI 必然重新布局该原生组件 ⇒ surface 重建 ⇒ 正常。
-        //   （自绘模式「上下滑动」不受影响：它走纯 ArkUI 组件，百分比天然会重排。）
+        // 之前我们套用的是《视频类应用横竖屏切换》那篇（bpta-landscape-and-portrait-
+        // development）—— 那是给 **XComponent / 视频** 的最佳实践，不是 ReaderKit 的用法。
+        // 把"按窗口 px 手算出 vp 数值再绑给原生组件"这套挪到 ReaderKit 上，
+        // 会让 **ArkUI 的布局尺寸** 与 **引擎自己测得的 surface 尺寸** 互相打架，
+        // 正是"横屏被压到左侧 65.7% / 右侧巨量留白"的形态
+        // （65.7% = 竖屏宽 1840 ÷ 横屏宽 2800，两个方向的值被混用了一帧）。
+        //
+        // ⇒ 现在默认走官方方式（`sizeByPercent = true`）：组件跟随父容器 100%，
+        //   让 ReaderKit 自己按 surface 实测尺寸排版；我们只负责把**正确的 px 视口**
+        //   通过 `setPageConfig` 告诉它（单位见官方：viewPortWidth/Height 单位 px）。
+        // 回退：把 `sizeByPercent` 改 false ⇒ 恢复"绑死 readerViewW/H 数值"的旧做法，
+        //   用于真机 A/B 对比。
         ReadPageComponent({
           controller: this.readerComponentController,
           readerCallback: (err: BusinessError, data: readerCore.ReaderComponentController) => {
             this.readerComponentController = data;
           }
         })
-          .width(this.readerViewW)
-          .height(this.readerViewH)
+          .width(this.compWidth())
+          .height(this.compHeight())
+          // ★ 2026-10-23 取证专用：把**原生组件节点自身的真实尺寸**打出来。
+          //   用途：区分「横屏异常」的两个可能成因 ——
+          //     ① 节点尺寸没变（ArkUI 没重新布局）⇒ 是**我们的布局**问题；
+          //     ② 节点尺寸变了、但 XComponent surface 没重新分配（日志里看不到
+          //        `OnSurfaceChangedCB`）⇒ 是 **ReaderKit 内部**没把 surface 尺寸更新。
+          //   两者修法完全不同，不能靠猜。诊断稳定后可删（只在 area 变化时触发，开销可忽略）。
+          .onAreaChange((_oldArea: Area, newArea: Area) => {
+            const ww: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+            const wh: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+            hilog.info(0x0000, 'testTag',
+              'ReadPageComponent area -> %{public}s x %{public}s vp | window %{public}d x %{public}d px',
+              String(newArea.width), String(newArea.height), ww, wh);
+          })
           .scale({ x: this.pdfScale(), y: this.pdfScale() })
           .translate({ x: this.pdfOffX, y: this.pdfOffY })
       } else {
@@ -7565,17 +7927,19 @@ export default struct ReaderPage3 {
                 .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                 .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
 
-              // ── 横竖屏切换（2026-10-23 用户设计）────────────────────────────
-              // 位置：**防窥左侧**（用户指定）。**仅平板 / 2in1 显示**，手机不需要
-              //   （手机在 `EntryAbility` 里已锁竖屏，`isWideDevice` 恒 false）。
+              // ── 横竖屏切换（2026-10-23 用户设计；2026-10-24 收窄为**仅平板**）──
+              // 位置：**防窥左侧**（用户指定）。**仅平板显示**。
+              //   · 手机：`EntryAbility` 已锁竖屏，`useManualOrientation` 恒 false。
+              //   · 2in1：自由窗口设备，窗口宽高由用户拖拽，**不需要也不应该**旋转锁 ——
+              //     官方推荐跟随窗口，编排交给 `applyViewportNow()`。
               // 图标：`sys.symbol.rectangle_portrait_rotate`（SDK `toolchains/id_defined.json`
               //   实证存在）。横屏时点它转竖屏、竖屏时点它转横屏，图标不随状态变
               //   （语义就是"旋转屏幕"，比换图标更直观，也避免用户误以为是两种功能）。
               // 为什么要这个按钮：平板阅读页**锁定了方向**（禁止自动旋转）——
               //   因为 ReaderKit 原生 surface 在自动旋转后不重新分配，会出现挤压/空白；
               //   改由本按钮手动切换，切换时机可控，可主动重建组件。
-              // 回退：删掉这个 `if (this.isWideDevice) { … }` 整块即可。
-              if (this.isWideDevice) {
+              // 回退：删掉这个 `if (this.useManualOrientation) { … }` 整块即可。
+              if (this.useManualOrientation) {
                 SymbolGlyph($r('sys.symbol.rectangle_portrait_rotate'))
                   .fontSize(22)
                   .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
@@ -9340,15 +9704,46 @@ export default struct ReaderPage3 {
    * 调用点：`pageShow`（分页模式每次翻页）、`persistScrollProgress`（滚动模式）。
    */
   private publishContinueState(): void {
-    const name: string = this.bookData.bookName ?? '';
-    if (name.length === 0) {
-      return;
-    }
     const pd: readerCore.PageDataInfo | null | undefined = this.bookData.localBookDurChapterPos;
     if (pd === undefined || pd === null) {
       return;
     }
-    // 本书自定义背景记录（自定义颜色/材质）：JSON 太长就不带，防撑破 wantParam 100KB
+    // 统一委托给 `publishContinueStateWith()`：payload 的字段组装只有一处，
+    // 避免"阅读分支 / 听书分支"两份字段表各自漂移（曾经就因为两份逻辑不一致踩过坑）。
+    // ⚠️ 用公开的 `TtsEngine.getState()`，不要用 `isPlaying()`（那是 private）。
+    this.publishContinueStateWith(pd.resourceIndex ?? 0, pd.startDomPos ?? '',
+      TtsEngine.getState() !== 'stopped');
+  }
+
+  /**
+   * 听书进度上报（2026-10-24 新增）。
+   *
+   * 官方《常见接续场景体验建议》对「新闻阅读」类明确要求同步「阅读**及听书**进度」。
+   * `TtsEngine.currentSegment()` 给的是同一套 ReaderKit 坐标（spine / 块节点 / 节点内字符），
+   * 用 `domPosFor(node, char)` 换算成字符级 DOM 锚点 ⇒ 对端能精确落到"正在听的那句"。
+   *
+   * 调用点：TTS 的「按句推进」回调（`onSentence` 分支）—— 每推进一句刷新一次，
+   * 频率与听书进度显示一致，不额外增加唤醒。
+   */
+  private publishListenState(): void {
+    // ⚠️ 用公开的 `getState()`，不要用 `TtsEngine.isPlaying()`（那是 private）
+    if (TtsEngine.getState() === 'stopped') {
+      return;
+    }
+    const seg: TtsSegmentPos | null = TtsEngine.currentSegment();
+    if (seg === null || seg.spineIndex < 0) {
+      return;
+    }
+    this.publishContinueStateWith(seg.spineIndex,
+      this.domPosFor(seg.nodeIndex, seg.charStart ?? 0), true);
+  }
+
+  /** 用指定落点发布接续态（听书分支复用；`listen` 仅用于标记来源） */
+  private publishContinueStateWith(spineIndex: number, domPos: string, listen: boolean): void {
+    const name: string = this.bookData.bookName ?? '';
+    if (name.length === 0) {
+      return;
+    }
     let bgJson: string = '';
     try {
       const rec: ReaderBgRecord | null = ReaderCustomBg.loadBook(name);
@@ -9363,15 +9758,15 @@ export default struct ReaderPage3 {
       bookName: name,
       bookUrl: this.bookData.bookUrl ?? '',
       chapterTitle: this.bookData.durChapterTitle ?? '',
-      spineIndex: pd.resourceIndex ?? 0,
-      domPos: pd.startDomPos ?? '',
+      spineIndex: spineIndex,
+      domPos: domPos,
       fontName: this.readerSetting.fontName ?? '',
       fontPath: this.readerSetting.fontPath ?? '',
       nightMode: this.readerSetting.nightMode === true,
       themeBgImg: this.readerSetting.themeBgImg ?? '',
       bgJson: bgJson,
-      // 书文件暂存由 `EntryAbility.onContinue` 负责（那里才有 context 且是同步阶段）
-      bookFileName: ''
+      bookFileName: '',
+      listenMode: listen
     };
     ContinueBridge.publish(payload);
   }

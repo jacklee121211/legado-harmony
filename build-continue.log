@@ -1,27 +1,27 @@
 ﻿--- The log is too long, only the last 50 lines are kept ---
 
-Full output saved to: C:\Users\ADMINI~1\AppData\Local\Temp\deveco\devecocli\build-1792734995002-27784.log
+Full output saved to: C:\Users\ADMINI~1\AppData\Local\Temp\deveco\devecocli\build-1792742165904-24352.log
 
 > hvigor UP-TO-DATE :colorLibrary:default@ProcessLibs...  
 > hvigor UP-TO-DATE :entry:default@ProcessResource...  
 > hvigor UP-TO-DATE :colorLibrary:default@DoNativeStrip...  
 > hvigor UP-TO-DATE :entry:default@CompileResource...  
 > hvigor Finished :entry:default@BuildJS... after 2 ms 
-> hvigor Finished :entry:default@BuildNativeWithNinja... after 37 ms 
+> hvigor Finished :entry:default@BuildNativeWithNinja... after 38 ms 
 > hvigor UP-TO-DATE :entry:default@ProcessLibs...  
 > hvigor UP-TO-DATE :entry:default@DoNativeStrip...  
 > hvigor UP-TO-DATE :entry:default@CacheNativeLibs...  
-> hvigor Finished :entry:default@CompileArkTS... after 5 s 881 ms 
+> hvigor Finished :entry:default@CompileArkTS... after 5 s 846 ms 
 > hvigor UP-TO-DATE :entry:default@GeneratePkgModuleJson...  
 > hvigor Finished :entry:default@ProcessCompiledResources... after 1 ms 
-> hvigor Finished :entry:default@PackageHap... after 626 ms 
-> hvigor Finished :entry:default@PackingCheck... after 8 ms 
-> hvigor Finished :entry:default@SignHap... after 468 ms 
+> hvigor Finished :entry:default@PackageHap... after 623 ms 
+> hvigor Finished :entry:default@PackingCheck... after 6 ms 
+> hvigor Finished :entry:default@SignHap... after 423 ms 
 > hvigor Finished :entry:default@CollectDebugSymbol... after 1 ms 
 > hvigor Finished :entry:assembleHap... after 1 ms 
-> hvigor BUILD SUCCESSFUL in 7 s 254 ms 
+> hvigor BUILD SUCCESSFUL in 7 s 167 ms 
 
-41 tasks in total: 20 executed, 21 up-to-date
+41 tasks in total: 22 executed, 19 up-to-date
 
 Merged central compile_commands.json for C++ language server.
 

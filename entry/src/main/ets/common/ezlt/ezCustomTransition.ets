@@ -15,30 +15,49 @@ export class ezCustomTransition {
   private static animationCountMap: Map<string, number> = new Map();
 
   /**
-   * **平板 / 2in1 的横屏下禁用「一镜到底」打开/回落动画**（2026-10-23 用户要求）。
+   * 一镜到底的**设备级开关**：只有手机为 `true`，tablet / 2in1 一律关闭（2026-10-23 用户决定）。
    *
-   * ── 为什么只禁横屏 ────────────────────────────────────────────────────────
-   *   一镜到底的几何是拿 `getRectangleById()` 的 **windowOffset** 当原点算的
-   *   （`common/utils/LongTakeBook.ets:81-82`），而横屏下整页布局的宽高比、
-   *   卡片位置全部重排，飞行几何极易算歪 ⇒ 用户实测横屏打开/回落动画错位。
-   *   竖屏（平板竖着拿 / 手机）几何稳定，动画保留。
+   * ── 为什么从"只在横屏禁用"升级为"非手机全禁"（结构性原因，非体验偏好）──────
+   *   `CardLongTakeDelegate.build()` 把阅读页包进一层**写死尺寸的裁切盒**
+   *   （`CustomTransition/CardLongTakeDelegate.ets:160-215`）：
+   *     `Stack{ Stack{ ReaderPage3 } .width(winWvp).height(winHvp).scale(...) }`
+   *     `.width(bookW).height(bookH).clip(true)`
+   *   而 `winWvp/winHvp` 只在 `LongTakeSession` 初始化时算一次
+   *   （`sessions/LongTakeSession.ets:175-176`：`px2vp(WindowUtils.windowWidth_px)`），
+   *   `onSizeChange` 里只写 `this.navDestSize = newSize`，**没有任何地方重算盒子尺寸**。
+   *   ⇒ 只要走一镜到底，阅读页就住在一个"不会随窗口变化"的盒子里，
+   *     只是转场结束后视觉上"铺满"了而已。
+   *   ⇒ 平板旋转 / 2in1 自由窗口缩放时，`ReadPageComponent` 的排版尺寸
+   *     与 XComponent surface 的分配尺寸必然分叉 ⇒ 内容被压进错尺寸的 surface
+   *     （真机现象："溢出左侧/右侧空白/整页被压缩"，2026-10-23 复现）。
    *
-   * ── 影响面 ────────────────────────────────────────────────────────────────
-   *   返回 `true` 时 `generateLongTakeParam*()` 返回 `undefined`
-   *   ⇒ `AppRouter` 的 `longTakeParam` 为空 ⇒ 走系统默认转场（普通 push/pop）。
-   *   手机锁竖屏（`EntryAbility.initWindowProcess` 已设 PORTRAIT），永远走不到这里。
+   *   在生成入口直接拦掉 ⇒ 阅读页**不再被 Delegate 包裹**（`Index.ets:2122` 走 else
+   *   分支，`ReaderPage3` 直接挂在 `NavDestination` 下），中间盒、`.clip()`、
+   *   `.scale()` 全部不存在，尺寸天然来自真实窗口 —— 这就是"结构隔离"，
+   *   比在运行时判断宽高再去修补更彻底。
    *
-   * 回退：本方法恒 `return false` 即恢复"所有方向都有一镜到底"。
+   * ── 影响面（返回 `false` 时，以下全部自动回落到系统原生方案）──────────────
+   *   · `generateLongTakeParam*()` 返回 `undefined`；
+   *   · **连封面快照都不截**（截图的 `getSync()` 在下面两行之后才执行）；
+   *   · `AppRouter` 的 `longTakeTransitionParam` 为空 ⇒ `Index.ets:2122` 走 else；
+   *   · `systemTransition` 由 `NavigationSystemTransitionType.NONE`
+   *     回落到 `UiMotion.pageTransition(UiMotion.T_READER)`（`Index.ets:2171-2173`）；
+   *   · txt 与 **PDF** 共用本开关，不会出现"txt 走默认、PDF 还在一镜到底"的割裂。
+   *
+   * ── 手机为什么完全不受影响 ────────────────────────────────────────────────
+   *   `EntryAbility.initWindowProcess` 已把手机锁成 PORTRAIT，窗口尺寸恒定，
+   *   上面那层固定盒子不会与真实窗口分叉；且本方法对 phone 恒返回 `true`。
+   *
+   * 回退：把本方法改成 `return true;` ⇒ 所有设备恢复一镜到底（代码路径全部保留）。
    */
-  private static isLandscapeWideDevice(): boolean {
+  private static isLongTakeEnabledDevice(): boolean {
     const type: string = deviceInfo.deviceType;
-    if (type !== 'tablet' && type !== '2in1') {
-      return false;
+    const on: boolean = type === 'phone';
+    if (!on) {
+      hilog.info(0x00, TAG,
+        `longtake disabled on deviceType=${type} (phone-only), fallback to system transition`);
     }
-    const w: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
-    const h: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
-    // 宽 > 高 = 横屏（windowWidth/Height 由 WindowAbility 维护，单位 px，比值判断不受密度影响）
-    return w > h;
+    return on;
   }
 
   private static getTransitionKey(from: NavContentInfo, to: NavContentInfo, operation: NavigationOperation): string {
@@ -55,9 +74,10 @@ export class ezCustomTransition {
 
   public static generateLongTakeParam(uiContext: UIContext, cardId: string, cornerRadius: number,
     options?: LongTakeTransitionOptions): LongTakeTransitionParam | undefined {
-    // 平板/2in1 横屏：禁用一镜到底（见 `isLandscapeWideDevice()` 注释）
-    if (ezCustomTransition.isLandscapeWideDevice()) {
-      hilog.info(0x00, TAG, 'longtake disabled: landscape on wide device');
+    // 仅手机启用一镜到底；tablet / 2in1 直接不生成参数（见 `isLongTakeEnabledDevice()` 注释）
+    // ⚠️ 必须放在**截图之前**：这里返回后不再执行 `getComponentSnapshot().getSync()`，
+    //    平板/2in1 因此连一次封面快照都不会拍（省掉无用的整卡截图开销）。
+    if (!ezCustomTransition.isLongTakeEnabledDevice()) {
       return undefined;
     }
     if (!uiContext || !cardId) {
@@ -87,6 +107,11 @@ export class ezCustomTransition {
 
   public static generateLongTakeParamByRegion(uiContext: UIContext, longTakeCardId: string, snapshotComponentId: string,
     cornerRadius: number, options?: LongTakeTransitionOptions): LongTakeTransitionParam | undefined {
+    // 同 `generateLongTakeParam`：非手机设备在**任何参数校验/截图之前**就退出，
+    // 保证"结构隔离"对所有入口一致（见 `isLongTakeEnabledDevice()` 注释）。
+    if (!ezCustomTransition.isLongTakeEnabledDevice()) {
+      return undefined;
+    }
     if (!uiContext || !longTakeCardId) {
       hilog.error(0x00, TAG, 'generateLongTakeParam error, input param is invalid');
       return undefined;

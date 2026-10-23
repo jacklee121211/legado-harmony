@@ -208,6 +208,31 @@ export class WindowAbility {
   }
 
   /**
+   * **移除**一个尺寸变化回调（2026-10-24 新增，配对 `onWindowSizeChange`）。
+   *
+   * ── 为什么必须补这个方法（真机日志实证）──────────────────────────────────
+   *   旧实现只有 `push`，**从不移除** ⇒ 每进一次阅读页就多一个回调，且退出后仍在跑。
+   *   真机日志（`docs/日志.md`）铁证：
+   *     `15:32:10.078 setOrientationDirect ok, orientation=5`   ← 已退出阅读页、恢复自动旋转
+   *     `15:32:11.682 onWindowSizeChange size {2800,1840}`      ← 书架页旋转
+   *     `15:32:12.907 syncReaderViewSize: 2800x1840`            ← **阅读页的陈旧回调仍在执行**
+   *   后果：
+   *     · 对着**已销毁**的组件实例改 `readerSetting`、调 `setPageConfig`（controller 已 release）；
+   *     · 一次旋转触发 N 个陈旧回调（N = 本次进程内已进过阅读页的次数），互相覆盖排版参数
+   *       ⇒ 画面挤压 / 留白 / 行距异常，且**越用越明显**（正好对上"有时候好有时候坏"）。
+   *
+   * @param callback 注册时传入的**同一个函数引用**（因此调用方必须先把它存成字段）
+   */
+  offWindowSizeChange(callback: () => void): void {
+    const idx: number = this.sizeCallbacks.indexOf(callback);
+    if (idx >= 0) {
+      this.sizeCallbacks.splice(idx, 1);
+      hilog.info(0x0000, TAG,
+        'offWindowSizeChange: removed, remain=' + this.sizeCallbacks.length);
+    }
+  }
+
+  /**
    * 直接设置窗口方向（2026-10-23 新增：阅读页内锁定方向 / 手动横竖屏切换用）。
    *
    * 与上面 `setOrientation(windowStage, …)` 的区别：阅读页（NavDestination）里拿不到
@@ -217,15 +242,26 @@ export class WindowAbility {
    * 再由顶栏的横竖屏按钮手动切换 —— 因为 ReaderKit 的原生 surface 在自动旋转后
    * **不会重新分配**（真机实证：旋转后内容仍按竖屏 1840px 宽渲染，塞进 2800px 窗口
    * ⇒ 左侧占 65.7%、右侧空白、行距异常）。锁定 + 手动切换才能让重建时机可控。
+   *
+   * ── 2026-10-24 改为**返回 Promise**────────────────────────────────────────
+   * 旧实现 `void`，调用方发完就靠 `setTimeout(420ms)` 猜"应该转完了吧"。
+   * 一旦系统侧因为窗口模式/受限旋转等原因**没有真的转**，调用方毫无感知，
+   * 于是出现"按钮状态已翻转、画面没动"，再点一下又翻回去 —— 用户看到的就是
+   * 「横竖屏切换异常」。现在把 `setPreferredOrientation` 的完成信号交回调用方，
+   * 由调用方**再按真实窗口尺寸确认翻转已发生**后才同步尺寸（见
+   * `ReaderPage3.toggleReaderOrientation()` / `waitForOrientationFlip()`）。
+   *
+   * @returns `setPreferredOrientation` resolve/reject 后 resolve 的 Promise（**不抛出**，
+   *          失败已在内部记日志；调用方需自行校验窗口尺寸是否真的变了）
    */
-  setOrientationDirect(orientation: window.Orientation): void {
-    window.getLastWindow(this.context).then((win: window.Window) => {
-      win.setPreferredOrientation(orientation).then(() => {
+  setOrientationDirect(orientation: window.Orientation): Promise<void> {
+    return window.getLastWindow(this.context).then((win: window.Window): Promise<void> => {
+      return win.setPreferredOrientation(orientation).then((): void => {
         hilog.info(0x0000, TAG, 'setOrientationDirect ok, orientation=' + orientation);
-      }).catch((err: Error) => {
+      }).catch((err: Error): void => {
         hilog.error(0x0000, TAG, 'setOrientationDirect failed: ' + JSON.stringify(err));
       });
-    }).catch((err: Error) => {
+    }).catch((err: Error): void => {
       hilog.error(0x0000, TAG, 'setOrientationDirect getLastWindow failed: ' + JSON.stringify(err));
     });
   }

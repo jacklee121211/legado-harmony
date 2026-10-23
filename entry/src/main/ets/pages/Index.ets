@@ -31,6 +31,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit'
 // 全量路线：复用生产导入管线（拷进沙箱 + 写库 + 抽封面）
 import { FileHandler } from '../common/utils/FileHandler'
 import { fileIo as fs } from '@kit.CoreFileKit'
+// 接续查询必须等建表完成（冷启动时建表是异步的）
+import DataBase from '../database'
 import {
   PdfRouteParam,
   ReaderRouteParam,
@@ -449,6 +451,8 @@ struct Main {
    * `aboutToAppear`，但 `@Watch` 一定会响。
    */
   @StorageLink('CONTINUE_PENDING') @Watch('onContinuePending') continuePending: string = ''
+  /** 接续接收中（书可能几 MB：导入期间给一个全局闸门，避免用户重复操作） */
+  @State continueReceiving: boolean = false
 
   /**
    * 消费一次接续数据 ⇒ 打开对应书籍并落到接续位置。
@@ -458,6 +462,8 @@ struct Main {
    * 字号/行距**刻意不迁移**（每块屏幕按自己的尺寸排版 ⇒ 布局不变）。
    */
   private onContinuePending(): void {
+    hilog.info(0x0000, 'ContinueIdx', 'onContinuePending: pending len=%{public}d',
+      this.continuePending.length)
     if (this.continuePending.length === 0) {
       return
     }
@@ -466,11 +472,37 @@ struct Main {
     if (p === null) {
       return
     }
+    // 重入守卫（2026-10-24）：`@Watch` 与 `onPageShow` 双路径 + 用户可能的重复触发，
+    // 都可能让两次接续叠在一起（第二次会把第一次正在导入的书再导一遍）。
+    if (this.continueReceiving) {
+      hilog.warn(0x0000, 'ContinueIdx', 'onContinuePending: already receiving, skip')
+      return
+    }
+    hilog.info(0x0000, 'ContinueIdx',
+      'onContinuePending: book=%{public}s url=%{public}s spine=%{public}d domPos=%{public}s file=%{public}s routerReady=%{public}s',
+      p.bookName, p.bookUrl, p.spineIndex, p.domPos, p.bookFileName, String(AppRouter.isReady()))
     const open = (book: Books): void => {
+      hilog.info(0x0000, 'ContinueIdx', 'open: name=%{public}s id=%{public}d',
+        book.bookName, book.id ?? -1)
       // 对端缺书：明确提示，不静默失败（全量"带书过去"是下一期的事）
       if (book.bookName !== p.bookName) {
+        hilog.warn(0x0000, 'ContinueIdx', 'open: name mismatch %{public}s != %{public}s',
+          book.bookName, p.bookName)
         showMessage(`本机没有《${p.bookName}》，请先导入这本书`)
         return
+      }
+      // ── 同名不同书防护（2026-10-24）────────────────────────────────────────
+      // 只按 bookUrl+bookName 匹配会把"对端同名但不同源/不同版次"的书误当成同一本，
+      // 结果是打开错书还落到错位置。用**文件体积**做二次校验（拿不到就跳过，不阻断）。
+      if (p.bookUrl.length > 0 && book.bookUrl !== undefined && book.bookUrl.length > 0) {
+        const sameSize: boolean = this.sameBookFileSize(p.bookUrl, book.bookUrl)
+        if (!sameSize) {
+          hilog.warn(0x0000, 'ContinueIdx',
+            'open: size mismatch, treat as different book (src=%{public}s dst=%{public}s)',
+            p.bookUrl, book.bookUrl)
+          showMessage(`本机《${p.bookName}》与来源不是同一本，请先导入正确的书籍`)
+          return
+        }
       }
       // ① 字体 / 背景 / 日夜间：写进本书的 ReaderSetting 持久位，
       //    阅读页 `aboutToAppear` 一读就是对的（**字号/行距刻意不动** ⇒ 布局不变）。
@@ -480,7 +512,12 @@ struct Main {
       const rp: ReaderRouteParam = {
         bookData: book,
         continueSpine: p.spineIndex,
-        continueDomPos: p.domPos
+        continueDomPos: p.domPos,
+        // 字体/背景/日夜间：**内存下发**（绝不写 ReaderSetting 持久位，见该方法注释）
+        continueFontName: p.fontName,
+        continueFontPath: p.fontPath,
+        continueNightMode: p.nightMode,
+        continueThemeBgImg: p.themeBgImg
       }
       if (!AppRouter.push(RouteName.READER, rp)) {
         showMessage('打开失败：页面栈尚未就绪')
@@ -514,12 +551,47 @@ struct Main {
         miss()
       })
     }
-    // 等页面栈就绪（冷启动时 onWindowStageCreate 里 attach 可能还没跑完）
-    if (!AppRouter.isReady()) {
-      setTimeout(find, 300)
-    } else {
-      find()
-    }
+    // 等 DB 与页面栈双双就绪再动手（2026-10-24 修：冷启动时两者都可能还没好）
+    //
+    // ── 真机日志实证（`docs/日志.md` 15:57:26，冷启动接续）──────────────────
+    //   `onWindowStageRestore, inited=false` → `routerReady=false`
+    //   ⇒ 旧实现只 setTimeout 300ms 就去 `BooksDao.isExistBooks`
+    //   ⇒ 那时 `onWindowStageCreate` 里的 `DbUtil.initDB` / `DataBase.initAllTable`
+    //     **还是异步进行中**，查询直接抛错，被 `.catch` 吞成"没这本书"
+    //   ⇒ 明明两端都有《紫川》却报了"本机没有这本书"。
+    // 现在改成：DB 就绪 + 路由就绪**两个条件都满足**才查，且带重试上限。
+    this.waitReadyThenFind(p, find, 0)
+  }
+
+  /**
+   * 轮询等待「DB 就绪 + 路由就绪」，再执行查询。
+   * 上限 20 × 150ms = 3s（冷启动建表实测远小于此），超时也放行 —— 交给下游给提示。
+   */
+  private waitReadyThenFind(p: ContinuePayload, find: () => void, attempt: number): void {
+    DataBase.whenReady().then((): void => {
+      if (AppRouter.isReady()) {
+        hilog.info(0x0000, 'ContinueIdx', 'ready: db+router ok at attempt=%{public}d', attempt)
+        find()
+        return
+      }
+      if (attempt >= 20) {
+        hilog.warn(0x0000, 'ContinueIdx', 'ready: router timeout, give up')
+        showMessage('打开失败：页面栈尚未就绪')
+        return
+      }
+      setTimeout((): void => {
+        this.waitReadyThenFind(p, find, attempt + 1)
+      }, 150)
+    }).catch((): void => {
+      if (attempt >= 20) {
+        hilog.warn(0x0000, 'ContinueIdx', 'ready: db timeout, give up')
+        showMessage('接续失败：数据库尚未就绪')
+        return
+      }
+      setTimeout((): void => {
+        this.waitReadyThenFind(p, find, attempt + 1)
+      }, 150)
+    })
   }
 
   /**
@@ -532,18 +604,21 @@ struct Main {
    * 先落盘再进页面 ⇒ 一进就是对的，不需要额外时序协调。
    */
   private applyContinueLayout(p: ContinuePayload): void {
-    try {
-      const key: string = `ReaderSetting_${p.bookName}`
-      const raw: string = PreferencesUtil.getSync(key, '') as string
-      let setting: Record<string, Object> = {}
-      if (typeof raw === 'string' && raw.length > 0) {
-        setting = JSON.parse(raw) as Record<string, Object>
-      }
-      ContinueBridge.applyLayoutToBook(p, setting)
-      PreferencesUtil.putSync(key, JSON.stringify(setting))
-    } catch (e) {
-      hilog.warn(0x0000, 'testTag', 'applyContinueLayout failed')
-    }
+    // ⚠️⚠️ 2026-10-23 已**停用**（事故修复，勿恢复）⚠️⚠️
+    //   旧实现：读 `ReaderSetting_${bookName}` → JSON.parse → 改几个字段 →
+    //   `putSync(key, JSON.stringify(...))`。
+    //   致命错误：这块持久位存的是 **readerSetting 对象**（`ReaderPage3.ets:3875`
+    //   的读取契约就是"读回来当对象用"），而 `PreferencesUtil.getSync` 拿回来的
+    //   不是 string ⇒ `typeof raw === 'string'` 为 false ⇒ `setting = {}` ⇒
+    //   我们把整本设置**覆盖成 3 个字段的 JSON 字符串**。
+    //   后果（用户实测）：读回来变字符串 ⇒ `readerSetting.fontSize` 等全 undefined
+    //   ⇒ 引擎收到非法配置 ⇒ **进书黑屏，且已落盘所以退出重进也黑**。
+    //   ⇒ 现在改为：字体/背景/日夜间**通过 ReaderRouteParam 内存下发**给阅读页
+    //     （见下面 `open()` 组 rp 的地方），对端自己决定怎么用，绝不从外部改写
+    //     这本设置。本方法保留空实现只为兼容旧调用点，**不要往里加写盘逻辑**。
+    hilog.info(0x0000, 'ContinueIdx',
+      'applyContinueLayout: skipped by design (font=%{public}s night=%{public}s)',
+      p.fontName, String(p.nightMode))
   }
 
   /**
@@ -556,7 +631,10 @@ struct Main {
    * 失败（未开多设备协同 / 网络断 / 源端没暂存成功）⇒ 明确提示，不静默。
    */
   private importContinueBook(p: ContinuePayload, onImported: (book: Books) => void): void {
+    hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: enter file=%{public}s',
+      p.bookFileName)
     if (p.bookFileName.length === 0) {
+      hilog.warn(0x0000, 'ContinueIdx', 'importContinueBook: no staged file')
       showMessage(`本机没有《${p.bookName}》，且未收到书籍文件，请先导入这本书`)
       return
     }
@@ -568,36 +646,62 @@ struct Main {
     } catch (e) {
       exists = false
     }
+    hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: staged path=%{public}s exists=%{public}s',
+      path, String(exists))
     if (!exists) {
       showMessage(`本机没有《${p.bookName}》，接续的书籍文件也读不到（请确认两端已开启多设备协同）`)
       return
     }
+    // 接收进度：书可能几 MB，必须给用户明确反馈（否则像卡死）
+    this.continueReceiving = true
     showMessage(`正在接收《${p.bookName}》…`)
     FileHandler.CopyFile(path, 0).then((ok: boolean) => {
+      this.continueReceiving = false
+      hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: CopyFile ok=%{public}s', String(ok))
       ContinueBridge.clearStagedFile(ctx, p.bookFileName)
       if (!ok) {
         showMessage(`《${p.bookName}》导入失败`)
         return
       }
       BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
+        hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: relookup hits=%{public}d', list.length)
         if (list.length > 0) {
           onImported(list[0])
-        } else {
-          // url 可能因导入路径不同而不等 ⇒ 退回"最后阅读"兜底
-          BooksDao.getLastReadBook().then((book: Books | null) => {
-            if (book !== null) {
-              onImported(book)
-            } else {
-              showMessage(`《${p.bookName}》已导入但未找到记录，请回书架查看`)
-            }
-          })
+          return
         }
+        // url 可能因导入路径不同而不等 ⇒ 退回"最后阅读"兜底
+        BooksDao.getLastReadBook().then((book: Books | null) => {
+          if (book !== null) {
+            onImported(book)
+          } else {
+            showMessage(`《${p.bookName}》已导入但未找到记录，请回书架查看`)
+          }
+        })
       }).catch((): void => {
         showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
       })
     }).catch((): void => {
+      this.continueReceiving = false
       showMessage(`《${p.bookName}》导入失败`)
     })
+  }
+
+  /**
+   * 同名不同书防护：比对两端的书文件体积。
+   * 拿不到 stat（文件不存在/无权限）时**判为相同**，不阻断正常接续。
+   */
+  private sameBookFileSize(srcUrl: string, dstUrl: string): boolean {
+    try {
+      if (!fs.accessSync(srcUrl) || !fs.accessSync(dstUrl)) {
+        return true
+      }
+      const s1 = fs.statSync(srcUrl)
+      const s2 = fs.statSync(dstUrl)
+      // 允许 1KB 误差（不同平台换行符/编码转换的极端情况），量级差异才算不同书
+      return Math.abs(s1.size - s2.size) <= 1024
+    } catch (e) {
+      return true
+    }
   }
 
   onPageShow(): void {

@@ -246,7 +246,7 @@ export default struct BookInfoGrids{
         // PDF：NavPathStack + **与其它格式同一套一镜到底**（2026-10-20，与列表模式同款；
         // 根因见 `BookInfos` 该分支注释：不带 longTakeTransitionParam 就只会走系统默认转场）
         const pp: PdfRouteParam = { bookData: this.book };
-        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+        if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
           AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60));
           const ltParam = ezCustomTransition.generateLongTakeParam(
             this.getUIContext(), this.longtakeId, 4);
@@ -282,7 +282,7 @@ export default struct BookInfoGrids{
         //   longtakeId 为空（搜索浮窗复用）⇒ 不参与一镜到底，走普通转场。
         const rp: ReaderRouteParam = { bookData: this.book };
         // 一镜到底官方库（2026-10-02 迁移，与 BookInfos 同款；圆角 10 = 宫格封面圆角）
-        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+        if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
           // 2026-10-05（方案 A）：同 BookInfos —— 把封面当前四角圆角传给 session。
           // 100 = 宫格封面的显示宽度（与下面 `.borderRadius(coverCorners(100))` 同源同值）。
           AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(100))

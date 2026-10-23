@@ -284,7 +284,7 @@ export default struct BookInfos {
         // ⇒ 这里与下面 READER 分支**完全同款**：拍封面几何 → 随路由带走 → delegate 演飞行。
         // 任何一步失败（id 失效/量不到）都自然退回系统转场，不阻塞点书。
         const pp: PdfRouteParam = { bookData: this.book };
-        if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+        if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
           AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60));
           const ltParam = ezCustomTransition.generateLongTakeParam(
             this.getUIContext(), this.longtakeId, 4);
@@ -320,7 +320,7 @@ export default struct BookInfos {
       // 按封面组件 id 拍几何并生成转场参数，随路由带给阅读页；
       // 失败（id 失效等）返回 undefined ⇒ 阅读页走普通分支，不阻塞点书。
       // 打断/手势/生命周期由官方库 session 管理（自研 lt* 机制已退役）。
-      if (UiMotion.LONGTAKE_ENABLED && this.longtakeId !== '') {
+      if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
         // 2026-10-05（方案 A）：把封面**当前的四角圆角**（书脊式不对称，见 CoverSource）传给
         // 一镜到底 session —— 否则飞行封面用统一圆角，起飞首帧/落位帧与书架封面圆角对不上。
         // 60 = 列表封面的显示宽度（与下面 `.borderRadius(coverCorners(60))` 同源同值）。

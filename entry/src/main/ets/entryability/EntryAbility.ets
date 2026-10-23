@@ -61,6 +61,13 @@ import { ContinueBridge } from '../common/utils/ContinueBridge';
 const AVOID_AREA_USE_UICONTEXT: boolean = false;
 
 export default class EntryAbility extends UIAbility {
+  /**
+   * `onWindowStageCreate` 是否已跑过（2026-10-24，应用接续用）。
+   * 接续拉起时框架调 `onWindowStageRestore` 而非 `onWindowStageCreate`，
+   * 用它区分"冷启动需补跑初始化"与"热启动只需交回 windowStage"。
+   */
+  private windowStageInited: boolean = false;
+
   private curBp: string = ''
 
   /**
@@ -200,6 +207,11 @@ export default class EntryAbility extends UIAbility {
     this.captureIncomingFiles(want);
     // 应用接续（2026-10-24）：对端**冷启动**恢复
     this.appContinuity(want, launchParam);
+    // 应用接续：**启动默认不可接续**（2026-10-24）。
+    // 只有阅读页/听书页会在 aboutToAppear 里把它打开（`ContinueBridge.setMissionActive`）。
+    // 这样在书架/设置等页面上，系统层面**不显示接续入口** —— 官方推荐做法，
+    // 比"显示入口→用户点→再 REJECT"的体验好得多。
+    ContinueBridge.setMissionActive(this.context, false);
     // 标定模式全局信号（2026-10-10）：从 Preferences 回填到 AppStorage，
     // 让书架/我的/PlugboardZone 在冷启动时也能感知到用户开过标定模式。
     CalibMode.bootstrap()
@@ -282,8 +294,8 @@ export default class EntryAbility extends UIAbility {
   /**
    * 对端：把 `want.parameters` 里的接续数据落成 AppStorage 标记。
    *
-   * ⚠️ 本方法**必须是同步的**（官方原文：`restoreWindowStage` 必须在同步接口方法中执行）。
-   *   我们只写 AppStorage（同步、微秒级），不在这里做任何 await。
+   * ⚠️ 本方法**必须是同步的**（官方原文：`restoreWindowStage` 必须在同步接口方法中执行，
+   *   放异步回调会导致迁移后页面加载失败）。
    */
   private appContinuity(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     if (launchParam === undefined || launchParam === null) {
@@ -297,13 +309,61 @@ export default class EntryAbility extends UIAbility {
     if (!restored) {
       hilog.warn(0x0000, 'testTag', 'appContinuity: payload missing');
     }
+    // ── 官方范式：给框架一份 LocalStorage 用于恢复窗口数据 ──────────────────
+    // SDK `UIAbilityContext.d.ts`：「Restores the WindowStage data in the UIAbility.
+    //   It can be called only on the main thread.」
+    // 不调它会报 `E [JUA1128] null content storage`（真机日志实证），
+    // 属于"页面栈恢复失败"的直接诱因。
+    // 我们自己是 NavPathStack 手动导航，所以这里只提供容器、不依赖它的恢复结果。
+    try {
+      this.context.restoreWindowStage(new LocalStorage());
+      hilog.info(0x0000, 'testTag', 'appContinuity: restoreWindowStage ok');
+    } catch (e) {
+      hilog.error(0x0000, 'testTag', 'appContinuity: restoreWindowStage failed %{public}s',
+        e instanceof Error ? e.message : String(e));
+    }
   }
 
   onDestroy() {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onDestroy');
   }
 
+  /**
+   * 应用接续（2026-10-24）：**接续拉起时框架调用的是本回调，而不是 onWindowStageCreate()**。
+   *
+   * ── 官方原文（SDK `@ohos.app.ability.UIAbility.d.ts:412-427`）──────────────
+   * > Called when the page stack is restored for the target UIAbility during
+   * > cross-device migration.
+   * > **NOTE**: When an application is launched as a result of a migration, the
+   * > **onWindowStageRestore()** lifecycle callback function, **rather than
+   * > onWindowStageCreate()**, is triggered following onCreate() or onNewWant().
+   * > This sequence occurs for **both cold start and hot start**.
+   *
+   * ── 不实现它的后果（真机日志 `docs/日志.md` 15:48:44 实证）──────────────
+   * `E [JUA1128] null content storage` —— 框架拿不到 LocalStorage/页面栈 ⇒
+   * 冷启动时窗口**空白**（loadContent 一次都没跑），热启动时页面栈恢复失败。
+   * 这就是"接续到了但没跳阅读页"的第一层原因。
+   *
+   * ── 为什么分冷/热两条分支 ────────────────────────────────────────────────
+   * `onWindowStageCreate` 里的初始化很重（建表、迁移、亮度、防窥、一镜到底…），
+   * 热启动时**已经跑过一遍**，重复执行会重复注册回调。所以用 `windowStageInited` 闸门：
+   * · 冷启动 ⇒ 完整补跑 `onWindowStageCreate`（框架不会替我们跑）；
+   * · 热启动 ⇒ 只把 windowStage 重新交给 WindowAbility，页面与 DB 本就绪。
+   */
+  onWindowStageRestore(windowStage: window.WindowStage): void {
+    hilog.info(0x0000, 'testTag', 'Ability onWindowStageRestore, inited=%{public}s',
+      String(this.windowStageInited));
+    if (!this.windowStageInited) {
+      // 冷启动被接续拉起：补全套初始化（loadContent 等）
+      this.onWindowStageCreate(windowStage);
+      return;
+    }
+    // 热启动：窗口还在，只需确保 WindowAbility 持有最新的 windowStage
+    WindowAbility.getInstance().setWindowStage(windowStage);
+  }
+
   onWindowStageCreate(windowStage: window.WindowStage) {
+    this.windowStageInited = true;
     // 初始化db数据库/创建相关数据表
     // 2026-09-28 修首次安装竞态：原实现 initAllTable() 裸跑不等待——首屏（书架分组
     // 胶囊 GroupType.aboutToAppear → BookGroupsDao.search）在表建好**之前**查询，

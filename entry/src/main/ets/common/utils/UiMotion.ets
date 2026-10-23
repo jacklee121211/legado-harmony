@@ -1,4 +1,5 @@
 import { curves } from '@kit.ArkUI';
+import { deviceInfo } from '@kit.BasicServicesKit';
 
 /**
  * UI 动效统一参数（2026-09-21，2026-09-23 增补弹簧令牌）。
@@ -332,6 +333,52 @@ export default class UiMotion {
    * 书架→阅读器回到 `T_READER`（EXPLODE）内置转场，与非书架入口一致。
    */
   static readonly LONGTAKE_ENABLED: boolean = true
+
+  /**
+   * 一镜到底「当前是否允许」—— **全工程唯一的设备闸门**（2026-10-23 用户最终拍板）。
+   *
+   * ── 用户口径（原话）──────────────────────────────────────────────────────
+   *   「除了手机以外的设备，都不再使用一镜到底，而是改用系统原生。
+   *     手机完全不受影响，但是手机以外都恢复成系统默认方案，天然舒服，
+   *     没有任何乱七八糟的罗乱。」
+   *
+   * ── 为什么是"按设备"而不是"按横竖屏"（结构性原因，有代码证据）──────────────
+   *   `CardLongTakeDelegate.build()` 把阅读页包进一层**写死尺寸的裁切盒**
+   *   （`common/ezlt/CustomTransition/CardLongTakeDelegate.ets:160-215`）：
+   *     `Stack{ Stack{ ReaderPage3 } .width(winWvp).height(winHvp).scale(...) }`
+   *     `.width(bookW).height(bookH).clip(true)`
+   *   而 `winWvp/winHvp` 只在 `LongTakeSession` 初始化时算一次
+   *   （`common/ezlt/sessions/LongTakeSession.ets:175-176`），
+   *   `onSizeChange` 里只写 `this.navDestSize = newSize`，
+   *   **没有任何地方重算盒子尺寸**。
+   *   ⇒ 走一镜到底时，阅读页始终住在一个"不随窗口变化"的盒子里；
+   *     平板旋转 / 2in1 拖窗口后，`ReadPageComponent` 的排版尺寸与
+   *     XComponent surface 的分配尺寸必然分叉 ⇒ 内容被压进错尺寸的 surface
+   *     （真机现象：竖屏进书切横屏 ⇒ 内容占左侧 65.7%、右侧空白）。
+   *   ⇒ 所以拦截点必须是**设备级**的：只要是非手机，就根本不能让阅读页进那个盒子。
+   *     这与"横屏时才拦"相比是从结构上隔离，而不是运行时修补。
+   *
+   * ── 判定规则（唯一一条）──────────────────────────────────────────────────
+   *   ① 总开关 `LONGTAKE_ENABLED` 关 → 不允许（一键回退语义）；
+   *   ② `deviceType !== 'phone'`（tablet / 2in1 / 未知）→ **一律不允许**；
+   *   ③ 手机 → 允许（`EntryAbility` 已锁 PORTRAIT，窗口尺寸恒定，盒子不会与窗口分叉）。
+   *
+   * ⚠️ 曾经这里还有「2in1 不允许」「横屏不允许」两条 —— 已删除：
+   *   它们是"按形态/方向打补丁"，与 `ezCustomTransition.isLongTakeEnabledDevice()`
+   *   形成**两套并存的判断**，且并不等价（平板竖屏一个放行一个拦），
+   *   正是用户说的"乱七八糟的罗乱"。现在两边同源
+   *   （`ezCustomTransition.isLongTakeEnabledDevice()` 与本方法判定完全一致）。
+   *
+   * 回退：把本方法改成 `return UiMotion.LONGTAKE_ENABLED`
+   *       ⇒ 恢复"所有设备所有方向都尝试开合动画"的旧行为。
+   */
+  static longTakeAllowed(): boolean {
+    if (!UiMotion.LONGTAKE_ENABLED) {
+      return false;
+    }
+    // 唯一设备闸门：只有手机用一镜到底（原因见上方头注释）
+    return deviceInfo.deviceType === 'phone';
+  }
 
   /**
    * 取证日志（TAG = `EZLT`）：打印几何与进/出动画的关键量 + **onFinish 时间戳**

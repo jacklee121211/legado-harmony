@@ -1,91 +1,164 @@
 ﻿/**
- * 应用接续（无缝流转）桥接层（2026-10-24 新增）。
+ * 应用接续（无缝流转）桥接层 —— 完整实现（2026-10-24 大修）。
  *
- * ── 官方能力边界（`devecocli docs` 取证）─────────────────────────────────────
- * documentId `最佳实践/跨端迁移/应用接续概述/bpta-continue-cast` 原文：
- * · 「在 module.json5 的 abilities 中，将 continuable 标签配置为 "true"，表示该
- *    UIAbility 可被迁移。默认值为 false」；
- * · 「**自 API12 起，无需申请 ohos.permission.DISTRIBUTED_DATASYNC 权限**」
- *   ⇒ 本功能**零权限**，只要 continuable + 同 BundleName（同 HAP ⇒ 不需要 AGC 接续服务）；
- * · 「在 onContinue 回调中使用 wantParam 传输的数据需要控制在 **100KB 以下**」；
- * · 「`restoreWindowStage` **必须在同步接口方法中执行**，如果在异步回调中执行，
- *    可能会导致应用迁移后页面加载失败」。
+ * ══════════════════════════════════════════════════════════════════════════
+ * 一、官方要求（全部来自 `devecocli docs` + SDK d.ts 取证，非经验判断）
+ * ══════════════════════════════════════════════════════════════════════════
+ * · `module.json5` → `abilities[].continuable: true`
+ *   （documentId `最佳实践/跨端迁移/应用接续概述/bpta-continue-cast`）
+ * · **API12 起无需任何权限**：同文档原文「自 API12 起，无需申请
+ *   ohos.permission.DISTRIBUTED_DATASYNC 权限」；同 BundleName 也不需要 AGC 接续服务。
+ * · 源端 `onContinue(wantParam)` 存数据 + 返回 `AGREE / REJECT`
+ * · 对端 `onCreate` / `onNewWant` → 判 `LaunchReason.CONTINUATION` 恢复
+ * · **接续拉起时框架调 `onWindowStageRestore()` 而非 `onWindowStageCreate()`**
+ *   （SDK `@ohos.app.ability.UIAbility.d.ts:412-427` 原文 NOTE，冷/热启动都一样）
+ * · **`setMissionContinueState(ACTIVE / INACTIVE)`** 控制接续可用性
+ *   （SDK `AbilityConstant.ContinueState`：ACTIVE=0 / INACTIVE=1）。
+ *   这是官方推荐的「只有某页可接续」实现 —— 不可接续时系统**不显示入口**，
+ *   比"显示入口→用户点→再 REJECT"的体验好得多。
+ * · `wantParam` < 100KB；系统保留键 `version` / `targetDevice` / `sessionId` 不可占用
+ * · `context.restoreWindowStage(localStorage)` 必须在**主线程**调用
+ *   （SDK `UIAbilityContext.d.ts`：「It can be called only on the main thread」）
  *
- * documentId `最佳实践/跨端迁移/应用接续数据迁移/bpta-continue-data` 的选型矩阵：
+ * ══════════════════════════════════════════════════════════════════════════
+ * 二、数据迁移选型（官方矩阵，documentId `bpta-continue-data`）
+ * ══════════════════════════════════════════════════════════════════════════
  * |            | <100kb          | >100kb        |
  * | 需要文件迁移 | 文件资产迁移     | 文件资产迁移   |
  * | 不需文件迁移 | want.param 迁移 | 分布式对象迁移 |
  *
- * ── 我们走哪条（用户 2026-10-24 拍板）───────────────────────────────────────
- * 「有书情况下传数据，没书情况下书也需要带过去，其实是两种并行路线，一个轻量一个全量」
- * · **轻量（本期）**：只传进度 + 排版信息（`wantParam`，几百字节）；
- * · **全量（下一期）**：书文件进 `context.distributedFilesDir` → `Asset` → 塞进
- *   `distributedDataObject`，与进度一起走。对端「有书就只用数据、没书才读 Asset 落库」。
+ * 我们的书是**沙箱本地文件** ⇒ 属于"需要文件迁移"。但官方示例的
+ * `Asset + distributedDataObject` 链要维护 sessionId、组网、属性置空、回调时序
+ * （官方自己列了 3 条 ⚠️）。我们只需要**文件到得了对端**，元数据走 wantParam 更可控：
+ *   · 源端：书 → `context.distributedFilesDir`，只把**文件名**塞 wantParam；
+ *   · 对端：用自己的 `distributedFilesDir` 拼同名路径直接读
+ *     （hmdfs 合并视图，同相对路径跨设备可解析）。
+ * ⇒ wantParam 恒为几百字节，完全规避 100KB 限制与组网复杂度。
  *
- * ── 同步哪些东西（用户明确要求）─────────────────────────────────────────────
- * ✅ 带：**字体**、**背景**、**日/夜模式** —— 换设备后"信息一致"；
- * ❌ 不带：**字号**、**行距** —— 让每块屏幕按自己的尺寸排版，**布局不变**。
+ * ══════════════════════════════════════════════════════════════════════════
+ * 三、同步什么（用户 2026-10-24 拍板）
+ * ══════════════════════════════════════════════════════════════════════════
+ * ✅ **阅读进度**（spineIndex + 字符级 domPos）—— 不传页码/像素（屏幕尺寸、
+ *    三种翻页模式都不同，页码不可迁移；`startPlay(spine, domPos)` 的 domPos 是
+ *    与排版无关的 DOM 锚点）
+ * ✅ **听书进度**（同一套 spine + domPos，由 `TtsEngine.currentSegment()` 换算）
+ * ✅ **字体 / 背景 / 日夜间** —— 换设备后信息一致
+ * ❌ **字号 / 行距** —— 每块屏幕按自己尺寸排版，**布局不变**
+ * ❌ 对端不自动播放听书（用户点播放才播，符合常理）
  *
- * ── 位置坐标为什么用 spineIndex + domPos ────────────────────────────────────
- * 页码/像素都不可迁移（手机平板屏幕不同、我们还有仿真/横滑/滚动三种翻页模式）。
- * `ReaderComponentController.startPlay(spineIndex, domPos)` 的 `domPos` 是字符级
- * DOM 锚点，与排版无关 ⇒ 跨设备、跨字号、跨翻页模式都能精确落点。
- * 这与工程既有做法完全一致（`ReaderPage3` 的 `localBookDurChapterPos` 就是
- * `PageDataInfo{resourceIndex, startDomPos}`，书签/进度全走这套）。
+ * ══════════════════════════════════════════════════════════════════════════
+ * 四、事故教训（勿重蹈）
+ * ══════════════════════════════════════════════════════════════════════════
+ * ⚠️ **绝不从外部改写别的模块的持久位**。曾经在 `Index` 里把
+ *    `ReaderSetting_${bookName}` 用 `JSON.stringify` 覆盖，而那块存的是
+ *    readerSetting **对象** ⇒ 读回来变字符串 ⇒ 引擎配置非法 ⇒ **进书黑屏且退出
+ *    重进也黑**。现在排版信息一律**内存下发**（走 `ReaderRouteParam`）。
+ * ⚠️ 背景落库必须走 `ReaderCustomBg.saveBook()`（键是 `ReaderBg_<书名>`，
+ *    不是自造的 `ReaderBgBook_`，且要登记覆盖表，否则「同步全局」清不掉）。
  */
-import { Want, common } from '@kit.AbilityKit';
+import { Want, common, AbilityConstant } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { PreferencesUtil } from '@pura/harmony-utils';
+import { ReaderCustomBg, ReaderBgRecord } from './ReaderCustomBg';
 
 /** 一次接续要带过去的东西 */
 export interface ContinuePayload {
-  /** 书名（对端据此在 books 表里找书） */
+  /** 书名（对端据此在 books 表里找书；本工程 bookName **含扩展名**） */
   bookName: string;
-  /** 书文件路径（书名可能重名，url 兜底比对） */
+  /** 书文件路径（用于暂存与二次校验） */
   bookUrl: string;
-  /** 章节标题（仅用于对端提示/校验） */
+  /** 章节标题（提示/校验用） */
   chapterTitle: string;
   /** 章节索引（= spineIndex） */
   spineIndex: number;
-  /** 章节内字符级 DOM 锚点 */
+  /** 章节内字符级 DOM 锚点（与排版无关，跨设备可精确落点） */
   domPos: string;
-  /** 字体族名（引擎侧 fontName） */
+  /** 字体族名 */
   fontName: string;
   /** 字体文件路径（沙箱/系统绝对路径） */
   fontPath: string;
   /** 日/夜：true = 夜间 */
   nightMode: boolean;
-  /** 背景图/材质（ReaderSetting.themeBgImg 原样带） */
+  /** 背景图/材质（ReaderSetting.themeBgImg） */
   themeBgImg: string;
-  /** 本书自定义背景记录（JSON；超长则不带，避免撑破 100KB） */
+  /** 本书自定义背景记录（JSON；超长不带，防撑破 100KB） */
   bgJson: string;
-  /**
-   * **全量路线**：源端已把书文件放进 `context.distributedFilesDir` 后的文件名
-   * （不是绝对路径！对端要用**自己的** distributedFilesDir 拼，见
-   * `ContinueBridge.targetBookPath()`）。空串 = 没暂存（书文件读不到/不需要）。
-   */
+  /** 源端暂存在分布式目录里的书文件名（'' = 未暂存） */
   bookFileName: string;
+  /** true = 源端当时处于**听书**状态（仅用于日志与后续策略，对端一律不自动播） */
+  listenMode: boolean;
 }
 
 const TAG: string = 'ContinueBridge';
 const DOMAIN: number = 0x0000;
 
 export class ContinueBridge {
-  // ── AppStorage 键（统一 `CONTINUE_` 前缀，避免与其它模块撞车）──────────────
-  /** 有待消费的接续数据（Index 订阅它来跳阅读页） */
+  // ── AppStorage 键（统一 CONTINUE_ 前缀）──────────────────────────────────
+  /** 待消费的接续数据（Index 订阅） */
   static readonly KEY_PENDING: string = 'CONTINUE_PENDING';
-  /** 阅读页上报的"当前阅读态"（onContinue 时从这里取） */
+  /** 源端"当前阅读/听书态"（onContinue 从这里取） */
   static readonly KEY_LIVE: string = 'CONTINUE_LIVE';
+  /**
+   * 源端"当前是否处于可接续页面"（阅读页/听书态）。
+   * 这是 `onContinue` 的**最后一道防线** —— 即使 `setMissionContinueState`
+   * 因为某些设备差异没生效，也不会把书架上的一次误触当成接续发出去。
+   */
+  static readonly KEY_ACTIVE: string = 'CONTINUE_READER_ACTIVE';
 
-  /** wantParam 里我们自己用的键（**不能**和系统占用的 `version`/`targetDevice`/`sessionId` 撞） */
+  /** wantParam 自定义键前缀（避开系统保留键 version/targetDevice/sessionId） */
   private static readonly W_PREFIX: string = 'ljContinue';
-  /** 背景 JSON 的体积上限（超过就不带，宁可少带也不能撑破 100KB） */
+  /** 背景 JSON 体积上限（超过就不带） */
   private static readonly BG_JSON_MAX: number = 4000;
+  /** 暂存文件名前缀 */
+  private static readonly STAGE_PREFIX: string = 'ljcontinue_';
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 接续可用性开关（官方 setMissionContinueState）
+  // ══════════════════════════════════════════════════════════════════════════
 
   /**
-   * 阅读页调用：把"此刻读到哪儿"登记到 AppStorage。
-   * 每次翻页/滚动都调，代价是一次 AppStorage 写入（微秒级），不做落盘。
+   * 声明"本应用此刻是否允许被接续"。
+   *
+   * 官方做法：进入可接续页面（阅读页/听书）调 `ACTIVE`，离开调 `INACTIVE`。
+   * 这样系统层面就**不显示**接续入口，而不是等用户点了再拒绝。
+   *
+   * ⚠️ 必须在**主线程**调用（ArkUI 页面生命周期天然满足）。
+   * ⚠️ `setMissionContinueState` 在部分设备（如不支持分布式业务的 Wearable）不生效，
+   *   所以 `onContinue` 里仍保留 `KEY_ACTIVE` 兜底判断。
+   */
+  static setMissionActive(ctx: common.UIAbilityContext | null, active: boolean): void {
+    AppStorage.setOrCreate(ContinueBridge.KEY_ACTIVE, active);
+    if (ctx === null) {
+      return;
+    }
+    const state: AbilityConstant.ContinueState = active
+      ? AbilityConstant.ContinueState.ACTIVE
+      : AbilityConstant.ContinueState.INACTIVE;
+    try {
+      ctx.setMissionContinueState(state).then(() => {
+        hilog.info(DOMAIN, TAG, 'setMissionContinueState: %{public}s', String(active));
+      }).catch((e: Object) => {
+        hilog.warn(DOMAIN, TAG, 'setMissionContinueState failed: %{public}s',
+          e instanceof Error ? e.message : String(e));
+      });
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'setMissionContinueState throw: %{public}s',
+        e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 当前是否处于可接续页面 */
+  static isActive(): boolean {
+    return AppStorage.get<boolean>(ContinueBridge.KEY_ACTIVE) === true;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 源端：登记当前阅读态
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * 阅读页/听书每次进度变化时调用：把"此刻读到哪儿"登记进 AppStorage。
+   * 一次 AppStorage 写入（微秒级），不落盘。
    */
   static publish(p: ContinuePayload): void {
     if (p.bookName.length === 0) {
@@ -94,12 +167,19 @@ export class ContinueBridge {
     AppStorage.setOrCreate(ContinueBridge.KEY_LIVE, JSON.stringify(p));
   }
 
-  /** 离开阅读页 / 听书停止时清掉，避免"在书架上还能接续到一本已经退出的书" */
-  static clear(): void {
-    AppStorage.setOrCreate(ContinueBridge.KEY_LIVE, '');
+  /**
+   * 离开阅读页时调用。
+   *
+   * ⚠️ 2026-10-24 修正：**不删阅读态**，只把"可接续"关掉。
+   *   旧实现在 `aboutToDisappear` 里 `clear()`，导致「读到某处 → 退出到书架 →
+   *   立刻接续」这条路直接 REJECT；而 AppStorage 里留一份几百字节的快照毫无代价，
+   *   真正的门禁应该是 `setMissionContinueState(INACTIVE)`。
+   */
+  static leaveReader(ctx: common.UIAbilityContext | null): void {
+    ContinueBridge.setMissionActive(ctx, false);
   }
 
-  /** 取当前阅读态（没有 / 不在阅读页 ⇒ null） */
+  /** 取当前阅读态（没有 ⇒ null） */
   static live(): ContinuePayload | null {
     const raw: string = AppStorage.get<string>(ContinueBridge.KEY_LIVE) ?? '';
     return ContinueBridge.parse(raw);
@@ -107,12 +187,13 @@ export class ContinueBridge {
 
   /**
    * 源端：把阅读态灌进 `wantParam`。
-   * @returns 是否同意接续（不在阅读页 ⇒ REJECT，交给 EntryAbility 直接用）
+   * @returns 是否同意接续（false ⇒ 调用方返回 REJECT）
    */
   static fillWantParam(wantParam: Record<string, Object>): boolean {
     const p: ContinuePayload | null = ContinueBridge.live();
-    if (p === null) {
-      hilog.info(DOMAIN, TAG, 'fillWantParam: no live reading state, reject');
+    if (p === null || !ContinueBridge.isActive()) {
+      hilog.info(DOMAIN, TAG, 'fillWantParam: reject (live=%{public}s active=%{public}s)',
+        String(p !== null), String(ContinueBridge.isActive()));
       return false;
     }
     const pre: string = ContinueBridge.W_PREFIX;
@@ -127,16 +208,18 @@ export class ContinueBridge {
     wantParam[pre + 'ThemeBgImg'] = p.themeBgImg;
     wantParam[pre + 'BgJson'] = p.bgJson;
     wantParam[pre + 'BookFile'] = p.bookFileName;
+    wantParam[pre + 'Listen'] = p.listenMode;
     hilog.info(DOMAIN, TAG,
-      'fillWantParam: book=%{public}s spine=%{public}d domPos=%{public}s',
-      p.bookName, p.spineIndex, p.domPos);
+      'fillWantParam: book=%{public}s spine=%{public}d domPos=%{public}s listen=%{public}s',
+      p.bookName, p.spineIndex, p.domPos, String(p.listenMode));
     return true;
   }
 
-  /**
-   * 对端：从 `want.parameters` 还原，并挂到 AppStorage 等 `Index` 消费。
-   * @returns 是否成功识别为一次接续
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // 对端：恢复
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 从 `want.parameters` 还原并挂到 AppStorage 等 Index 消费 */
   static restoreFromWant(want: Want): boolean {
     const params: Record<string, Object> | undefined = want.parameters;
     if (params === undefined || params === null) {
@@ -159,16 +242,17 @@ export class ContinueBridge {
       nightMode: ContinueBridge.bool(params[pre + 'NightMode']),
       themeBgImg: ContinueBridge.str(params[pre + 'ThemeBgImg']),
       bgJson: ContinueBridge.str(params[pre + 'BgJson']),
-      bookFileName: ContinueBridge.str(params[pre + 'BookFile'])
+      bookFileName: ContinueBridge.str(params[pre + 'BookFile']),
+      listenMode: ContinueBridge.bool(params[pre + 'Listen'])
     };
     AppStorage.setOrCreate(ContinueBridge.KEY_PENDING, JSON.stringify(p));
     hilog.info(DOMAIN, TAG,
-      'restoreFromWant: book=%{public}s spine=%{public}d domPos=%{public}s',
-      p.bookName, p.spineIndex, p.domPos);
+      'restoreFromWant: book=%{public}s spine=%{public}d domPos=%{public}s file=%{public}s listen=%{public}s',
+      p.bookName, p.spineIndex, p.domPos, p.bookFileName, String(p.listenMode));
     return true;
   }
 
-  /** `Index` 消费一次（读走即清，避免重复跳转） */
+  /** Index 消费一次（读走即清，避免重复跳转） */
   static consumePending(): ContinuePayload | null {
     const raw: string = AppStorage.get<string>(ContinueBridge.KEY_PENDING) ?? '';
     if (raw.length === 0) {
@@ -178,64 +262,13 @@ export class ContinueBridge {
     return ContinueBridge.parse(raw);
   }
 
-  /**
-   * 对端：把带过来的**字体/背景/日夜间**写进本书的 ReaderSetting 持久位。
-   *
-   * 为什么不直接写内存：阅读页 `aboutToAppear` 会从
-   * `ReaderSetting_${bookName}` 读初值，先落盘再进页面，等于"一进就是对的"，
-   * 不需要额外的时序协调（字号/行距**刻意不动**，见文件头注释）。
-   */
-  static applyLayoutToBook(p: ContinuePayload, setting: Record<string, Object>): void {
-    if (p.fontName.length > 0) {
-      setting.fontName = p.fontName;
-    }
-    if (p.fontPath.length > 0) {
-      setting.fontPath = p.fontPath;
-    }
-    setting.nightMode = p.nightMode;
-    if (p.themeBgImg.length > 0) {
-      setting.themeBgImg = p.themeBgImg;
-    }
-    hilog.info(DOMAIN, TAG,
-      'applyLayoutToBook: font=%{public}s night=%{public}s', p.fontName, String(p.nightMode));
-  }
-
-  /** 背景记录落盘（超长/空则跳过） */
-  static saveBgIfAny(p: ContinuePayload): void {
-    if (p.bgJson.length === 0 || p.bgJson.length > ContinueBridge.BG_JSON_MAX) {
-      return;
-    }
-    try {
-      PreferencesUtil.putSync(`ReaderBgBook_${p.bookName}`, p.bgJson);
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'saveBgIfAny failed');
-    }
-  }
-
   // ══════════════════════════════════════════════════════════════════════════
-  // 全量路线：书文件通过「分布式文件目录」过河（2026-10-24）
-  //
-  // ── 为什么不用官方示例的 distributedDataObject + Asset ──────────────────────
-  // 官方《应用接续数据迁移》的「文件资产迁移」是：书 → `distributedFilesDir` →
-  // 包成 `commonType.Asset` → 塞进 `distributedDataObject` → 对端在
-  // `status === 'restored'` 回调里读。
-  // 但那条链要维护 sessionId、组网、属性置空、回调时序，坑极多（官方自己也列了
-  // 三条 ⚠️）。而我们**只需要文件到得了对端**，元数据走 wantParam 更简单可控：
-  //   · 源端：书拷进 `context.distributedFilesDir`，把**文件名**塞进 wantParam；
-  //   · 对端：用**自己的** `distributedFilesDir` 拼同名路径直接读。
-  // `distributedFilesDir` 是同账号设备间的分布式目录（hmdfs 合并视图）⇒ 同一相对
-  // 路径在对端可解析，省掉整条 DataObject 组网链，且 wantParam 依旧只有几百字节。
-  // 若对端读不到（未开多设备协同/网络断）⇒ 回落"本机没有这本书"提示，不崩。
+  // 全量路线：书文件过河（分布式文件目录）
   // ══════════════════════════════════════════════════════════════════════════
-
-  /** 暂存文件名前缀，便于清理与辨识 */
-  private static readonly STAGE_PREFIX: string = 'ljcontinue_';
 
   /**
    * 源端：把书文件拷进分布式目录，返回**暂存文件名**（'' = 失败/无需）。
-   *
-   * ⚠️ 必须**同步**：`onContinue` 是同步回调，异步拷贝会在文件写完前就允许迁移。
-   *    书是纯文本，几 MB 的同步拷贝在真机上约几十毫秒，可接受。
+   * ⚠️ 必须同步：`onContinue` 是同步回调，异步拷贝会在文件写完前就放行迁移。
    */
   static stageBookFile(ctx: common.UIAbilityContext, bookUrl: string, bookName: string): string {
     if (bookUrl.length === 0) {
@@ -256,8 +289,15 @@ export class ContinueBridge {
       if (dot > 0) {
         ext = bookUrl.substring(dot);
       }
+      // ⚠️ bookName 在本工程里**含扩展名**（如 `步步生莲.txt`），
+      //   直接拼 ext 会产出 `ljcontinue_步步生莲.txt.txt`（真机日志实证）。
+      let base: string = bookName;
+      const dotN: number = base.lastIndexOf('.');
+      if (dotN > 0) {
+        base = base.substring(0, dotN);
+      }
       const safe: string = ContinueBridge.STAGE_PREFIX
-        + bookName.replace(/[\\/:*?"<>|]/g, '_') + ext;
+        + base.replace(/[\\/:*?"<>|]/g, '_') + ext;
       const dst: string = dir + '/' + safe;
       fs.copyFileSync(bookUrl, dst);
       hilog.info(DOMAIN, TAG, 'stageBookFile: ok %{public}s -> %{public}s', bookUrl, dst);
@@ -269,11 +309,7 @@ export class ContinueBridge {
     }
   }
 
-  /**
-   * 对端：把暂存文件名拼成**本机**分布式目录下的绝对路径。
-   * 用本机 `distributedFilesDir` 而不是源端传过来的绝对路径 —— 两台设备的沙箱
-   * 根不同，只有"同一相对位置"这个语义是对端可用的。
-   */
+  /** 对端：把暂存文件名拼成**本机**分布式目录下的绝对路径 */
   static targetBookPath(ctx: common.UIAbilityContext, fileName: string): string {
     if (fileName.length === 0) {
       return '';
@@ -281,7 +317,7 @@ export class ContinueBridge {
     return ctx.distributedFilesDir + '/' + fileName;
   }
 
-  /** 对端读完/导入后清理暂存文件（失败无所谓，分布式目录会自己回收） */
+  /** 对端读完/导入后清理暂存文件 */
   static clearStagedFile(ctx: common.UIAbilityContext, fileName: string): void {
     if (fileName.length === 0) {
       return;
@@ -293,6 +329,32 @@ export class ContinueBridge {
       }
     } catch (e) {
       // 清不掉不影响主流程
+    }
+  }
+
+  /**
+   * 对端：把带过来的**背景记录**落库。
+   *
+   * ⚠️ 必须走 `ReaderCustomBg.saveBook()`：
+   *   · 键是 `ReaderBg_<书名>`（`ReaderCustomBg.KEY_PREFIX`），
+   *     不是自造的 `ReaderBgBook_`（旧实现的 bug，写了也用不上）；
+   *   · 它内部还会把书名登记进 `ReaderBgOverrides` 覆盖表 ——
+   *     否则「同步全局」清场时清不掉这条。
+   */
+  static saveBgIfAny(p: ContinuePayload): void {
+    if (p.bgJson.length === 0 || p.bgJson.length > ContinueBridge.BG_JSON_MAX) {
+      return;
+    }
+    try {
+      const rec = JSON.parse(p.bgJson) as ReaderBgRecord;
+      if (rec === null || rec === undefined) {
+        return;
+      }
+      ReaderCustomBg.saveBook(p.bookName, rec);
+      hilog.info(DOMAIN, TAG, 'saveBgIfAny: ok for %{public}s', p.bookName);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'saveBgIfAny failed: %{public}s',
+        e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -346,7 +408,8 @@ export class ContinueBridge {
         nightMode: p.nightMode === true,
         themeBgImg: typeof p.themeBgImg === 'string' ? p.themeBgImg : '',
         bgJson: typeof p.bgJson === 'string' ? p.bgJson : '',
-        bookFileName: typeof p.bookFileName === 'string' ? p.bookFileName : ''
+        bookFileName: typeof p.bookFileName === 'string' ? p.bookFileName : '',
+        listenMode: p.listenMode === true
       };
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'parse payload failed');
