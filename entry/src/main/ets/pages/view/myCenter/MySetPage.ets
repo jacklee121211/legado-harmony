@@ -2,7 +2,7 @@ import MySetConstants from '../../../common/constants/MySetConstants'
 import { Attribute } from '../../../common/utils/Attribute'
 // ── 加入 QQ 群（2026-10-21 新增）：跳转走系统 openLink ────────────────────────
 import { common } from '@kit.AbilityKit'
-import { BusinessError } from '@kit.BasicServicesKit'
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { SetList, SetGroupList } from '../../../componets/dataList/SetListGroup'
 import { SetListView } from '../../../componets/myset/SetListView'
@@ -28,6 +28,8 @@ import { ThemeItem } from '../../../common/model/Theme'
 // ── 测试账号（2026-09-28 迁入）：登录下线后，测试登录+彩蛋解锁入口迁到本页顶部 ──
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
+// ── 宫格列数（2026-10-23 多端适配新增）：手机以外设备可手动调整「一行显示几本」
+import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 import { TestAccountDialog } from '../../../componets/myCenter/TestAccountDialog'
 // ── 字号阶梯（2026-10-06 统一标准，见 FontConstants「语义阶梯」段；本页文字只取这四档）──
 import FontConstants from '../../../common/constants/FontConstants'
@@ -187,6 +189,37 @@ export default struct MySetPage{
   /** 记录上次模式滑块所在档位 */
   private lastModeStep: number = Haptics.MODE_DEFAULT / Haptics.STRENGTH_STEP
 
+  // ── 书架宫格「一行显示几本」（2026-10-23 多端适配新增）────────────────────
+  /**
+   * 用户手动设定的宫格列数；`0` = **自动**（跟随屏幕断点）。
+   *
+   * 用 `@StorageLink` 而不是 `@State`：书架 `BookContent` 用
+   * `@StorageProp('shelfGridColumns')` 订阅同一个键 ⇒ 拖完滑块书架立刻重排，
+   * 不需要退出设置页再进书架。
+   *
+   * ⚠️ 只有**手机以外**的设备显示这个滑块（`showGridColumnsRow()`）：
+   *   手机屏幕窄，3 列已是实测最优，给出滑块只会让用户把封面调得看不清书名。
+   */
+  @StorageLink(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE) gridColumns: number = 0
+
+  /** 当前横向断点（用于滑块「自动」档时显示实际生效的列数） */
+  @StorageProp('currentBreakpoint') currentBreakpoint: string = 'sm'
+
+  /**
+   * 是否显示「一行显示书籍数」滑块 —— **仅手机以外的设备**。
+   *
+   * 用户原话（2026-10-23）：「我们在手机以外的设备的设置页，布局这一区域可以增加
+   *   一个调整滑块，手动调整一行显示的书籍数，也给用户一个自己定义的机会。」
+   */
+  private showGridColumnsRow(): boolean {
+    return deviceInfo.deviceType !== 'phone'
+  }
+
+  /** 滑块当前应显示的列数：用户手动值优先，否则取自动档（跟随断点） */
+  private gridColumnsShown(): number {
+    return ShelfPrefs.effectiveColumns(this.gridColumns, this.currentBreakpoint)
+  }
+
   // ── 听书双引擎（2026-09-25 新增）────────────────────────────────────────────
   // 整组仅在暗门解锁后出现（listenEntryUnlocked）；开关=切 Edge/本地引擎，
   // 落盘 TtsPrefs.ttsEngine（TtsEngine.activeEngineId() 还有解锁二次校验兜底）。
@@ -220,6 +253,15 @@ export default struct MySetPage{
     // 阅读器信息窗开关初值（2026-10-13 起**默认开**；用户要求"信息窗默认打开"）
     // ⚠️ 这里是默认值的**权威单点**，`ReaderPage3.aboutToAppear` 的回读用同一个 true。
     this.setInfoWin = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, true) as boolean
+    // ── 书架宫格列数（2026-10-23）：从 Preferences 回填到 AppStorage ─────────────
+    // ⚠️ 为什么必须在这里做：`BookContent` 用 `@StorageProp('shelfGridColumns')` 订阅，
+    //   而 AppStorage 是**内存态**、冷启动为空。若只靠 `setUserColumns()` 写入，
+    //   用户设过的列数在重启后就丢了（书架回落自动档）。
+    //   这里在设置页打开时补一次回填；`ShelfPrefs.getUserColumns()` 内部已做范围钳制。
+    //   （用户不打开设置页也不会错：`BookContent` 的 `@StorageProp` 默认值 0 = 自动档。）
+    if (this.gridColumns !== ShelfPrefs.getUserColumns()) {
+      this.gridColumns = ShelfPrefs.getUserColumns()
+    }
     // ── 离线模式（2026-10-13）：先按落盘意图重建「功能」组 ──────────────────────
     // ⚠️ 必须早于下面 findSetRow 的写回：rebuildOtherList 决定本组渲染哪些行。
     // 顺序：先同步 offlineOn（防 EntryAbility.init 尚未跑到 / 页面被直接拉起），
@@ -968,16 +1010,83 @@ export default struct MySetPage{
               // 卡片圆角：本组只有一行，所以**四角全圆**（20）。
               // 标题行与控件放在同一张卡片里（`card_bg`），与「震动强度」滑块行同一套视觉语言。
               if (group.groupValue === '布局'){
+                // ── 一整张胶囊里装两项（2026-10-23 用户要求合并）────────────────────
+                // 用户原话：「这个调节器在布局中和上面的胶囊紧挨着，稍微给点距离，
+                //   也比较好看，或者直接融入成一个胶囊，我建议是融入一个胶囊，如果可以的话。」
+                // ⇒ 把「首页三段按钮排序」与「一行显示书籍数」放进**同一个 Column / 同一张
+                //   card_bg 卡片**，中间用一条 `Divider` 分隔（而不是两个独立卡片贴在一起）。
+                //   这样既解决了"紧挨着"的观感问题，也不会出现两条胶囊叠在一起的厚重感。
                 ListItem(){
-                  Column({ space: 12 }){
-                    Row(){
-                      Text('首页三段按钮排序').fontSize(FontConstants.ITEM)
-                      Blank()
-                    }.width('100%')
-                    ChipOrderSetting()
+                  Column(){
+                    // ① 首页三段按钮排序
+                    Column({ space: 12 }){
+                      Row(){
+                        Text('首页三段按钮排序').fontSize(FontConstants.ITEM)
+                        Blank()
+                      }.width('100%')
+                      ChipOrderSetting()
+                    }
+                    .width('100%')
+                    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+
+                    // ② 一行显示书籍数（仅手机以外设备；见 `showGridColumnsRow()`）
+                    if (this.showGridColumnsRow()){
+                      // 分隔线：左右各让 16（与上面内容的左右内边距对齐），不画到卡片边缘
+                      Divider()
+                        .color($r('app.color.divider'))
+                        .margin({ left: 16, right: 16 })
+                      Column({ space: 8 }){
+                        Row(){
+                          Text('一行显示书籍数').fontSize(FontConstants.ITEM)
+                          Blank()
+                          // 右侧值：手动档显示数字；自动档显示「自动（N）」，
+                          // 让用户一眼看出"现在是跟随屏幕"，而不是以为滑块坏了
+                          Text(this.gridColumns > 0
+                            ? `${this.gridColumns}`
+                            : `自动（${this.gridColumnsShown()}）`)
+                            .fontSize(FontConstants.CAPTION)
+                            .fontColor($r('app.color.text_tertiary'))
+                        }.width('100%')
+                        Slider({
+                          // 自动档时滑块停在"当前实际生效列数"上，
+                          // 用户一拖就切到手动档（值即列数）
+                          value: this.gridColumnsShown(),
+                          min: ShelfPrefs.COLUMNS_MIN,
+                          max: ShelfPrefs.COLUMNS_MAX,
+                          step: 1,
+                          style: SliderStyle.InSet
+                        })
+                          .width('100%')
+                          // 落盘只在松手（End）/点击（Click）时做，避免拖动过程频繁 flush
+                          // （与「震动强度」滑块同一口径）
+                          .onChange((value: number, mode: SliderChangeMode) => {
+                            const n: number = Math.round(value)
+                            this.gridColumns = n
+                            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                              ShelfPrefs.setUserColumns(n)
+                            }
+                          })
+                        // 「恢复自动」：不提供的话用户一旦拖过就**再也回不到**跟随屏幕的状态
+                        // （滑块最小只能到 2，无法表达"自动"）。
+                        if (this.gridColumns > 0) {
+                          Row(){
+                            Blank()
+                            Text('恢复自动')
+                              .fontSize(FontConstants.CAPTION)
+                              .fontColor($r('app.color.text_tertiary'))
+                              .onClick(() => {
+                                Haptics.tap()
+                                this.gridColumns = 0
+                                ShelfPrefs.setUserColumns(0)
+                              })
+                          }.width('100%')
+                        }
+                      }
+                      .width('100%')
+                      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                    }
                   }
                   .width('100%')
-                  .padding({ left: 16, right: 16, top: 14, bottom: 14 })
                   .backgroundColor($r('app.color.card_bg'))
                   .borderRadius(20)
                 }.padding({left:20,right:20})

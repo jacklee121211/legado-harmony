@@ -74,6 +74,8 @@ export default class ShelfPrefs {
   private static readonly K_HEADER_MERGED: string = 'shelf_header_merged';
   /** 顶栏三段按钮排列（2026-10-21，见 getChipOrder 的注释） */
   private static readonly K_CHIP_ORDER: string = 'shelf_chip_order';
+  /** 宫格一行显示几本（2026-10-23；0 = 自动跟随断点，见 autoColumns 注释） */
+  private static readonly K_GRID_COLUMNS: string = 'shelf_grid_columns';
 
   /** 偏好文件与既有书籍数据同一个（见文件头说明） */
   private static readonly PREF_NAME: string = CommonConstants.PREFERENCES_BOOK_DATA_KEY;
@@ -106,6 +108,101 @@ export default class ShelfPrefs {
       // 持久化失败不影响当前会话的界面（状态仍在内存里）
     }
   }
+
+  // ── 宫格「一行显示几本」（2026-10-23 多端适配新增）──────────────────────
+  //
+  // ── 为什么要这一套 ────────────────────────────────────────────────────────
+  //   旧实现把列数**写死**在 `BookContent.ets`：`.lanes(this.EXHIBIT === '宫格' ? 3 : 1)`
+  //   ⇒ 手机/平板/2in1、横屏/竖屏全是 3 列。平板横屏（实测 1244vp 宽）下
+  //   每格约 400vp，封面比手机还大 ⇒ 一屏只能看 3×3，用户反馈「显示太少」。
+  //
+  // ── 取值规则（官方规格 + 本项目基线）──────────────────────────────────────
+  //   ① **自动档**（用户没手动调过，`userCols <= 0`）：跟随横向断点
+  //      `sm=3 / md=4 / lg=5 / xl=6`。
+  //      · 规格来源：技能 `hmos-multidevice-screen-window-size` 的
+  //        `references/responsive_layout.md` →「RESP-01 重复布局」网格列数 sm/md/lg。
+  //      · 但同一文档紧接着有一条**硬性规则**「列数递增原则」原文：
+  //        「若原始设计（直板机/SM断点）为 N 列，则 md = N+1，lg = N+2」
+  //        本项目原始基线就是 **3 列**（手机现状，不能改），
+  //        所以这里取 3/4/5（而不是把手机缩成 2 列的通用值 2/3/4）。
+  //        ⇒ **手机端永远是 3 列，零回归**（`sm` 档与旧写死值完全相同）。
+  //      · `xl`（PC/2in1 全屏）按同一递增规律 +1 = 6。
+  //   ② **手动档**（用户在设置页拖过滑块，`userCols > 0`）：直接用用户值，
+  //      不再跟随断点 —— 这是用户明确要的「自己定义的机会」。
+  //   ③ 断点取不到（冷启动极早期，键还没写入）⇒ 回落 `sm` 的 3 列，
+  //      与旧行为完全一致，不会出现"一进书架列数乱跳"。
+  //
+  // ── 为什么用 `ShelfPrefs` 而不是新开一个类 ────────────────────────────────
+  //   它已经是书架界面偏好的唯一落盘点（同库同 flush 语义），
+  //   宫格列数属于同一类偏好，放在一起才不会出现"两套持久化姿势"。
+  /** 用户手动设定的列数下限（低于 2 列在平板上没有意义） */
+  static readonly COLUMNS_MIN: number = 2;
+  /** 用户手动设定的列数上限（再多封面就小到看不清书名） */
+  static readonly COLUMNS_MAX: number = 8;
+
+  /**
+   * 自动档：按横向断点给出列数。
+   * @param bp `currentBreakpoint` 的值（`xs`/`sm`/`md`/`lg`/`xl`）
+   * @returns 3 / 4 / 5 / 6（未知或缺失一律 3，与旧写死值一致）
+   */
+  static autoColumns(bp: string): number {
+    if (bp === 'md') {
+      return 4;
+    }
+    if (bp === 'lg') {
+      return 5;
+    }
+    if (bp === 'xl') {
+      return 6;
+    }
+    // sm / xs / 空串 / 未知 ⇒ 3（手机基线，绝不回归）
+    return 3;
+  }
+
+  /** 读取用户手动设定的列数；`<= 0` 表示"自动"（默认 0） */
+  static getUserColumns(): number {
+    if (!ShelfPrefs.ENABLED) {
+      return 0;
+    }
+    try {
+      const v = PreferencesUtil.getSync(ShelfPrefs.K_GRID_COLUMNS, 0, ShelfPrefs.PREF_NAME);
+      const n: number = typeof v === 'number' ? Math.round(v) : 0;
+      return n <= 0 ? 0 : (n < ShelfPrefs.COLUMNS_MIN ? ShelfPrefs.COLUMNS_MIN
+        : (n > ShelfPrefs.COLUMNS_MAX ? ShelfPrefs.COLUMNS_MAX : n));
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  /** 写入用户手动设定的列数；传 `0` = 恢复自动（跟随断点） */
+  static setUserColumns(n: number): void {
+    if (!ShelfPrefs.ENABLED) {
+      return;
+    }
+    try {
+      const v: number = n <= 0 ? 0 : Math.round(n);
+      PreferencesUtil.putSync(ShelfPrefs.K_GRID_COLUMNS, v, ShelfPrefs.PREF_NAME);
+      // 同步到 AppStorage：书架 `BookContent` 用 `@StorageProp` 订阅它 ⇒ 改完立即重排，
+      // 不必等下次进书架（否则用户拖完滑块回书架还是旧列数）。
+      AppStorage.setOrCreate(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE, v);
+    } catch (e) {
+    }
+  }
+
+  /**
+   * **最终列数**（书架唯一取值入口）。
+   * @param userCols `@StorageProp` 里的用户值（0 = 自动）
+   * @param bp 当前横向断点
+   */
+  static effectiveColumns(userCols: number, bp: string): number {
+    if (userCols > 0) {
+      return userCols;
+    }
+    return ShelfPrefs.autoColumns(bp);
+  }
+
+  /** AppStorage 键：宫格列数（设置页写、书架读；与持久化键分离，见 setUserColumns） */
+  static readonly KEY_GRID_COLUMNS_STORAGE: string = 'shelfGridColumns';
 
   // ── 当前选中的分组 chip ──────────────────────────────────────────────────
 

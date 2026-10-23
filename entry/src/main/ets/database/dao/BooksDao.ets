@@ -691,6 +691,29 @@ class BooksDao {
   }
 
 
+  /**
+   * 按**书名**查书（2026-10-23 新增，应用接续用）。
+   *
+   * 为什么不复用 `isExistBooks(bookUrl, bookName)`：那个是 `bookUrl` AND `bookName`
+   * **双条件精确匹配**，接续场景下对端书可能是不同路径/不同导入批次进来的，
+   * url 未必逐字相等 ⇒ 双条件会漏。这里只按书名查，作为回查兜底。
+   */
+  async getBooksByName(bookName: string): Promise<Books[]> {
+    if (!bookName || bookName.length === 0) {
+      return [];
+    }
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const predicates = DbUtil.getPredicates(this.TABLE_NAME);
+      predicates.equalTo('bookName', bookName);
+      const books = await DbUtil.queryForList<Books>(predicates, column);
+      return books || [];
+    } catch (err) {
+      console.error('getBooksByName, Error:', err);
+      return [];
+    }
+  }
+
   //根据书籍Id获取书籍
   async getBookByIds(ids: number[]): Promise<Books[]> {
 

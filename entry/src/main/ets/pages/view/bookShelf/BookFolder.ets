@@ -13,6 +13,8 @@ import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 import { resolveCoverSource, coverCorners } from '../../../common/utils/CoverSource'
+// 宫格列数（2026-10-23 多端适配）：与书籍宫格**同源同一份取值**
+import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 
 /**
  * 文件夹
@@ -20,6 +22,15 @@ import { resolveCoverSource, coverCorners } from '../../../common/utils/CoverSou
 @Component
 export default struct BookFolder {
   @Prop EXHIBIT: string
+  // ── 宫格列数的两个输入源（2026-10-23 多端适配）────────────────────────────
+  // 用户原话：「最近和全部都没问题，随着调节就可以变化，但是分组没变化啊，
+  //   我建议分组跟着变化，也没必要单独给分组弄一个调节器，
+  //   因为分组其实和单本书宽度相仿。」
+  // ⇒ 分组视图**不单独设滑块**，直接复用书籍宫格那一份列数
+  //   （`ShelfPrefs.effectiveColumns`：自动档跟随断点 / 手动档用设置页滑块的值）。
+  //   分组卡片的视觉宽度与单本书封面同量级，列数一致才对齐得好看。
+  @StorageProp('currentBreakpoint') currentBreakpoint: string = 'sm'
+  @StorageProp(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE) userGridColumns: number = 0
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   currentIndex: number = 0
@@ -203,7 +214,12 @@ export default struct BookFolder {
 
   build() {
     GridRow({
-      columns: this.EXHIBIT === '宫格' ? 3 : 1
+      // 旧实现写死 3 列（与书籍宫格旧值同款）⇒ 平板横屏下列数与书籍不一致。
+      // 现在与 `BookContent` 的 `List.lanes()` **同源同一个函数**：
+      //   自动档 sm=3 / md=4 / lg=5 / xl=6；手动档 = 设置页滑块值。
+      // ⚠️ 手机端恒为 3（sm 档），与旧值完全一致 ⇒ 零回归。
+      columns: this.EXHIBIT === '宫格'
+        ? ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint) : 1
     }) {
       ForEach(this.groupList, (item: BookGroups, index: number) => {
         // ⚠️ 放行「未分组」系统分组（2026-09-29，审核问题④）：其余系统分组
