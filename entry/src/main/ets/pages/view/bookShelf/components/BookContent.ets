@@ -482,7 +482,7 @@ export default struct BookContent {
       .margin({ top: 120 })
     } else if (this.bookList.length === 0){
       Column() {
-        Image($r('app.media.no_record')).width(200).height(200)
+        Image($r('app.media.no_record')).width(130).height(130)
         Text('暂无浏览记录')
           .fontSize(12)
           .fontColor(ShelfColors.textSub())
