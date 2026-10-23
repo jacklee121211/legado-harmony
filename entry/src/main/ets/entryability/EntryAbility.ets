@@ -28,6 +28,8 @@ import { IapManager } from '../common/utils/IapManager';
 import { systemShare } from '@kit.ShareKit';
 import { IncomingFiles } from '../common/format/IncomingFiles';
 import { FMT_MASTER_ENABLED, FMT_SHARE_INTAKE_ENABLED } from '../common/format/FormatFlags';
+// 应用接续（无缝流转，2026-10-24）：源端 onContinue 存进度、对端 onCreate/onNewWant 恢复
+import { ContinueBridge } from '../common/utils/ContinueBridge';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -196,6 +198,8 @@ export default class EntryAbility extends UIAbility {
     this.captureQuickAction(want);
     // 分享 / 用其他应用打开（2026-10-19）：只登记，由书架消费导入
     this.captureIncomingFiles(want);
+    // 应用接续（2026-10-24）：对端**冷启动**恢复
+    this.appContinuity(want, launchParam);
     // 标定模式全局信号（2026-10-10）：从 Preferences 回填到 AppStorage，
     // 让书架/我的/PlugboardZone 在冷启动时也能感知到用户开过标定模式。
     CalibMode.bootstrap()
@@ -224,6 +228,75 @@ export default class EntryAbility extends UIAbility {
     this.captureQuickAction(want);
     // 应用已在后台时，从「文件管理 → 用其他应用打开」或分享面板进来走这里
     this.captureIncomingFiles(want);
+    // 应用接续（2026-10-24）：对端**热启动**恢复（singleton 启动模式下走这里）
+    this.appContinuity(want, launchParam);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 应用接续 / 无缝流转（2026-10-24 新增）
+  //
+  // ── 官方约束（documentId `最佳实践/跨端迁移/应用接续概述/bpta-continue-cast`）──
+  // · 源端：`onContinue()` 里把数据写进 `wantParam`，返回 `AGREE` 才允许迁移；
+  //   `REJECT` = 拒绝（我们的用法：**不在阅读页/听书页就不允许接续**，用户拍板）；
+  // · 对端：`onCreate()`（冷启动）/ `onNewWant()`（singleton 热启动）里按
+  //   `launchParam.launchReason === LaunchReason.CONTINUATION` 判断并恢复；
+  // · `wantParam` 数据 **< 100KB**；`restoreWindowStage` **必须在同步方法里调用**
+  //   （放异步回调会导致迁移后页面加载失败）。
+  //
+  // ── 我们的分工 ────────────────────────────────────────────────────────────
+  // · 本类只负责"存取 wantParam + 打标记"；
+  // · 真正的跳转由 `Index` 消费 `ContinueBridge.KEY_PENDING` 完成 ——
+  //   因为 `onCreate` 阶段 UI 还没起来、DB 也还没建表（见本文件 `:141` 注释），
+  //   在这里 push 路由必然失败。
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * 源端：系统触发接续时调用。
+   * 只在"正在阅读/听书"时同意，其它页面一律 REJECT（用户 2026-10-24 拍板）。
+   */
+  onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
+    const ok: boolean = ContinueBridge.fillWantParam(wantParam);
+    if (!ok) {
+      hilog.info(0x0000, 'testTag', 'onContinue: not in reader, REJECT');
+      return AbilityConstant.OnContinueResult.REJECT;
+    }
+    // ── 全量路线（2026-10-24）：把书文件暂存到分布式目录 ──────────────────
+    // 对端「有书就只用数据、没书就用这份文件导入」⇒ 一条链路同时覆盖轻量/全量。
+    // 同步执行（`onContinue` 是同步回调，异步拷贝会在写完前就放行迁移）。
+    const live = ContinueBridge.live();
+    if (live !== null) {
+      const staged: string = ContinueBridge.stageBookFile(
+        this.context, live.bookUrl, live.bookName);
+      if (staged.length > 0) {
+        wantParam.ljContinueBookFile = staged;
+        hilog.info(0x0000, 'testTag', 'onContinue: staged book file %{public}s', staged);
+      }
+    }
+    // 官方体验建议（同文档「常见接续场景体验建议」）：电子书/听书类
+    // 「阅读及听书进度同步」+ 源端**退出**（用户 2026-10-24 拍板：听书也退出）。
+    // 返回 AGREE 后系统会按默认策略退出源端，无需应用自己 kill。
+    hilog.info(0x0000, 'testTag', 'onContinue: AGREE');
+    return AbilityConstant.OnContinueResult.AGREE;
+  }
+
+  /**
+   * 对端：把 `want.parameters` 里的接续数据落成 AppStorage 标记。
+   *
+   * ⚠️ 本方法**必须是同步的**（官方原文：`restoreWindowStage` 必须在同步接口方法中执行）。
+   *   我们只写 AppStorage（同步、微秒级），不在这里做任何 await。
+   */
+  private appContinuity(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    if (launchParam === undefined || launchParam === null) {
+      return;
+    }
+    if (launchParam.launchReason !== AbilityConstant.LaunchReason.CONTINUATION) {
+      return;
+    }
+    hilog.info(0x0000, 'testTag', 'appContinuity: CONTINUATION launch');
+    const restored: boolean = ContinueBridge.restoreFromWant(want);
+    if (!restored) {
+      hilog.warn(0x0000, 'testTag', 'appContinuity: payload missing');
+    }
   }
 
   onDestroy() {
@@ -399,8 +472,25 @@ export default class EntryAbility extends UIAbility {
       windowClass.setWindowSystemBarProperties(systemBarProperties);
     });
     WindowAbility.getInstance().setWindowLayoutFullScreen(true);
-    if (deviceInfo.deviceType === 'tablet') {
-      WindowAbility.getInstance().setOrientation(windowStage, window.Orientation.AUTO_ROTATION_RESTRICTED);
+    // ══════════════════════════════════════════════════════════════════════════
+    // 屏幕方向策略（2026-10-23 用户拍板）
+    // ══════════════════════════════════════════════════════════════════════════
+    //   · **手机：锁竖屏**（用户原话「手机不支持横屏」）。
+    //     旧实现手机**完全没设方向** ⇒ 走系统默认（多数手机可自由旋转）
+    //     ⇒ 横屏下布局没做过适配 = 用户看到的"横竖屏切换很烂"。
+    //   · **平板 / 2in1（笔记本模式）：自由旋转**（用户原话「自由旋转」）。
+    //     旧实现只有 tablet 设了 `AUTO_ROTATION_RESTRICTED`（受限旋转，部分方向不可用），
+    //     2in1 完全没处理。
+    //   依据：`setPreferredOrientation(orientation: Orientation): Promise<void>`
+    //        见 `…\ets\api\@ohos.window.d.ts`，`@since 9`；枚举 `window.Orientation`
+    //        含 `PORTRAIT` / `AUTO_ROTATION` / `AUTO_ROTATION_RESTRICTED` 等。
+    //   回退：改回 `if (deviceInfo.deviceType === 'tablet') { … AUTO_ROTATION_RESTRICTED }`
+    //        即恢复改造前行为（手机会重新变成可旋转）。
+    if (deviceInfo.deviceType === 'phone') {
+      WindowAbility.getInstance().setOrientation(windowStage, window.Orientation.PORTRAIT);
+    } else {
+      // tablet / 2in1 / 其它宽屏设备：自由旋转
+      WindowAbility.getInstance().setOrientation(windowStage, window.Orientation.AUTO_ROTATION);
     }
     WindowAbility.getInstance().initWindowSize();
   }

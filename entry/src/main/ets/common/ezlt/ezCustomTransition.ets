@@ -1,5 +1,6 @@
 import { WindowUtils } from './utils/WindowUtils'
 import { window } from '@kit.ArkUI'
+import { deviceInfo } from '@kit.BasicServicesKit'
 import { AnimateCallback, CustomTransition} from './utils/CustomNavigationUtils';
 import { ezCustomTransitionConstants, LongTakeTransitionType } from './Constants/ezCustomTransitionConstants';
 import { ComponentAttrUtils } from './utils/ComponentAttrUtils';
@@ -12,6 +13,33 @@ const TAG: string = 'ezCustomTransition';
 
 export class ezCustomTransition {
   private static animationCountMap: Map<string, number> = new Map();
+
+  /**
+   * **平板 / 2in1 的横屏下禁用「一镜到底」打开/回落动画**（2026-10-23 用户要求）。
+   *
+   * ── 为什么只禁横屏 ────────────────────────────────────────────────────────
+   *   一镜到底的几何是拿 `getRectangleById()` 的 **windowOffset** 当原点算的
+   *   （`common/utils/LongTakeBook.ets:81-82`），而横屏下整页布局的宽高比、
+   *   卡片位置全部重排，飞行几何极易算歪 ⇒ 用户实测横屏打开/回落动画错位。
+   *   竖屏（平板竖着拿 / 手机）几何稳定，动画保留。
+   *
+   * ── 影响面 ────────────────────────────────────────────────────────────────
+   *   返回 `true` 时 `generateLongTakeParam*()` 返回 `undefined`
+   *   ⇒ `AppRouter` 的 `longTakeParam` 为空 ⇒ 走系统默认转场（普通 push/pop）。
+   *   手机锁竖屏（`EntryAbility.initWindowProcess` 已设 PORTRAIT），永远走不到这里。
+   *
+   * 回退：本方法恒 `return false` 即恢复"所有方向都有一镜到底"。
+   */
+  private static isLandscapeWideDevice(): boolean {
+    const type: string = deviceInfo.deviceType;
+    if (type !== 'tablet' && type !== '2in1') {
+      return false;
+    }
+    const w: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
+    const h: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
+    // 宽 > 高 = 横屏（windowWidth/Height 由 WindowAbility 维护，单位 px，比值判断不受密度影响）
+    return w > h;
+  }
 
   private static getTransitionKey(from: NavContentInfo, to: NavContentInfo, operation: NavigationOperation): string {
     return `${from.navDestinationId}_${to.navDestinationId}_${operation}`;
@@ -27,6 +55,11 @@ export class ezCustomTransition {
 
   public static generateLongTakeParam(uiContext: UIContext, cardId: string, cornerRadius: number,
     options?: LongTakeTransitionOptions): LongTakeTransitionParam | undefined {
+    // 平板/2in1 横屏：禁用一镜到底（见 `isLandscapeWideDevice()` 注释）
+    if (ezCustomTransition.isLandscapeWideDevice()) {
+      hilog.info(0x00, TAG, 'longtake disabled: landscape on wide device');
+      return undefined;
+    }
     if (!uiContext || !cardId) {
       hilog.error(0x00, TAG, 'generateLongTakeParam error, cardId is invalid');
       return undefined;

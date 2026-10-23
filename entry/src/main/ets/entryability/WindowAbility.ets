@@ -138,22 +138,96 @@ export class WindowAbility {
     });
   }
 
+  /**
+   * 窗口尺寸变化监听（2026-10-23 重做：去重 + 防抖 + 安全区重算 + 监听器单例）。
+   *
+   * ── 旧实现的两个问题（用户反馈「竖屏偶尔整页被挤压，横屏再竖屏才好」）──────
+   *   ① **监听器重复注册**：`onWindowSizeChange()` 每调一次就 `on('windowSizeChange')`
+   *      一次。阅读页每次进入都会注册（`ReaderPage3.registerListener()`），
+   *      退出不注销 ⇒ 监听器越积越多，一次旋转触发 N 次回调。
+   *   ② **安全区不重算**：旋转后状态栏/手势条高度会变，但 `initAvoidArea()`
+   *      只在启动时调过一次 ⇒ `statusBarHeight` / `Paf.TopHeight` /
+   *      `NavigationBarHeight` 仍是旋转前的值 ⇒ 页面按错的避让值排版 = 「被挤压」。
+   *      转一圈横屏再回来能恢复，是因为那一圈里又走了一次重新测量。
+   *
+   * ── 现在的做法 ────────────────────────────────────────────────────────────
+   *   · 监听器**只注册一次**（`sizeListenerBound` 闸门），回调集中存在 `sizeCallbacks`；
+   *   · 同尺寸重复上报**直接丢弃**（旋转过程会连报多次相同尺寸）；
+   *   · 用 **150ms 防抖**合并，只在尺寸稳定后重算一次（日志实证：一次旋转会连发
+   *     6+ 次 config 推送，重排整本书 ⇒ 卡顿 + 闪）；
+   *   · 稳定后先 `initAvoidArea()` 刷新安全区，再递增 `windowSizeTick`
+   *     （供书架等非阅读页 `@StorageLink` 它触发重建），最后才回调业务。
+   */
   onWindowSizeChange(callback?: () => void): void {
-    if (!this.windowClass) {
+    if (callback) {
+      this.sizeCallbacks.push(callback);
+    }
+    if (!this.windowClass || this.sizeListenerBound) {
       return;
     }
+    this.sizeListenerBound = true;
     try {
       this.windowClass.on('windowSizeChange', (size) => {
         hilog.info(0x0000, TAG,
           'onWindowSizeChange windowSizeChange size is: ' + JSON.stringify(size));
+        // 去重：同一尺寸重复上报（旋转过程常见）直接忽略
+        if (size.width === this.lastSizeWidth && size.height === this.lastSizeHeight) {
+          return;
+        }
+        this.lastSizeWidth = size.width;
+        this.lastSizeHeight = size.height;
         AppStorage.setOrCreate<number>('windowWidth', size.width);
         AppStorage.setOrCreate<number>('windowHeight', size.height);
-        callback && callback();
+        // 防抖合并：一次旋转会连续触发多次，只在稳定后重算一次
+        if (this.sizeChangeTimer !== -1) {
+          clearTimeout(this.sizeChangeTimer);
+        }
+        this.sizeChangeTimer = setTimeout(() => {
+          this.sizeChangeTimer = -1;
+          // ★ 关键：安全区随方向变化 ⇒ 必须重算（旧实现漏了这一步）
+          if (this.windowClass) {
+            this.initAvoidArea(this.windowClass);
+          }
+          // 通知全 App「尺寸已稳定」（非阅读页可 @StorageLink 它触发重建）
+          const tick = (AppStorage.get<number>('windowSizeTick') ?? 0) as number;
+          AppStorage.setOrCreate<number>('windowSizeTick', tick + 1);
+          for (const cb of this.sizeCallbacks) {
+            try {
+              cb();
+            } catch (e) {
+              hilog.error(0x0000, TAG,
+                'onWindowSizeChange callback failed: ' + JSON.stringify(e));
+            }
+          }
+        }, 150);
       });
     } catch (exception) {
       hilog.error(0x0000, TAG,
         'onWindowSizeChange failed, error is ' + JSON.stringify(exception));
     }
+  }
+
+  /**
+   * 直接设置窗口方向（2026-10-23 新增：阅读页内锁定方向 / 手动横竖屏切换用）。
+   *
+   * 与上面 `setOrientation(windowStage, …)` 的区别：阅读页（NavDestination）里拿不到
+   * `windowStage`，所以这里内部走 `getLastWindow()` 自己取。
+   *
+   * 用途：平板 / 2in1 进入阅读页时**锁住当前方向**（禁止自动旋转），
+   * 再由顶栏的横竖屏按钮手动切换 —— 因为 ReaderKit 的原生 surface 在自动旋转后
+   * **不会重新分配**（真机实证：旋转后内容仍按竖屏 1840px 宽渲染，塞进 2800px 窗口
+   * ⇒ 左侧占 65.7%、右侧空白、行距异常）。锁定 + 手动切换才能让重建时机可控。
+   */
+  setOrientationDirect(orientation: window.Orientation): void {
+    window.getLastWindow(this.context).then((win: window.Window) => {
+      win.setPreferredOrientation(orientation).then(() => {
+        hilog.info(0x0000, TAG, 'setOrientationDirect ok, orientation=' + orientation);
+      }).catch((err: Error) => {
+        hilog.error(0x0000, TAG, 'setOrientationDirect failed: ' + JSON.stringify(err));
+      });
+    }).catch((err: Error) => {
+      hilog.error(0x0000, TAG, 'setOrientationDirect getLastWindow failed: ' + JSON.stringify(err));
+    });
   }
 
   setOrientation(windowStage: window.WindowStage, orientation: window.Orientation): void {
@@ -205,6 +279,15 @@ export class WindowAbility {
   private topRectFrozen: boolean = false;
   private savedTopRectHeight: number = 0;
   private savedBottomRectHeight: number = 0;
+  /** 尺寸变化回调集合（2026-10-23：监听器单例化，避免每进一次阅读页就多注册一个） */
+  private sizeCallbacks: Array<() => void> = [];
+  /** 'windowSizeChange' 是否已注册（只允许注册一次） */
+  private sizeListenerBound: boolean = false;
+  /** 上一次生效的窗口尺寸（去重用，单位 px） */
+  private lastSizeWidth: number = 0;
+  private lastSizeHeight: number = 0;
+  /** 尺寸变化防抖计时器 id（-1 = 空闲） */
+  private sizeChangeTimer: number = -1;
 
   /** 进入沉浸（阅读页打开）：冻结上下避让值，让隐藏系统栏不再引起主页重排 */
   freezeTopRect(): void {

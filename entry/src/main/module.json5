@@ -72,6 +72,16 @@
       {
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
+        // ── 应用接续（无缝流转，2026-10-24 新增）────────────────────────────────
+        // 官方 documentId `最佳实践/跨端迁移/应用接续概述/bpta-continue-cast` 原文：
+        // 「在 module.json5 的 abilities 中，将 continuable 标签配置为 "true"，
+        //   表示该 UIAbility 可被迁移。默认值为 false，将被系统识别为无法迁移。」
+        // ⚠️ 不需要任何权限：同文档原文「**自 API12 起，无需申请
+        //   ohos.permission.DISTRIBUTED_DATASYNC 权限**」。
+        // ⚠️ 不需要 AGC「接续服务」申请：那只针对双端 **BundleName 不同 / 开发者不同**；
+        //   我们手机平板是同一个 HAP、同一个 BundleName ⇒ 无需申请。
+        // 启动模式未显式配置 = 默认 singleton ⇒ 对端冷启动走 onCreate、热启动走 onNewWant。
+        "continuable": true,
         "description": "$string:EntryAbility_desc",
         "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",

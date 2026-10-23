@@ -24,6 +24,13 @@ import UiMotion from '../common/utils/UiMotion'
 import BookDetailPage from './view/BookDetailPage'
 import ReaderPage3 from './view/Reader/ReaderPage3'
 import PdfViewerPage from './view/Reader/PdfViewerPage'
+// 应用接续（无缝流转，2026-10-24）：消费对端恢复标记
+import { ContinueBridge, ContinuePayload } from '../common/utils/ContinueBridge'
+import { PreferencesUtil } from '@pura/harmony-utils'
+import { hilog } from '@kit.PerformanceAnalysisKit'
+// 全量路线：复用生产导入管线（拷进沙箱 + 写库 + 抽封面）
+import { FileHandler } from '../common/utils/FileHandler'
+import { fileIo as fs } from '@kit.CoreFileKit'
 import {
   PdfRouteParam,
   ReaderRouteParam,
@@ -59,11 +66,14 @@ import CommonConstants from '../common/constants/CommonConstants'
 import {
   HdsBarStyle,
   HdsTabs,
+  HdsTabsAttribute,
   HdsTabsBarChangeMode,
   HdsTabsController,
   HdsTabsFloatingStyle,
   hdsMaterial
 } from '@kit.UIDesignKit'
+// 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
+import HdsCompat, { HdsFloatingStyleModifier } from '../common/utils/HdsCompat'
 import { ListenDock, ListenTitleBar } from '../components/tts/ListenDock'
 import { ListenSession } from '../tts/ListenSession'
 import { ListenLauncher } from '../tts/ListenLauncher'
@@ -108,10 +118,17 @@ struct Main {
   /** 听书 dock 是否展开（HDS MiniBar 的 EXPAND 态） */
   @StorageLink('listenExpanded') @Watch('onListenExpandedChanged') listenExpanded: boolean = false
   /** HDS 最近一次回报的迷你栏样式（`onBarStyleChange` 里更新；只作闸门，不驱动 UI） */
-  private lastHdsMiniBar: HdsBarStyle = HdsBarStyle.COLLAPSE
+  // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**这里不能写 `HdsBarStyle.COLLAPSE`**。
+  //   字段初始化器是**无条件执行**的，而 `HdsBarStyle` 是 6.1.0(23) 才有的枚举
+  //   （SDK `@hms.hds.hdsBaseComponent.d.ets:5124` `@since 6.1.0(23)`）
+  //   ⇒ API 20 设备上该枚举是 undefined，取 `.COLLAPSE` 即抛 TypeError ⇒ 页面构造就崩。
+  //   ⇒ 改成可空 + 只有 23+ 分支（`onBarStyleChange` 回调）才会赋值。
+  private lastHdsMiniBar: HdsBarStyle | null = null
   /** hdsFloatingStyle() 的缓存（防止切页签重建迷你栏 ⇒ 圆形闪一帧） */
   private cachedFloatStyle: HdsTabsFloatingStyle | null = null
   private cachedFloatKey: string = ''
+  /** 包着 `barFloatingStyle` 的属性修改器缓存（同上，防止重建 ⇒ 闪） */
+  private cachedFloatModifier: AttributeModifier<HdsTabsAttribute> | null = null
   /** 是否存在听书会话（书名信息条的显示条件；必须走 StorageLink 才会驱动重绘） */
   @StorageLink('listenActive') listenActive: boolean = false
 
@@ -424,7 +441,173 @@ struct Main {
     return false
   }
 
+  /**
+   * 应用接续（无缝流转，2026-10-24）：对端恢复标记。
+   *
+   * 用 `@StorageLink + @Watch` 而不是只在 `onPageShow` 里查 —— 与本页
+   * `quickAction` 那套（`:322`）同因：**应用已在后台时被接续拉起**不会重新走
+   * `aboutToAppear`，但 `@Watch` 一定会响。
+   */
+  @StorageLink('CONTINUE_PENDING') @Watch('onContinuePending') continuePending: string = ''
+
+  /**
+   * 消费一次接续数据 ⇒ 打开对应书籍并落到接续位置。
+   *
+   * 落点用 `continueSpine + continueDomPos`（字符级 DOM 锚点，跨设备/跨字号/跨翻页
+   * 模式都能精确命中），由 `ReaderPage3.aboutToAppear` 的 `startPlay` 消费。
+   * 字号/行距**刻意不迁移**（每块屏幕按自己的尺寸排版 ⇒ 布局不变）。
+   */
+  private onContinuePending(): void {
+    if (this.continuePending.length === 0) {
+      return
+    }
+    // 先同步取走（consumePending 内部会清标记）⇒ @Watch 重入无害
+    const p: ContinuePayload | null = ContinueBridge.consumePending()
+    if (p === null) {
+      return
+    }
+    const open = (book: Books): void => {
+      // 对端缺书：明确提示，不静默失败（全量"带书过去"是下一期的事）
+      if (book.bookName !== p.bookName) {
+        showMessage(`本机没有《${p.bookName}》，请先导入这本书`)
+        return
+      }
+      // ① 字体 / 背景 / 日夜间：写进本书的 ReaderSetting 持久位，
+      //    阅读页 `aboutToAppear` 一读就是对的（**字号/行距刻意不动** ⇒ 布局不变）。
+      this.applyContinueLayout(p)
+      // ② 背景记录（自定义颜色/材质）
+      ContinueBridge.saveBgIfAny(p)
+      const rp: ReaderRouteParam = {
+        bookData: book,
+        continueSpine: p.spineIndex,
+        continueDomPos: p.domPos
+      }
+      if (!AppRouter.push(RouteName.READER, rp)) {
+        showMessage('打开失败：页面栈尚未就绪')
+      }
+    }
+    const find = (): void => {
+      const miss = (): void => {
+        // 对端确实没有这本书 ⇒ 走**全量路线**：把源端暂存在分布式目录的书文件
+        // 用现有导入管线（`FileHandler.CopyFile`：拷进沙箱 + 写库）落地，再打开。
+        this.importContinueBook(p, open)
+      }
+      if (p.bookUrl.length > 0) {
+        BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
+          if (list.length > 0) {
+            open(list[0])
+          } else {
+            miss()
+          }
+        }).catch((): void => {
+          miss()
+        })
+        return
+      }
+      BooksDao.getLastReadBook().then((book: Books | null) => {
+        if (book !== null && book.bookName === p.bookName) {
+          open(book)
+        } else {
+          miss()
+        }
+      }).catch((): void => {
+        miss()
+      })
+    }
+    // 等页面栈就绪（冷启动时 onWindowStageCreate 里 attach 可能还没跑完）
+    if (!AppRouter.isReady()) {
+      setTimeout(find, 300)
+    } else {
+      find()
+    }
+  }
+
+  /**
+   * 把接续带过来的**字体 / 背景 / 日夜间**写进本书的 `ReaderSetting_${bookName}`。
+   *
+   * ⚠️ 字号（fontSize）、行距（lineHeight）**刻意不写** —— 用户 2026-10-24 拍板：
+   *    「字体、背景、日/夜需要带，字号和行距不要带，这样就能完美实现布局不变，
+   *      但是信息同步」。
+   * 写的是**持久位**而不是内存：阅读页 `aboutToAppear` 会从 Preferences 读初值，
+   * 先落盘再进页面 ⇒ 一进就是对的，不需要额外时序协调。
+   */
+  private applyContinueLayout(p: ContinuePayload): void {
+    try {
+      const key: string = `ReaderSetting_${p.bookName}`
+      const raw: string = PreferencesUtil.getSync(key, '') as string
+      let setting: Record<string, Object> = {}
+      if (typeof raw === 'string' && raw.length > 0) {
+        setting = JSON.parse(raw) as Record<string, Object>
+      }
+      ContinueBridge.applyLayoutToBook(p, setting)
+      PreferencesUtil.putSync(key, JSON.stringify(setting))
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'applyContinueLayout failed')
+    }
+  }
+
+  /**
+   * 全量路线（2026-10-24）：对端没有这本书 ⇒ 用源端暂存在**分布式目录**的文件导入。
+   *
+   * 复用生产导入管线 `FileHandler.CopyFile(uri, index)`（拷进沙箱 + 写库 + 抽封面），
+   * 与「分享 / 用其他应用打开」完全同一条链路 ⇒ 入库结果与手动导入一致。
+   * 导入成功后回查一次 DB 拿到带 id 的 Books，再走正常打开流程。
+   *
+   * 失败（未开多设备协同 / 网络断 / 源端没暂存成功）⇒ 明确提示，不静默。
+   */
+  private importContinueBook(p: ContinuePayload, onImported: (book: Books) => void): void {
+    if (p.bookFileName.length === 0) {
+      showMessage(`本机没有《${p.bookName}》，且未收到书籍文件，请先导入这本书`)
+      return
+    }
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
+    const path: string = ContinueBridge.targetBookPath(ctx, p.bookFileName)
+    let exists: boolean = false
+    try {
+      exists = fs.accessSync(path)
+    } catch (e) {
+      exists = false
+    }
+    if (!exists) {
+      showMessage(`本机没有《${p.bookName}》，接续的书籍文件也读不到（请确认两端已开启多设备协同）`)
+      return
+    }
+    showMessage(`正在接收《${p.bookName}》…`)
+    FileHandler.CopyFile(path, 0).then((ok: boolean) => {
+      ContinueBridge.clearStagedFile(ctx, p.bookFileName)
+      if (!ok) {
+        showMessage(`《${p.bookName}》导入失败`)
+        return
+      }
+      BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
+        if (list.length > 0) {
+          onImported(list[0])
+        } else {
+          // url 可能因导入路径不同而不等 ⇒ 退回"最后阅读"兜底
+          BooksDao.getLastReadBook().then((book: Books | null) => {
+            if (book !== null) {
+              onImported(book)
+            } else {
+              showMessage(`《${p.bookName}》已导入但未找到记录，请回书架查看`)
+            }
+          })
+        }
+      }).catch((): void => {
+        showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
+      })
+    }).catch((): void => {
+      showMessage(`《${p.bookName}》导入失败`)
+    })
+  }
+
   onPageShow(): void {
+    // ★ 应用接续（2026-10-24）：**冷启动**必须在这里补一次消费。
+    //   原因（踩过）：`@StorageLink` 的初值是**从 AppStorage 读取**的，读取**不触发
+    //   `@Watch`** —— 而冷启动路径是 `EntryAbility.onCreate` 先写 `CONTINUE_PENDING`
+    //   （那时 UI 还没起），再 `onWindowStageCreate` → `loadContent` → 本页构建。
+    //   于是 @Watch 永远不响 ⇒ 接续到冷启动的设备上会"停在书架、不跳阅读页"。
+    //   `consumePending()` 读走即清 ⇒ 与 @Watch 双路径并存也不会重复 push。
+    this.onContinuePending()
     // 冷启动场景：@Watch 只在"绑定之后发生变化"时触发，
     // 快捷方式在 onCreate 里就写好了标记，所以这里也消费一次（幂等，见 consumeQuickAction）。
     this.consumeQuickAction();
@@ -661,6 +844,14 @@ struct Main {
    * 用 `lastHdsMiniBar` 做闸门，避免 HDS 自己已经折叠时再调一次造成回环。
    */
   onListenExpandedChanged(): void {
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：闸门必须在**碰任何 HDS 符号之前**。
+    //   `applyMiniBarStyle()` 与 `HdsBarStyle` 都是 6.1.0(23) 才有
+    //   （SDK `@hms.hds.hdsBaseComponent.d.ets:5124 / :5805`）
+    //   ⇒ API 20 设备上 `HdsBarStyle` undefined，取 `.EXPAND` 即抛。
+    //   23 以下没有迷你栏（没有悬浮样式），本回调本来也无事可做。
+    if (!HdsCompat.supportsFloatingBar()) {
+      return;
+    }
     if (!this.listenExpanded && this.lastHdsMiniBar === HdsBarStyle.EXPAND) {
       this.tabController.applyMiniBarStyle(HdsBarStyle.COLLAPSE);
     }
@@ -680,7 +871,46 @@ struct Main {
    * 不设材质的普通悬浮条；彻底回退到 `Tabs` 需要把本文件里的 HdsTabs 换回 Tabs
    * （见文件头 import 注释）。
    */
-  private hdsFloatingStyle(): HdsTabsFloatingStyle {
+  /**
+   * 悬浮样式 → `AttributeModifier`（2026-10-23 向下兼容鸿蒙6 新增）。
+   *
+   * ⚠️ **不要再改回 `.barFloatingStyle(...)`**：声明式语法会把它编译成裸方法调用
+   * （构建产物 `…\pages\Index.ts` 原文 `HdsTabs.barFloatingStyle(...)`），
+   * 而它是 6.1.0(23) 才有的属性（SDK `…d.ets:5680`）⇒ API 20 设备上方法不存在，
+   * **首页构建即 TypeError ⇒ 闪退**。
+   *
+   * 走 `AttributeModifier` 的理由：`applyNormalAttribute()` 是**回调**，
+   * 只有 modifier 真被挂上时才执行 ⇒ 低版本挂 `HdsCompat.NOOP_MODIFIER`，
+   * 一个 HDS 23 独有属性都不会碰到。官方认可：HDS 自己的
+   * `HdsTabsModifier implements AttributeModifier<HdsTabsAttribute>`
+   * （SDK `…d.ets:5751`）就是这条通道。
+   *
+   * 缓存：与 `hdsFloatingStyle()` 同生命周期（`cachedFloatModifier`），
+   * 否则每次渲染 new 一个 modifier ⇒ HDS 当成"配置变了"重建迷你栏 ⇒ 圆形闪。
+   */
+  private floatStyleModifier(): AttributeModifier<HdsTabsAttribute> {
+    if (!HdsCompat.supportsFloatingBar()) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    const st: HdsTabsFloatingStyle | undefined = this.hdsFloatingStyle();
+    if (st === undefined) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    if (this.cachedFloatModifier === null) {
+      this.cachedFloatModifier = new HdsFloatingStyleModifier(st);
+    }
+    return this.cachedFloatModifier;
+  }
+
+  private hdsFloatingStyle(): HdsTabsFloatingStyle | undefined {
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：闸门必须在**第一行**。
+    //   `HdsTabsFloatingStyle` 是 6.1.0(23) 才有的接口（SDK `…d.ets:5380`），
+    //   下面 `const st: HdsTabsFloatingStyle = {…}` 是**对象字面量构造**，
+    //   API 20 上执行即抛 TypeError。23 以下直接返回 undefined
+    //   （`floatStyleModifier()` 会换成空 modifier，页签退回普通贴底条）。
+    if (!HdsCompat.supportsFloatingBar()) {
+      return undefined;
+    }
     // ★★ 2026-10-09「切页签时圆形闪一下」修复：**缓存样式对象，不要每次渲染都新建** ★★
     //   原因：`.barFloatingStyle(新对象)` 每次切页签都会拿到一个**新引用**
     //   （`onAnimationStart` 里 `currentTabIndex = target` 触发 Index 重渲染 ⇒ 本方法重跑），
@@ -691,6 +921,8 @@ struct Main {
     if (this.cachedFloatStyle !== null && this.cachedFloatKey === key) {
       return this.cachedFloatStyle;
     }
+    // 样式对象要重建 ⇒ 包着它的 modifier 也必须一起失效，否则新样式不生效
+    this.cachedFloatModifier = null;
     const st: HdsTabsFloatingStyle = {
       barSideMargin: 16,
       barBottomMargin: this.bottomRectHeight + 8,
@@ -934,7 +1166,13 @@ struct Main {
       //    从"给 Tabs 加 padding"改成"给悬浮条加 barBottomMargin"，否则两处叠加会把条顶太高。
       //    关闭沉浸光感时（`ImmersiveMaterialUtil.ENABLED = false`）两个表达式都会回到原样。
       .barOverlap(ImmersiveMaterialUtil.isOn())
-      .barFloatingStyle(this.hdsFloatingStyle())
+      // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.barFloatingStyle(...)`**。
+      //   它是 6.1.0(23) 才有的属性（SDK `…\@hms.hds.hdsBaseComponent.d.ets:5680`），
+      //   声明式语法会把它编译成裸调用 `HdsTabs.barFloatingStyle(...)`
+      //   （本工程构建产物 `entry\build\…\pages\Index.ts` 原文），
+      //   API 20 设备上该方法不存在 ⇒ **首页构建即 TypeError ⇒ 闪退**。
+      //   ⇒ 改走官方 `AttributeModifier` 通道，低版本自动挂空 modifier（什么都不设）。
+      .attributeModifier(this.floatStyleModifier())
       .padding({ bottom: ImmersiveMaterialUtil.isOn() ? 0 : this.bottomRectHeight })
       // 同 TabContent 上的说明：官方参考实现给 Tabs 也挂了 expandSafeArea。
       .expandSafeArea([SafeAreaType.SYSTEM])
@@ -978,6 +1216,24 @@ struct Main {
     .id('main')
     }
     .hideTitleBar(true)
+    // ══════════════════════════════════════════════════════════════════════════
+    // 2026-10-23 平板布局修正（用户反馈「平板进入后分成左右两侧，像平行世界」）
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── 根因 ────────────────────────────────────────────────────────────────
+    //   `Navigation` 的 `mode` **默认是 `NavigationMode.Auto`**：宽屏（平板）下
+    //   自动切成 **Split 分栏**（左 = 导航栏/NavBar，右 = 内容区）⇒ 用户看到的
+    //   "左右两半、像平行世界"就是 Split 模式。手机宽度不够，Auto 落到 Stack，
+    //   所以手机上一直是单栏。
+    // ── 用户要求 ────────────────────────────────────────────────────────────
+    //   「让平板和手机一样的布局」⇒ 显式钉成 `NavigationMode.Stack`（单栏）。
+    // ── 为什么可以安全钉死 ──────────────────────────────────────────────────
+    //   本工程路由是**一镜到底的整页飞行**（`ezCustomTransition` + `LongTakeBook`
+    //   几何计算），Split 分栏会让"整页飞行"的几何基准失效（左栏不再是全屏）。
+    //   官方 skill `hmos-arkui-longtake-transition` 的前提也是**整页 NavDestination**。
+    //   `Navigation.mode()` 是 `@since 9`（`navigation.d.ts`），API 20 可用。
+    // ── 回退 ────────────────────────────────────────────────────────────────
+    //   删掉本行即恢复系统默认（平板上重新变回左右分栏）。
+    .mode(NavigationMode.Stack)
     // ── 一镜到底官方库迁移（2026-10-02，@hmanimations/ezcustomtransition）────────
     // skill: hmos-arkui-longtake-transition Step 4。转场回调交由官方库接管
     //（打断/手势/生命周期由库内 session 状态机管理），并按官方要求在转场期间

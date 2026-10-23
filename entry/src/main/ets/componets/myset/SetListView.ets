@@ -100,7 +100,13 @@ export struct SetListView{
             //   「You are advised **not to use this API together with** the aforementioned APIs
             //     [backgroundColor, borderColor, borderWidth, shadow]」
             // ⇒ 这里只保留 Toggle 专属的 `selectedColor`，没有再叠加那四个通用属性。
-            .systemMaterial(ImmersiveMaterialUtil.controlMaterial())
+            // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.systemMaterial(...)`**。
+            //   它是 **API 26.0.0** 才有（SDK `…\ets\component\common.d.ts:22642`
+            //   `systemMaterial(material: SystemUiMaterial | undefined): T;` `@since 26.0.0`），
+            //   声明式语法编译成裸调用 `Toggle.systemMaterial(...)`
+            //   ⇒ 鸿蒙6 上 `undefined is not callable` ⇒ 设置页闪退。
+            //   改走 `AttributeModifier` 回调通道，低版本挂空实现（开关退回普通样式）。
+            .attributeModifier(ImmersiveMaterialUtil.toggleMaterialModifier())
         }
       }.alignItems(VerticalAlign.Center)
 

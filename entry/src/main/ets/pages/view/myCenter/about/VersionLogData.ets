@@ -19,7 +19,7 @@ export const APP_VERSION_FALLBACK: string = 'V2.2.1'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.2.1',
+    version: 'V2.2.1 B',
     date: '2026-10-23',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
@@ -62,6 +62,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '超多细节改动与优化，首页布局完全重制，极致精简',
       '新增在线字体库',
       '新增上下滑动的翻页模式',
+      '测试应用接续',
     ]
   },
 ]

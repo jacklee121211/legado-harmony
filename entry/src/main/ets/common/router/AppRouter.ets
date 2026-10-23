@@ -156,6 +156,14 @@ export interface ReaderRouteParam {
   clickBookCatalogId?: number;
   /** 桌面快捷方式「快速听书」带过来的标记：进入后自动开始朗读 */
   quickListen?: boolean;
+  /**
+   * 应用接续（2026-10-24）：对端恢复时要落的**章节索引**（= spineIndex）。
+   * 有值 ⇒ `ReaderPage3.aboutToAppear` 优先用它 `startPlay(spine, domPos)`，
+   * 而不是本书持久化的 `localBookDurChapterPos`。
+   */
+  continueSpine?: number;
+  /** 应用接续：章节内字符级 DOM 锚点（与排版无关，跨设备可精确落点） */
+  continueDomPos?: string;
   /** 「我的 → 书签」回跳：书签的目录号 */
   bmChapterIndex?: number;
   /** 「我的 → 书签」回跳：书签的页首块节点号 */

@@ -1,5 +1,6 @@
 import { uiMaterial } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { NightMode } from './NightMode';
 
 /**
@@ -68,9 +69,47 @@ export default class ImmersiveMaterialUtil {
    */
   static readonly ENABLED: boolean = true;
 
+  /**
+   * 沉浸光感的最低 API 版本（**26.0.0**，即鸿蒙7）。
+   * 证据：SDK `…\openharmony\ets\api\@ohos.arkui.uiMaterial.d.ts:30` `@since 26.0.0`。
+   * 低于此版本一律视为"不支持"，见 `probe()`。
+   */
+  static readonly MIN_API_IMMERSIVE: number = 26;
+
+  /** `uiMaterial.MaterialLevel` 的数值（SDK 注释：EXQUISITE=0 高算力 / GENTLE=1 中算力 / SMOOTH=2 低算力） */
+  static readonly LEVEL_EXQUISITE: number = 0;
+  static readonly LEVEL_GENTLE: number = 1;
+  static readonly LEVEL_SMOOTH: number = 2;
+
   private static supported: boolean = false;
-  private static level: uiMaterial.MaterialLevel = uiMaterial.MaterialLevel.GENTLE;
+  /**
+   * 设备算力档位（数值，等价 `uiMaterial.MaterialLevel`）。
+   *
+   * ⚠️⚠️ **绝对不能写成 `uiMaterial.MaterialLevel.GENTLE`** —— 这是 2026-10-23
+   *   「鸿蒙6 平板安装即闪退」的**真凶**：
+   *   本行是**静态字段初始化器**，类一加载就**无条件求值**；而 `uiMaterial` 是
+   *   **API 26.0.0** 才有的命名空间（SDK `…\openharmony\ets\api\@ohos.arkui.uiMaterial.d.ts:30`
+   *   `@since 26.0.0`）⇒ 鸿蒙6（API 20）上 `uiMaterial === undefined`
+   *   ⇒ 取 `.GENTLE` 直接抛 `TypeError: Cannot read property GENTLE of undefined`
+   *   ⇒ **应用启动即闪退**（连首页都没机会渲染）。
+   *
+   *   真机日志原文（`docs/日志.md:686-689`）：
+   *     `TypeError: Cannot read property GENTLE of undefined`
+   *     `at static_initializer (entry|…|src/main/ets/common/utils/ImmersiveMaterialUtil.ts:76:79)`
+   *     `at func_main_0 (entry|…|src/main/ets/common/utils/ImmersiveMaterialUtil.ts:63:44)`
+   *     `Cannot execute ark file 'entry/ets/pages/Index.abc' with entry '_GLOBAL::func_main_0'`
+   *
+   *   ⇒ 改用本类的 `LEVEL_*` 数值常量，**静态初始化期全程不碰 `uiMaterial.*`**。
+   *   （同类坑：`HdsBarStyle` 写在字段初始化器里也一样，见 `pages/Index.ets`
+   *     `lastHdsMiniBar` 的注释。）
+   */
+  private static level: number = ImmersiveMaterialUtil.LEVEL_GENTLE;
   private static probed: boolean = false;
+  /** 空 `Tabs` modifier 单例缓存（见 `noopTabsModifier()`） */
+  private static noopTabs: AttributeModifier<TabsAttribute> | null = null;
+  /** 空 `Slider` / `Toggle` modifier 单例缓存（见 `noopSliderModifier()` / `noopToggleModifier()`） */
+  private static noopSlider: AttributeModifier<SliderAttribute> | null = null;
+  private static noopToggle: AttributeModifier<ToggleAttribute> | null = null;
 
   /**
    * 探测设备能力与算力档位（幂等，只在首次真正调用时执行一次）。
@@ -83,6 +122,16 @@ export default class ImmersiveMaterialUtil {
     }
     ImmersiveMaterialUtil.probed = true;
     if (!ImmersiveMaterialUtil.ENABLED) {
+      ImmersiveMaterialUtil.supported = false;
+      return;
+    }
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**先按版本短路，再进 try**。
+    //   为什么不能只靠下面的 try/catch：沉浸光感是 **API 26.0.0** 新增
+    //   （SDK `…\openharmony\ets\api\@ohos.arkui.uiMaterial.d.ts:30` `@since 26.0.0`），
+    //   低版本设备上 `uiMaterial` 整个命名空间都不存在 ⇒ 每次冷启动都会先抛一次
+    //   TypeError 再被 catch 吃掉，**hilog 里会刷异常栈**（容易被误判成崩溃）。
+    //   加这一层后：低版本设备一次异常都不抛，直接判定"不支持"。
+    if (deviceInfo.sdkApiVersion < ImmersiveMaterialUtil.MIN_API_IMMERSIVE) {
       ImmersiveMaterialUtil.supported = false;
       return;
     }
@@ -107,14 +156,14 @@ export default class ImmersiveMaterialUtil {
   }
 
   /** 设备算力档位（供需要按档位微调的地方读取） */
-  static materialLevel(): uiMaterial.MaterialLevel {
+  static materialLevel(): number {
     ImmersiveMaterialUtil.probe();
     return ImmersiveMaterialUtil.level;
   }
 
   /** 是否高算力设备（可用更厚的材质） */
   private static isHighEnd(): boolean {
-    return ImmersiveMaterialUtil.materialLevel() === uiMaterial.MaterialLevel.EXQUISITE;
+    return ImmersiveMaterialUtil.materialLevel() === ImmersiveMaterialUtil.LEVEL_EXQUISITE;
   }
 
   /**
@@ -133,6 +182,78 @@ export default class ImmersiveMaterialUtil {
    * @param barBottomMargin 页签条离底部的距离。**不能用百分比**，所以直接吃像素值。
    *        传 `bottomRectHeight + 8`：让悬浮条浮在系统导航条之上，并留 8vp 呼吸位。
    */
+  /**
+   * 原生 `Tabs` 的悬浮样式 → `AttributeModifier`（2026-10-23 向下兼容鸿蒙6 新增）。
+   *
+   * ⚠️ 调用方**不要再用 `.barFloatingStyle(...)`**：它是 **API 26.0.0** 才有的
+   *   （SDK `…\component\tabs.d.ts:1683`），声明式语法编译成裸调用，
+   *   API 20 设备上 `undefined is not callable` ⇒ 阅读页闪退
+   *   （真机日志 `docs/日志.md:4148-4149`）。详见 `TabsFloatingStyleModifier` 注释。
+   *
+   * 返回空 modifier 的两种情况：① API<26；② 沉浸光感没开（`isOn()` 为假）。
+   */
+  static tabsFloatingModifier(barBottomMargin: number): AttributeModifier<TabsAttribute> {
+    if (deviceInfo.sdkApiVersion < ImmersiveMaterialUtil.MIN_API_IMMERSIVE) {
+      return ImmersiveMaterialUtil.noopTabsModifier();
+    }
+    const style: FloatingTabBarStyle | undefined =
+      ImmersiveMaterialUtil.tabsFloatingStyle(barBottomMargin);
+    if (style === undefined) {
+      return ImmersiveMaterialUtil.noopTabsModifier();
+    }
+    return new TabsFloatingStyleModifier(style);
+  }
+
+  /** 空 modifier 单例（懒建，避免静态初始化期引用后置类） */
+  private static noopTabsModifier(): AttributeModifier<TabsAttribute> {
+    if (ImmersiveMaterialUtil.noopTabs === null) {
+      ImmersiveMaterialUtil.noopTabs = new NoopTabsModifier();
+    }
+    return ImmersiveMaterialUtil.noopTabs;
+  }
+
+  /**
+   * `Slider` 的 `systemMaterial` → `AttributeModifier`（2026-10-23 兼容鸿蒙6 新增）。
+   * ⚠️ 调用方**不要再用 `.systemMaterial(...)`**，它是 API 26.0.0 才有，
+   *   传 undefined 也会触发裸调用 ⇒ 低版本闪退。详见 `SliderMaterialModifier` 注释。
+   */
+  static sliderMaterialModifier(): AttributeModifier<SliderAttribute> {
+    if (deviceInfo.sdkApiVersion < ImmersiveMaterialUtil.MIN_API_IMMERSIVE) {
+      return ImmersiveMaterialUtil.noopSliderModifier();
+    }
+    const m: uiMaterial.ImmersiveMaterial | undefined = ImmersiveMaterialUtil.sliderMaterial();
+    if (m === undefined) {
+      return ImmersiveMaterialUtil.noopSliderModifier();
+    }
+    return new SliderMaterialModifier(m);
+  }
+
+  /** `Toggle` 的 `systemMaterial` → `AttributeModifier`（同上，见 `ToggleMaterialModifier`） */
+  static toggleMaterialModifier(): AttributeModifier<ToggleAttribute> {
+    if (deviceInfo.sdkApiVersion < ImmersiveMaterialUtil.MIN_API_IMMERSIVE) {
+      return ImmersiveMaterialUtil.noopToggleModifier();
+    }
+    const m: uiMaterial.ImmersiveMaterial | undefined = ImmersiveMaterialUtil.controlMaterial();
+    if (m === undefined) {
+      return ImmersiveMaterialUtil.noopToggleModifier();
+    }
+    return new ToggleMaterialModifier(m);
+  }
+
+  private static noopSliderModifier(): AttributeModifier<SliderAttribute> {
+    if (ImmersiveMaterialUtil.noopSlider === null) {
+      ImmersiveMaterialUtil.noopSlider = new NoopSliderModifier();
+    }
+    return ImmersiveMaterialUtil.noopSlider;
+  }
+
+  private static noopToggleModifier(): AttributeModifier<ToggleAttribute> {
+    if (ImmersiveMaterialUtil.noopToggle === null) {
+      ImmersiveMaterialUtil.noopToggle = new NoopToggleModifier();
+    }
+    return ImmersiveMaterialUtil.noopToggle;
+  }
+
   static tabsFloatingStyle(barBottomMargin: number): FloatingTabBarStyle | undefined {
     if (!ImmersiveMaterialUtil.isOn()) {
       return undefined;
@@ -688,5 +809,99 @@ export class MaterialButtonModifier implements AttributeModifier<ButtonAttribute
       instance.backgroundColor(this.bg);
       instance.fontColor(this.fg);
     }
+  }
+}
+
+/**
+ * 把**原生 `Tabs`** 的 `barFloatingStyle(...)` 包进 `AttributeModifier` 里。
+ *
+ * ⚠️⚠️ 为什么必须这么包（2026-10-23「鸿蒙6 平板点进阅读页闪退」的真凶）：
+ *   `Tabs.barFloatingStyle()` 是 **API 26.0.0** 才有的属性
+ *   （SDK `…\openharmony\ets\component\tabs.d.ts:1683` `@since 26.0.0`；
+ *     配套接口 `FloatingTabBarStyle` 同文件 `:824` 也是 `@since 26.0.0`）。
+ *   声明式语法会把它编译成**裸方法调用**（构建产物 `…\pages\view\Reader\ReaderPage3.ts`
+ *   原文 `Tabs.barFloatingStyle(...)`）⇒ 鸿蒙6（API 20）上该方法 `undefined`
+ *   ⇒ `TypeError: undefined is not callable` ⇒ **点进阅读页即闪退**。
+ *   真机日志原文（`docs/日志.md:4148-4149 / 4174-4176`）：
+ *     `TypeError: undefined is not callable`
+ *     `at anonymous entry (entry/src/main/ets/pages/view/Reader/ReaderPage3.ets:7649:12)`
+ *
+ *   ⇒ 改走 `AttributeModifier`：`applyNormalAttribute()` 是**回调**，只有挂上去才执行，
+ *     低版本挂 `ImmersiveMaterialUtil.tabsFloatingModifier()` 返回的空实现即可。
+ *
+ * 回退：低版本（API<26）上页签条退回**普通贴底实心条**（无悬浮、无材质），
+ *   这是用户已接受的"老机型体验弱于新机型"。
+ */
+export class TabsFloatingStyleModifier implements AttributeModifier<TabsAttribute> {
+  private readonly style: FloatingTabBarStyle;
+
+  constructor(style: FloatingTabBarStyle) {
+    this.style = style;
+  }
+
+  applyNormalAttribute(instance: TabsAttribute): void {
+    instance.barFloatingStyle(this.style);
+  }
+}
+
+/** API<26 用的空实现：不设置任何属性（见 `TabsFloatingStyleModifier` 注释） */
+class NoopTabsModifier implements AttributeModifier<TabsAttribute> {
+  applyNormalAttribute(instance: TabsAttribute): void {
+    // 故意留空：低版本设备不得触碰 `Tabs.barFloatingStyle`（API 26.0.0 才有）
+  }
+}
+
+/**
+ * 把**普通组件**的 `systemMaterial(...)` 包进 `AttributeModifier`（Slider 版）。
+ *
+ * ⚠️⚠️ 为什么必须包（2026-10-23 全量扫描发现的第二类闪退源）：
+ *   `systemMaterial(material: SystemUiMaterial | undefined): T;` 是
+ *   **API 26.0.0** 才有（SDK `…\openharmony\ets\component\common.d.ts:22642`
+ *   `@since 26.0.0`，声明在 `CommonMethod<T>` 上）。
+ *   声明式语法编译成裸调用 ⇒ API 20 设备上 `Slider.systemMaterial` 为 `undefined`
+ *   ⇒ `TypeError: undefined is not callable`。
+ *
+ *   ⚠️ 特别注意：**传 `undefined` 也救不了** —— `sliderMaterial()` 在沉浸光感关闭时
+ *   返回 `undefined`，但 `.systemMaterial(undefined)` 依然会**调用那个不存在的方法**。
+ *   所以必须整条调用都搬进 modifier 回调里（低版本挂空实现）。
+ *
+ * 回退：API<26 或沉浸光感关闭 ⇒ 滑条回到改造前的普通样式（无材质）。
+ */
+export class SliderMaterialModifier implements AttributeModifier<SliderAttribute> {
+  private readonly material: uiMaterial.ImmersiveMaterial;
+
+  constructor(material: uiMaterial.ImmersiveMaterial) {
+    this.material = material;
+  }
+
+  applyNormalAttribute(instance: SliderAttribute): void {
+    instance.systemMaterial(this.material);
+  }
+}
+
+/** 同上（Toggle 版）—— `SetListView` 的开关用它 */
+export class ToggleMaterialModifier implements AttributeModifier<ToggleAttribute> {
+  private readonly material: uiMaterial.ImmersiveMaterial;
+
+  constructor(material: uiMaterial.ImmersiveMaterial) {
+    this.material = material;
+  }
+
+  applyNormalAttribute(instance: ToggleAttribute): void {
+    instance.systemMaterial(this.material);
+  }
+}
+
+/** API<26 用的空实现（Slider） */
+class NoopSliderModifier implements AttributeModifier<SliderAttribute> {
+  applyNormalAttribute(instance: SliderAttribute): void {
+    // 故意留空：低版本设备不得触碰 `systemMaterial`（API 26.0.0 才有）
+  }
+}
+
+/** API<26 用的空实现（Toggle） */
+class NoopToggleModifier implements AttributeModifier<ToggleAttribute> {
+  applyNormalAttribute(instance: ToggleAttribute): void {
+    // 故意留空：低版本设备不得触碰 `systemMaterial`（API 26.0.0 才有）
   }
 }

@@ -37,10 +37,13 @@ import UiMotion, { runJellyClick } from '../../../../common/utils/UiMotion';
 // ⇒ 要与书架 dock 完全同款，必须用同一个 HdsTabs 悬浮栏实现。
 import {
   HdsTabs,
+  HdsTabsAttribute,
   HdsTabsController,
   HdsTabsFloatingStyle,
   hdsMaterial
 } from '@kit.UIDesignKit';
+// 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
+import HdsCompat, { HdsFloatingStyleModifier } from '../../../../common/utils/HdsCompat';
 // 页签栏目标宽度要按屏宽算（`manageBarWidth()`）⇒ 需要 `display`。
 import { display } from '@kit.ArkUI';
 
@@ -541,7 +544,14 @@ export default struct BookManagePage {
     .scrollable(false)
     // 与书架 dock **同款悬浮样式**（同一份 `manageFloatingStyle()`，
     // 几何/材质/关蒙层的做法逐字段对齐 `Index.hdsFloatingStyle()`）
-    .barFloatingStyle(this.manageFloatingStyle())
+    //
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.barFloatingStyle(...)`**。
+    //   它是 6.1.0(23) 才有的属性（SDK `…\@hms.hds.hdsBaseComponent.d.ets:5680`），
+    //   声明式语法会编译成裸调用 `HdsTabs.barFloatingStyle(...)`（见构建产物
+    //   `entry\build\…\BookManagePage.ts`），API 20 设备上方法不存在 ⇒ 构建即 TypeError。
+    //   ⇒ 改走官方 `AttributeModifier` 通道（HDS 自己的 `HdsTabsModifier` 同款，
+    //      SDK `…d.ets:5751`），低版本自动挂空 modifier，一个属性都不设。
+    .attributeModifier(this.manageFloatStyleModifier())
     .layoutWeight(1)
   }
   // （2026-10-12 已删 `manageTabBar()` 中转 builder：`tabBar` 直接给内容 builder，
@@ -549,6 +559,8 @@ export default struct BookManagePage {
 
   /** HdsTabs 控制器（本页只有 0 号页签，仅用于满足构造签名） */
   private manageTabController: HdsTabsController = new HdsTabsController()
+  /** 包着 `barFloatingStyle` 的属性修改器缓存（2026-10-23 兼容鸿蒙6 新增） */
+  private cachedManageModifier: AttributeModifier<HdsTabsAttribute> | null = null
 
   /**
    * 底部操作栏**项间距**（vp）—— 唯一可调点（用户 2026-10-12 要求
@@ -618,7 +630,34 @@ export default struct BookManagePage {
    *     否则切页签时两页 dock 高度/位置会跳。
    *  ④ `barWidth` —— **管理页独有**，书架不需要（2026-10-12 五修，见下方长注释）。
    */
-  private manageFloatingStyle(): HdsTabsFloatingStyle {
+  /**
+   * 悬浮样式 → `AttributeModifier`（2026-10-23 向下兼容鸿蒙6 新增）。
+   * 与 `Index.floatStyleModifier()` 同一套做法与理由（见那边的长注释）：
+   * `barFloatingStyle()` 是 6.1.0(23) 才有，声明式语法编译成裸调用，
+   * API 20 设备上方法不存在 ⇒ 改走 `AttributeModifier` 回调通道，
+   * 低版本挂 `HdsCompat.NOOP_MODIFIER`（什么都不设）。
+   */
+  private manageFloatStyleModifier(): AttributeModifier<HdsTabsAttribute> {
+    if (!HdsCompat.supportsFloatingBar()) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    const st: HdsTabsFloatingStyle | undefined = this.manageFloatingStyle();
+    if (st === undefined) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    if (this.cachedManageModifier === null) {
+      this.cachedManageModifier = new HdsFloatingStyleModifier(st);
+    }
+    return this.cachedManageModifier;
+  }
+
+  private manageFloatingStyle(): HdsTabsFloatingStyle | undefined {
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：闸门必须在第一行。
+    //   `HdsTabsFloatingStyle` 是 6.1.0(23) 才有（SDK `…d.ets:5380`），
+    //   下面对象字面量在 API 20 上执行即抛 TypeError。
+    if (!HdsCompat.supportsFloatingBar()) {
+      return undefined;
+    }
     const st: HdsTabsFloatingStyle = {
       barSideMargin: 16,
       barBottomMargin: this.bottomRectHeight + 8,

@@ -20,6 +20,7 @@
  *   否则圆四周空一圈（用户反馈"图标没撑满按钮"）。
  */
 import { HdsBarStyle, HdsTabsController } from '@kit.UIDesignKit';
+import HdsCompat from '../../common/utils/HdsCompat';
 import { Haptics } from '../../common/utils/Haptics';
 import { NightMode } from '../../common/utils/NightMode';
 import { ListenUnlock } from '../../common/utils/ListenUnlock';
@@ -137,6 +138,14 @@ export struct ListenDock {
   private collapse(): void {
     Haptics.tap();
     ListenSession.setExpanded(false);
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：
+    //   `applyMiniBarStyle()` 与 `HdsBarStyle` 都是 **6.1.0(23)** 才有的
+    //   （SDK `@hms.hds.hdsBaseComponent.d.ets:5124 / :5805` 成员表），
+    //   API 20 设备上 `HdsBarStyle` 是 undefined ⇒ 取值即抛 TypeError。
+    //   ⇒ 23 以下直接跳过：迷你栏本来就不存在（没有悬浮样式），无需折叠。
+    if (!HdsCompat.supportsFloatingBar()) {
+      return;
+    }
     this.controller.applyMiniBarStyle(HdsBarStyle.COLLAPSE);
   }
 
