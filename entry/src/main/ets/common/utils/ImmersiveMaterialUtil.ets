@@ -155,6 +155,29 @@ export default class ImmersiveMaterialUtil {
     return ImmersiveMaterialUtil.supported;
   }
 
+  /**
+   * **悬浮页签条是否真的可用**（2026-10-24 新增，单一判据）。
+   *
+   * = `sdkApiVersion >= 26` **且** 沉浸光感可用。
+   * 这两个条件与 `tabsFloatingModifier()` 内部的两道门**完全一致**，所以：
+   *   · 返回 true  ⇒ 有官方悬浮胶囊底板，调用方**不要**再给背景（会盖住胶囊）；
+   *   · 返回 false ⇒ modifier 是空实现（**没有底板**），调用方**必须**给实心背景兜底。
+   *
+   * ⚠️ 为什么必须有这个方法（真机事故）：平板（鸿蒙6 / API 20）上
+   *   `tabsFloatingModifier()` 返回空实现 ⇒ 阅读器底部 dock **完全没有背景**。
+   *   分页模式下引擎视口本来就不含 dock 区，看不出问题；
+   *   但**上下滚动模式**正文会一路滚到窗口底 ⇒ 文字直接穿到图标下面，
+   *   看起来像"dock 一半透明"（用户截图实证 2026-10-24）。
+   *   原代码注释写着"API<26 自动挂空实现（退回贴底实心条）"，但**实心条从未实现** ——
+   *   本方法就是给那个兜底提供判据。
+   */
+  static floatingTabBarAvailable(): boolean {
+    if (deviceInfo.sdkApiVersion < ImmersiveMaterialUtil.MIN_API_IMMERSIVE) {
+      return false;
+    }
+    return ImmersiveMaterialUtil.isOn();
+  }
+
   /** 设备算力档位（供需要按档位微调的地方读取） */
   static materialLevel(): number {
     ImmersiveMaterialUtil.probe();

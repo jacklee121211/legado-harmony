@@ -65,11 +65,18 @@
       "phone",
       "tablet",
       // ── 2in1（PC / 二合一）── 2026-10-23 多端适配补上 ────────────────────────
-      // ⚠️ 这是**阻断性**配置：`deviceTypes` 里没有 "2in1" 时，HAP **根本装不到**
-      //   2in1 设备上（应用市场与 hdc install 都会按设备类型过滤）。
-      //   代码里再怎么按断点适配都没有意义 —— 所以它必须和布局改动一起改。
-      // 依据：官方 `开发指南/应用程序包结构/module.json5配置文件` 的 deviceTypes 字段
-      //   取值枚举 `phone / tablet / 2in1 / tv / wearable / car`。
+      // 取值枚举依据：官方 `开发指南/应用程序包结构/module.json5配置文件`
+      //   deviceTypes 字段取值 `phone / tablet / 2in1 / tv / wearable / car`。
+      // Reader Kit 侧依据：官方 `faqs-reader-3`「仅适用于 HarmonyOS NEXT 5.0.4
+      //   及以上版本的 Phone、PC/2in1、Tablet 设备」⇒ PC 端本就在支持范围内。
+      // ⚠️ 2026-10-24 修正旧注释的过度表述：原文写「不加就装不上（阻断性）」，
+      //   与实测不符 —— 在 2in1 模拟器（devicetype=2in1）上，deviceTypes 只有
+      //   phone/tablet 时 `hdc install` **装得上、也起得来**，只是走**手机兼容模式**：
+      //     WMSCompat  `MobileAppInPadLayoutFullScreenChange ... isMobileAppInPadLayoutFullScreen 0`
+      //     WMSLayout  `UpdateRect: id:82 name:reader0 rect:[0 0 0 0]->[515 281 2090 1394]`
+      //   （固定手机比例窗口，非自由窗口）。真机是否同样放行【待验证】。
+      //   确定的作用：`deviceTypes` 是 **AGC 分发过滤字段** ⇒ 不加则上架后
+      //   PC/2in1 用户搜不到/装不到，且不会进 2in1 自由窗口形态。
       "2in1"
     ],
     "deliveryWithInstall": true,

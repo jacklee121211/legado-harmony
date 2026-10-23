@@ -130,6 +130,19 @@ interface PageRange {
   endChar: number;
 }
 
+/**
+ * 「当前位置」的唯一表示（ReaderKit 坐标，2026-10-24 新增）。
+ * 由 `ReaderPage3.currentPosition()` 统一产出 —— 见该方法的注释。
+ */
+interface ReaderPosition {
+  /** 章节索引（= spineIndex = resourceIndex） */
+  spine: number;
+  /** 章内块节点下标（0 基） */
+  node: number;
+  /** 节点内字符偏移 */
+  char: number;
+}
+
 /** 定位目标（ReaderKit 坐标） */
 interface LocateTarget {
   spine: number;
@@ -3972,12 +3985,32 @@ export default struct ReaderPage3 {
     // 必须在 `migrateReaderSetting()` **之后**（滚动档不改 flipMode，但分页两档要把它
     // 对齐成 '0'/'1'）、在 `startPlay()` **之前**（首帧就要决定渲染谁）。
     this.loadReadMode();
-    // 滚动模式：首屏初始位置直接用持久化进度（与分页模式恢复走同一份数据）。
+    // ── 滚动模式：首屏初始位置 ────────────────────────────────────────────────
+    // ⚠️⚠️ 2026-10-24 修「滚动模式接续落点不生效」（真机日志定案）⚠️⚠️
+    //
+    // 事故（`docs/日志.md` 01:51:09）：对端收到 `spine=50`，却打出了
+    //   `loadChapter spine=17/18/19`（窗口中心 = 本机旧位置第 18 章）⇒ 进度不对等。
+    // 根因：本块原来只读 `localBookDurChapterPos`（**本机上次读到哪**），
+    //   **完全无视接续传来的 `continueSpine` / `continueNode`**。
+    //   分页模式的落点走 `startPlay(spine, domPos)`（已修好），
+    //   滚动模式走的是**这条独立入口**，之前漏了 ⇒ 所以"只有滚动模式不对等"。
+    // 修法：接续进来且有落点（`continueSpine >= 0`）时**优先用接续坐标**；
+    //   否则退回持久化进度（原有行为，不变）。
     if (this.scrollModeOn()) {
-      const ri: number = this.bookData.localBookDurChapterPos?.resourceIndex ?? 0;
-      const dp: string = this.bookData.localBookDurChapterPos?.startDomPos ?? '';
+      const cSpine: number = temp.continueSpine ?? -1;
+      let ri: number = this.bookData.localBookDurChapterPos?.resourceIndex ?? 0;
+      let nd: number = this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
+      if (cSpine >= 0) {
+        // 接续落点优先（continueNode 由 Index 从 wantParam 带来，备用坐标）
+        ri = cSpine;
+        const cNode: number = temp.continueNode ?? -1;
+        nd = cNode >= 0 ? cNode : this.parseDomPos(temp.continueDomPos ?? '')[0];
+        hilog.info(0x0000, 'ContinueIdx',
+          'scroll init from CONTINUE: spine=%{public}d node=%{public}d (local was spine=%{public}d)',
+          ri, nd, this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
+      }
       this.scrollInitSpine = ri;
-      this.scrollInitNode = this.parseDomPos(dp)[0];
+      this.scrollInitNode = nd;
       this.scrollSpine = this.scrollInitSpine;
       this.scrollNode = this.scrollInitNode;
       this.scrollInitSerial++;
@@ -8416,7 +8449,7 @@ export default struct ReaderPage3 {
           .edgeEffect(EdgeEffect.None)
           .barHeight(READER_BAR_HEIGHT)
           // 沉浸光感三条件：barPosition = End（构造参数）✓ / barOverlap(true) ✓ / vertical 默认 false ✓
-          .barOverlap(ImmersiveMaterialUtil.isOn())
+          .barOverlap(ImmersiveMaterialUtil.floatingTabBarAvailable())
           // 悬浮几何（左右 + 底部留白）由 `FloatingTabBarStyle` 给：
           //   · `barSideMargin`（util 里是 16，原自绘胶囊是 margin 12）
           //   · `barBottomMargin` = 系统底部安全区 + `READER_BAR_BOTTOM_GAP`（原自绘胶囊 margin.bottom = 10）
@@ -8429,6 +8462,20 @@ export default struct ReaderPage3 {
           //   （真机日志 `docs/日志.md:4148-4149 / 4174-4176`，栈顶正是本行 7649:12）。
           //   ⇒ 改走 `AttributeModifier` 回调通道；API<26 自动挂空实现（退回贴底实心条）。
           .attributeModifier(ImmersiveMaterialUtil.tabsFloatingModifier(this.bottomRectHeight + READER_BAR_BOTTOM_GAP))
+          // ⚠️⚠️ 2026-10-24 修「平板上下滚动模式 dock 无底板、正文穿到图标下」⚠️⚠️
+          //
+          // 根因（用户截图 + 代码定案）：
+          //   · 悬浮胶囊来自 `tabsFloatingModifier()`，但它要求 **API≥26 且沉浸光感可用**；
+          //     平板是鸿蒙6（API 20）⇒ 返回**空实现** ⇒ dock **完全没有背景**。
+          //   · 分页模式下引擎视口不含 dock 区 ⇒ 背后是页面底色 ⇒ 看不出问题；
+          //   · **上下滚动模式**正文一路滚到窗口底 ⇒ 文字直接穿到图标下面 ⇒
+          //     看起来像"dock 一半透明"。
+          // 修法：悬浮不可用时给 dock 铺**页面底色**当实心底板（原注释里说的"贴底实心条"，
+          //   之前一直没实现）。悬浮可用时保持 `Color.Transparent`，**手机完全不受影响**
+          //   （手机走悬浮胶囊分支，透明 = 与改动前一致）。
+          .backgroundColor(ImmersiveMaterialUtil.floatingTabBarAvailable()
+            ? Color.Transparent
+            : this.readerSetting.themeColor)
           .width('100%')
           // 容器高度 = 条高 + 底部留白 + 安全区：悬浮条被 `barBottomMargin` 顶起来，容器必须给够高度
           .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
@@ -9801,6 +9848,56 @@ export default struct ReaderPage3 {
           spine, node, range.endNode, seg.spineIndex, seg.nodeIndex);
       }
     }
+    // 应用接续（2026-10-24）：**每次**滚动事件都刷新接续态。
+    // ⚠️ 不能挂在 `persistScrollProgress()` 里 —— 那个被 `SCROLL_PERSIST_GAP_MS`
+    //   节流，快速滚动时接续会上报旧位置（真机日志 01:18:00 实证：上报成了章首）。
+    //   这里只写 AppStorage（微秒级、不落盘），不需要节流。
+    this.publishContinueState();
+  }
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   * **全工程唯一的「当前位置」出口**（2026-10-24 新增）
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * ── 为什么必须有它 ────────────────────────────────────────────────────────
+   * 本页的"当前位置"曾经有**三套表示、三套更新时机**，任何新功能接进来都要先
+   * 猜"该读哪一个"——接续功能就因此踩坑（真机日志 01:18:00：滚动模式上报成了章首）。
+   *
+   * | 状态 | 更新时机 | 能否代表"用户此刻在哪" |
+   * |---|---|---|
+   * | `scrollSpine` / `scrollNode` | 滚动模式**每次**滚动事件（`onScrollPos` 开头） | ✅ 滚动模式**实时**位置 |
+   * | `bookData.localBookDurChapterPos` | 分页模式每次 `pageShow`；滚动模式只在**节流**落盘时 | ⚠️ 滚动模式是**滞后**值 |
+   * | `pageRange` | 两种模式都更新，但是**页范围**不是单点 | ⚠️ 只适合"目标是否在页内"判断 |
+   *
+   * ── 谁应该调它 ────────────────────────────────────────────────────────────
+   * 任何"需要知道用户此刻读到哪儿"的功能，**一律调本方法**，不要直接读上面三个字段：
+   * · 应用接续（`publishContinueState`）✅ 已迁移
+   * · 书签新增 / 双端同步锚点 / 阅读统计 / TTS 回跳
+   *   （这些目前各自读 `pageRange` 或 `localBookDurChapterPos`，**属历史实现**，
+   *     行为已验证，暂不强改；但**新增功能必须走本方法**。）
+   *
+   * ── 分模式取值 ────────────────────────────────────────────────────────────
+   * · **滚动模式**：读 `scrollSpine` / `scrollNode`（实时，未被节流）
+   * · **分页模式**：读 `localBookDurChapterPos`（`pageShow` 每翻一页就更新，够实时）
+   * · 两者都拿不到 ⇒ 兜底 `pageRange` 的页首；再不行 ⇒ `(0,0,0)`
+   *
+   * ⚠️ 不要在这里做节流/缓存：调用方语义就是"要此刻的准确位置"。
+   */
+  private currentPosition(): ReaderPosition {
+    if (this.scrollModeOn()) {
+      return { spine: this.scrollSpine, node: this.scrollNode, char: 0 };
+    }
+    const pd: readerCore.PageDataInfo | null | undefined = this.bookData.localBookDurChapterPos;
+    if (pd !== null && pd !== undefined) {
+      const parsed: number[] = this.parseDomPos(pd.startDomPos ?? '');
+      return { spine: pd.resourceIndex ?? 0, node: parsed[0], char: parsed[1] };
+    }
+    const r: PageRange | null = this.pageRange;
+    if (r !== null) {
+      return { spine: r.spine, node: r.startNode, char: r.startChar };
+    }
+    return { spine: 0, node: 0, char: 0 };
   }
 
   /**
@@ -9809,26 +9906,19 @@ export default struct ReaderPage3 {
    * `wantParam` 送到对端。
    *
    * ── 带什么 / 不带什么（用户 2026-10-24 拍板）─────────────────────────────
-   * ✅ 带：字体（fontName/fontPath）、背景（themeBgImg + 本书背景记录）、日/夜
-   *        —— 换设备后"信息一致"；
-   * ❌ 不带：字号、行距 —— 每块屏幕按自己的尺寸排版，**布局不变**。
+   * ✅ 带：字体、字重、字色、主题色、背景、日/夜、翻页模式、进度（双坐标）
+   * ❌ 不带：字号、行距 —— 每块屏幕按自己的尺寸排版，**布局不变**
    *
-   * ── 位置坐标 ────────────────────────────────────────────────────────────
-   * `resourceIndex`（= spineIndex）+ `startDomPos`（字符级 DOM 锚点）。
-   * 不传页码/像素：手机平板屏幕不同、还有仿真/横滑/滚动三种翻页模式，页码不可迁移。
-   *
-   * 调用点：`pageShow`（分页模式每次翻页）、`persistScrollProgress`（滚动模式）。
+   * 调用点：`pageShow`（分页模式每次翻页）、`onScrollPos` 尾部（滚动模式每次滚动）。
+   * ⚠️ 滚动模式**不能**挂在 `persistScrollProgress()` 里 —— 那个被
+   *   `SCROLL_PERSIST_GAP_MS` 节流，快速滚动时会上报旧位置（真机日志 01:18:00 实证）。
    */
   private publishContinueState(): void {
-    const pd: readerCore.PageDataInfo | null | undefined = this.bookData.localBookDurChapterPos;
-    if (pd === undefined || pd === null) {
-      return;
-    }
-    // 双坐标：domPos 原样带，同时把 parseDomPos 解出的 node/char 一并带
-    // （对端 domPos 异常时用它重算，用户 2026-10-24 同意"有备无患"）
-    const parsed: number[] = this.parseDomPos(pd.startDomPos ?? '');
-    this.publishContinueStateWith(pd.resourceIndex ?? 0, pd.startDomPos ?? '',
-      parsed[0], parsed[1], TtsEngine.getState() !== 'stopped');
+    // 位置统一走 `currentPosition()`（滚动=实时值 / 分页=pageShow 值）
+    const pos: ReaderPosition = this.currentPosition();
+    // 双坐标：domPos 与 (node, char) 一并带（对端 domPos 异常时用 node/char 重算）
+    this.publishContinueStateWith(pos.spine, this.domPosFor(pos.node, pos.char),
+      pos.node, pos.char, TtsEngine.getState() !== 'stopped');
   }
 
   /**
@@ -9921,8 +10011,8 @@ export default struct ReaderPage3 {
       pd.state = readerCore.PageState.PAGE_ON_SHOW;
       this.bookData.localBookDurChapterPos = pd;
       this.bookData.totalChapterNum = this.CatalogList.totalCount();
-      // 应用接续（2026-10-24）：滚动模式的位置也要上报，否则接续落点会停在旧页
-      this.publishContinueState();
+      // 应用接续：上报已移到 `onScrollPos()` 尾部（每次滚动都刷）——
+      // 这里被 `SCROLL_PERSIST_GAP_MS` 节流，放这里会导致接续上报旧位置。
       PreferencesUtil.putSync(`BookCurrentData_${name}`, this.bookData);
       PreferencesUtil.putSync('LastReadBookName', name);
       PreferencesUtil.putSync('LastReadBookUrl', this.bookData.bookUrl ?? '');
