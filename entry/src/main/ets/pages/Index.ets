@@ -1,4 +1,4 @@
-import { showMessage } from '../componets/common/promptShow'
+﻿import { showMessage } from '../componets/common/promptShow'
 import { ezCustomTransition, LongTakeSession, LongTakeTransitionDelegate } from '../common/ezlt'
 import { hostContext } from '../common/utils/HostContextUtil'
 import ReadShow from '../componets/common/ReadShow'
@@ -453,6 +453,8 @@ struct Main {
   @StorageLink('CONTINUE_PENDING') @Watch('onContinuePending') continuePending: string = ''
   /** 接续接收中（书可能几 MB：导入期间给一个全局闸门，避免用户重复操作） */
   @State continueReceiving: boolean = false
+  /** 本 Index 实例是否已处理过接续（容器重建后新实例会重置为 false，可再处理一次） */
+  private continueHandled: boolean = false
 
   /**
    * 消费一次接续数据 ⇒ 打开对应书籍并落到接续位置。
@@ -467,20 +469,39 @@ struct Main {
     if (this.continuePending.length === 0) {
       return
     }
-    // 先同步取走（consumePending 内部会清标记）⇒ @Watch 重入无害
-    const p: ContinuePayload | null = ContinueBridge.consumePending()
+    // 读取（**不清除**，见 ContinueBridge.peekPending 注释：容器重建期间不能丢标记）
+    const p: ContinuePayload | null = ContinueBridge.peekPending()
     if (p === null) {
       return
     }
-    // 重入守卫（2026-10-24）：`@Watch` 与 `onPageShow` 双路径 + 用户可能的重复触发，
-    // 都可能让两次接续叠在一起（第二次会把第一次正在导入的书再导一遍）。
+    // 同一个 Index 实例只处理一次（新旧 Index 谁先到都能试；容器重建后新实例会再来一次）
+    if (this.continueHandled) {
+      hilog.warn(0x0000, 'ContinueIdx', 'onContinuePending: already handled in this instance')
+      return
+    }
+    // ⚠️⚠️ 2026-10-24 修（真机日志定案）：**在这里立刻占位**，不能等 push 成功。
+    //
+    // 事故（`docs/日志.md` 00:09:50）：
+    //   `.337 importContinueBook: enter session=...`   ← 第1次（走 waitAssetPath 轮询）
+    //   `.349 onContinuePending: pending len=776`      ← @Watch/onPageShow 又触发一次
+    //   `.389 importContinueBook: enter session=...`   ← 第2次并发进来
+    //   `.506 CopyFile ok=true` / `.515 open: 神墓.txt` ← 第1次成功
+    //   `9.806 importContinueBook: asset timeout`      ← 第2次等不到 asset（已被
+    //                                                    releaseTarget 清空）⇒ 弹「接收超时」
+    // 根因：`continueReceiving` 只在 asset 就绪后才置 true、`continueHandled` 只在
+    //   push 成功后才置 true ⇒ `waitAssetPath` 轮询那几秒是**无保护窗口**，
+    //   双路径各触发一次，两次 importContinueBook 并行。
+    // 修法：进入即占位；失败路径再回滚（见下方 `this.continueHandled = false`）。
+    this.continueHandled = true
+    // 重入守卫（兜底：跨实例/异常路径）
     if (this.continueReceiving) {
       hilog.warn(0x0000, 'ContinueIdx', 'onContinuePending: already receiving, skip')
       return
     }
     hilog.info(0x0000, 'ContinueIdx',
-      'onContinuePending: book=%{public}s url=%{public}s spine=%{public}d domPos=%{public}s file=%{public}s routerReady=%{public}s',
-      p.bookName, p.bookUrl, p.spineIndex, p.domPos, p.bookFileName, String(AppRouter.isReady()))
+      'onContinuePending: book=%{public}s url=%{public}s spine=%{public}d node=%{public}d char=%{public}d domPos=%{public}s session=%{public}s routerReady=%{public}s',
+      p.bookName, p.bookUrl, p.spineIndex, p.nodeIndex, p.charOffset, p.domPos,
+      p.sessionId, String(AppRouter.isReady()))
     const open = (book: Books): void => {
       hilog.info(0x0000, 'ContinueIdx', 'open: name=%{public}s id=%{public}d',
         book.bookName, book.id ?? -1)
@@ -489,6 +510,7 @@ struct Main {
         hilog.warn(0x0000, 'ContinueIdx', 'open: name mismatch %{public}s != %{public}s',
           book.bookName, p.bookName)
         showMessage(`本机没有《${p.bookName}》，请先导入这本书`)
+        this.continueHandled = false // 失败回滚：允许用户重试接续
         return
       }
       // ── 同名不同书防护（2026-10-24）────────────────────────────────────────
@@ -501,6 +523,7 @@ struct Main {
             'open: size mismatch, treat as different book (src=%{public}s dst=%{public}s)',
             p.bookUrl, book.bookUrl)
           showMessage(`本机《${p.bookName}》与来源不是同一本，请先导入正确的书籍`)
+          this.continueHandled = false // 失败回滚：允许用户重试接续
           return
         }
       }
@@ -513,15 +536,31 @@ struct Main {
         bookData: book,
         continueSpine: p.spineIndex,
         continueDomPos: p.domPos,
-        // 字体/背景/日夜间：**内存下发**（绝不写 ReaderSetting 持久位，见该方法注释）
+        // 备用坐标：domPos 若被引擎忽略/格式异常，阅读页用自己重算的
+        // `domPosFor(node,char)` 兜底（双保险，用户已同意）
+        continueNode: p.nodeIndex,
+        continueChar: p.charOffset,
+        // 排版：**内存下发**（绝不写 ReaderSetting 持久位，见 applyContinueLayout 注释）
+        // ✅ 带：字体/字重/字色/主题色/背景/日夜/翻页模式
+        // ❌ 不带：字号/行距（用户拍板：屏幕比例不同，真正影响体验的只有这两个）
         continueFontName: p.fontName,
         continueFontPath: p.fontPath,
+        continueFontWeight: p.fontWeight,
+        continueFontColor: p.fontColor,
+        continueThemeColor: p.themeColor,
+        continueThemeBgImg: p.themeBgImg,
         continueNightMode: p.nightMode,
-        continueThemeBgImg: p.themeBgImg
+        continueFlipMode: p.flipMode
       }
       if (!AppRouter.push(RouteName.READER, rp)) {
         showMessage('打开失败：页面栈尚未就绪')
+        this.continueHandled = false // 失败回滚：保留 pending，等新容器/下次 onPageShow 再试
+        return
       }
+      // 跳转成功才清标记（失败时保留，等下一次 onPageShow / 新容器再试）
+      this.continueHandled = true
+      ContinueBridge.clearPending()
+      hilog.info(0x0000, 'ContinueIdx', 'open: push ok, pending cleared')
     }
     const find = (): void => {
       const miss = (): void => {
@@ -631,59 +670,94 @@ struct Main {
    * 失败（未开多设备协同 / 网络断 / 源端没暂存成功）⇒ 明确提示，不静默。
    */
   private importContinueBook(p: ContinuePayload, onImported: (book: Books) => void): void {
-    hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: enter file=%{public}s',
-      p.bookFileName)
-    if (p.bookFileName.length === 0) {
-      hilog.warn(0x0000, 'ContinueIdx', 'importContinueBook: no staged file')
-      showMessage(`本机没有《${p.bookName}》，且未收到书籍文件，请先导入这本书`)
-      return
-    }
-    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
-    const path: string = ContinueBridge.targetBookPath(ctx, p.bookFileName)
-    let exists: boolean = false
-    try {
-      exists = fs.accessSync(path)
-    } catch (e) {
-      exists = false
-    }
-    hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: staged path=%{public}s exists=%{public}s',
-      path, String(exists))
-    if (!exists) {
-      showMessage(`本机没有《${p.bookName}》，接续的书籍文件也读不到（请确认两端已开启多设备协同）`)
-      return
-    }
-    // 接收进度：书可能几 MB，必须给用户明确反馈（否则像卡死）
+    hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: enter session=%{public}s',
+      p.sessionId)
+    // ⚠️ 整个接收流程（含 waitAssetPath 轮询期）都算"接收中"⇒ 闸门从入口就打开，
+    //   否则轮询那几秒是无保护窗口（真机日志 00:09:50 就是在这里被并发进来第二次，
+    //   第 2 次等不到 asset ⇒ 9 秒后弹「接收超时」）。
     this.continueReceiving = true
-    showMessage(`正在接收《${p.bookName}》…`)
-    FileHandler.CopyFile(path, 0).then((ok: boolean) => {
+    if (p.sessionId.length === 0) {
       this.continueReceiving = false
-      hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: CopyFile ok=%{public}s', String(ok))
-      ContinueBridge.clearStagedFile(ctx, p.bookFileName)
-      if (!ok) {
-        showMessage(`《${p.bookName}》导入失败`)
+      this.continueHandled = false // 允许重试
+      hilog.warn(0x0000, 'ContinueIdx', 'importContinueBook: no session, source had no asset')
+      showMessage(`本机没有《${p.bookName}》，且源端未传出书籍文件，请先导入这本书`)
+      return
+    }
+    // Asset 是异步同步过来的（源端 save → 系统传输 → 对端 restored）
+    // ⇒ 必须轮询等 `CONTINUE_ASSET_PATH`，不能立刻断言"没有书"。
+    this.waitAssetPath(p, 0, (path: string) => {
+      if (path.length === 0) {
+        this.continueReceiving = false
+        this.continueHandled = false // 允许用户重试接续
+        hilog.warn(0x0000, 'ContinueIdx', 'importContinueBook: asset timeout')
+        showMessage(`《${p.bookName}》接收超时（请确认两端已开启多设备协同并处于同一网络）`)
         return
       }
-      BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
-        hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: relookup hits=%{public}d', list.length)
-        if (list.length > 0) {
-          onImported(list[0])
+      hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: asset ready %{public}s', path)
+      this.continueReceiving = true
+      showMessage(`正在接收《${p.bookName}》…`)
+      FileHandler.CopyFile(path, 0).then((ok: boolean) => {
+        this.continueReceiving = false
+        hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: CopyFile ok=%{public}s', String(ok))
+        ContinueBridge.releaseTarget()
+        // 清理分布式目录里的暂存文件（已经拷进沙箱，留着占空间）
+        try {
+          if (fs.accessSync(path)) {
+            fs.unlinkSync(path)
+          }
+        } catch (e) {
+          // 清不掉不影响主流程
+        }
+        if (!ok) {
+          showMessage(`《${p.bookName}》导入失败`)
+          this.continueHandled = false // 失败回滚：允许重试
           return
         }
-        // url 可能因导入路径不同而不等 ⇒ 退回"最后阅读"兜底
-        BooksDao.getLastReadBook().then((book: Books | null) => {
-          if (book !== null) {
-            onImported(book)
-          } else {
-            showMessage(`《${p.bookName}》已导入但未找到记录，请回书架查看`)
+        BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
+          hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: relookup hits=%{public}d', list.length)
+          if (list.length > 0) {
+            onImported(list[0])
+            return
           }
+          // 双条件（url+name）未命中 ⇒ 退回**只按书名**查（对端路径/导入批次可能不同）
+          BooksDao.getBooksByName(p.bookName).then((byName: Books[]) => {
+            hilog.info(0x0000, 'ContinueIdx',
+              'importContinueBook: name-lookup hits=%{public}d', byName.length)
+            if (byName.length > 0) {
+              onImported(byName[0])
+            } else {
+              showMessage(`《${p.bookName}》已导入但未找到记录，请回书架查看`)
+            }
+          }).catch((): void => {
+            showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
+          })
+        }).catch((): void => {
+          showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
         })
       }).catch((): void => {
-        showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
+        this.continueReceiving = false
+        showMessage(`《${p.bookName}》导入失败`)
       })
-    }).catch((): void => {
-      this.continueReceiving = false
-      showMessage(`《${p.bookName}》导入失败`)
     })
+  }
+
+  /**
+   * 轮询等待 Asset 落地（150ms × 60 ≈ 9s）。
+   * 大书（20MB 级）经分布式同步可能需要几秒，所以给足时间。
+   */
+  private waitAssetPath(p: ContinuePayload, attempt: number, cb: (path: string) => void): void {
+    const path: string = AppStorage.get<string>(ContinueBridge.KEY_ASSET_PATH) ?? ''
+    if (path.length > 0) {
+      cb(path)
+      return
+    }
+    if (attempt >= 60) {
+      cb('')
+      return
+    }
+    setTimeout((): void => {
+      this.waitAssetPath(p, attempt + 1, cb)
+    }, 150)
   }
 
   /**

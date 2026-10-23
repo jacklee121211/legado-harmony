@@ -1305,6 +1305,15 @@ export default struct ReaderPage3 {
   private locateTarget: LocateTarget | null = null;
   private flipSearch: FlipSearch | null = null;
   private locateTimer: number = -1;
+  // ── 应用接续「句内微调」状态（2026-10-24）──────────────────────────────────
+  /** 本次进书是否由接续带落点进来（false ⇒ 微调完全跳过） */
+  private continueFineTuneArmed: boolean = false;
+  /** 是否已完成（或放弃）微调，保证只做一次，避免和用户翻页打架 */
+  private continueFineTuned: boolean = false;
+  /** 接续目标坐标（ReaderKit 块节点 / 节点内字符） */
+  private continueTargetSpine: number = -1;
+  private continueTargetNode: number = -1;
+  private continueTargetChar: number = 0;
   private lastFollowNode: number = -1;
   /** 定位 toast 去抖（面板关闭同时走"完成按钮 + onDisappear"两条路径时避免重复提示） */
   private lastLocateToastMs: number = 0;
@@ -3902,22 +3911,55 @@ export default struct ReaderPage3 {
     //    所有字段级纠正统一走 migrateReaderSetting()（版本化迁移 + scaledDensity 刷新），
     //    不要再在这里散落 ad-hoc 修正。
     this.migrateReaderSetting();
-    // ── 应用接续（2026-10-24）：字体 / 背景 / 日夜间**在内存里**套用 ──────────
+    // ── 应用接续（2026-10-24）：排版**在内存里**套用 ────────────────────────
     // ⚠️ 必须放在 `migrateReaderSetting()` **之后**：迁移会做版本化纠正，先套接续值
-    //    会被迁移覆盖。也**必须**放在 `this.readerSetting = ...` 读持久位之后。
-    // ⚠️ 只改这三个（用户拍板）：字体、背景、日/夜；
-    //    **字号/行距一律不动** ⇒ 每块屏幕按自己尺寸排版，布局不变。
+    //    会被迁移覆盖。也**必须**在 `this.readerSetting = ...` 读持久位之后。
+    // ✅ 带（用户原话「除了字号和行距，都需要接续」）：
+    //    字体 / 字重 / 字色 / 主题色 / 背景 / 日夜 / 翻页模式
+    // ❌ 不带：`fontSize` / `lineHeight` —— 屏幕比例不同，真正影响体验的只有这两个；
+    //    对端**完全不碰**，没设置过就用它自己的默认值。
+    // ❌ 也不带 `scaledDensity` / `viewPortWidth` / `viewPortHeight`（设备度量）。
     if (temp.continueFontName !== undefined && temp.continueFontName.length > 0) {
       this.readerSetting.fontName = temp.continueFontName;
     }
     if (temp.continueFontPath !== undefined && temp.continueFontPath.length > 0) {
       this.readerSetting.fontPath = temp.continueFontPath;
     }
-    if (temp.continueNightMode !== undefined) {
-      this.readerSetting.nightMode = temp.continueNightMode;
+    if (temp.continueFontWeight !== undefined && temp.continueFontWeight > 0) {
+      this.readerSetting.fontWeight = temp.continueFontWeight;
+    }
+    if (temp.continueFontColor !== undefined && temp.continueFontColor.length > 0) {
+      this.readerSetting.fontColor = temp.continueFontColor;
+    }
+    if (temp.continueThemeColor !== undefined && temp.continueThemeColor.length > 0) {
+      this.readerSetting.themeColor = temp.continueThemeColor;
     }
     if (temp.continueThemeBgImg !== undefined && temp.continueThemeBgImg.length > 0) {
       this.readerSetting.themeBgImg = temp.continueThemeBgImg;
+    }
+    if (temp.continueNightMode !== undefined) {
+      this.readerSetting.nightMode = temp.continueNightMode;
+    }
+    if (temp.continueFlipMode !== undefined && temp.continueFlipMode.length > 0) {
+      this.readerSetting.flipMode = temp.continueFlipMode;
+      // ⚠️⚠️ 只改 `readerSetting.flipMode` **不生效**（2026-10-23 真机日志定案）：
+      //   `loadReadMode()`（:3947 调用）优先读**按书持久化**的
+      //   `ReaderMode_${bookName}`，`readerSetting.flipMode` 只是 `getSync` 的
+      //   **默认值**——B 端只要读过这本书，键已存在 ⇒ 直接返回旧值 ⇒ 接续的
+      //   翻页模式被静默丢弃。
+      //   修法：接续时把这个持久位一并覆写（这是"接续覆盖本机阅读方式"的语义，
+      //   与字号/行距"完全不碰"不冲突——翻页模式属于用户明确要求接续的项）。
+      try {
+        const mode: number = temp.continueFlipMode === '1'
+          ? READ_MODE_FLIP_SLIDE
+          : (temp.continueFlipMode === '2' ? READ_MODE_SCROLL : READ_MODE_FLIP_CURL);
+        PreferencesUtil.putSync(`${READ_MODE_KEY_PREFIX}${this.bookData.bookName}`, mode);
+        this.readMode = mode;
+        hilog.info(0x0000, 'ContinueIdx',
+          'apply continueFlipMode=%{public}s -> readMode=%{public}d', temp.continueFlipMode, mode);
+      } catch (e) {
+        hilog.warn(0x0000, 'ContinueIdx', 'apply continueFlipMode failed');
+      }
     }
     // ── 自定义背景色的恢复（2026-09-25）──────────────────────────────────────
     // 必须在 `migrateReaderSetting()` **之后**（要读迁移后的 themeColor 当初始值）、
@@ -3997,10 +4039,29 @@ export default struct ReaderPage3 {
     // `domPos` 是字符级 DOM 锚点（与排版无关）⇒ 跨设备、跨字号、跨翻页模式都精确。
     const cSpine: number = temp.continueSpine ?? -1;
     if (cSpine >= 0) {
+      // ── 双坐标兜底（用户 2026-10-24 同意）────────────────────────────────
+      // 主坐标 `domPos` 是源端引擎产出的字符串；若它为空/格式异常，用备用坐标
+      // `nodeIndex + charOffset` 在本机**重新生成**同构 domPos（`domPosFor` 是纯
+      // 格式化，与排版无关，两端结果一致）⇒ 不会因为源端字符串异常而落回首页。
+      let dp: string = temp.continueDomPos ?? '';
+      const nIdx: number = temp.continueNode ?? -1;
+      const cOff: number = temp.continueChar ?? 0;
+      if (dp.length === 0 && nIdx >= 0) {
+        dp = this.domPosFor(nIdx, cOff);
+        hilog.info(0x0000, 'ContinueIdx',
+          'startPlay: domPos empty, rebuilt from node=%{public}d char=%{public}d -> %{public}s',
+          nIdx, cOff, dp);
+      }
       hilog.info(0x0000, 'ContinueIdx',
-        'startPlay from CONTINUE: spine=%{public}d domPos=%{public}s book=%{public}s',
-        cSpine, temp.continueDomPos ?? '', this.bookData.bookName);
-      this.startPlay(this.bookData.bookUrl ?? '', cSpine, temp.continueDomPos ?? '');
+        'startPlay from CONTINUE: spine=%{public}d domPos=%{public}s node=%{public}d char=%{public}d book=%{public}s',
+        cSpine, dp, nIdx, cOff, this.bookData.bookName);
+      // 记录接续目标 ⇒ 首帧 pageShow 后做「句内微调」校验（见 tryContinueFineTune）
+      this.continueFineTuneArmed = true;
+      this.continueFineTuned = false;
+      this.continueTargetSpine = cSpine;
+      this.continueTargetNode = nIdx;
+      this.continueTargetChar = cOff;
+      this.startPlay(this.bookData.bookUrl ?? '', cSpine, dp);
     } else {
       hilog.info(0x0000, 'ContinueIdx',
         'startPlay from LOCAL: spine=%{public}d domPos=%{public}s book=%{public}s',
@@ -4991,6 +5052,15 @@ export default struct ReaderPage3 {
       hilog.info(0x0000, 'ContinueIdx',
         'engine.pageShow: spine=%{public}d startDomPos=%{public}s',
         data.resourceIndex, data.startDomPos);
+      // ── 应用接续「句内微调」（2026-10-24）─────────────────────────────────
+      // 引擎的 `startPlay(spine, domPos)` 只保证"目标所在的那一页被推出来"，1
+      // 实际落点会被**吸附到 B 端自己的页边界**（真机日志：
+      //   请求 `13=0#0`(node 6) → 回调 `1=0#0`(node 0)）。
+      // 若 B 的页边界离目标很远，用户会看到"接续到了，但读的那句在屏幕外/页尾"。
+      // ⇒ 首帧校验：目标若**不在**本页范围内，用工程既有的 `requestLocate()`
+      //   再做一次精确落位（它自带 startPlay + 超时逐页逼近 + 结果校验，
+      //   书签回跳/TTS 跟随都用这条链，是已验证路径）。
+      this.tryContinueFineTune(data);
       // 应用接续（2026-10-24）：每次翻页把"此刻读到哪儿"登记到 AppStorage，
       // 供 `EntryAbility.onContinue()` 打包进 wantParam（不落盘，微秒级）。
       this.publishContinueState();
@@ -6424,6 +6494,65 @@ export default struct ReaderPage3 {
    *   2) 若未产生 pageShow 或在超时内没落到位 → 翻页搜索兜底（按 (节点,字符) 逐页逼近）；
    *   3) 搜索到上限即如实告知"未精确对齐"，绝不假报成功。
    */
+  /**
+   * 应用接续「句内微调」（2026-10-24）。
+   *
+   * ── 为什么需要 ────────────────────────────────────────────────────────────
+   * 引擎的 `startPlay(spine, domPos)` 只保证"**目标所在的那一页**被推出来"，
+   * 实际落点会被吸附到 **B 端自己的页边界**。真机日志（`docs/日志.md` 00:09:51）：
+   *   请求 `domPos=13=0#0`（node 6） → 回调 `startDomPos=1=0#0`（node 0）
+   * 章节对了，但如果目标落在页尾/屏幕外，用户会觉得"没接上"。
+   *
+   * ── 做法（复用工程既有定位链，不另造轮子）──────────────────────────────────
+   * 首帧 `pageShow` 拿到真实页范围（`startDomPos`..`endDomPos`）后校验：
+   * · 目标在页内 ⇒ 收工（这是最常见情况，不产生任何额外跳动）；
+   * · 目标不在页内 ⇒ 调 `requestLocate(spine, node, char, true, true)`，
+   *   它自带 `startPlay` + 超时逐页逼近 + 结果校验（书签回跳 / TTS 跟随 /
+   *   沉浸层交接全都走这条链，是工程内已验证路径）。
+   *
+   * ── 安全约束 ──────────────────────────────────────────────────────────────
+   * · 只做**一次**（`continueFineTuned`），绝不和用户手动翻页抢方向盘；
+   * · 只对"接续进来的这次进书"生效（`continueFineTuneArmed`）；
+   * · 滚动模式不参与（滚动由 `requestLocate` 自己分流，这里只处理分页档）；
+   * · `silent = true`：不弹「已定位到第 N 段」，接续不该有额外提示音/弹窗。
+   */
+  private tryContinueFineTune(data: readerCore.PageDataInfo): void {
+    if (!this.continueFineTuneArmed || this.continueFineTuned) {
+      return;
+    }
+    if (this.scrollModeOn()) {
+      // 滚动模式的位置由滚动层自己的 seek 负责，不做分页微调
+      this.continueFineTuned = true;
+      return;
+    }
+    // 只认接续目标所在章节的首帧，别的章的 pageShow（引擎预排版）不参与
+    if (data.resourceIndex !== this.continueTargetSpine) {
+      return;
+    }
+    this.continueFineTuned = true;
+    // 用本帧真实范围构造 PageRange（不依赖 `this.pageRange` 的赋值时机）
+    const s: number[] = this.parseDomPos(data.startDomPos ?? '');
+    const e: number[] = this.parseDomPos(data.endDomPos ?? '');
+    const range: PageRange = {
+      spine: data.resourceIndex,
+      startNode: s[0],
+      startChar: s[1],
+      endNode: e[0],
+      endChar: e[1]
+    };
+    const covered: boolean = this.rangeCovers(range, this.continueTargetNode, this.continueTargetChar);
+    hilog.info(0x0000, 'ContinueIdx',
+      'fineTune: target=node%{public}d/char%{public}d page=node%{public}d#%{public}d..node%{public}d#%{public}d covered=%{public}s',
+      this.continueTargetNode, this.continueTargetChar,
+      range.startNode, range.startChar, range.endNode, range.endChar, String(covered));
+    if (covered) {
+      return; // 目标就在这一页里，收工
+    }
+    // 不在页内 ⇒ 精确重定位（自带超时逐页逼近兜底）
+    this.requestLocate(this.continueTargetSpine, this.continueTargetNode,
+      this.continueTargetChar, true, true);
+  }
+
   private requestLocate(spine: number, node: number, char: number, silent: boolean,
     noFallback: boolean = false): void {
     const n = Math.max(0, node);
@@ -7426,19 +7555,6 @@ export default struct ReaderPage3 {
         })
           .width(this.compWidth())
           .height(this.compHeight())
-          // ★ 2026-10-23 取证专用：把**原生组件节点自身的真实尺寸**打出来。
-          //   用途：区分「横屏异常」的两个可能成因 ——
-          //     ① 节点尺寸没变（ArkUI 没重新布局）⇒ 是**我们的布局**问题；
-          //     ② 节点尺寸变了、但 XComponent surface 没重新分配（日志里看不到
-          //        `OnSurfaceChangedCB`）⇒ 是 **ReaderKit 内部**没把 surface 尺寸更新。
-          //   两者修法完全不同，不能靠猜。诊断稳定后可删（只在 area 变化时触发，开销可忽略）。
-          .onAreaChange((_oldArea: Area, newArea: Area) => {
-            const ww: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
-            const wh: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
-            hilog.info(0x0000, 'testTag',
-              'ReadPageComponent area -> %{public}s x %{public}s vp | window %{public}d x %{public}d px',
-              String(newArea.width), String(newArea.height), ww, wh);
-          })
           .scale({ x: this.pdfScale(), y: this.pdfScale() })
           .translate({ x: this.pdfOffX, y: this.pdfOffY })
       } else {
@@ -9708,11 +9824,11 @@ export default struct ReaderPage3 {
     if (pd === undefined || pd === null) {
       return;
     }
-    // 统一委托给 `publishContinueStateWith()`：payload 的字段组装只有一处，
-    // 避免"阅读分支 / 听书分支"两份字段表各自漂移（曾经就因为两份逻辑不一致踩过坑）。
-    // ⚠️ 用公开的 `TtsEngine.getState()`，不要用 `isPlaying()`（那是 private）。
+    // 双坐标：domPos 原样带，同时把 parseDomPos 解出的 node/char 一并带
+    // （对端 domPos 异常时用它重算，用户 2026-10-24 同意"有备无患"）
+    const parsed: number[] = this.parseDomPos(pd.startDomPos ?? '');
     this.publishContinueStateWith(pd.resourceIndex ?? 0, pd.startDomPos ?? '',
-      TtsEngine.getState() !== 'stopped');
+      parsed[0], parsed[1], TtsEngine.getState() !== 'stopped');
   }
 
   /**
@@ -9735,11 +9851,13 @@ export default struct ReaderPage3 {
       return;
     }
     this.publishContinueStateWith(seg.spineIndex,
-      this.domPosFor(seg.nodeIndex, seg.charStart ?? 0), true);
+      this.domPosFor(seg.nodeIndex, seg.charStart ?? 0),
+      seg.nodeIndex, seg.charStart ?? 0, true);
   }
 
-  /** 用指定落点发布接续态（听书分支复用；`listen` 仅用于标记来源） */
-  private publishContinueStateWith(spineIndex: number, domPos: string, listen: boolean): void {
+  /** 用指定落点发布接续态（阅读/听书分支共用；`listen` 仅用于标记来源） */
+  private publishContinueStateWith(spineIndex: number, domPos: string,
+    nodeIndex: number, charOffset: number, listen: boolean): void {
     const name: string = this.bookData.bookName ?? '';
     if (name.length === 0) {
       return;
@@ -9760,12 +9878,27 @@ export default struct ReaderPage3 {
       chapterTitle: this.bookData.durChapterTitle ?? '',
       spineIndex: spineIndex,
       domPos: domPos,
+      nodeIndex: nodeIndex,
+      charOffset: charOffset,
+      // ✅ 带：字体/字重/字色/主题色/背景/日夜/翻页模式
+      // ❌ 不带：字号/行距（屏幕比例不同，真正影响体验的只有这两个）
       fontName: this.readerSetting.fontName ?? '',
       fontPath: this.readerSetting.fontPath ?? '',
-      nightMode: this.readerSetting.nightMode === true,
+      fontWeight: this.readerSetting.fontWeight ?? 0,
+      fontColor: this.readerSetting.fontColor ?? '',
+      themeColor: this.readerSetting.themeColor ?? '',
       themeBgImg: this.readerSetting.themeBgImg ?? '',
+      nightMode: this.readerSetting.nightMode === true,
+      // ⚠️⚠️ 2026-10-24 修（真机日志定案）：**必须报 `readMode`，不能报 `readerSetting.flipMode`**。
+      //   事故（`docs/日志.md` 00:12:41）：源端在**上下滚动**档接续，对端收到 `flipMode=1`
+      //   ⇒ 变成横滑。
+      //   根因：`loadReadMode()` 里只有分页两档会回写 `readerSetting.flipMode`
+      //     （`if (m === CURL || m === SLIDE) { … }`），**滚动档不回写** ⇒ 滚动时
+      //     `readerSetting.flipMode` 仍是上一次分页的旧值（'0'/'1'），于是上报的是脏数据。
+      //   真正的权威状态是 `@State readMode`（0=仿真 / 1=横滑 / 2=滚动，见 :330-332）。
+      flipMode: String(this.readMode),
       bgJson: bgJson,
-      bookFileName: '',
+      sessionId: '',
       listenMode: listen
     };
     ContinueBridge.publish(payload);

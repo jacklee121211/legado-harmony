@@ -63,7 +63,14 @@
     ],
     "deviceTypes": [
       "phone",
-      "tablet"
+      "tablet",
+      // ── 2in1（PC / 二合一）── 2026-10-23 多端适配补上 ────────────────────────
+      // ⚠️ 这是**阻断性**配置：`deviceTypes` 里没有 "2in1" 时，HAP **根本装不到**
+      //   2in1 设备上（应用市场与 hdc install 都会按设备类型过滤）。
+      //   代码里再怎么按断点适配都没有意义 —— 所以它必须和布局改动一起改。
+      // 依据：官方 `开发指南/应用程序包结构/module.json5配置文件` 的 deviceTypes 字段
+      //   取值枚举 `phone / tablet / 2in1 / tv / wearable / car`。
+      "2in1"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,

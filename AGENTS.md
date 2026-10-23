@@ -159,6 +159,61 @@ V2.0.2 封面圆角对齐 + 进场更顺
   `devecocli skills list / find / add --path`；**合并必须差异化，禁止 `--force` 覆盖**
   —— 技能内含 100+ MB 平台二进制（`heap_cluster.exe` 等），官方 tar 包**不含**，
   删了技能直接失效。完整流程见 `~/.dsh/AGENTS.md` 第 6 节。
+- **一镜到底（LongTake）在非手机设备上必须整体禁用 —— 它会毒化阅读器渲染**（2026-10-23 真机实证）：
+  1. **机制**：`CardLongTakeDelegate.build()` 把阅读页包进一层**写死尺寸的裁切盒**
+     （`common/ezlt/CustomTransition/CardLongTakeDelegate.ets:160-215`）：
+     `Stack{ Stack{ ReaderPage3 } .width(winWvp).height(winHvp).scale(...) }
+     .width(bookW).height(bookH).clip(true)`。而 `winWvp/winHvp` 只在
+     `sessions/LongTakeSession.ets:175-176` 初始化时算**一次**，`onSizeChange` 里只写
+     `navDestSize`，**没有任何地方重算盒子尺寸** ⇒ 阅读页永远住在一个"不随窗口变化"的盒子里，
+     只是转场结束后视觉上"铺满"了而已。
+  2. **症状**：平板旋转 / 2in1 拖窗口后，`ReadPageComponent` 的排版尺寸与 XComponent
+     surface 的分配尺寸分叉 ⇒ 内容被压进错尺寸的 surface。真机表现：
+     「内容占左侧 **65.7%**（= 竖屏宽 1840 ÷ 横屏宽 2800）、右侧空白」、「整页被横向拉抻」。
+  3. **修法（已落地）**：**设备级隔离**，不做运行时判断修补 ——
+     `ezCustomTransition.isLongTakeEnabledDevice()` 与 `UiMotion.longTakeAllowed()`
+     统一为 `deviceInfo.deviceType === 'phone'`；非手机在**生成入口**就返回 `undefined`
+     （连封面快照都不截），`longTakeTransitionParam` 为空 ⇒ `Index.ets` 走 else 分支，
+     `ReaderPage3` 直接挂在 `NavDestination` 下，中间盒 / `.clip()` / `.scale()` 全部不存在，
+     `systemTransition` 自动回落到 `UiMotion.pageTransition(T_READER)`。
+  4. **别再犯**：曾经出现过"只在横屏时禁用"（`isLandscapeWideDevice()`）与
+     "2in1 + 横屏禁用"（旧 `longTakeAllowed()`）**两套并存且不等价**的判断，
+     正是这类"按形态打补丁"造成了排查混乱。**形态/方向类问题一律回到设备级隔离**。
+- **`ReaderSetting.viewPortWidth/Height` 不会自己跟着窗口走 —— 进书前必须主动校准**（2026-10-23 真机实证）：
+  - 全工程只有两处赋值：`applyViewportNow()`（由 `@Watch('onViewportChanged')` 驱动）与
+    `windowSizeCb`（由 `WindowAbility.onWindowSizeChange` 的 150ms 防抖驱动）。
+    **两者都只在"窗口尺寸发生变化"时触发。**
+  - ⇒ **非冷启动第二次进书**时窗口尺寸早已稳定（书架期间就转好了），`@Watch` 一次都不触发
+    ⇒ `readerSetting.viewPort*` 停在上一次的旧值，`startPlay` 就带着旧视口排版。
+    真机日志（`docs/日志.md` 21:10:04）：
+    `startPlay: viewPort=1840 x 2800 , window=2800 x 1840`（视口是竖屏旧值、窗口是横屏新值），
+    紧接着 `setPageConfig width is 817.77`（旧值）把前一次的 `1244.44`（正确值）覆盖回去。
+  - ⇒ 修法：`ReaderPage3` 在 `startPlay` **之前**，用 AppStorage 的
+    `windowWidth/windowHeight`（px，与 `ReaderSetting.viewPort*` 同单位）主动校正一次，
+    并 `refreshScaledDensity()`。**不要指望监听能兜住"进书瞬间"这一帧。**
+- **多端断点体系：`currentBreakpoint` 曾经是死代码，改布局前先确认它是活的**（2026-10-23）：
+  `EntryAbility.updateBreakpoint()` 早已写好，但**全工程 0 处调用**、写入的
+  `currentBreakpoint` 键也**0 处消费** ⇒ 任何 `@StorageProp('currentBreakpoint')` 都恒为默认值。
+  现在已在 `onWindowStageCreate` 的 `getMainWindow` 回调里首次调用 + 注册
+  `windowSizeChange` 持续维护（**不复用** `WindowAbility.onWindowSizeChange`：那是业务回调 +
+  150ms 防抖，断点需要第一时间跟随）。
+  ⚠️ 两个必须记住的细节：① **`xl` 档（≥1440vp）原来不存在**（最大只到 lg），
+  导致"2in1 六列 / 1600vp 限宽"两条分支永远不命中，已补；
+  ② 换算必须用**该窗口的** `UIContext.px2vp()`，不能用
+  `display.getDefaultDisplaySync().densityPixels` —— 2in1 可拖到不同 DPI 显示器，
+  默认屏密度 ≠ 窗口密度，会判错断点。
+- **`deviceTypes` 不写 `"2in1"` ⇒ HAP 根本装不到 2in1 上**（2026-10-23）：
+  `entry/src/main/module.json5` 原本只有 `["phone","tablet"]`。这是**阻断性**配置，
+  代码里再怎么按断点适配都没意义。多端适配第一件事先查这一项。
+- **书架宫格列数是"写死 3 列"的历史遗留**（2026-10-23 已改）：
+  旧实现 `BookContent.ets` 的 `.lanes(this.EXHIBIT === '宫格' ? 3 : 1)` 与
+  `BookFolder.ets` 的 `GridRow({ columns: ... ? 3 : 1 })` **两处各写一遍**。
+  现在统一走 `ShelfPrefs.effectiveColumns(用户值, 断点)`：
+  自动档 **sm=3 / md=4 / lg=5 / xl=6**（按技能 `responsive_layout.md` 的
+  「列数递增原则」以本项目 **3 列为基线**递增，不是通用表的 2/3/4 —— **手机必须保持 3 列，不得回归**）；
+  手动档 = 设置页「布局 → 一行显示书籍数」滑块（**仅手机以外设备显示**，0 = 自动）。
+  ⚠️ 加列数相关的 UI 时，`BookContent`（书籍）与 `BookFolder`（分组）**必须同源同一函数**，
+  否则会出现"书籍变了、分组没变"的不一致。
 
 ## 8. 截图/验证产物：一律放仓库外（2026-10-19 隐私事故后立的规矩）
 

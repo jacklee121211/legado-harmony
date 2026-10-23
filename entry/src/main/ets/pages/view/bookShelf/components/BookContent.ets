@@ -381,6 +381,46 @@ export default struct BookContent {
   @State currentPage:number = 1
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+
+  // ── 宫格列数的两个输入源（2026-10-23 多端适配）──────────────────────────
+  /**
+   * 当前横向断点（`xs`/`sm`/`md`/`lg`/`xl`）。
+   *
+   * 由 `EntryAbility.updateBreakpoint()` 写入 AppStorage（2026-10-23 修活：
+   * 该方法此前**从未被调用**，键也没有任何消费方，等于死代码）。
+   * 默认 `'sm'` ⇒ 冷启动极早期（键还没写入）时按手机 3 列渲染，
+   * 与改造前写死的值一致，不会出现"进书架先乱跳一下列数"。
+   */
+  @StorageProp('currentBreakpoint') currentBreakpoint: string = 'sm'
+
+  /**
+   * 用户在设置页手动设定的列数；`0` = 自动跟随断点（默认）。
+   *
+   * 写入方：`MySetPage` 的「一行显示书籍数」滑块 → `ShelfPrefs.setUserColumns()`。
+   * 只有手机以外的设备会显示那个滑块（手机保持自动 3 列）。
+   */
+  @StorageProp(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE) userGridColumns: number = 0
+
+  /**
+   * 宫格内容区的**最大宽度**（vp），超出即居中留白（2026-10-23，2in1/PC 适配）。
+   *
+   * ── 为什么需要 ────────────────────────────────────────────────────────────
+   *   2in1 / PC 全屏时窗口可能宽达 2000vp+。若不限宽：
+   *     · 自动档到 `xl` 是 6 列，每格约 330vp ⇒ 封面被撑得过大、观感松散；
+   *     · 再宽下去（外接 4K 屏）会更夸张。
+   *   限宽后内容按"阅读舒适宽度"居中，两侧留背景色，与主流阅读类应用一致。
+   *
+   * ── 为什么取 1600 ─────────────────────────────────────────────────────────
+   *   1600vp 是常见横屏大屏的舒适阅读宽度上限；**手机/平板都到不了这个宽度**
+   *   （平板横屏实测 1244vp）⇒ 本约束在手机和平板上**天然不生效**，
+   *   只有 2in1/PC 大窗口才会起作用 ⇒ 零回归。
+   */
+  private static readonly MAX_CONTENT_WIDTH_VP: number = 1600
+
+  /** 宫格内容区是否处于"超宽"状态（只有此时才需要限宽 + 居中） */
+  private isUltraWide(): boolean {
+    return this.currentBreakpoint === 'xl'
+  }
   async loadMoreBooks() {
     if (!this.isLoading) {
       this.isLoading = true;
@@ -518,7 +558,27 @@ export default struct BookContent {
       }
       .alignListItem(ListItemAlign.Center)
       .layoutWeight(1)
-      .lanes(this.EXHIBIT === '宫格' ? 3 : 1)
+      // ══ 宫格列数：从"写死 3 列"改为"按断点 / 用户设定"（2026-10-23 多端适配）══
+      // ── 旧实现（已删）────────────────────────────────────────────────────────
+      //   `.lanes(this.EXHIBIT === '宫格' ? 3 : 1)`
+      //   ⇒ 手机/平板/2in1、横屏/竖屏全 3 列。平板横屏实测 1244vp 宽，
+      //     每格约 400vp，封面比手机还大 ⇒ 一屏只能看 3×3（用户反馈"显示太少"）。
+      //
+      // ── 取值来源（全部集中在 `ShelfPrefs`，此处只做一次调用）───────────────
+      //   `ShelfPrefs.effectiveColumns(用户手动值, 当前断点)`：
+      //     · 用户没调过（0）⇒ 自动档 sm=3 / md=4 / lg=5 / xl=6
+      //       （规格见 `ShelfPrefs.autoColumns()` 头注释：技能
+      //        `responsive_layout.md` RESP-01 + 「列数递增原则」以本项目 3 列为基线）
+      //     · 用户在设置页拖过滑块 ⇒ 直接用它（手机以外设备才有该滑块）
+      //   ⚠️ **手机端恒为 3 列**（`sm` 档 = 旧写死值），零回归。
+      //
+      // ── 为什么两个 `@StorageProp` 就能让列数实时变 ──────────────────────────
+      //   `lanes()` 是 List 的属性，只有组件**重新渲染**才会重算；
+      //   `@StorageProp` 订阅 AppStorage 键，键一变即触发本组件刷新
+      //   ⇒ 旋转 / 折叠 / 2in1 拖窗口 / 设置页拖滑块，都会立刻重排，
+      //     不需要退出重进书架。
+      .lanes(this.EXHIBIT === '宫格'
+        ? ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint) : 1)
       .scrollBar(BarState.Off)
       // ── 预加载区大小（2026-09-24，需求第 7 点「省资源」）────────────────────
       // SDK `component/list.d.ts:1195`：`cachedCount(value: number): ListAttribute;`
@@ -564,6 +624,16 @@ export default struct BookContent {
       .margin({
         left: 20,
         right: 20
+      })
+      // ── 超宽屏（2in1 / PC）内容区限宽 + 居中（2026-10-23 多端适配）──────────
+      //   为什么加在**最后**：ArkUI 属性后写的覆盖先写的，`constraintSize` 必须在
+      //   `width('100%')`/`margin` 之后才能真正收窄盒子（否则会被 100% 撑满）。
+      //   `maxWidth` 只在 `xl` 断点生效 —— 手机（sm）/ 平板（md/lg，实测 1244vp）
+      //   都到不了 1600vp，条件不成立 ⇒ 这两个设备上**完全不执行**，零回归。
+      //   居中由 `align(Alignment.Top)` 的父容器天然完成：盒子宽度被收到 1600 后，
+      //   横向剩余空间在父级按居中分配（父容器是 Column，默认居中）。
+      .constraintSize({
+        maxWidth: this.isUltraWide() ? BookContent.MAX_CONTENT_WIDTH_VP : Infinity
       })
     }
   }

@@ -30,6 +30,8 @@ import { IncomingFiles } from '../common/format/IncomingFiles';
 import { FMT_MASTER_ENABLED, FMT_SHARE_INTAKE_ENABLED } from '../common/format/FormatFlags';
 // 应用接续（无缝流转，2026-10-24）：源端 onContinue 存进度、对端 onCreate/onNewWant 恢复
 import { ContinueBridge } from '../common/utils/ContinueBridge';
+// 书架宫格列数（2026-10-23 多端适配）：启动时把用户手动设定回填到 AppStorage
+import ShelfPrefs from '../common/utils/ShelfPrefs';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -89,18 +91,46 @@ export default class EntryAbility extends UIAbility {
   }
 
   // 根据当前窗口尺寸更新断点
-  private updateBreakpoint(windowWidth: number): void {
-    // 将长度的单位由px换算为vp
-    let windowWidthVp = windowWidth / display.getDefaultDisplaySync().densityPixels
-    let newBp: string = ''
+  //
+  // ── 2026-10-23 两处修正（2in1 适配必需）──────────────────────────────────
+  //  ① **补 `xl` 档（≥1440vp）**。原实现最大只到 `lg`（≥840vp 全部算 lg），
+  //     而 `ShelfPrefs.autoColumns()` 里 `xl → 6 列`、
+  //     `BookContent.isUltraWide()` 判 `'xl'` 才启用 1600vp 限宽
+  //     ⇒ 断点永远产不出 `xl`，那两条分支**永远不会命中**（2in1 全屏 2000vp+
+  //     会被当成 `lg` 给 5 列，且内容区不限宽）。这是必须补的。
+  //     阈值依据：技能 `hmos-multidevice-screen-window-size` 的
+  //     `references/responsive_layout.md` 里 GridRow `breakpoints` 示例
+  //     `{ value: ['320vp', '600vp', '840vp', '1440vp'] }`（xl 起点 1440vp）。
+  //  ② **改用该窗口自己的 `UIContext.px2vp()`**，不再用
+  //     `display.getDefaultDisplaySync().densityPixels`。
+  //     原因：2in1 可以拖到不同 DPI 的显示器上 / 系统显示缩放不同，
+  //     "默认屏密度"未必等于"当前窗口密度"⇒ 算出的 vp 会偏，断点判错档。
+  //     官方 FAQ `FAQ/UI框架/组件使用/为什么vp2px_px2vp返回的结果不正确/faqs-arkui-259`
+  //     原文：「UIContext 的 vp2px、px2vp 为推荐的替代接口，能保证调用时 UI 实例
+  //     已经创建，并返回正确的结果」。
+  //     取不到 UIContext 时回退全局 `px2vp()`（与 `toVp()` 同一套兜底策略），
+  //     保证任何情况下都不打断启动流程。
+  private updateBreakpoint(windowClass: window.Window, windowWidthPx: number): void {
+    let windowWidthVp: number = 0;
+    try {
+      windowWidthVp = windowClass.getUIContext().px2vp(windowWidthPx);
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'breakpoint px2vp(UIContext) failed, fallback: %{public}s',
+        e instanceof Error ? e.message : String(e));
+      windowWidthVp = px2vp(windowWidthPx);
+    }
+    let newBp: string = '';
     if (windowWidthVp < 320) {
       newBp = 'xs'
     } else if (windowWidthVp < 600) {
       newBp = 'sm'
     } else if (windowWidthVp < 840) {
       newBp = 'md'
-    } else {
+    } else if (windowWidthVp < 1440) {
       newBp = 'lg'
+    } else {
+      // xl：PC / 2in1 全屏、外接大屏（≥1440vp）。见方法头 ① 的说明。
+      newBp = 'xl'
     }
     if (this.curBp !== newBp) {
       this.curBp = newBp
@@ -266,27 +296,32 @@ export default class EntryAbility extends UIAbility {
    * 源端：系统触发接续时调用。
    * 只在"正在阅读/听书"时同意，其它页面一律 REJECT（用户 2026-10-24 拍板）。
    */
-  onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
-    const ok: boolean = ContinueBridge.fillWantParam(wantParam);
-    if (!ok) {
+  async onContinue(wantParam: Record<string, Object>): Promise<AbilityConstant.OnContinueResult> {
+    const p = ContinueBridge.fillWantParam(wantParam);
+    if (p === null) {
       hilog.info(0x0000, 'testTag', 'onContinue: not in reader, REJECT');
       return AbilityConstant.OnContinueResult.REJECT;
     }
-    // ── 全量路线（2026-10-24）：把书文件暂存到分布式目录 ──────────────────
-    // 对端「有书就只用数据、没书就用这份文件导入」⇒ 一条链路同时覆盖轻量/全量。
-    // 同步执行（`onContinue` 是同步回调，异步拷贝会在写完前就放行迁移）。
-    const live = ContinueBridge.live();
-    if (live !== null) {
-      const staged: string = ContinueBridge.stageBookFile(
-        this.context, live.bookUrl, live.bookName);
-      if (staged.length > 0) {
-        wantParam.ljContinueBookFile = staged;
-        hilog.info(0x0000, 'testTag', 'onContinue: staged book file %{public}s', staged);
-      }
+    // ── 全量路线（2026-10-24 修正）：书文件必须走 Asset + 分布式数据对象 ──────
+    // 真机日志实证：直接写 `distributedFilesDir` 让对端读同一路径 = **读不到**。
+    // 官方机制是 Asset 随对象同步。
+    // ⚠️ 关键：save() 必须传 **对端 deviceId**（系统预置的 wantParam.targetDevice），
+    //   传 'local' 只持久化到本机 ⇒ A 退出后 B 拿不到（真机日志 23:39:22 实证：
+    //   B 端 `joinSession ok` 但永远没有 `dstObject status=restored`，9 秒超时）。
+    const asset = ContinueBridge.buildAsset(this.context, p.bookUrl, p.bookName);
+    const targetDevice: string = (wantParam.targetDevice !== undefined
+      && wantParam.targetDevice !== null) ? String(wantParam.targetDevice) : '';
+    hilog.info(0x0000, 'testTag', 'onContinue: targetDevice=%{public}s', targetDevice);
+    const sessionId: string = await ContinueBridge.createSession(
+      this.context, asset, targetDevice);
+    if (sessionId.length > 0) {
+      wantParam.ljContinueSession = sessionId;
+      hilog.info(0x0000, 'testTag', 'onContinue: session ready %{public}s', sessionId);
+    } else {
+      hilog.warn(0x0000, 'testTag', 'onContinue: no session (asset unavailable), metadata only');
     }
-    // 官方体验建议（同文档「常见接续场景体验建议」）：电子书/听书类
-    // 「阅读及听书进度同步」+ 源端**退出**（用户 2026-10-24 拍板：听书也退出）。
-    // 返回 AGREE 后系统会按默认策略退出源端，无需应用自己 kill。
+    // 官方体验建议（新闻阅读/电子书）：进度同步 + 源端**退出**（用户拍板：听书也退出）。
+    // 返回 AGREE 后系统按默认策略退出源端，无需应用自己 kill。
     hilog.info(0x0000, 'testTag', 'onContinue: AGREE');
     return AbilityConstant.OnContinueResult.AGREE;
   }
@@ -305,23 +340,46 @@ export default class EntryAbility extends UIAbility {
       return;
     }
     hilog.info(0x0000, 'testTag', 'appContinuity: CONTINUATION launch');
-    const restored: boolean = ContinueBridge.restoreFromWant(want);
-    if (!restored) {
-      hilog.warn(0x0000, 'testTag', 'appContinuity: payload missing');
-    }
-    // ── 官方范式：给框架一份 LocalStorage 用于恢复窗口数据 ──────────────────
+    // ══════════════════════════════════════════════════════════════════════
+    // ⚠️⚠️ 顺序铁律（2026-10-23 真机日志定案，勿改）⚠️⚠️
+    //
+    // 必须**先** restoreWindowStage，**再**写 CONTINUE_PENDING。
+    //
+    // 真机事故证据（`docs/日志.md` 22:48:38，同一毫秒内）：
+    //   `restoreWindowStage ok`
+    //   `SetUIContentInner: {"stackInfo":[{"url":"pages/Index"}],"nodeInfo":{}}`
+    //   `window destroy`
+    //   `AceContainer Destroy begin`          ← 整个 UI 容器被销毁重建
+    //   ……之后 `open: name=步步生莲.txt id=2` 才 push 阅读页
+    //   ⇒ 阅读页随旧容器一起被销毁 ⇒ 用户「停在书架，没有任何操作」。
+    //
+    // 根因：`restoreWindowStage()` 会销毁并重建 AceContainer。而
+    //   `@StorageLink + @Watch` 是**同步**回调 —— 一旦先写 AppStorage，
+    //   Index 立刻 push 阅读页，紧接着容器被销毁，push 白做。
+    // 修法：先把容器重建掉，再写标记 ⇒ Index（新的那个）通过 @Watch 或
+    //   onPageShow 消费，`waitReadyThenFind()` 会等路由就绪后才 push。
+    // ══════════════════════════════════════════════════════════════════════
+    // ① 官方范式：给框架一份 LocalStorage 用于恢复窗口数据
     // SDK `UIAbilityContext.d.ts`：「Restores the WindowStage data in the UIAbility.
     //   It can be called only on the main thread.」
-    // 不调它会报 `E [JUA1128] null content storage`（真机日志实证），
-    // 属于"页面栈恢复失败"的直接诱因。
-    // 我们自己是 NavPathStack 手动导航，所以这里只提供容器、不依赖它的恢复结果。
+    // 不调它会报 `E [JUA1128] null content storage`（真机日志实证）。
     try {
       this.context.restoreWindowStage(new LocalStorage());
-      hilog.info(0x0000, 'testTag', 'appContinuity: restoreWindowStage ok');
+      hilog.info(0x0000, 'testTag', 'appContinuity: restoreWindowStage ok (before pending)');
     } catch (e) {
       hilog.error(0x0000, 'testTag', 'appContinuity: restoreWindowStage failed %{public}s',
         e instanceof Error ? e.message : String(e));
     }
+    // ② 再解析 wantParam（内部会写 CONTINUE_PENDING，触发 Index 消费）
+    const p = ContinueBridge.restoreFromWant(want);
+    if (p === null) {
+      hilog.warn(0x0000, 'testTag', 'appContinuity: payload missing');
+      return;
+    }
+    // ③ 对端：加入源端建的 session，等 Asset 同步落地
+    // 官方三条 ⚠️ 全在 `ContinueBridge.joinSession()` 里照做了
+    // （属性全空防倒灌 / 先 on('status') 再 setSessionId / 对象常驻）。
+    ContinueBridge.joinSession(this.context, p.sessionId);
   }
 
   onDestroy() {
@@ -413,6 +471,51 @@ export default class EntryAbility extends UIAbility {
       }
       // 初始化屏幕亮度设置
       BrightnessUtil.initWindow(windowClass);
+
+      // ══ 断点体系「修活」（2026-10-23）══════════════════════════════════════
+      // ── 改之前的事实（取证）────────────────────────────────────────────────
+      //   `updateBreakpoint()` 早就写好了，但**全工程 0 处调用**；
+      //   它写入的 AppStorage 键 `currentBreakpoint` 也**0 处消费**
+      //   ⇒ 整套断点体系是死代码，任何页面都无法按屏幕宽度做响应式布局
+      //     （书架宫格因此只能写死 3 列，见 `BookContent.ets` 的 `lanes`）。
+      //
+      // ── 现在做的两件事 ─────────────────────────────────────────────────────
+      //   ① 启动时立刻算一次（此时窗口已完成布局，`windowRect` 是真实值）；
+      //   ② 注册 `windowSizeChange` 持续维护 —— 旋转 / 折叠展开 / 2in1 拖窗口 /
+      //      分屏都会触发，这正是响应式布局需要的输入。
+      //   为什么自己注册而不是复用 `WindowAbility.onWindowSizeChange()`：
+      //   那个是**业务回调 + 150ms 防抖**（合并一次旋转的多次上报），
+      //   而断点需要**第一时间**跟随（防抖窗口内布局会先按旧断点渲染一帧）；
+      //   且 `EntryAbility` 是 `updateBreakpoint` 的持有者，放这里无需跨模块暴露。
+      //   监听器数量：`on('windowSizeChange')` 允许多个监听，二者互不影响。
+      //
+      // ── 单位 ───────────────────────────────────────────────────────────────
+      //   `windowSizeChange` 回调给的是**物理像素**，`updateBreakpoint()` 内部
+      //   已经按 `densityPixels` 换算成 vp 再判档（阈值 320/600/840 vp）。
+      //   取值链依据：官方 `API参考/ArkUI_方舟UI框架/.../windowSizeChange`
+      //   「回调参数为 `window.Size`（物理像素）」。
+      try {
+        this.updateBreakpoint(windowClass, windowClass.getWindowProperties().windowRect.width);
+        windowClass.on('windowSizeChange', (size: window.Size) => {
+          this.updateBreakpoint(windowClass, size.width);
+        });
+        hilog.info(0x0000, 'testTag', 'breakpoint live: init=%{public}s',
+          AppStorage.get<string>('currentBreakpoint') ?? '');
+      } catch (e) {
+        hilog.error(0x0000, 'testTag', 'breakpoint live failed: %{public}s',
+          e instanceof Error ? e.message : String(e));
+      }
+
+      // ── 书架宫格列数：启动即从 Preferences 回填到 AppStorage（2026-10-23）──────
+      //   `BookContent` 用 `@StorageProp('shelfGridColumns')` 订阅该键，而 AppStorage
+      //   是内存态、冷启动为空 ⇒ 不回填的话用户手动设过的列数重启后失效。
+      //   `ShelfPrefs.getUserColumns()` 内部已做范围钳制（2..8，0=自动）。
+      try {
+        AppStorage.setOrCreate(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE, ShelfPrefs.getUserColumns());
+      } catch (e) {
+        hilog.error(0x0000, 'testTag', 'shelfGridColumns restore failed: %{public}s',
+          e instanceof Error ? e.message : String(e));
+      }
 
       // ── 防窥两层（2026-10-08）：启动最早时机把主窗口交给 AntiPeep ——
       //    第 1 层（防截屏/录屏）立即按用户意图应用；第 2 层（阅读防窥）静默对账系统防窥开关

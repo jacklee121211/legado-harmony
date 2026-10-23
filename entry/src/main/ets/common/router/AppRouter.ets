@@ -164,18 +164,27 @@ export interface ReaderRouteParam {
   continueSpine?: number;
   /** 应用接续：章节内字符级 DOM 锚点（与排版无关，跨设备可精确落点） */
   continueDomPos?: string;
+  /** 应用接续备用坐标：块节点下标（domPos 失效时用它重算） */
+  continueNode?: number;
+  /** 应用接续备用坐标：节点内字符偏移 */
+  continueChar?: number;
   /**
    * 应用接续（2026-10-24）：**内存下发**的排版信息。
    * ⚠️ 刻意**不**在 `Index` 侧写 `ReaderSetting_${bookName}` 持久位 ——
    *    那块存的是 readerSetting **对象**，外部按 JSON 字符串改写会把整本设置写坏
    *    （真机事故：进书黑屏且退出重进也黑）。这里只传，由 `ReaderPage3` 自己在
    *    已加载的对象上改字段。
-   * 只带：字体、背景、日/夜；**不带字号/行距**（每块屏幕按自己尺寸排版）。
+   * ✅ 带：字体、字重、字色、主题色、背景、日夜、翻页模式
+   * ❌ 不带：**字号、行距**（屏幕比例不同，真正影响体验的只有这两个）
    */
   continueFontName?: string;
   continueFontPath?: string;
-  continueNightMode?: boolean;
+  continueFontWeight?: number;
+  continueFontColor?: string;
+  continueThemeColor?: string;
   continueThemeBgImg?: string;
+  continueNightMode?: boolean;
+  continueFlipMode?: string;
   /** 「我的 → 书签」回跳：书签的目录号 */
   bmChapterIndex?: number;
   /** 「我的 → 书签」回跳：书签的页首块节点号 */
