@@ -1,3 +1,4 @@
+
 /node_modules
 /oh_modules
 /local.properties
@@ -22,3 +23,4 @@ __pycache__/
 /screenshots/
 /.cache/
 /verify/
+/fonts/

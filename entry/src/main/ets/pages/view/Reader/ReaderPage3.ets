@@ -67,6 +67,10 @@ import { VipManager } from '../../../common/utils/VipManager';
 // ── 离线模式（2026-10-13 新增）：隐藏阅读器内依赖网络的入口 ──
 import { OfflineMode } from '../../../common/utils/OfflineMode';
 import { ReaderBgPalette } from './ReaderBgPalette';
+// ── 上下滚动阅读（2026-10-20 新增：阅读方式第三档）──────────────────────────
+// ReaderKit 只有仿真/横滑两档（`flipMode` '0'/'1'，SDK 全文无滚动字段），
+// 这一档由我们自己用 ArkUI 铺段落实现，见 `ReaderScrollView.ets` 文件头。
+import { ReaderScrollView } from './ReaderScrollView';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics';
@@ -246,6 +250,21 @@ const RS_SETTING_VER: number = 2;
  */
 const SYSTEM_CJK_FONT_NAME: string = '鸿蒙黑体';
 
+// ── ArkUI 侧的族名（2026-10-23 真机日志定案，理由见 `arkFontName()` 注释）──────
+/**
+ * 系统中文黑体在 **ArkUI** 里认的族名（英文全名）。
+ * `getFontByName('HarmonyOS Sans SC')` 实测正常返回；而传中文 family
+ * 「鸿蒙黑体」会让 ArkUI 解析不到、静默回落默认族。
+ */
+const ARK_FONT_SYS_CJK: string = 'HarmonyOS Sans SC';
+/** 最后一级回退：ArkUI 的默认无衬线族（只有拉丁字形，仅作兜底，正常不应落到这里） */
+const ARK_FONT_FALLBACK: string = 'HarmonyOS Sans';
+/**
+ * 系统中文黑体在 ArkUI 侧的字重补偿（2026-10-23 真机验证：`-100` 后与分页模式
+ * **完全一致**）。机理与"为什么不能全局用"见 `scrollWeightOffset()` 注释。
+ */
+const SCROLL_SYS_CJK_WEIGHT_OFFSET: number = -100;
+
 /**
  * 系统中文黑体的**真实文件路径**（`getFontByName('HarmonyOS Sans SC').path` 实测值）。
  * ⚠️ 不要清空它：`fontPath` 是 `resourceRequest` 字体分支的第一候选路径，
@@ -295,6 +314,24 @@ const READER_BAR_HEIGHT: number = 60;
  * `margin({ bottom: 10 })` 一致（悬浮条的留白现在由 `FloatingTabBarStyle.barBottomMargin` 表达）。
  */
 const READER_BAR_BOTTOM_GAP: number = 10;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 阅读方式（2026-10-20 新增第三档：上下滚动）
+// ══════════════════════════════════════════════════════════════════════════════
+/**
+ * 阅读方式三档。**为什么不塞进 `readerCore.ReaderSetting`**：
+ * 那是 ReaderKit 的接口，`flipMode` 只认 `'0'`=仿真 / `'1'`=横滑
+ * （SDK `@hms.core.readerservice.readerComponent.d.ets:169`，全文无滚动档），
+ * 塞 `'2'` 进去引擎会当成非法值。⇒ 与「自定义背景色」同款做法：走**旁路 Preferences**
+ * （键 `ReaderMode_<书名>`，按书持久化），`readerSetting.flipMode` 仍只承载 0/1。
+ */
+const READ_MODE_FLIP_CURL: number = 0;    // 仿真
+const READ_MODE_FLIP_SLIDE: number = 1;   // 横滑
+const READ_MODE_SCROLL: number = 2;       // 上下滚动（本工程自绘）
+/** 按书保存阅读方式的 Preferences 键前缀 */
+const READ_MODE_KEY_PREFIX: string = 'ReaderMode_';
+/** 滚动模式下写进度的最小间隔（ms）——滚动回调很密，落盘必须节流 */
+const SCROLL_PERSIST_GAP_MS: number = 1200;
 
 /**
  * 信息窗（含时钟/电量/书签/防窥）里的 symbol 图标**统一字号**（2026-10-19 新增）。
@@ -927,6 +964,78 @@ export default struct ReaderPage3 {
    */
   private effectiveBookPath: string = ''
   @State firstPageReady: boolean = false
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 上下滚动阅读（2026-10-20 新增：阅读方式第三档）
+  //
+  // 设计要点（三条硬约束，全部来自用户口径）：
+  //   ① 复用沉浸听读那套渲染，不另造排版逻辑；
+  //   ② 三种方式互切**进度统一** —— 全靠全工程唯一坐标 `(spine, 块节点, 字符)`：
+  //      滚动时把「可视首段」写回 `pageRange`，于是书签/TTS 跟随/双端同步/读完判定
+  //      /目录跳转全部**零改动**继续工作；
+  //   ③ 不能影响原有功能：分页模式下本页所有分支原样保留（见各处 `scrollModeOn()` 守卫）。
+  // ══════════════════════════════════════════════════════════════════════════
+  /** 阅读方式：0=仿真 1=横滑 2=上下滚动（按书持久化，见 `READ_MODE_KEY_PREFIX`） */
+  @State readMode: number = READ_MODE_FLIP_CURL
+  /** 滚动视图初始位置（`scrollInitSerial` 变化 = 重新载入窗口） */
+  @State scrollInitSpine: number = 0
+  @State scrollInitNode: number = 0
+  @State scrollInitSerial: number = 0
+  /** 滚动视图定位请求（TTS 跟随 / 目录 / 书签都走这里） */
+  @State scrollSeekSpine: number = 0
+  @State scrollSeekNode: number = 0
+  @State scrollSeekSerial: number = 0
+  /** 翻一屏请求（音量键翻页在滚动模式下的等价动作） */
+  @State scrollPageDir: number = 1
+  @State scrollPageReq: number = 0
+  /** 滚动模式下的朗读高亮（父页从 TtsEngine 算好再传下去） */
+  @State scrollHlSpine: number = -1
+  @State scrollHlNode: number = -1
+  @State scrollHlFrom: number = -1
+  @State scrollHlTo: number = -1
+  @State scrollHlSerial: number = 0
+  /** 滚动模式进度落盘节流时间戳 */
+  private scrollPersistAt: number = 0
+  /** 最近一次滚动上报的位置（切回分页时用它定位） */
+  private scrollSpine: number = 0
+  private scrollNode: number = 0
+  /**
+   * 「刚从滚动模式切到分页模式时，我们请求落位的那一段」（-1 = 无）。
+   *
+   * ⚠️ 为什么需要它（2026-10-20 真机日志实证的真实缺陷）：
+   *   切回滚动时若取 `pageRange.startNode`，会**每往返一次退一页** —— 日志里
+   *   `switchReadMode` / `locate` 交替出现时节点号是 237 → 235 → 233 → 230。
+   *   根因：`startPlay(spine, domPos)` 落位时把目标段放在**页尾**
+   *   （日志原文 `locate: landed node=237 char=0 at TAIL in spine=1 [235#50..237#36]`），
+   *   于是"页首"永远比我们请求的那段更靠前，下一次再拿页首当滚动起点就继续往前退。
+   * ⇒ 记住"请求落位的那一段"，切回滚动时**优先用它**（只要当前页仍覆盖它），
+   *   往返就变成幂等的：237 → 分页显示含 237 的那页 → 切回滚动仍是 237。
+   *   用户若在分页模式里真翻了页，旧节点不再被当前页覆盖 ⇒ 自动回落到页首，语义正确。
+   */
+  private pagedRestoreSpine: number = -1
+  private pagedRestoreNode: number = -1
+  /**
+   * 解析器是否已就绪（`startPlay()` 里 `BookHandler` 赋值完成）。
+   *
+   * ⚠️ 为什么必须是 `@State`：`BookHandler` 是普通字段（`startPlay` 异步赋值），
+   * 它变化**不会**触发 `build()` 重估。而滚动视图必须等解析器就绪才能读正文 ——
+   * 否则它 `aboutToAppear` 时 `handlerProvider()` 还是 null，会立刻渲染出
+   * 「这一章没有可显示的正文」的假错误（真机上就是"进书就报没正文"）。
+   */
+  @State bookHandlerReady: boolean = false
+  /**
+   * 字体就绪代数（2026-10-20 新增）。
+   *
+   * ArkUI 侧的自定义字体是**异步注册**的（`Font.registerFont` 返回 void、无完成回调，
+   * 见 `ReaderFontLib.ensureRegistered` 注释），注册完成前 `.fontFamily(name)`
+   * 解析不到该族名 ⇒ 回落系统默认字形。而原生 `Text` 的参数不变就不会自己重排，
+   * 所以必须有一个**可观察的量**在"字体真的可用了"之后变一次，逼滚动层重建行。
+   *
+   * 传给 `ReaderScrollView` 当 `@Prop fontSerial`，并参与 `LazyForEach` 的行键。
+   * 只在换字体 / 开书注册完成时 +1，无性能顾虑。
+   */
+  @State fontSerial: number = 0
+
   /** 「正在排版…」占位是否已经显示够久（避免快书时闪一下反而更难看） */
   @State showTypesettingHint: boolean = false
   /**
@@ -1049,6 +1158,19 @@ export default struct ReaderPage3 {
   // ── 居中下拉书签手势（2026-10-07 用户需求，常量与取证见文件头 BM_PULL_* 段）────
   /** 当前下拉位移（vp）：驱动内容层 `translate` 与顶部提示条 */
   @State bmPullY: number = 0
+  /**
+   * 上下滚动模式下的**右滑**位移（vp）—— 2026-10-20 新增。
+   *
+   * 用户口径：「其他的翻页方式下拉会有一个丝滑的存取书签功能……在上下滚动模式下，
+   * 把这个下拉手势变成左右滑动手势，依旧能够快速存取书签，操作逻辑正好扭过来」。
+   *
+   * 为什么滚动模式必须换轴：分页模式的"下拉"是**抢** ReaderKit 的翻页 pan
+   * （见文件头 BM_PULL_* 段的两道闸）；而滚动模式里竖向 pan 属于 `List` 滚动，
+   * 抢走它等于把滚动功能弄坏。横向 pan 在滚动模式下**没有任何其它用途**
+   * （没有左右翻页），所以扭到横轴既安全又顺手。
+   * 复用同一套量纲：`BM_PULL_MAX / BM_PULL_TRIGGER / BM_PULL_DAMP`，手感与分页模式一致。
+   */
+  @State bmPullX: number = 0
   /** 本次手势是否已通过起手门禁（全屏 + 居中起手），false ⇒ 忽略后续 update/end */
   private bmPullArmed: boolean = false
 
@@ -2067,6 +2189,12 @@ export default struct ReaderPage3 {
     if (!this.bmPullArmed) {
       return
     }
+    // 2026-10-20：滚动模式跟**横轴**（右滑），分页模式跟纵轴（下拉）—— 见 `bmPullX` 注释
+    if (this.scrollModeOn()) {
+      const dx: number = e.offsetX > 0 ? e.offsetX : 0
+      this.bmPullX = Math.min(dx * BM_PULL_DAMP, BM_PULL_MAX)
+      return
+    }
     const d: number = e.offsetY > 0 ? e.offsetY : 0
     this.bmPullY = Math.min(d * BM_PULL_DAMP, BM_PULL_MAX)
   }
@@ -2077,12 +2205,15 @@ export default struct ReaderPage3 {
       return
     }
     this.bmPullArmed = false
-    const hit: boolean = this.bmPullY >= BM_PULL_TRIGGER
-    // 取证行：位移与命中一起看，可判定"下拉是否被 ReaderKit 抢走 / 是否斜了"
-    hilog.info(0x0000, 'testTag', 'BMPULL end: pullY=%{public}s hit=%{public}s',
-      this.bmPullY.toFixed(1), String(hit))
+    const scroll: boolean = this.scrollModeOn()
+    const moved: number = scroll ? this.bmPullX : this.bmPullY
+    const hit: boolean = moved >= BM_PULL_TRIGGER
+    // 取证行：位移与命中一起看，可判定"手势是否被抢走 / 是否斜了"
+    hilog.info(0x0000, 'testTag', 'BMPULL end: axis=%{public}s pull=%{public}s hit=%{public}s',
+      scroll ? 'x' : 'y', moved.toFixed(1), String(hit))
     this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
       this.bmPullY = 0
+      this.bmPullX = 0
     })
     if (hit) {
       Haptics.tap()
@@ -2098,6 +2229,7 @@ export default struct ReaderPage3 {
     this.bmPullArmed = false
     this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
       this.bmPullY = 0
+      this.bmPullX = 0
     })
   }
 
@@ -2118,37 +2250,67 @@ export default struct ReaderPage3 {
     // 不包这一层，120 高的垫层/提示会被**垂直居中**再叠加 `translate`，
     // 表现就是"白条跑到屏幕中间"（2026-10-07 用户截图为证）。
     Stack({ alignContent: Alignment.TopStart }) {
-      // ① 底部垫层（页面同底色）
-      Column()
-        .width('100%')
-        .height(BM_PULL_MAX)
-        .backgroundColor(this.pageBaseColor())
-        .translate({ y: this.bmPullY - BM_PULL_MAX })
-        .hitTestBehavior(HitTestMode.None)
+      // ① 垫层（页面同底色）—— 盖住内容层位移后露出的缺口。
+      //    分页模式：贴顶的横条（高 = BM_PULL_MAX），随下拉从屏幕上方滑入；
+      //    滚动模式：贴左的竖条（宽 = BM_PULL_MAX），随右滑从屏幕左侧滑入。
+      if (this.scrollModeOn()) {
+        Column()
+          .width(BM_PULL_MAX)
+          .height('100%')
+          .backgroundColor(this.pageBaseColor())
+          .translate({ x: this.bmPullX - BM_PULL_MAX })
+          .hitTestBehavior(HitTestMode.None)
+      } else {
+        Column()
+          .width('100%')
+          .height(BM_PULL_MAX)
+          .backgroundColor(this.pageBaseColor())
+          .translate({ y: this.bmPullY - BM_PULL_MAX })
+          .hitTestBehavior(HitTestMode.None)
+      }
 
-      // ② 全局变暗
+      // ② 全局变暗（不透明度随位移线性增长，回弹即恢复）
       Column()
         .width('100%')
         .height('100%')
         .backgroundColor(Color.Black)
-        .opacity(this.bmPullY / BM_PULL_MAX * BM_SCRIM_MAX)
+        .opacity((this.scrollModeOn() ? this.bmPullX : this.bmPullY) / BM_PULL_MAX * BM_SCRIM_MAX)
         .hitTestBehavior(HitTestMode.None)
 
       // ③ 提示（图标 + 文案）
-      Column({ space: 4 }) {
-        SymbolGlyph(this.bookmarkIcon())
-          .fontSize(26)
-          .fontColor([this.readerSetting.fontColor])
-        Text(this.isBookmarked ? '松开移除书签' : '松开添加书签')
-          .fontSize(11)
-          .fontColor(this.readerSetting.fontColor)
+      if (this.scrollModeOn()) {
+        // 滚动模式：竖条里的提示 —— 靠左、垂直居中，文字保持水平（不旋转，读起来最自然）
+        Column({ space: 4 }) {
+          SymbolGlyph(this.bookmarkIcon())
+            .fontSize(26)
+            .fontColor([this.readerSetting.fontColor])
+          Text(this.isBookmarked ? '松开移除' : '松开添加')
+            .fontSize(11)
+            .fontColor(this.readerSetting.fontColor)
+            .textAlign(TextAlign.Center)
+        }
+        .width(BM_PULL_MAX)
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ left: 6, right: 6 })
+        .translate({ x: this.bmPullX - BM_PULL_MAX })
+        .hitTestBehavior(HitTestMode.None)
+      } else {
+        Column({ space: 4 }) {
+          SymbolGlyph(this.bookmarkIcon())
+            .fontSize(26)
+            .fontColor([this.readerSetting.fontColor])
+          Text(this.isBookmarked ? '松开移除书签' : '松开添加书签')
+            .fontSize(11)
+            .fontColor(this.readerSetting.fontColor)
+        }
+        .width('100%')
+        .height(BM_PULL_MAX)
+        .justifyContent(FlexAlign.End)
+        .padding({ bottom: 10 })
+        .translate({ y: this.bmPullY - BM_PULL_MAX })
+        .hitTestBehavior(HitTestMode.None)
       }
-      .width('100%')
-      .height(BM_PULL_MAX)
-      .justifyContent(FlexAlign.End)
-      .padding({ bottom: 10 })
-      .translate({ y: this.bmPullY - BM_PULL_MAX })
-      .hitTestBehavior(HitTestMode.None)
     }
     .width('100%')
     .height('100%')
@@ -2861,6 +3023,20 @@ export default struct ReaderPage3 {
     this.readerSetting.fontName = name
     this.readerSetting.fontPath = path
     this.readerComponentController.setPageConfig(this.readerSetting)
+    // ★★ 关键修复（2026-10-20）：ArkUI 侧必须**同步注册**新族名 ★★
+    // 缺陷现场：这里原来只有上面三行 —— 引擎拿到了 `fontName/fontPath`（它自己按
+    // `resourceRequest` 向应用要字体字节），所以**仿真/横滑正常**；但 ArkUI 原生文本
+    // （滚动层 / 沉浸层 / 测量通道）靠 `.fontFamily(name)` 解析族名，**没注册就回落系统
+    // 默认字形** ⇒ 表现为「上下滚动模式下自定义字体失效、且比其它模式更黑」。
+    // `registerFont` 是异步生效的（SDK 返回 void，无完成回调），所以注册完成后
+    // 还要逼一次重排：`fontSerial++` 会改变滚动层的行键 ⇒ `LazyForEach` 重建可见行
+    // ⇒ 新字形才真正落到屏幕上。
+    // ⚠️ 注册用的是 **ArkUI 族名**（`arkFontName()` 翻译过），不是引擎族名：
+    //   引擎名「鸿蒙黑体」在 ArkUI 里解析不到（真机 1s 超时），注册它等于白等一轮。
+    ReaderFontLib.ensureRegistered(this.getUIContext(), this.arkFontName(), path, (): void => {
+      this.fontSerial++
+      this.updateHighlight()
+    })
     this.updateHighlight()
   }
 
@@ -3514,21 +3690,27 @@ export default struct ReaderPage3 {
     }
     BrightnessUtil.setBrightness('reader', savedBright)
     BrightnessUtil.setScreenState(this.isScreenState)
-    // 诊断（临时）：量同一段中文在不同字体族下的宽度 —— 用于客观判定"哪个族 == ArkUI 默认"
-    // （普通模式偏窄 = 所选字体比 ArkUI 默认更窄；沉浸模式用 ArkUI 默认所以是对的）
+    // 诊断（临时）：量同一段文字在不同字体族下的宽度 —— 用于客观判定"fontFamily 到底生效没"
+    // ⚠️ 2026-10-23：中文样本**测不出区别**（全角字符在任何字体里都是 1em 宽，
+    //    实测 6 个族全返回 547），所以必须**同时用拉丁样本**：
+    //    拉丁字母的字宽随字体变化 ⇒ 只要某族的宽度 ≠ 默认族，就证明该族被真正应用了；
+    //    若与默认族**完全相同**，说明 ArkUI 根本没认出这个名字（静默回落）。
     try {
       const mu = this.getUIContext().getMeasureUtils();
-      const sample = '声声龙吼，震荡天地';
-      const defSize = mu.measureTextSize({ textContent: sample, fontSize: 18 });
-      const def = defSize;
-      hilog.info(0x0000, 'testTag', 'fontwidth default = %{public}s (width=%{public}s)',
-        JSON.stringify(def), String(def.width));
-      const fams: string[] = ['鸿蒙黑体', 'HarmonyOS Sans', '书宋-简', 'Noto Serif', 'HarmonyOS Sans SC'];
+      const cjk = '声声龙吼，震荡天地';
+      const latin = 'Hamburgefonstiv WWW iiii 123';
+      const fams: string[] = ['鸿蒙黑体', 'HarmonyOS Sans', 'HarmonyOS Sans SC', '书宋-简', 'NoSuchFontXYZ'];
+      const dCjk = mu.measureTextSize({ textContent: cjk, fontSize: 18 });
+      const dLat = mu.measureTextSize({ textContent: latin, fontSize: 18 });
+      hilog.info(0x0000, 'testTag', 'fontwidth <default> cjk=%{public}s latin=%{public}s',
+        String(dCjk.width), String(dLat.width));
       for (let i = 0; i < fams.length; i++) {
-        const m = mu.measureTextSize({ textContent: sample, fontSize: 18, fontFamily: fams[i] });
-        
-        hilog.info(0x0000, 'testTag', 'fontwidth %{public}s = width %{public}s',
-          fams[i], String(m.width));
+        const mc = mu.measureTextSize({ textContent: cjk, fontSize: 18, fontFamily: fams[i] });
+        const ml = mu.measureTextSize({ textContent: latin, fontSize: 18, fontFamily: fams[i] });
+        // same=1 表示该族与默认族**完全同宽** ⇒ 极可能没被识别（回落默认）
+        const same: string = (ml.width === dLat.width && mc.width === dCjk.width) ? 'SAME(回落)' : 'DIFF(生效)';
+        hilog.info(0x0000, 'testTag', 'fontwidth %{public}s cjk=%{public}s latin=%{public}s %{public}s',
+          fams[i], String(mc.width), String(ml.width), same);
       }
     } catch (e) {
       hilog.warn(0x0000, 'testTag', 'fontwidth 测量失败: %{public}s',
@@ -3617,9 +3799,32 @@ export default struct ReaderPage3 {
     this.restoreCustomBg();
     // 「保存方案」存下来的颜色清单（全局，一次读入；增删时再刷）
     this.refreshSavedSchemes();
+    // ── 阅读方式（2026-10-20 新增第三档「上下滚动」）──────────────────────────
+    // 必须在 `migrateReaderSetting()` **之后**（滚动档不改 flipMode，但分页两档要把它
+    // 对齐成 '0'/'1'）、在 `startPlay()` **之前**（首帧就要决定渲染谁）。
+    this.loadReadMode();
+    // 滚动模式：首屏初始位置直接用持久化进度（与分页模式恢复走同一份数据）。
+    if (this.scrollModeOn()) {
+      const ri: number = this.bookData.localBookDurChapterPos?.resourceIndex ?? 0;
+      const dp: string = this.bookData.localBookDurChapterPos?.startDomPos ?? '';
+      this.scrollInitSpine = ri;
+      this.scrollInitNode = this.parseDomPos(dp)[0];
+      this.scrollSpine = this.scrollInitSpine;
+      this.scrollNode = this.scrollInitNode;
+      this.scrollInitSerial++;
+      hilog.info(0x0000, 'testTag', 'scroll mode on enter: spine=%{public}d node=%{public}d',
+        this.scrollInitSpine, this.scrollInitNode);
+    }
     // ── 按键翻页（2026-10-07）：阅读页存活期间才订阅（官方要求"确定响应时才激活"），
     //    音量上=上一页、下=下一页；智控键仅支持的机型生效。退订在 aboutToDisappear。
+    //    2026-10-20：滚动模式下"上一页/下一页"没有意义 ⇒ 改成**翻一屏**，
+    //    由滚动视图按当前可视行数滚动（键位语义在两种模式下保持一致的手感）。
     ReaderKeyTurn.attachReader((isNext: boolean): void => {
+      if (this.scrollModeOn()) {
+        this.scrollPageDir = isNext ? 1 : -1;
+        this.scrollPageReq++;
+        return;
+      }
       try {
         this.readerComponentController.flipPage(isNext)
       } catch (e) {
@@ -3784,6 +3989,9 @@ export default struct ReaderPage3 {
         return;
       }
       this.BookHandler = result[0];
+      // 解析器就绪 ⇒ 允许挂载滚动视图（见 `bookHandlerReady` 字段注释）。
+      // ⚠️ 必须放在这里（而不是 startPlay 开头）：此时 `getSpineItemContent()` 才可用。
+      this.bookHandlerReady = true;
       // 换书 ⇒ 正文号↔目录号 的映射缓存作废（见 catalogIndexForSpine）
       this.spineToCatalog = null;
       // ⚠️ 必须直注册默认 handler（2026-09-27 回退）：委托型 handler（加粗 CSS 注入）
@@ -4450,7 +4658,12 @@ export default struct ReaderPage3 {
 
     // 字体管理（2026-09-26）：本书若用沙箱导入字体，先注册到 ArkUI 侧
     // （高亮测量通道 / 沉浸层按 fontName 渲染，走 @ohos.font；引擎侧走 resourceRequest 不依赖此）
-    ReaderFontLib.ensureRegistered(this.getUIContext(), this.readerSetting.fontName, this.readerSetting.fontPath);
+    // 2026-10-20：注册是异步的，完成后再逼一次重排 —— 否则首帧可能抢在注册之前，
+    // 而滚动层的 List 项参数不变就不会自己重排 ⇒ 字体永久停在系统默认字形。
+    ReaderFontLib.ensureRegistered(this.getUIContext(), this.arkFontName(),
+      this.readerSetting.fontPath, (): void => {
+        this.fontSerial++
+      });
 
     // ③ 有改动才回写（pageShow 也会写，这里保证"打开即纠正"能落地）
     if (changed) {
@@ -4562,6 +4775,18 @@ export default struct ReaderPage3 {
 
   private registerPageShow(): void {
     this.readerComponentController.on('pageShow', (data: readerCore.PageDataInfo): void => {
+      // ── 上下滚动模式：**忽略引擎的页**（2026-10-20）─────────────────────────
+      // 滚动模式下 ReaderKit 仍在下面跑（为的是切回仿真/横滑时零等待），它照旧会
+      // 产出 pageShow。但此刻"页"已经不是用户看到的东西了 —— 位置由滚动层上报
+      // （`onScrollPos()`）。若不在这里早退，引擎的页首会把滚动层的坐标覆盖掉，
+      // 表现为：滚动时进度/书签/目录号乱跳，退出重进还会跳回引擎那一页。
+      // 只保留一个作用：首屏信号（让「正在排版…」占位有机会撤掉）。
+      if (this.scrollModeOn()) {
+        if (!this.firstPageReady) {
+          this.firstPageReady = true;
+        }
+        return;
+      }
       this.bookData.localBookDurChapterPos = data;
       this.bookData.durChapterTitle = this.CatalogList.getData(this.bookData.durChapterIndex)?.catalogName ?? this.bookData.durChapterTitle;
       this.bookData.totalChapterNum = this.CatalogList.totalCount();
@@ -5608,6 +5833,21 @@ export default struct ReaderPage3 {
     noFallback: boolean = false): void {
     const n = Math.max(0, node);
     const c = Math.max(0, char);
+    // ── 上下滚动模式：同一套坐标，只是执行者换成滚动视图 ──────────────────────
+    // 这是"三种方式进度统一"的关键接缝：目录跳转、书签回跳、TTS 跟随、沉浸层交接
+    // 全都调本方法，这里按当前阅读方式分流 ⇒ 上层调用方**一行都不用改**。
+    if (this.scrollModeOn()) {
+      this.locateTarget = null;
+      this.flipSearch = null;
+      this.lastNavMs = Date.now();
+      this.scrollSeekSpine = spine;
+      this.scrollSeekNode = n;
+      this.scrollSeekSerial++;
+      if (!silent) {
+        this.toastLocate(`已定位到第 ${n + 1} 段`);
+      }
+      return;
+    }
     const cur = this.locateTarget;
     if (cur !== null && cur.spine === spine && cur.node === n && cur.char === c) {
       return; // 同一目标已在定位中，重复触发直接忽略
@@ -6374,6 +6614,15 @@ export default struct ReaderPage3 {
 
   private updateHighlightInner(): void {
     this.updateCalibRuler();
+    // ── 上下滚动模式：高亮画在滚动视图的 Text 内部，这里不参与逐行矩形计算 ──
+    // （`hlBands`/`hlTop` 那套是"栅格化页面上叠色块"，滚动模式没有栅格页，
+    //   也不需要测量通道 ⇒ 直接算句内字符区间交给滚动视图。）
+    if (this.scrollModeOn()) {
+      this.clearHighlight();
+      this.wasImmersive = false;
+      this.updateScrollHighlight();
+      return;
+    }
     // 沉浸 → 普通 的切换：把阅读器同步到当前朗读位置。
     // ⚠️ 必须**先**更新 wasImmersive 再触发 requestLocate，否则 requestLocate 里的同步
     //    回调会再次进入这里、判定条件依旧成立 ⇒ 无限递归。
@@ -6534,8 +6783,8 @@ export default struct ReaderPage3 {
               // 字体管理（2026-09-26）：测量通道必须与引擎渲染同字体，否则换字体后
               // 高亮/沉浸层的行高测量错位。导入字体由 migrateReaderSetting 里的
               // ensureRegistered 注册到 ArkUI（@ohos.font）。
-              .fontFamily(this.readerSetting.fontName)
-              .fontWeight(this.readerSetting.fontWeight)
+              .fontFamily(this.scrollFontFamily())
+              .fontWeight(this.readerSetting.fontWeight + this.scrollWeightOffset())
               .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul())
               .textIndent(this.measureIndents.length > i ? this.measureIndents[i] : 0)
               .width('100%')
@@ -6731,6 +6980,68 @@ export default struct ReaderPage3 {
         .translate({ y: -(this.bottomRectHeight + READER_BAR_BOTTOM_GAP + 62) })
       }
 
+      // ── 上下滚动阅读层（2026-10-20 新增：阅读方式第三档）────────────────────
+      // 位置：**盖在 `ReadPageComponent` 之上、菜单/弹窗之下**。
+      //  · 为什么不替换掉 `ReadPageComponent`：它在下方保持存活，切回仿真/横滑时是
+      //    "换一层"而不是"重建引擎" ⇒ 三种方式互切零黑屏、零重排版等待；
+      //  · 为什么不与沉浸层并存：`immersiveActive()` 在滚动模式恒 false（见该方法注释），
+      //    滚动视图自带句内高亮，天然满足"边听边看"，不需要那层自绘分页。
+      // 排版参数（字体/字号/行高/缩进/背景）全部取自 `readerSetting` 与标定值，
+      // 与引擎、与沉浸听读层**同源**，所以三种方式看起来是同一本书、同一个版式。
+      if (this.scrollModeOn() && this.bookHandlerReady) {
+        ReaderScrollView({
+          fontName: this.scrollFontFamily(),
+          fontSize: this.readerSetting.fontSize,
+          fontWeight: this.readerSetting.fontWeight,
+          fontColor: this.readerSetting.fontColor,
+          lineHeightFp: this.scrollLineHeightFp(),
+          indentFp: this.scrollIndentFp(),
+          bgColor: this.readerSetting.themeColor,
+          bgUri: this.scrollBgUri(),
+          sideInsetVp: this.textAreaLeftVp(),
+          // 顶部：与分页模式正文首行严格对齐（同时让出阅读器信息窗）
+          // 底部：只让出手势条 ⇒ 整块正文区域整体下移（见两个方法的注释）
+          topInsetVp: this.scrollTopInsetVp(),
+          bottomInsetVp: this.scrollBottomInsetVp(),
+          initSpine: this.scrollInitSpine,
+          initNode: this.scrollInitNode,
+          initSerial: this.scrollInitSerial,
+          seekSpine: this.scrollSeekSpine,
+          seekNode: this.scrollSeekNode,
+          seekSerial: this.scrollSeekSerial,
+          pageDir: this.scrollPageDir,
+          pageReq: this.scrollPageReq,
+          hlSpine: this.scrollHlSpine,
+          hlNode: this.scrollHlNode,
+          hlFrom: this.scrollHlFrom,
+          hlTo: this.scrollHlTo,
+          hlSerial: this.scrollHlSerial,
+          // 字体就绪代数：自定义字体异步注册完成后 +1 ⇒ 逼可见行重建，
+          // 让 .fontFamily 用上刚注册好的族名（见 ReaderScrollView.rowKey 注释）
+          fontSerial: this.fontSerial,
+          // 字重补偿：系统中文黑体（可变字体）减一档才与引擎的默认实例一致
+          weightOffset: this.scrollWeightOffset(),
+          // 解析器用闭包读：`BookHandler` 是异步赋值的普通字段，
+          // 直接按值传会永远拿到构造那一刻的 null。
+          handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
+          spineCountProvider: (): number => {
+            const spines: bookParser.SpineItem[] = this.BookHandler?.getSpineList() ?? [];
+            return spines.length;
+          },
+          onPos: (spine: number, node: number, endNode: number): void => {
+            this.onScrollPos(spine, node, endNode);
+          },
+          onTap: (): void => {
+            this.isShowSetting = true;
+          },
+          onReady: (): void => {
+            this.onScrollReady();
+          }
+        })
+          .width('100%')
+          .height('100%')
+      }
+
       // ── 转换进度 / 转换失败（2026-10-19，PDF/DOCX 首次打开）──────────────────
       // 为什么要有它：PDF 首次打开要逐页渲染（实测 ≈53ms/页，300 页约 16 秒），
       // 这段时间若只显示「正在排版…」用户会以为卡死；这里给出「n/N 页」的真实进度。
@@ -6796,6 +7107,10 @@ export default struct ReaderPage3 {
       //   这里给一个明确的"在干活"信号。
       // 为什么延 250ms 才显示：正常书首屏 <250ms，不加延迟的话占位会闪一下更难看。
       // 命中条件：`firstPageReady`（首个 pageShow）为假 **且** 已超过 250ms。
+      // ⚠️ 2026-10-20：滚动模式下**也要**显示这个占位。
+      //   滚动视图要等 `bookHandlerReady` 才挂载、挂载后还要异步读三章正文，
+      //   这段窗口里底下只有 `ReadPageComponent` 的首帧（黑）⇒ 不显示占位就是黑屏。
+      //   正文一上屏 `onScrollReady()` 会把 `firstPageReady` 置真，占位随即消失。
       if (!this.firstPageReady && this.showTypesettingHint) {
         Column({ space: 14 }) {
           LoadingProgress()
@@ -7347,7 +7662,8 @@ export default struct ReaderPage3 {
       .width('100%')
       .height('100%')
       // 下拉跟手位移（只动 transform，符合工程既有的《动画帧率优化》口径）
-      .translate({ y: this.bmPullY })
+      // 2026-10-20：滚动模式跟横轴（右滑存取书签），分页模式跟纵轴（下拉）
+      .translate({ x: this.bmPullX, y: this.bmPullY })
       .onClick(() => {
         Haptics.tap();
         // ── PDF 双击放大（2026-10-19 修卡顿后挪到这里）────────────────────────
@@ -7406,7 +7722,9 @@ export default struct ReaderPage3 {
       // 100% 时仍是 `fingers: 1`，下拉书签行为完全不变。
       PanGesture({
         fingers: this.isPdfZoomed() ? 9 : 1,
-        direction: PanDirection.Down,
+        // 2026-10-20：滚动模式扭到**横轴（右滑）** —— 见 `bmPullX` 注释。
+        // 竖轴在滚动模式下属于 `List` 滚动，抢走它会把滚动功能弄坏。
+        direction: this.scrollModeOn() ? PanDirection.Right : PanDirection.Down,
         distance: BM_PULL_DISTANCE
       })
         .onActionStart((e: GestureEvent): void => {
@@ -8088,20 +8406,27 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 「翻页：仿真 / 横滑」胶囊按钮（2026-09-23 重做，2026-09-26 抽成 @Builder）。
+   * 「阅读方式」胶囊按钮（2026-09-23 重做，2026-09-26 抽成 @Builder，
+   * 2026-10-20 扩成**三档**）。
    *
    * 历史：原来直接用系统默认 Button（自带主题色底 + 默认圆角/内边距），放在这个自绘胶囊里
-   * 显得很突兀 ⇒ 改成与胶囊同色系的**半透明胶囊按钮**，并让文案直接反映**当前**翻页模式
+   * 显得很突兀 ⇒ 改成与胶囊同色系的**半透明胶囊按钮**，并让文案直接反映**当前**模式
    * （原来恒定写「仿真翻页」，而模式可能是"横滑"，属于会误导人的静态标签）。
+   *
+   * ── 2026-10-20：加第三档「上下滚动」────────────────────────────────────────
+   * 点击按 仿真 → 横滑 → 上下滚动 → 仿真 循环，实际切换交给 `switchReadMode()`
+   * （它负责进度交接：分页↔滚动都在同一段上，见该方法注释）。
+   * ⚠️ 为什么循环而不是弹选择器：本按钮位于设置胶囊的一行里，空间只够一个胶囊；
+   *    三档循环与"仿真/横滑"两档时代的交互习惯一致（点一下换一个）。
    *
    * ⚠️ 为什么抽成 @Builder：开启自定义背景后它要跟「同步全局 / 保存方案」同处一行，
    *   而关闭自定义时又要留在原来的独立行 —— 同一个按钮出现在两个位置，只能有一份定义。
    *   本 @Builder **不带参数**（按值传参的 @Builder 在参数变化时不保证刷新，
-   *   这里读的是页面自己的 `@State readerSetting.flipMode`，由父级重建驱动，没有这个隐患）。
+   *   这里读的是页面自己的 `@State readMode`，由父级重建驱动，没有这个隐患）。
    */
   @Builder
   FlipModeButton() {
-    Button(this.readerSetting.flipMode == '0' ? '翻页：仿真' : '翻页：横滑')
+    Button(this.readModeLabel())
       .fontSize(13)
       .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
       .backgroundColor(this.colorMode == 0
@@ -8114,21 +8439,19 @@ export default struct ReaderPage3 {
       .clickEffect(UiMotion.CLICK)
       .onClick(() => {
         Haptics.tap();
-        if (this.readerSetting.flipMode == '0') {
-          this.readerSetting.flipMode = '1';
-          this.getUIContext().getPromptAction().showToast({ message: '横滑' })
-        } else {
-          this.readerSetting.flipMode = '0';
-          this.getUIContext().getPromptAction().showToast({ message: '仿真' })
-        }
-        this.readerComponentController.setPageConfig(this.readerSetting);
-        // 翻页模式是 `readerSetting` 的字段，本页只在 pageShow 时落盘；
-        // 这里立刻写一次，避免"改完马上退出"导致这次选择丢失。
-        const name: string = this.bookData.bookName
-        if (name !== undefined && name !== null && name.length > 0) {
-          PreferencesUtil.putSync(`ReaderSetting_${name}`, this.readerSetting)
-        }
+        const next: number = this.readMode === READ_MODE_FLIP_CURL ? READ_MODE_FLIP_SLIDE
+          : (this.readMode === READ_MODE_FLIP_SLIDE ? READ_MODE_SCROLL : READ_MODE_FLIP_CURL);
+        this.switchReadMode(next);
+        this.getUIContext().getPromptAction().showToast({ message: this.readModeLabel() });
       })
+  }
+
+  /** 三档阅读方式的按钮文案（永远显示**当前**这一档） */
+  private readModeLabel(): string {
+    if (this.readMode === READ_MODE_SCROLL) {
+      return '阅读：上下滚动';
+    }
+    return this.readMode === READ_MODE_FLIP_SLIDE ? '阅读：横滑' : '阅读：仿真';
   }
 
   /**
@@ -8493,6 +8816,399 @@ export default struct ReaderPage3 {
     return byName;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 上下滚动阅读（2026-10-20 新增：阅读方式第三档）
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 当前是否处于「上下滚动」阅读方式。
+   *
+   * 三道门禁都必须是**排除项**：
+   *  · PDF：正文是整页图（`ReadPageComponent` 渲染），滚动它没有意义，只能原地缩放；
+   *  · `.doc` 仅预览：压根没有正文；
+   *  · 转换失败：有错误卡要显示。
+   */
+  private scrollModeOn(): boolean {
+    return this.readMode === READ_MODE_SCROLL
+      && !this.isPdfBook
+      && !this.previewOnlyBody
+      && this.prepError.length === 0;
+  }
+
+  /** 读本书记忆的阅读方式（按书持久化；PDF 强制回分页） */
+  private loadReadMode(): void {
+    let m: number = READ_MODE_FLIP_CURL;
+    try {
+      const v: number = PreferencesUtil.getSync(`${READ_MODE_KEY_PREFIX}${this.bookData.bookName}`,
+        this.readerSetting.flipMode === '1' ? READ_MODE_FLIP_SLIDE : READ_MODE_FLIP_CURL) as number;
+      m = v;
+    } catch (e) {
+      m = READ_MODE_FLIP_CURL;
+    }
+    if (m !== READ_MODE_FLIP_CURL && m !== READ_MODE_FLIP_SLIDE && m !== READ_MODE_SCROLL) {
+      m = READ_MODE_FLIP_CURL;
+    }
+    if (this.isPdfBook && m === READ_MODE_SCROLL) {
+      hilog.info(0x0000, 'testTag', 'readMode: PDF 不支持上下滚动，回落到横滑');
+      m = READ_MODE_FLIP_SLIDE;
+    }
+    this.readMode = m;
+    // 分页两档要和引擎的 `flipMode` 对齐（滚动档不改它，保留上次的分页偏好）
+    if (m === READ_MODE_FLIP_CURL || m === READ_MODE_FLIP_SLIDE) {
+      this.readerSetting.flipMode = m === READ_MODE_FLIP_SLIDE ? '1' : '0';
+    }
+    hilog.info(0x0000, 'testTag', 'readMode loaded: %{public}d (flipMode=%{public}s)',
+      m, this.readerSetting.flipMode);
+  }
+
+  /** 落盘阅读方式 */
+  private saveReadMode(m: number): void {
+    const name: string = this.bookData.bookName;
+    if (name === undefined || name === null || name.length === 0) {
+      return;
+    }
+    try {
+      PreferencesUtil.putSync(`${READ_MODE_KEY_PREFIX}${name}`, m);
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'saveReadMode failed');
+    }
+  }
+
+  /**
+   * 切换阅读方式（0=仿真 1=横滑 2=上下滚动）。
+   *
+   * ── 进度怎么做到"不丢" ──────────────────────────────────────────────────
+   * 三种方式共用一套坐标 `(spine, 块节点, 字符)`：
+   *  · 分页 → 滚动：把当前 `pageRange`（页首）交给滚动视图当初始位置；
+   *  · 滚动 → 分页：把滚动上报的 `(scrollSpine, scrollNode)` 交给 `requestLocate()`，
+   *    由它 `startPlay(spine, domPos)` 让引擎翻到同一段。
+   * ⇒ 来回切都在同一段上，不存在"切一次跳一章"。
+   */
+  private switchReadMode(next: number): void {
+    if (next === this.readMode) {
+      return;
+    }
+    if (this.isPdfBook && next === READ_MODE_SCROLL) {
+      this.getUIContext().getPromptAction().showToast({ message: 'PDF 请用双指缩放阅读' });
+      return;
+    }
+    const prev: number = this.readMode;
+    this.readMode = next;
+    this.saveReadMode(next);
+    hilog.info(0x0000, 'testTag', 'switchReadMode %{public}d → %{public}d', prev, next);
+
+    if (next === READ_MODE_SCROLL) {
+      // 分页 → 滚动：以"当前页首"为起点（没有 pageRange 时用持久化进度兜底）
+      const r = this.pageRange;
+      const spine: number = r !== null ? r.spine
+        : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
+      let node: number = r !== null ? r.startNode
+        : this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
+      // ⚠️ 反"往回跑"：刚从分页切过来、且当前页仍覆盖我们上次请求的那一段 ⇒ 用它。
+      //    （理由与实测数据见 `pagedRestoreSpine` 字段注释）
+      if (r !== null && this.pagedRestoreSpine === r.spine && this.pagedRestoreNode >= 0
+        && this.rangeCovers(r, this.pagedRestoreNode, 0)) {
+        node = this.pagedRestoreNode;
+        hilog.info(0x0000, 'testTag',
+          'switchReadMode: keep requested node %{public}d (page start was %{public}d)',
+          node, r.startNode);
+      }
+      this.pagedRestoreSpine = -1;
+      this.pagedRestoreNode = -1;
+      this.scrollSpine = spine;
+      this.scrollNode = node;
+      this.scrollInitSpine = spine;
+      this.scrollInitNode = node;
+      this.scrollInitSerial++;
+      // 分页侧的定位/搜索全部作废（否则迟到的 pageShow 会把状态又写回去）
+      this.locateTarget = null;
+      this.flipSearch = null;
+      if (this.locateTimer >= 0) {
+        clearTimeout(this.locateTimer);
+        this.locateTimer = -1;
+      }
+      this.clearHighlight();
+    } else {
+      // 滚动 → 分页（含 0↔1 之间切换）
+      if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
+        this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
+        try {
+          this.readerComponentController.setPageConfig(this.readerSetting);
+        } catch (e) {
+          hilog.warn(0x0000, 'testTag', 'switchReadMode setPageConfig failed');
+        }
+        const nm: string = this.bookData.bookName;
+        if (nm !== undefined && nm !== null && nm.length > 0) {
+          PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting);
+        }
+      }
+      if (prev === READ_MODE_SCROLL) {
+        // 滚动 → 分页：让引擎定位到滚动位置。
+        // ⚠️ 先把 `pageRange` 清空：`requestLocate()` 会先判"目标是否已在当前页内"，
+        //    而此刻的 pageRange 还是**滚动层的可视范围**，不清就会误判"已可见"而跳过翻页。
+        const spine: number = this.scrollSpine;
+        const node: number = this.scrollNode;
+        // 记住这次请求落位的那一段：切回滚动时优先用它，避免"每往返一次退一页"
+        // （实测与机理见 `pagedRestoreSpine` 字段注释）
+        this.pagedRestoreSpine = spine;
+        this.pagedRestoreNode = node;
+        this.pageRange = null;
+        this.requestLocate(spine, node, 0, true, true);
+      }
+    }
+    this.updateHighlight();
+  }
+
+  /** 滚动视图首屏已上屏 ⇒ 撤掉「正在排版…」占位 */
+  private onScrollReady(): void {
+    if (!this.firstPageReady) {
+      this.firstPageReady = true;
+      hilog.info(0x0000, 'testTag', 'scroll: 首屏已上屏，撤掉排版占位');
+    }
+  }
+
+  /**
+   * 滚动视图上报"可视首段/末段" ⇒ 写回全工程唯一坐标。
+   *
+   * 这是**滚动模式下的 `pageShow` 等价物**：下面这一串调用与 `registerPageShow()` 里
+   * 分页分支做的事一一对应（目录号跟随、书签图标、读完判定、进度落库、双端同步），
+   * 所以滚动模式下书签/TTS 跟随/统计/双端同步**无需任何改动**就能工作。
+   */
+  private onScrollPos(spine: number, node: number, endNode: number): void {
+    if (!this.scrollModeOn()) {
+      return;
+    }
+    this.scrollSpine = spine;
+    this.scrollNode = node;
+    const range: PageRange = {
+      spine: spine, startNode: node, startChar: 0,
+      endNode: endNode >= node ? endNode : node, endChar: 0
+    };
+    this.pageRange = range;
+    // 目录号跟随（滚动跨章时标题/滑杆跟着走）
+    this.syncCatalogIndex(spine);
+    this.bookData.durChapterTitle =
+      this.CatalogList.getData(this.bookData.durChapterIndex)?.catalogName ?? this.bookData.durChapterTitle;
+    this.syncBookmarkState();
+    this.checkFinished();
+    this.persistReadProgress();
+    this.writeWebSyncAnchors();
+    // 进度落盘（节流）：合成一个与 pageShow 同构的 `PageDataInfo`，
+    // 这样"退出再进"用的还是同一条恢复链路（`resourceIndex` + `startDomPos`）。
+    const now: number = Date.now();
+    if (now - this.scrollPersistAt >= SCROLL_PERSIST_GAP_MS) {
+      this.scrollPersistAt = now;
+      this.persistScrollProgress(spine, node);
+    }
+    // 手动滚动 ⇒ 暂停自动跟随（与分页模式的 followSuspended 同一语义：
+    // 用户自己翻走了就别把他拽回去；点浮条「回到朗读」立即解除）
+    //
+    // ⚠️ 必须叠加「最近没发起过跳转」这道时间窗，否则**自动跟随会把自己挂起**：
+    //   `autoFollowTts()` → `requestLocate()` → 滚动视图 `scrollToIndex` 是**动画**滚动，
+    //   动画中间帧的可视范围本来就不含朗读段 ⇒ 这里会判成"用户手动滚走了"，
+    //   置 `followSuspended = true`，而 `autoFollowTts()` 首行就是 `if (followSuspended) return`
+    //   ⇒ 跟随从此彻底停摆（真机表现为"读着读着就不跟了"）。
+    //   1500ms 覆盖动画时长 + 一次回调间隔，足够区分"程序滚动"与"用户滚动"。
+    const navRecently: boolean = Date.now() - this.lastNavMs < 1500;
+    if (!navRecently && TtsEngine.getState() === 'playing' && !this.followSuspended) {
+      const seg = TtsEngine.currentSegment();
+      if (seg !== null && (seg.spineIndex !== spine
+        || seg.nodeIndex < node || seg.nodeIndex > range.endNode)) {
+        this.followSuspended = true;
+        hilog.info(0x0000, 'testTag',
+          'follow: suspended by manual scroll (view=[%{public}d#%{public}d..%{public}d], audio=%{public}d#%{public}d)',
+          spine, node, range.endNode, seg.spineIndex, seg.nodeIndex);
+      }
+    }
+  }
+
+  /** 把滚动位置写成与 `pageShow` 同构的 `PageDataInfo` 并落盘 */
+  private persistScrollProgress(spine: number, node: number): void {
+    const name: string = this.bookData.bookName;
+    if (name === undefined || name === null || name.length === 0) {
+      return;
+    }
+    try {
+      const pd = new readerCore.PageDataInfo('', '');
+      pd.resourceIndex = spine;
+      pd.startDomPos = this.domPosFor(node, 0);
+      pd.endDomPos = this.domPosFor(node, 0);
+      pd.pageOffset = 0;
+      pd.pageHeaderContent = '';
+      pd.pageFooterContent = '';
+      pd.state = readerCore.PageState.PAGE_ON_SHOW;
+      this.bookData.localBookDurChapterPos = pd;
+      this.bookData.totalChapterNum = this.CatalogList.totalCount();
+      PreferencesUtil.putSync(`BookCurrentData_${name}`, this.bookData);
+      PreferencesUtil.putSync('LastReadBookName', name);
+      PreferencesUtil.putSync('LastReadBookUrl', this.bookData.bookUrl ?? '');
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'persistScrollProgress failed');
+    }
+  }
+
+  /**
+   * 滚动模式下的朗读高亮：直接算出「当前句在本段内的字符区间」交给滚动视图，
+   * 由它在 `Text` 内部用 `Span.textBackgroundStyle` 画 —— 与沉浸层同一套画法，
+   * 但**不需要**测量通道、不需要逐行矩形，天然贴合。
+   */
+  private updateScrollHighlight(): void {
+    const seg = TtsEngine.currentSegment();
+    const nodes = TtsEngine.currentNodeTexts();
+    if (seg === null || nodes === null || this.ttsState === 'stopped'
+      || !this.listeningThisBook()) {
+      if (this.scrollHlFrom !== -1) {
+        this.scrollHlSpine = -1;
+        this.scrollHlNode = -1;
+        this.scrollHlFrom = -1;
+        this.scrollHlTo = -1;
+        this.scrollHlSerial++;
+      }
+      return;
+    }
+    const text: string = seg.nodeIndex >= 0 && seg.nodeIndex < nodes.length ? nodes[seg.nodeIndex] : '';
+    let from: number = Math.max(0, Math.min(seg.charStart, text.length));
+    let to: number = from;
+    const s: string = this.ttsSegText.trim();
+    if (s.length > 0) {
+      let at: number = text.indexOf(s, Math.max(0, seg.charStart - 6));
+      if (at < 0) {
+        at = text.indexOf(s);
+      }
+      if (at >= 0) {
+        from = at;
+        to = Math.min(text.length, at + s.length);
+      }
+    }
+    this.scrollHlSpine = seg.spineIndex;
+    this.scrollHlNode = seg.nodeIndex;
+    this.scrollHlFrom = from;
+    this.scrollHlTo = to;
+    this.scrollHlSerial++;
+  }
+
+  /** 滚动视图的行高（fp）：与引擎/沉浸层同源 */
+  private scrollLineHeightFp(): number {
+    return this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul();
+  }
+
+  /** 滚动视图的段首缩进（fp）：2 个字位（`HL_INDENT_SLOTS`） */
+  private scrollIndentFp(): number {
+    return this.readerSetting.fontSize * HL_INDENT_SLOTS;
+  }
+
+  /**
+   * **引擎族名 → ArkUI 族名**的翻译（2026-10-23，真机日志定案）。
+   *
+   * ── 为什么需要翻译（`docs/日志.md` 原文证据）────────────────────────────────
+   * 引擎侧 config：`fontName:"鸿蒙黑体", fontPath:"/system/fonts/HarmonyOS_Sans_SC.ttf"`
+   * —— 引擎是**按 fontPath 直接加载字体文件**的，不依赖族名匹配 ⇒ 永远正确。
+   *
+   * ArkUI 侧（滚动层/沉浸层/测量通道）只能给 `.fontFamily(名字)`，必须让 ArkUI 的
+   * 字体管理器**按名字匹配到族**。而：
+   *   · `fontinfo HarmonyOS Sans SC: {"family":"鸿蒙黑体", "fullName":"HarmonyOS Sans SC"}`
+   *     ⇒「鸿蒙黑体」只是该 TTF **name 表里的中文本地化 family**；
+   *   · 真机实测：`getFontByName('鸿蒙黑体')` **1 秒超时（解析不到）**，
+   *     而 `getFontByName('HarmonyOS Sans SC')` 正常返回上面那条 fontinfo
+   *     （本文件 `readerSetting` 初值注释里也记着这个实测）。
+   * ⇒ 直接传「鸿蒙黑体」会让 ArkUI **静默回落到默认族 `HarmonyOS Sans`**
+   *   （只有拉丁字形，中文再走另一套 CJK 兜底）⇒ 字形与引擎不同、观感"更黑"。
+   *   注意**不是**字重问题：两边 `fontWeight` 都是 400。
+   *
+   * 反过来，自定义/系统别名（如「书宋-简」）在系统字体清单里就是真名
+   * （`sysfonts(1): ["书宋-简"]`），`getFontByName` 能直接解析 ⇒ 原样传即可。
+   */
+  private arkFontName(): string {
+    const n: string = this.readerSetting.fontName;
+    if (n === undefined || n === null || n.length === 0) {
+      return ARK_FONT_FALLBACK;
+    }
+    if (n === SYSTEM_CJK_FONT_NAME) {
+      // 「鸿蒙黑体」= HarmonyOS_Sans_SC.ttf 的中文 family ⇒ ArkUI 要英文全名
+      return ARK_FONT_SYS_CJK;
+    }
+    return n;
+  }
+
+  /**
+   * 滚动层的 `fontFamily` 取值：**ArkUI 族名 + 回退链**。
+   *
+   * ArkUI 的 `fontFamily` 支持逗号分隔的回退列表（与 CSS 同语义），
+   * 前面的解析不到就用后面的 ⇒ 即使某个自定义字体在 ArkUI 侧注册失败，
+   * 也会落到 `HarmonyOS Sans SC`（全字库），而不是掉进只有拉丁字形的默认族。
+   */
+  private scrollFontFamily(): string {
+    const primary: string = this.arkFontName();
+    if (primary === ARK_FONT_SYS_CJK) {
+      return `${ARK_FONT_SYS_CJK}, ${ARK_FONT_FALLBACK}`;
+    }
+    return `${primary}, ${ARK_FONT_SYS_CJK}, ${ARK_FONT_FALLBACK}`;
+  }
+
+  /**
+   * ArkUI 侧的字重补偿（2026-10-23 真机定案：`-100` 后与分页模式**完全一致**）。
+   *
+   * 机理：`HarmonyOS Sans SC` 是**可变字体**——
+   *   · 引擎加载该 ttf 时**不指定 wght 轴** ⇒ 用文件**默认实例**（比 Regular 细一档）；
+   *   · ArkUI 收到 `fontWeight(400)` 会**显式取 wght=400 实例**。
+   * ⇒ 系统中文黑体必须减一档才对得上；真机已验证 400→300 完全吻合。
+   *
+   * ⚠️ **只对系统中文黑体生效**：自定义字体（书宋-简 `ShuS-SC.ttf`、用户导入字体）
+   *    大多是单一字重的静态字体，减一档要么被忽略、要么触发合成变细 ⇒ 会弄坏。
+   */
+  private scrollWeightOffset(): number {
+    return this.arkFontName() === ARK_FONT_SYS_CJK ? SCROLL_SYS_CJK_WEIGHT_OFFSET : 0;
+  }
+
+  /**
+   * 滚动模式文本区**顶部**（vp）—— 与分页模式的正文首行**严格对齐**。
+   *
+   * 用户反馈（2026-10-20）：「正文整体向下一行，主要是要把阅读器信息窗让出来，
+   * 和正常模式的正文顶部对齐，现在直接贯穿信息显示窗了」。
+   *
+   * 取值就是引擎/标定算出来的那个"正文首行顶部" `calibTopPx`（px，实测默认 230，
+   * 会自动校准覆盖），除以 density 转 vp。分页模式的高亮叠加层用的也是它
+   * （见 `updateHighlightInner()` 里 `yPx = this.calibTopPx + top * lh`）
+   * ⇒ 两种模式的正文第一行落在**同一条像素线**上，切模式时不会"文字整体跳一下"。
+   *
+   * 顺带解决信息窗：信息窗画在 `readerTopInset() + 12` 处、高度约 16~18vp，
+   * 而 `calibTopPx/density ≈ 68vp` 远在它下面 ⇒ 正文不再贯穿信息窗。
+   */
+  private scrollTopInsetVp(): number {
+    const d: number = this.densityVp();
+    const t: number = this.calibTopPx / (d > 0 ? d : 1);
+    return t > 0 ? t : 68;
+  }
+
+  /**
+   * 滚动模式文本区**底部**（vp）—— 只让出手势条，尽量往下铺。
+   *
+   * 用户原话：「底部的话也向下，正好相当于把整个正文内容区域向下了」
+   * ⇒ 顶部下移之后，底部**不再保留原来那 28vp 的呼吸位**（那会让整个文本区变矮、
+   *   读起来比正常模式少一行），只留手势条本身的高度 + 8vp 余量，
+   *   于是整块正文区域是"整体下移"的观感，而不是"上下各切一刀"。
+   */
+  private scrollBottomInsetVp(): number {
+    return this.bottomRectHeight + 8;
+  }
+
+  /**
+   * 滚动视图的背景图 URI（'' = 纯色）。
+   * `readerSetting.themeBgImg` 是**沙箱绝对路径**，ArkUI 的 `Image` 不能直接吃
+   * （官方 FAQ `faqs-arkui-154`）⇒ 这里转成 `file://` URI 再传下去。
+   */
+  private scrollBgUri(): string {
+    const p: string = this.readerSetting.themeBgImg;
+    if (p === undefined || p === null || p.length === 0) {
+      return '';
+    }
+    try {
+      return fileUri.getUriFromPath(p);
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'scrollBgUri failed: %{public}s', p);
+      return '';
+    }
+  }
+
   /**
    * 沉浸听读**不跟 ReaderKit 的"页"走，而是跟章节走**：
    * 以当前朗读段为锚点连续渲染一串段落（窗口），朗读往前走窗口跟着走。
@@ -8501,6 +9217,12 @@ export default struct ReaderPage3 {
    * ⚠️ 必须叠加 `listeningThisBook()`：否则在听 A 时打开 B，B 会被渲染成 A 的沉浸听读。
    */
   private immersiveActive(): boolean {
+    // ⚠️ 上下滚动模式**不用**沉浸听读层：滚动视图本身就是原生 Text 排版，
+    //   高亮直接画在文字里（`Span.textBackgroundStyle`），天然满足"边听边看"。
+    //   所以这里必须返回 false —— 否则沉浸层会盖在滚动层上，把滚动体验整个吃掉。
+    if (this.scrollModeOn()) {
+      return false;
+    }
     const base: boolean = this.ttsPrefs.immersiveListen && this.immReady
       && this.listeningThisBook();
     if (!base) {
@@ -8588,8 +9310,8 @@ export default struct ReaderPage3 {
             .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul())
             .textIndent(sg[1] === 0 ? this.readerSetting.fontSize * HL_INDENT_SLOTS : 0)
             .fontColor(this.readerSetting.fontColor)
-            .fontFamily(this.readerSetting.fontName)
-            .fontWeight(this.readerSetting.fontWeight)
+            .fontFamily(this.scrollFontFamily())
+            .fontWeight(this.readerSetting.fontWeight + this.scrollWeightOffset())
             .width('100%')
             .hitTestBehavior(HitTestMode.None)
           } else {
@@ -8598,8 +9320,8 @@ export default struct ReaderPage3 {
               .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul())
               .textIndent(sg[1] === 0 ? this.readerSetting.fontSize * HL_INDENT_SLOTS : 0)
               .fontColor(this.readerSetting.fontColor)
-              .fontFamily(this.readerSetting.fontName)
-              .fontWeight(this.readerSetting.fontWeight)
+              .fontFamily(this.scrollFontFamily())
+              .fontWeight(this.readerSetting.fontWeight + this.scrollWeightOffset())
               .width('100%')
               .hitTestBehavior(HitTestMode.None)
           }
@@ -8867,6 +9589,18 @@ export default struct ReaderPage3 {
     }
     // 根据目录项获取章节的索引
     const resourceIndex = this.getResourceItemByCatalog(catalogItem).index;
+    // ── 上下滚动模式：跳章交给滚动视图（2026-10-20）──────────────────────────
+    // 分页模式走 `startPlayAt()`（让引擎重排那一章）；滚动模式没有"页"可翻，
+    // 直接 `requestLocate(spine, 0, 0)` —— 它会分流到滚动视图并把视口滚到章首。
+    // ⚠️ 这里**不能**再调 `startPlayAt()`：那会让引擎偷偷换页，而滚动层的
+    //    `pageRange` 由自己上报，两边会各说各话（表现为进度忽前忽后）。
+    if (this.scrollModeOn()) {
+      this.requestLocate(resourceIndex, 0, 0, true);
+      if (TtsEngine.getState() !== 'stopped') {
+        TtsEngine.seekToChapter(resourceIndex);
+      }
+      return;
+    }
     // 跳转到指定章节。
     // ⚠️ 改走 `startPlayAt()`：`startPlay` 返回 Promise，官方声明会抛 BusinessError
     // （如 `1016910001 Invalid spine item`，见

@@ -1,0 +1,54 @@
+﻿--- The log is too long, only the last 50 lines are kept ---
+
+Full output saved to: C:\Users\ADMINI~1\AppData\Local\Temp\deveco\devecocli\build-1792726967118-42884.log
+
+> hvigor UP-TO-DATE :colorLibrary:default@ProcessLibs...  
+> hvigor UP-TO-DATE :entry:default@ProcessResource...  
+> hvigor UP-TO-DATE :colorLibrary:default@DoNativeStrip...  
+> hvigor UP-TO-DATE :entry:default@CompileResource...  
+> hvigor Finished :entry:default@BuildJS... after 4 ms 
+> hvigor Finished :entry:default@BuildNativeWithNinja... after 175 ms 
+> hvigor UP-TO-DATE :entry:default@ProcessLibs...  
+> hvigor UP-TO-DATE :entry:default@DoNativeStrip...  
+> hvigor UP-TO-DATE :entry:default@CacheNativeLibs...  
+> hvigor Finished :entry:default@CompileArkTS... after 22 s 909 ms 
+> hvigor UP-TO-DATE :entry:default@GeneratePkgModuleJson...  
+> hvigor Finished :entry:default@ProcessCompiledResources... after 1 ms 
+> hvigor Finished :entry:default@PackageHap... after 659 ms 
+> hvigor Finished :entry:default@PackingCheck... after 7 ms 
+> hvigor Finished :entry:default@SignHap... after 449 ms 
+> hvigor Finished :entry:default@CollectDebugSymbol... after 1 ms 
+> hvigor Finished :entry:assembleHap... after 1 ms 
+> hvigor BUILD SUCCESSFUL in 24 s 334 ms 
+
+41 tasks in total: 20 executed, 21 up-to-date
+
+Merged central compile_commands.json for C++ language server.
+
+Build completed successfully
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/PdfProbePage.ets:220:10
+ Function may throw exceptions. Special handling is required.
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/PdfProbePage.ets:222:10
+ Function may throw exceptions. Special handling is required.
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/PdfProbePage.ets:224:19
+ Function may throw exceptions. Special handling is required.
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/PdfProbePage.ets:427:21
+ Function may throw exceptions. Special handling is required.
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/view/Reader/PdfReaderPage.ets:52:24
+ 'getParams' has been deprecated.
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/view/Reader/PdfReaderPage.ets:155:14
+ 'back' has been deprecated.
+
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/view/Reader/ReaderPage3.ets:460:3
+ Methods, properties and accessors in structures decorated by '@Component' and '@ComponentV2' cannot have name as 'initParam'.
+WARN: ArkTS:WARN File: D:/Arkts/3.8.11/legado-harmonydsh/entry/src/main/ets/pages/view/Reader/PdfViewerPage.ets:59:9
+ Methods, properties and accessors in structures decorated by '@Component' and '@ComponentV2' cannot have name as 'initParam'.
+
+
+Build completed successfully (exitCode=0)
