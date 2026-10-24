@@ -159,9 +159,27 @@ Share Kit、IAP Kit、NetworkKit 等）：随 HarmonyOS 系统提供，不属于
 
 ---
 
-## 6. 更新方式
+## 6. 许可证全文入口
 
-新增三方依赖或素材时，请**同时**更新两处，避免不一致：
+**GPL-3.0 §5(d)** 要求交互式界面显示 **Appropriate Legal Notices**；§0 对其定义为包含
+「(1) 版权声明 (2) 无担保声明、可依本许可再分发、**如何查看本许可证副本**」。
+其中「如何查看副本」由以下入口满足（应用内：我的 → 关于我们 → 开源许可 → 「许可证全文」卡）：
+
+| 许可证 | 覆盖范围 | 全文地址 |
+|---|---|---|
+| **GPL-3.0** | 本项目整体（含基于 Legado 的上游代码与全部自研代码） | https://www.gnu.org/licenses/gpl-3.0.html |
+| **MPL-2.0** | `PauseSplicer.ets` 中源自 ColorTxt 的部分（并依 §3.3 同时以 GPL-3.0 提供） | https://www.mozilla.org/MPL/2.0/ |
+| **Apache-2.0** | `@pura/harmony-utils`、`@hmanimations/ezcustomtransition`、测试框架，及部分文件保留的华为版权头 | https://www.apache.org/licenses/LICENSE-2.0 |
+| **MIT** | `@ohos/axios`、`dayjs` | https://opensource.org/license/mit |
+
+> 仓库根 `LICENSE` 为 GPL-3.0 全文，随源码分发；上述链接用于**已安装应用内**的查看入口。
+
+---
+
+## 7. 更新方式
+
+新增三方依赖或素材时，请**同时**更新三处，避免不一致：
 
 1. 本文件（`THIRD_PARTY_NOTICES.md`）—— 授权来源与义务；
-2. 应用内页面 `entry/src/main/ets/pages/view/myCenter/about/LicensePage.ets` 的 `LICENSES` 数组。
+2. 应用内页面 `entry/src/main/ets/pages/view/myCenter/about/LicensePage.ets` 的 `LICENSES` 数组（依赖清单）；
+3. 同文件的 `LICENSE_TEXTS` 数组（若引入了新许可证类型，需补其全文地址 —— GPL-3.0 §0 要求）。

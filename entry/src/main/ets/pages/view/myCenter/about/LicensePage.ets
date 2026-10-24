@@ -4,7 +4,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit'
 import { SetHead } from '../../../../componets/myset/SetHead'
 import UiMotion from '../../../../common/utils/UiMotion'
 import { Haptics } from '../../../../common/utils/Haptics'
-import { ShelfColors } from '../../../../common/utils/NightMode'
+import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../common/model/Theme'
 
@@ -129,12 +129,69 @@ const RESTRICTIONS: string[] = [
   '本项目按「现状」提供，不对可用性、稳定性与适用性作任何担保；因使用本软件产生的任何后果由使用者自行承担。',
 ]
 
+/**
+ * 许可证全文入口（2026-10-25 新增）。
+ *
+ * ── 为什么必须有这一块（**不是可选装饰**）──────────────────────────────────
+ *  GPL-3.0 §5(d) 是**强制条款**：
+ *    "d) If the work has interactive user interfaces, each must display
+ *        Appropriate Legal Notices"
+ *
+ *  而 §0 对 "Appropriate Legal Notices" 的定义明确要求界面包含
+ *  「a convenient and prominently visible feature that
+ *    (1) displays an appropriate copyright notice, and
+ *    (2) tells the user that there is no warranty …, that licensees may convey
+ *        the work under this License, and **how to view a copy of this License**」
+ *
+ *  ⇒ 前三项此前已由 `RESTRICTIONS` 覆盖，**唯独「how to view a copy of this
+ *    License」缺失**（本页原先只写「具体以各项目官方仓库的许可证原文为准」，
+ *    没有任何可点击的许可证全文入口）。本块补齐该项。
+ *
+ * ── 为什么用官方链接而不是把全文塞进 rawfile ──────────────────────────────
+ *  §0 只要求「how to view a copy」，提供**可访问的全文地址**即满足；
+ *  GNU 官方页面是该许可证的权威载体。若日后需要离线可读，再把全文
+ *  放进 `resources/rawfile/` 并在本块加一个站内路由即可，两件事不冲突。
+ */
+interface LicenseTextLink {
+  /** 许可证标识（显示用） */
+  name: string
+  /** 该许可证覆盖本项目的哪部分 */
+  scope: string
+  /** 全文地址 */
+  url: string
+}
+
+const LICENSE_TEXTS: LicenseTextLink[] = [
+  {
+    name: 'GPL-3.0',
+    scope: '本项目整体（含基于 Legado 的上游代码与全部自研代码）',
+    url: 'https://www.gnu.org/licenses/gpl-3.0.html',
+  },
+  {
+    name: 'MPL-2.0',
+    scope: 'PauseSplicer.ets 中源自 ColorTxt 的部分（并依 §3.3 同时以 GPL-3.0 提供）',
+    url: 'https://www.mozilla.org/MPL/2.0/',
+  },
+  {
+    name: 'Apache-2.0',
+    scope: '@pura/harmony-utils、@hmanimations/ezcustomtransition、测试框架，及部分文件保留的华为版权头',
+    url: 'https://www.apache.org/licenses/LICENSE-2.0',
+  },
+  {
+    name: 'MIT',
+    scope: '@ohos/axios、dayjs',
+    url: 'https://opensource.org/license/mit',
+  },
+]
+
 @Component
 export default struct LicensePage {
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
   /** 全局主题（2026-10-12：本页底色改为跟随主题渐变） */
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  /** 夜间模式（2026-10-25：许可证全文卡的 Divider 颜色需随主题走，与 AboutPage 同款取值） */
+  @StorageLink(NightMode.KEY) nightOn: boolean = false
 
   /**
    * 用**系统浏览器**打开上游项目地址（2026-10-25 新增，用户需求：许可条目可点击跳转）。
@@ -306,7 +363,67 @@ export default struct LicensePage {
             .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
             .alignItems(HorizontalAlign.Start)
 
-            Text('以上许可描述仅用于致谢与合规披露，具体以各项目官方仓库的许可证原文为准。')
+            // ── 许可证全文（2026-10-25 新增，满足 GPL-3.0 §0「how to view a copy」）──
+            // 每条整行可点 → 系统浏览器打开官方全文页；同时保留长按复制兜底。
+            Column({ space: 8 }) {
+              Text('许可证全文')
+                .fontSize(15).fontWeight(600)
+                .fontColor($r('app.color.text_primary'))
+                .width('100%')
+              Text('点按任一许可证，可在浏览器中查看其完整条款原文。')
+                .fontSize(12)
+                .opacity(0.45)
+                .width('100%')
+              ForEach(LICENSE_TEXTS, (lic: LicenseTextLink, idx: number) => {
+                Column({ space: 2 }) {
+                  if (idx > 0) {
+                    Divider()
+                      .color(this.nightOn ? '#2A2A2C' : '#F0F0F0')
+                      .margin({ top: 8, bottom: 8 })
+                  }
+                  Row({ space: 4 }) {
+                    Text(lic.name)
+                      .fontSize(14).fontWeight(500)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
+                    Text('查看全文')
+                      .fontSize(12)
+                      .fontColor('#0A84FF')
+                    SymbolGlyph($r('sys.symbol.chevron_forward'))
+                      .fontSize(13)
+                      .fontColor([$r('app.color.text_primary')])
+                      .opacity(0.35)
+                  }
+                  .width('100%')
+                  Text(lic.scope)
+                    .fontSize(11)
+                    .opacity(0.5)
+                    .width('100%')
+                  // 地址行：可长按复制（openLink 失败时的兜底，与本页其它卡片一致）
+                  Text(lic.url)
+                    .fontSize(11)
+                    .fontColor('#0A84FF')
+                    .opacity(0.75)
+                    .width('100%')
+                    .copyOption(CopyOptions.LocalDevice)
+                }
+                .width('100%')
+                .padding({ top: 4, bottom: 4 })
+                .clickEffect(UiMotion.CLICK)
+                .onClick(() => {
+                  Haptics.tap()
+                  this.openUrl(lic.url)
+                })
+              })
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor($r('app.color.card_bg'))
+            .borderRadius(10)
+            .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+            .alignItems(HorizontalAlign.Start)
+
+            Text('以上许可描述仅用于致谢与合规披露；若与官方许可证原文有出入，以各许可证原文为准。')
               .fontSize(12)
               .opacity(0.45)
               .width('100%')
