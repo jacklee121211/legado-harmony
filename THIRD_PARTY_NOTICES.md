@@ -20,12 +20,61 @@
 |---|---|---|---|---|
 | [gedoor/legado](https://github.com/gedoor/legado) | — | **上游项目**（本项目由其衍生） | GPL-3.0 | — （同许可） |
 | [yongfengnice/legado-harmony](https://github.com/yongfengnice/legado-harmony) | — | **直接上游**（HarmonyOS 移植基座） | GPL-3.0 | — （同许可） |
-| [ssnangua/ColorTxt](https://github.com/ssnangua/ColorTxt) | — | **设计参考**（AI 阅读 / 多引擎 TTS 架构思路与接口设计范式；**无代码复制**，所有实现自研） | MPL-2.0（带 Exhibit B） | ⚠️ 不兼容（Exhibit B 关闭了 GPL 通道，但本项目不包含任何 MPL 代码，仅思想借鉴，不受 MPL 约束） |
+| [ssnangua/ColorTxt](https://github.com/ssnangua/ColorTxt) | — | **部分代码衍生**（`entry/src/main/ets/tts/PauseSplicer.ets` 中标点停顿的段落收集/词级对齐逻辑改写自其 `src/shared/voiceReadPunctuationPauses.ts`；其余听书实现为自研） | **MPL-2.0**（**未附加 Exhibit B**） | ✅ 兼容 —— 见下方说明 |
+| [@hmanimations/ezcustomtransition](https://ohpm.openharmony.cn/#/cn/detail/@hmanimations%2Fezcustomtransition) | 1.3.0 | 一镜到底转场（`entry/src/main/ets/common/ezlt/`，**受控 fork**，契约层保留原样、仅改编排段） | **Apache-2.0**（ohpm 官方 `license` 字段原文） | ✅ |
 | [@ohos/axios](https://gitcode.com/openharmony-sig/ohos_axios) | 2.2.0 | 三方 HTTP 客户端 | MIT（`"license": "MIT"`） | ✅ |
 | [dayjs](https://github.com/iamkun/dayjs) | 1.11.7 | 日期时间处理 | MIT（`"license": "MIT"`） | ✅ |
 | [@pura/harmony-utils](https://gitee.com/tongyuyan/harmony-utils) | 1.3.2 | HarmonyOS 工具集（PreferencesUtil 等） | **Apache-2.0**（`"license":"Apache-2.0"`） | ✅ |
 | [@ohos/hypium](https://gitee.com/openharmony/testfwk_arkxtest) | 1.0.17 | 单元测试框架（**仅测试期**，不进发行包） | Apache-2.0（`"license":"Apache-2.0"`） | ✅ |
 | @ohos/hamock | 1.0.0 | 测试 mock（**仅测试期**，不进发行包） | Apache-2.0（LICENSE 文件原文） | ✅ |
+
+### 1.1 ColorTxt（MPL-2.0）的合规说明 —— 2026-10-25 更正
+
+> ⚠️ **本段替换此前「无代码复制 / MPL-2.0 带 Exhibit B / Exhibit B 关闭 GPL 通道」的错误表述。**
+> 旧表述与事实不符（实测 ColorTxt 全仓 665 个源文件**无一份**附加 Exhibit B 声明），已更正。
+
+**事实认定（逐条可核）：**
+
+1. **确有代码衍生**：`PauseSplicer.ets` 中 `collectPauseRuns` / `alignWords` /
+   `computePausePoints` / `scaledPauseMs` 及若干标点字符类常量，与 ColorTxt
+   `src/shared/voiceReadPunctuationPauses.ts` 存在实质性行级重合。
+   上游该文件由提交 `47430f28`（2026-09-08，`feat：Edge TTS 朗读时支持按标点插入停顿 #90`）引入，
+   早于本文件创建时间（2026-09-18）。
+2. **未附加 Exhibit B**：MPL-2.0 §1.5 规定，「Incompatible With Secondary Licenses」
+   需由初始贡献者**主动附加 Exhibit B 通知**。实测 ColorTxt 仓库内
+   `Incompatible With Secondary Licenses` 仅在 `LICENSE` 模板正文出现，**无任何源文件或 README 声明**
+   ⇒ 不属于 Incompatible With Secondary Licenses。
+3. **GPL-3.0 属 Secondary License**：MPL-2.0 §1.12 原文定义 Secondary License 为
+   「GNU General Public License, Version 2.0, … **or any later versions of those licenses**」
+   ⇒ GPL-3.0 在列。
+4. **§3.3 允许双重授权**：MPL-2.0 §3.3 原文允许在「Larger Work 由 Covered Software 与
+   Secondary License 作品组合、且 Covered Software 不是 Incompatible With Secondary Licenses」时，
+   **额外**以该 Secondary License 分发该 Covered Software。
+
+**因此本项目做法：**
+
+- 上述源自 ColorTxt 的部分，**同时**以 **MPL-2.0** 与 **GPL-3.0** 双重授权，接收方可择一适用；
+- 该部分源码**已随本仓库完整公开**（满足 MPL-2.0 §3.1 / §3.2 的 Source Code Form 义务）；
+- `PauseSplicer.ets` 文件头已附 **MPL-2.0 Exhibit A 通知**（§3.1 要求），并注明上游项目地址、
+  上游文件地址、引入日期与修改日期（§3.4 要求不得移除许可证通知）；
+- 2026-10-25 已重写 `collectPauseRuns`（改为单条全局正则一次性切簇，不再使用上游的
+  逐字符游标状态机），进一步降低重合度；
+- 本文件其余实现（`applyEdgeFade`、`applyPauses`、`applyVolume`、`copySegment`、
+  `lookupAdjMs`、`lookupOrigMs`、`countSpeakable`、`buildTimeline`、`buildSentenceTimeline`、
+  `buildLyricTimeline`、`sentenceEndAt`、`pushSentenceMark`）为本项目独立实现。
+
+**MPL-2.0 的义务边界（file-level copyleft，不传染其他文件）：**
+
+| 义务 | 依据 | 本项目的落实 |
+|---|---|---|
+| 衍生文件须以 MPL-2.0 授权 | §3.1 | ✅ 文件头已声明 |
+| 须提供 Source Code Form | §3.1 / §3.2(a) | ✅ 仓库公开 |
+| 须告知接收方如何取得许可证副本 | §3.1 | ✅ 文件头含 mozilla.org 链接 |
+| 不得移除/篡改许可证通知 | §3.4 | ✅ 已保留 |
+| **不要求**其他文件开源 | §3.3（Larger Work 可按自选条款） | ✅ 仅此一个文件受影响 |
+
+**MPL-2.0 不禁止商业化**：§3.5 明文允许「offer, and to charge a fee for」附加服务。
+
 
 **Apache-2.0 的义务**：再分发时须保留许可证与 NOTICE 文本。上表已给出名称/版本/来源/许可，
 若上游提供独立 `NOTICE` 文件，应随发行物一并提供。

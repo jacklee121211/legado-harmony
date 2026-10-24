@@ -65,7 +65,10 @@ hvigorw assembleHap --mode module -p product=default -p buildMode=release
 - 本项目基于 [gedoor/legado](https://github.com/gedoor/legado)（**GPL-3.0**）的 HarmonyOS 社区移植版本 [yongfengnice/legado-harmony](https://github.com/yongfengnice/legado-harmony) 修改而来，感谢两位上游作者的工作
 - 相对移植版本的主要修改：**移除书源 / 订阅 / RSS 等全部联网内容获取体系**，仅保留本地阅读能力，并重构了 UI
 - 本项目依 **GPL-3.0** 协议继续开源，完整许可证见 [LICENSE](LICENSE)
-- **AI 阅读 / 多引擎 TTS 听书**的架构与思路，借鉴了 [ssnangua/ColorTxt](https://github.com/ssnangua/ColorTxt)（MPL-2.0）的成熟设计：引擎分派、provider 注册表、LLM 说话人识别、配置方案等模式。我们**没有复制任何 MPL-2.0 代码**，所有实现均为自研，仅复刻了经实践检验的设计范式。感谢 ColorTxt 作者的探索与验证
+- **AI 阅读 / 多引擎 TTS 听书**的架构与思路，借鉴了 [ssnangua/ColorTxt](https://github.com/ssnangua/ColorTxt)（**MPL-2.0**）的成熟设计：引擎分派、provider 注册表、LLM 说话人识别、配置方案等模式。
+  此外，`entry/src/main/ets/tts/PauseSplicer.ets` 中**标点停顿的段落收集与词级对齐逻辑**，改写自 ColorTxt 的 `src/shared/voiceReadPunctuationPauses.ts`（上游提交 `47430f28`，2026-09-08）。
+  该部分按 **MPL-2.0** 授权，并依 MPL-2.0 §3.3 **同时以 GPL-3.0** 提供（ColorTxt 未附加 Exhibit B，故不属于 "Incompatible With Secondary Licenses"；GPL-3.0 属其 §1.12 定义的 Secondary License）。
+  `PauseSplicer.ets` 文件头已附 MPL-2.0 Exhibit A 通知；听书子系统其余实现均为自研。感谢 ColorTxt 作者的探索与验证。
 
 > **完全开源，无附加限制**：**代码整体**（含会员/付费相关实现）均在 GPL-3.0 授权范围内。
 > 任何人都可以自由使用、修改、再分发，**也可以用于商业用途**，无需另行取得授权。
