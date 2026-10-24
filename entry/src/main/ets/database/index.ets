@@ -1,7 +1,7 @@
 import BookGroupsDao from './dao/BookGroupsDao'
 import bookHistoryDao from './dao/BookHistoryDao'
 import BooksDao from './dao/BooksDao'
-import worksListsDao from './dao/WorksListsDao'
+// 2026-10-25：`worksListsDao`（书单）随书单功能删除
 import BookmarksDao from './dao/BookmarksDao'
 import readRecordDao from './dao/ReadRecordDao'
 import readDailyDao from './dao/ReadDailyDao'
@@ -58,7 +58,7 @@ class DataBase {
   private async doInitAllTable() {
     await BooksDao.initBooksTable()
     await BookGroupsDao.initGroupTable()
-    await worksListsDao.initWorksListsTable()
+    // 2026-10-25：`works_lists` 建表随书单功能删除（老库里的表保留，不再读写）
     await bookHistoryDao.initBookHistoryTable()
     // ★ 2026-09-21 补：`bookmarks` 表此前**从未被创建** ——
     //   原 `initAllTable()` 漏掉了它，而 `AppDatabase/index.ets` 虽已定义建表语句

@@ -26,6 +26,8 @@ import ReaderPage3 from './view/Reader/ReaderPage3'
 import PdfViewerPage from './view/Reader/PdfViewerPage'
 // 应用接续（无缝流转，2026-10-24）：消费对端恢复标记
 import { ContinueBridge, ContinuePayload } from '../common/utils/ContinueBridge'
+// 2026-10-25：碰一碰/隔空传送的"退后台清空选定"（见 onPageHide）
+import { BookShareBridge } from '../common/share/BookShareBridge'
 import { PreferencesUtil } from '@pura/harmony-utils'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 // 全量路线：复用生产导入管线（拷进沙箱 + 写库 + 抽封面）
@@ -941,6 +943,14 @@ struct Main {
 
   onPageHide(): void {
     this.backgroundedSinceLastShow = true
+    // ★ 2026-10-25 碰一碰/隔空传送：退后台清空"选定快照"。
+    //   官方要求「离开可分享页面（**包括应用退至后台**）时取消监听」，本工程的做法是
+    //   **保留监听、清空内容** —— 依据 Share Kit 的处理机制：无内容时回调里走
+    //   `clarifyNonShare` 引导用户，不会误发；而保留监听可以避免"回前台后必须
+    //   重开关一次弹窗才恢复"的暗坑。
+    //   若将来要求严格按原文 off，把这里换成 `BookShareBridge.get().releaseAll()`，
+    //   代价见 `BookShareBridge.release()` 注释（顺序由页面重新 acquire 恢复）。
+    BookShareBridge.get().clearSelection()
   }
 
   screenShot() {

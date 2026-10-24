@@ -5,6 +5,7 @@ import { ThemeItem } from '../../../../../common/model/Theme'
 import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import { resolveBookCover, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
+import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
 
 @Component
 
@@ -20,6 +21,37 @@ export default struct BookInfoManage{
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   /** 书架书名是否显示文件拓展名（我的-设置；与书架 `BookInfos`/`BookInfoGrids` 同键同源） */
   @StorageLink('setExtName') showFileExt: boolean = false
+
+  // ── 勾选视觉与"整行可点"（2026-10-25 重做）────────────────────────────────
+  // 与宫格 `BookInfoGridManage` 同一套做法（理由详见那边注释）：
+  //   · `Checkbox` 退化成显示件（`hitTestBehavior(None)`，触摸穿透给整行）；
+  //   · 整行点击走 `toggle()` ⇒ 点封面/书名/空白处都能选/取消；
+  //   · 外部批量改动（全选 / 划选 / 刷新回填）靠 `MANAGE_SEL_VERSION_KEY` 广播回读。
+  @State checked: boolean = false
+  @StorageProp(MANAGE_SEL_VERSION_KEY) @Watch('resyncChecked') selVersion: number = 0
+
+  aboutToAppear(): void {
+    this.resyncChecked()
+  }
+
+  private resyncChecked(): void {
+    const id: number | undefined = this.bookData.id
+    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+  }
+
+  private toggle(): void {
+    if (!this.isManage) {
+      return
+    }
+    Haptics.tap()
+    this.checked = !this.checked
+    const id: number | undefined = this.bookData.id
+    if (id !== undefined && id !== null) {
+      this.checkGroup[id] = this.checked
+    }
+    this.onSelect()
+  }
+
   build() {
     Flex(
       {
@@ -100,22 +132,21 @@ export default struct BookInfoManage{
           Checkbox({
             name: JSON.stringify(this.bookData.id)
           })
-            .onClick(()=>{
-              Haptics.tap(); this.onSelect()
-            })
-            .select(this.bookData.id?this.checkGroup[this.bookData.id] ?? false:false)
-            .onChange((val:boolean)=>{
-              if (this.bookData.id) {
-                this.checkGroup[this.bookData.id] = val
-              }
-            })
+            // 只作显示件：勾选态由本组件 `@State checked` 决定（见上方字段注释）
+            .select(this.checked)
             .selectedColor(this.theme.mainColor)
             .unselectedColor(ShelfColors.checkboxIdle())
+            // 触摸穿透给整行 ⇒ 点圈与点封面走同一条 toggle 路径，不会双翻转
+            .hitTestBehavior(HitTestMode.None)
         }
         .padding({ left: 15, right: 15, bottom: 5, top: 5 })
       }
     }
     .padding(10)
     .borderRadius(10)
+    // 2026-10-25：整行可点（含封面 / 书名 / 空白处），不再只有选择圈能点
+    .onClick((): void => {
+      this.toggle()
+    })
   }
 }

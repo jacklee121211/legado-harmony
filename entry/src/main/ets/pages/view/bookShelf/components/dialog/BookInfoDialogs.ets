@@ -11,20 +11,24 @@ import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
-import AddToBookListDialog from './AddToBookListDialog'
+// 2026-10-25：`AddToBookListDialog`（加入书单弹窗）已随书单功能删除
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode } from '../../../../../common/utils/NightMode'
 // ── v3.20：长按弹窗按钮 symbol 化 + Q弹 + 单本分享（与管理页同款配方）─────────
 import UiMotion, { runJellyClick } from '../../../../../common/utils/UiMotion';
 import { systemShare } from '@kit.ShareKit';
-import { uniformTypeDescriptor } from '@kit.ArkData';
-import { fileUri } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+// 2026-10-25：碰一碰/隔空传送收口到 BookShareBridge（单本选中 = 这条通道的第二个入口）
+import { BookShareBridge, buildSelection, ShareSelection } from '../../../../../common/share/BookShareBridge';
+import ShareGuideTip from '../../../../../common/share/ShareGuideTip';
 import { ShelfColors } from '../../../../../common/utils/NightMode'
 import { resolveBookCover } from '../../../../../common/utils/CoverSource'
 import CoverStyleDialog from './CoverStyleDialog'
 import RenameBookDialog from './RenameBookDialog'
 import MarkToolButton from '../../../../../componets/common/MarkToolButton'
+
+/** 本弹窗在 `BookShareBridge` 里的宿主标识（碰一碰/隔空传送监听持有权） */
+const OWNER_BOOK_INFO: string = 'BookInfoDialogs'
 
 @CustomDialog
 /**
@@ -177,8 +181,54 @@ export default struct BookInfoDialogs{
    *  万一材质没生效，`MaterialColumnModifier` 会自动落回白实底（不会又变透明）。 */
   private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 碰一碰 / 隔空传送（2026-10-25 新增）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 用户需求原文：「第一种是长按单本书籍，出现弹窗则为被选中状态」
+  // ⇒ 本弹窗**打开即视为选中**：aboutToAppear 把这本书写进 bridge，
+  //    aboutToDisappear 清空。这样「长按单本」与「管理页批量」在分享语义上等价，
+  //    而且两条通道（knockShare / gesturesShare）读的是同一份快照。
+  // ⚠️ 能力闸门与注册/注销全部在 bridge 内部（逐设备 API 门槛见其文件头）；
+  //    不支持的设备上这里只是空转，不会抛、不会提示 —— 静默降级。
+  aboutToAppear(): void {
+    const ctx: common.UIAbilityContext =
+      this.getUIContext().getHostContext() as common.UIAbilityContext
+    BookShareBridge.get().acquire(OWNER_BOOK_INFO, ctx).then((): void => {
+      BookShareBridge.get().setSelection(this.singleSelection())
+    }).catch((e: Error): void => {
+      console.error('share acquire failed: ' + e.message)
+    })
+  }
+
+  aboutToDisappear(): void {
+    BookShareBridge.get().release(OWNER_BOOK_INFO)
+  }
+
+  /** 本弹窗当前的选定快照（单本；书籍无可分享文件时为 null） */
+  private singleSelection(): ShareSelection | null {
+    const path: string = this.bookData.bookUrl ?? ''
+    if (path === '') {
+      return null
+    }
+    return buildSelection([this.bookData])
+  }
+
   build() {
     Column(){
+      // ══════════════════════════════════════════════════════════════════════
+      // 碰一碰/隔空传送 引导气泡（2026-10-25 第 3 版，用户定的 C 方案）
+      // ══════════════════════════════════════════════════════════════════════
+      // 位置：**卡片最顶部、原有内容之上**（封面/书名行之前）。
+      // 行为：`autoHide: false` ⇒ **常驻不消失**（卡片本来就只开一会儿，
+      //       用户原话「已经放进来，其实过几秒不消失也没关系」）。
+      // ⚠️ 为什么不在页面层用 `.overlay()`（第 2 版的失败原因，留档别再踩）：
+      //   `.overlay()` 挂在 `#main`（Navigation 直接子节点）上时，overlay 节点会被
+      //   拉伸成整块内容区且丢掉 `HitTestMode.None` ⇒ 吃掉全部命中测试。
+      //   真机节点树取证：`Column#main` 的第二个子节点是 `Stack b=[0,400,1320,2848]
+      //   hitTest=(空) children=0`，截图渲染正常但每次触摸都是
+      //   `W Touch test result is empty.`（`docs/日志.md` 全程）。
+      ShareGuideTip({ active: true, autoHide: false })
+        .margin({ top: 10 })
       // ── 头部行（2026-10-01 重排，修"书名与右侧图标间距过大、封面/书籍详情溢出"）──
       // 旧结构：左侧 Row 固定 `width('80%')` + 书名 Text 固定 `width('75%')`，
       // 书名把右侧（封面/书籍详情/箭头）挤出边界。新结构：封面图 + 中间列
@@ -353,65 +403,10 @@ export default struct BookInfoDialogs{
     .width('100%')
   }
 
-  /**
-   * 「加入书单」弹窗（2026-09-22 从 `bindSheet` 改成 `@CustomDialog`）。
-   *
-   * ── 为什么必须改 ──────────────────────────────────────────────────────────
-   * 用户原话：「我的意思是**加入书单的弹窗是白色的**，不是这种（半透明沉浸光感）…
-   *            阅读器目录书签 sheet 也需要独立圆角，材质也要统一上面那种沉浸光感，
-   *            书架搜索浮窗同上」。
-   *
-   * 而 **`SheetOptions` 里没有任何材质字段** —— 已逐个核对 `common.d.ts` 的
-   * `interface SheetOptions` 全部 36 个字段（`height`/`dragBar`/`maskColor`/`detents`/
-   * `blurStyle`/`showClose`/`preferType`/`title`/…/`radius`/`placement`/
-   * `placementOnTarget`/…），**没有 `systemMaterial`**
-   * ⇒ **sheet 载不了沉浸光感材质**，只能实色/半透明模拟。
-   *
-   * ⇒ 官方给弹窗材质的正规渠道是 `CustomDialogControllerOptions.systemMaterial`
-   *   （`custom_dialog_controller.d.ts:681`，@since 26.0.0），且实测**前提是
-   *   `customStyle: false`**（`true` 时 dialog 层背景透明、材质无处附着）。
-   *   本工程长按书籍弹窗就是这么做的，已是真机验证过的"半透明沉浸光感"。
-   *
-   * 所以这里改成 `@CustomDialog` + `customStyle:false` + `systemMaterial` +
-   * `offset{dy:-16}`（悬空四圆角），与长按弹窗**完全同款**。
-   */
-  catalogAddShelfDialog: CustomDialogController | null = new CustomDialogController({
-    builder: AddToBookListDialog({
-      currentIndex: this.bookData.bookType,
-      ids: this.bookData.id ? [this.bookData.id] : [],
-      bookOrFolder: 0,
-      cancel: () => {
-        // 子退父进：加入书单弹窗取消 ⇒ 关闭子弹窗 + 父弹窗恢复
-        //
-        // ⚠️ 2026-10-12：**必须先真的 close 子弹窗**。旧写法只调 `childDialogClosed()`
-        //   把父弹窗召回来，子弹窗却还留在屏幕上 ⇒ 与「移动分组」完全同款的双弹窗叠加。
-        //   （`AddToBookListDialog` 内部自己的 `controller.close()` 在 @CustomDialog
-        //    子组件里不可靠 —— 真机两次独立验证，见 `ReaderSaveSchemeDialog.ets:205-208`
-        //    与 `RenameBookDialog` 的类注释。）
-        this.catalogAddShelfDialog?.close()
-        this.childDialogClosed()
-      }
-    }),
-    autoCancel: true,
-    // 2026-09-25 用户反馈：加入书单弹窗改**标准居中四圆角材质**（原贴底老款式）
-    // 2026-10-01 补 `height: 400`：内部 catalogAddShelf 根节点是 `height('100%')`，
-    // 弹窗层无确定高度时百分比按最大约束解 ⇒ 弹窗被撑满整屏、圆角顶到屏幕边缘，
-    // 观感退回老式全屏 sheet（用户复测："还是没有实现四圆角那种项目统一"）。
-    // 固定高 400 与"移动分组"弹窗同款（其 options 即 `height: 400`）。
-    alignment: DialogAlignment.Center,
-    width: '80%',
-    height: 400,
-    cornerRadius: 20,
-    customStyle: false,
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    // 遮罩/返回键：同一条收尾路径，一样要 close 子弹窗（2026-10-12 一并修）
-    cancel: (): void => {
-      this.catalogAddShelfDialog?.close()
-      this.childDialogClosed()
-    }
-  })
+  // 2026-10-25：`catalogAddShelfDialog`（加入书单弹窗）整块删除 —— 书单功能下线。
+  //   原实现是 `@CustomDialog` + `customStyle:false` + `systemMaterial` 的标准居中卡片，
+  //   取证与踩坑记录见 git 历史（`SheetOptions` 无 `systemMaterial` 字段那条）。
+  //   ⚠️ 回退：需要恢复时从 git 历史取回本段 + `AddToBookListDialog` 组件文件。
 
   bookInfoButton(id:number){
     switch (id){
@@ -423,7 +418,8 @@ export default struct BookInfoDialogs{
           console.error('openMoveGroupDialog failed: ' + e.message)
         }); break;
       case 3 :
-        this.openChildDialog(this.catalogAddShelfDialog); break;
+        // 2026-10-25：「加入书单」入口与弹窗已随书单功能删除 ⇒ 本分支不再可达
+        break;
       case 4 :
         this.openChildDialog(this.bookDelDialog); break;
       case 6 :
@@ -432,29 +428,22 @@ export default struct BookInfoDialogs{
   }
 
   /**
-   * 单本分享（v3.20，与管理页 manageShare 同一 API 链）：systemShare.SharedData
-   * （utd 按后缀解析 + fileUri）→ ShareController.show 拉起华为分享面板。
-   * 对端装了喵阅 ⇒ 分享面板推荐区直达 ⇒ 分享即入库。
+   * 单本分享（v3.20；2026-10-25 收口到 BookShareBridge）：
+   * 与 `BookManagePage.manageShare`、碰一碰、隔空传送**共用同一份**
+   * `buildSelection` + `buildSharedData`，所以「三条分享方式发出去的东西」必然一致。
    */
   private async shareSingle(){
-    const path: string = this.bookData.bookUrl ?? ''
-    if (path === '') {
+    const sel: ShareSelection | null = this.singleSelection()
+    if (sel === null) {
       showMessage('该书没有可分享的文件');
       return
     }
     try {
-      const suffix: string = path.substring(path.lastIndexOf('.'))
-      let utdId: string = 'general.text'
-      try {
-        utdId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix) ?? 'general.text'
-      } catch (err) {
-        // 未知后缀退回 general.text
+      const shareData: systemShare.SharedData | null = BookShareBridge.buildSharedData(sel)
+      if (shareData === null) {
+        showMessage('该书没有可分享的文件');
+        return
       }
-      const shareData: systemShare.SharedData = new systemShare.SharedData({
-        utd: utdId,
-        uri: fileUri.getUriFromPath(path),
-        title: this.bookData.bookName ?? '书籍'
-      });
       const controller: systemShare.ShareController = new systemShare.ShareController(shareData)
       const context: common.UIAbilityContext =
         this.getUIContext().getHostContext() as common.UIAbilityContext

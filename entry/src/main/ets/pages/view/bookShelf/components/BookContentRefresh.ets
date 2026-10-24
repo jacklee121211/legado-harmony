@@ -6,7 +6,8 @@
 import { showMessage } from '../../../../componets/common/promptShow'
 import RefreshComponent from '../../../../componets/common/RefreshComponent'
 import BookFolder from '../BookFolder'
-import WorksBookLists from '../Shelf/WorksBookLists'
+// 2026-10-25：书单功能整体删除（用户口径「书单功能早就没了，能删就删了吧」）
+//   ⇒ 原来的 `import WorksBookLists from '../Shelf/WorksBookLists'` 一并移除。
 import BookContent from './BookContent'
 // 「返回分组列表」悬浮按钮（2026-10-21）：震动 + Q弹 + 玻璃材质
 import { Haptics } from '../../../../common/utils/Haptics'
@@ -21,7 +22,7 @@ export default struct BookContentRefresh {
   @State @Watch('changeRefreshing')isRefreshing: boolean = false
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') isGroupRefreshing: number = 0
-  @StorageLink('BOOK_IS_BOOK_WORKS_BOOK_LIST') isWorksBookListRefreshing: number = 0
+  // 2026-10-25：`BOOK_IS_BOOK_WORKS_BOOK_LIST`（书单刷新键）随书单功能删除
   /** 「分组 / 全部 / 未分组 / 本地」那一栏的**实测高度**（`GroupType` 上报）——用于给列表让位 */
   @StorageLink('shelfGroupRowH') shelfGroupRowH: number = 0
   @State counter: number = 0
@@ -99,9 +100,7 @@ export default struct BookContentRefresh {
         case 1:
           this.isGroupRefreshing++
           break;
-        case 5:
-          this.isWorksBookListRefreshing++
-          break;
+        // 2026-10-25：`case 5`（书单）随书单功能一起删除
         default:
           this.isBookRefreshing++
           break
@@ -156,23 +155,16 @@ export default struct BookContentRefresh {
           } else {
             Scroll() {
               Column() {
-                if (this.bookTypeNumber === 5) {
-                  WorksBookLists({
-                    checkGroup: this.checkGroup,
-                    EXHIBIT: this.EXHIBIT,
-                    currentIndex:this.currentIndex,
-                    isShowCheck:false
-                  })
-                } else {
-                  BookFolder({
-                    EXHIBIT: this.EXHIBIT,
-                    currentIndex:this.currentIndex,
-                    // 2026-10-13：分组卡片改成"点了**直接切到该分组**"（用户不再要半屏 sheet）
-                    // ⇒ 子组件必须能写回这两个状态，故传 @Link（链尾 @Prop 是单向副本，写不生效）。
-                    GROUP: this.GROUP,
-                    bookTypeNumber: this.bookTypeNumber
-                  })
-                }
+                // 2026-10-25：书单（`bookTypeNumber === 5`）分支整块删除 —— 书单功能下线，
+                //   这里只剩「分组卡片页」一种。
+                BookFolder({
+                  EXHIBIT: this.EXHIBIT,
+                  currentIndex:this.currentIndex,
+                  // 2026-10-13：分组卡片改成"点了**直接切到该分组**"（用户不再要半屏 sheet）
+                  // ⇒ 子组件必须能写回这两个状态，故传 @Link（链尾 @Prop 是单向副本，写不生效）。
+                  GROUP: this.GROUP,
+                  bookTypeNumber: this.bookTypeNumber
+                })
               }
               .padding({ left: 10, right: 10, bottom: 30 })
             }

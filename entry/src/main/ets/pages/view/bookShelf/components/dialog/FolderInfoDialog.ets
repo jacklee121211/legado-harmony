@@ -11,7 +11,7 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
-import AddToBookListDialog from './AddToBookListDialog'
+// 2026-10-25：`AddToBookListDialog`（加入书单弹窗）已随书单功能删除
 import coverInfoDialog from './coverInfoDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
@@ -37,7 +37,9 @@ export default struct FolderInfoDialog{
     new buttonList(1,'重命名',$r('sys.symbol.square_and_pencil')),
     new buttonList(2,'置顶',$r('sys.symbol.pin')),
     new buttonList(3,'移动至',$r('sys.symbol.folder')),
-    new buttonList(4,'加入书单',$r('sys.symbol.book')),
+    // 2026-10-25：`new buttonList(4,'加入书单',…)` 已随书单功能删除（用户口径「书单功能早就没了」）。
+    //   ⚠️ `id` 是**语义键**不是下标（下面 `folderInfo()` 的 switch 按 id 分发），
+    //   所以删掉 id 4 不影响置顶(2)/移动(3)/封面(5)/隐藏(6)/解散(7)/删除(8) 的绑定。
     new buttonList(5,'封面样式',$r('sys.symbol.picture')),
     new buttonList(6, this.itemData.show?'隐藏分组':'显示分组',this.itemData.show?$r('sys.symbol.eye_slash'):$r('sys.symbol.eye')),
     new buttonList(7,'解散分组',$r('sys.symbol.trash')),
@@ -156,36 +158,11 @@ export default struct FolderInfoDialog{
     this.controller?.open()
   }
 
-  // v3.21：加入书单改 CustomDialog（统一范式，通用包装 AddToBookListDialog）。
-  // ⚠️ 2026-10-01 闪退修复：这里原来是 `builder: catalogAddShelf({...})` —— catalogAddShelf
-  // 是普通 @Component（无 @CustomDialog 装饰器），放进 controller 字段初始化器的 builder 里
-  // 真机必崩（日志原文：FolderInfoDialog.ets:52:14 "TypeError: class constructor cannot
-  // called without 'new'" ← GroupType.ets:41:16 长按分组打开本弹窗时，Kill Reason: Js Error）。
-  catalogAddShelfDialog: CustomDialogController | null = new CustomDialogController({
-    builder: AddToBookListDialog({
-      currentIndex: this.itemData.groupType,
-      ids: this.itemData.groupId ? [this.itemData.groupId] : [],
-      bookOrFolder: 1,
-      cancel: () => {
-        this.closeChildAndReopen(this.catalogAddShelfDialog)
-      }
-    }),
-    autoCancel: true,
-    // 标准居中四圆角卡片：固定高度 400（内部 catalogAddShelf 根节点是 height('100%')，
-    // 父级无确定高度会把弹窗撑满整屏）+ 沉浸光感材质 + 弹簧动画（统一规范）。
-    alignment: DialogAlignment.Center,
-    width: '80%',
-    height: 400,
-    cornerRadius: 20,
-    customStyle: false,
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    // 遮罩/返回键：同一条收尾路径（2026-10-12）
-    cancel: (): void => {
-      this.closeChildAndReopen(this.catalogAddShelfDialog)
-    }
-  })
+  // 2026-10-25：`catalogAddShelfDialog`（加入书单弹窗）整块删除，书单功能下线。
+  //   历史坑留档：这里原来是 `builder: catalogAddShelf({...})` —— catalogAddShelf 是普通
+  //   @Component（无 @CustomDialog 装饰器），放进 controller 字段初始化器的 builder 里真机必崩
+  //   （FolderInfoDialog.ets:52:14 "TypeError: class constructor cannot called without 'new'"）。
+  //   组件本身也已随书单一起删除。
 
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
@@ -256,7 +233,8 @@ export default struct FolderInfoDialog{
       case 3 :
         this.openChildDialog(this.bookMoveGroup); break;
       case 4 :
-        this.openChildDialog(this.catalogAddShelfDialog); break;
+        // 2026-10-25：「加入书单」入口已随书单功能删除 ⇒ 本分支不再可达
+        break;
       case 5 :
         this.openChildDialog(this.coverDialog);
         break;

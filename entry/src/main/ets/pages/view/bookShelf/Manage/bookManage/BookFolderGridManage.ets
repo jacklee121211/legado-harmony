@@ -5,6 +5,7 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
+import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
 
 /**
  * 文件夹宫格_管理页
@@ -19,6 +20,36 @@ export default struct BookFolderGridManage {
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+
+  // ── 勾选视觉与"整卡可点"（2026-10-25 重做）────────────────────────────────
+  // 与书籍宫格 `BookInfoGridManage` 同一套（理由见那边注释）：
+  //   Checkbox 只当显示件（触摸穿透），整卡点击走 toggle()，外部批量改动靠
+  //   `MANAGE_SEL_VERSION_KEY` 广播回读。
+  @State checked: boolean = false
+  @StorageProp(MANAGE_SEL_VERSION_KEY) @Watch('resyncChecked') selVersion: number = 0
+
+  aboutToAppear(): void {
+    this.resyncChecked()
+  }
+
+  private resyncChecked(): void {
+    const id: number | undefined = this.group.groupId
+    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+  }
+
+  private toggle(): void {
+    if (!this.isManage) {
+      return
+    }
+    Haptics.tap()
+    this.checked = !this.checked
+    const id: number | undefined = this.group.groupId
+    if (id !== undefined && id !== null) {
+      this.checkGroup[id] = this.checked
+    }
+    this.onSelect()
+  }
+
   build() {
     Column() {
       Stack() {
@@ -26,16 +57,11 @@ export default struct BookFolderGridManage {
           if (this.isManage){
             Checkbox()
               .zIndex(9)
-              .select(this.group.groupId?this.checkGroup[this.group.groupId] ?? false:false)
+              // 只作显示件：勾选态由本组件 `@State checked` 决定
+              .select(this.checked)
               .selectedColor(this.theme.mainColor)
-              .onChange((val: boolean) => {
-                if (this.group.groupId) {
-                  this.checkGroup[this.group.groupId] = val
-                }
-              })
-              .onClick(()=>{
-                Haptics.tap(); this.onSelect()
-              })
+              // 触摸穿透给整张卡片 ⇒ 点圈与点封面同一条 toggle 路径
+              .hitTestBehavior(HitTestMode.None)
           }
           Stack(){
             if (this.group.isTop){
@@ -95,5 +121,9 @@ export default struct BookFolderGridManage {
           .maxLines(1)
     }
     .padding({ left:8,right:8,bottom:5,top:5 })
+    // 2026-10-25：整张卡片可点（含封面 / 分组名 / 空白处）
+    .onClick((): void => {
+      this.toggle()
+    })
   }
 }

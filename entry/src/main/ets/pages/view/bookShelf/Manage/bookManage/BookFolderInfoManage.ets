@@ -4,6 +4,7 @@ import { ThemeItem } from '../../../../../common/model/Theme'
 import BookOverlay from '../../../../../componets/bookDetail/BookOverlay'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
+import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
 
 /**
  * 文件夹列表_管理页
@@ -18,6 +19,36 @@ export default struct BookFolderInfoManage {
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
+
+  // ── 勾选视觉与"整行可点"（2026-10-25 重做）────────────────────────────────
+  // 与书籍列表 `BookInfoManage` 同一套（理由详见 `BookInfoGridManage` 注释）：
+  //   Checkbox 只当显示件（触摸穿透），整行点击走 toggle()，外部批量改动靠
+  //   `MANAGE_SEL_VERSION_KEY` 广播回读。
+  @State checked: boolean = false
+  @StorageProp(MANAGE_SEL_VERSION_KEY) @Watch('resyncChecked') selVersion: number = 0
+
+  aboutToAppear(): void {
+    this.resyncChecked()
+  }
+
+  private resyncChecked(): void {
+    const id: number | undefined = this.group.groupId
+    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+  }
+
+  private toggle(): void {
+    if (!this.isManage) {
+      return
+    }
+    Haptics.tap()
+    this.checked = !this.checked
+    const id: number | undefined = this.group.groupId
+    if (id !== undefined && id !== null) {
+      this.checkGroup[id] = this.checked
+    }
+    this.onSelect()
+  }
+
   build() {
     Flex(
       {
@@ -67,16 +98,11 @@ export default struct BookFolderInfoManage {
         Row() {
           Checkbox()
             //判断是否存在当前id
-            .select(this.group.groupId?this.checkGroup[this.group.groupId] ?? false:false)
+            // 只作显示件：勾选态由本组件 `@State checked` 决定
+            .select(this.checked)
             .selectedColor(this.theme.mainColor)
-            .onChange((val: boolean) => {
-              if (this.group.groupId) {
-                this.checkGroup[this.group.groupId] = val
-              }
-            })
-            .onClick(()=>{
-              Haptics.tap(); this.onSelect()
-            })
+            // 触摸穿透给整行 ⇒ 点圈与点封面同一条 toggle 路径
+            .hitTestBehavior(HitTestMode.None)
         }
         .padding({ left: 15, right: 15, bottom: 5, top: 5 })
       }
@@ -85,6 +111,10 @@ export default struct BookFolderInfoManage {
     }
     .padding(10)
     .borderRadius(10)
+    // 2026-10-25：整行可点（含封面 / 分组名 / 空白处）
+    .onClick((): void => {
+      this.toggle()
+    })
   }
 
 

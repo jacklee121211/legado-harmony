@@ -7,7 +7,7 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
-import worksListsDao from '../../../../../database/dao/WorksListsDao'
+// 2026-10-25：`worksListsDao` 随书单功能删除（书单聚合封面分支已移除）
 import { Books } from '../../../../../database/entities/Books'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
@@ -370,18 +370,7 @@ export default struct coverInfoDialog{
       const ids = await booksDao.queryBooksByGroupId(gids)
       return ids.length > 0 ? await booksDao.getBookByIds(ids) : []
     }
-    if (this.itemData.isSystem && name === '书单') {
-      const lists = await worksListsDao.search()
-      const ids: number[] = []
-      for (const w of lists) {
-        for (const wb of (w.worksBookList ?? [])) {
-          if (wb.bookId !== undefined) {
-            ids.push(wb.bookId)
-          }
-        }
-      }
-      return ids.length > 0 ? await booksDao.getBookByIds(ids) : []
-    }
+    // 2026-10-25：「书单」聚合条目分支已随书单功能删除（原来读 worksListsDao 汇总所有书单内的书）
     if (this.itemData.isSystem && name === '全部') {
       return await booksDao.search()
     }

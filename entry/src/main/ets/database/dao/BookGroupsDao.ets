@@ -218,7 +218,11 @@ class BookGroupsDao{
 
   //系统初始分组数据
   async initGroupData() {
-    let initGroup = ['分组','全部','未分组','本地','书单']
+    // 2026-10-25：`'书单'` 已从初始系统分组里移除（书单功能整体下线）。
+    //   ⚠️ 只影响**新装**：老库里那一行 `book_groups` 记录仍在（不改用户数据），
+    //   但它在渲染层本来就被跳过（`GroupType.sortSystemChips` 的 `continue`、
+    //   `groupTypePanel.HIDDEN_UNIT_NAMES`），所以观感零变化。
+    let initGroup = ['分组','全部','未分组','本地']
     try {
       const groupList = await this.search()
       if (groupList.length > 0) {

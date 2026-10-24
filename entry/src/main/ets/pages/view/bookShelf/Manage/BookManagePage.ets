@@ -13,21 +13,28 @@ import BookSelectGroupDialog from '../components/dialog/BookSelectGroupDialog';
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao';
 import { BookGroups } from '../../../../database/entities/BookGroups';
 import bookGroupUtil from '../../../../common/utils/bookGroupUtils';
-import AddToBookListDialog from '../components/dialog/AddToBookListDialog';
 import Header from '../../../../componets/common/Header';
-import WorksBookLists from '../Shelf/WorksBookLists';
-import worksListsDao from '../../../../database/dao/WorksListsDao';
-import { WorksLists } from '../../../../database/entities/WorksLists';
-import worksListsUtils from '../../../../common/utils/WorksListsUtils';
+// ── 2026-10-25：书单功能整体删除（用户口径「书单功能早就没了，能删就删了吧」）──────
+//   随之移除的四个 import：
+//     `AddToBookListDialog`（加入书单弹窗）、`WorksBookLists`（书单卡片列表）、
+//     `worksListsDao`、`WorksLists` 实体、`worksListsUtils`。
+//   ⇒ 管理页从此只有两路：分组（`bookTypeNumber === 1`）与书籍（其余）。
 import { ThemeItem } from '../../../../common/model/Theme';
 import { ThemeStorageKey } from '../../../../common/constants/Theme';
 import AppRouter, { BookManageRouteParam } from '../../../../common/router/AppRouter';
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode';
-// ── 分享/碰一碰（2026-09-30 回填，官方取证见本文件 manageShare/注释）──────────
-import { systemShare, harmonyShare } from '@kit.ShareKit';
-import { uniformTypeDescriptor } from '@kit.ArkData';
-import { fileUri } from '@kit.CoreFileKit';
+// ── 分享/碰一碰（2026-09-30 回填；2026-10-25 收口到 BookShareBridge）──────────
+// 官方取证见 `common/share/BookShareBridge.ets` 文件头（docId + SDK 行号）。
+// ⚠️ 本页**不再自己调 harmonyShare.on/off**：注册/注销统一由 bridge 持有，
+//    否则「本页 + 长按弹窗」两处注册会撞上官方未文档化的同窗口双注册行为。
+import { systemShare } from '@kit.ShareKit';
 import { common } from '@kit.AbilityKit';
+import {
+  BookShareBridge,
+  buildSelection,
+  ShareSelection
+} from '../../../../common/share/BookShareBridge';
+import ShareGuideTip from '../../../../common/share/ShareGuideTip';
 import { FileHandler } from '../../../../common/utils/FileHandler';
 import UiMotion, { runJellyClick } from '../../../../common/utils/UiMotion';
 // ── 底部操作栏迁 HDS 悬浮页签（2026-10-12 用户要求「直接改，改成HDS」）────────────
@@ -44,6 +51,10 @@ import {
 } from '@kit.UIDesignKit';
 // 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
 import HdsCompat, { HdsFloatingStyleModifier } from '../../../../common/utils/HdsCompat';
+// 手势划选（2026-10-25）：勾选状态广播（全选 / 划选 / 刷新回填都走它）
+import { bumpSelectionVersion } from './bookManage/ManageBrush';
+// 设备类型分流（2026-10-25 平板/2in1 dock 适配）：`deviceType` = phone / tablet / 2in1
+import { deviceInfo } from '@kit.BasicServicesKit';
 // 页签栏目标宽度要按屏宽算（`manageBarWidth()`）⇒ 需要 `display`。
 import { display } from '@kit.ArkUI';
 
@@ -53,6 +64,9 @@ import { display } from '@kit.ArkUI';
  * 迁 Navigation 第 4 期：去掉 `@Entry` + 补 `export default`，
  * 参数由 `Index.appRoutes()` 经 `initParam` 注入（原来是 `router.getParams()`）。
  */
+/** 本页在 `BookShareBridge` 里的宿主标识（碰一碰/隔空传送监听的持有权） */
+const OWNER_MANAGE: string = 'BookManagePage'
+
 @Component
 export default struct BookManagePage {
   /**
@@ -76,7 +90,7 @@ export default struct BookManagePage {
   @State checkLists: Record<number, boolean> = {}
   @State checkListNumber:number[] = []
   @State bookGroups:BookGroups[] = [] // 分组
-  @State worksLists:WorksLists[] =[] //书单
+  // 2026-10-25：`worksLists`（书单）随书单功能删除
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   // 主题颜色
@@ -112,12 +126,7 @@ export default struct BookManagePage {
     for (const id of this.checkListNumber) {
       const key: number = Number(id)
       let hit = false
-      if (this.bookTypeNumber === 5){
-        // 书单
-        for (const item of this.worksLists) {
-          if (item.isTop && key === item.worksId) { hit = true; break }
-        }
-      } else if (this.bookTypeNumber === 1){
+      if (this.bookTypeNumber === 1){
         // 分组（系统分组不参与置顶）
         for (const item of this.bookGroups) {
           if (item.isTop && key === item.groupId && !item.isSystem) { hit = true; break }
@@ -138,23 +147,6 @@ export default struct BookManagePage {
     } else {
       this.topTitle = '置顶'
     }
-  }
-  //书单
-  /**
-   * 重查书单列表。
-   *
-   * ⚠️ 2026-10-12 十一修：**改为返回 Promise 并 `await` 到底**。
-   *   旧写法是 `.then((val)=>{ this.worksLists = val })` 之后**直接返回** ——
-   *   调用方 await 不到、也不知道列表何时就绪。
-   *   在 `manageTop()` 那种「写库 → 重查 → 按新数据判定按钮文字」的链路里，
-   *   重查还没回来就判定 ⇒ **拿旧数据判定** ⇒ 按钮文字/列表不刷新
-   *   （用户反馈①「点击置顶或者取消置顶，没有即刻刷新」的根因之一）。
-   */
-  async getWorkLists(): Promise<void> {
-    const val: WorksLists[] = await worksListsDao.search({
-      type:this.currentIndex
-    })
-    this.worksLists = val
   }
   //书籍
   /**
@@ -197,20 +189,21 @@ export default struct BookManagePage {
     this.EXHIBIT = this.routeParam.EXHIBIT
     this.bookTypeNumber = this.routeParam.bookTypeNumber
     this.pageInit()
-    // 碰一碰监听（官方文档：离开页面/退后台应及时 off —— 本页 aboutToDisappear 处理；
-    // 系统能力用官方推荐的 canIUse 判定，不支持碰一碰的设备静默跳过）
-    if (canIUse('SystemCapability.Collaboration.HarmonyShare')) {
-      harmonyShare.on('knockShare', (target: harmonyShare.SharableTarget) => {
-        this.knockCallback(target)
-      })
-    }
+    // ── 碰一碰 / 隔空传送（2026-10-25 收口到 BookShareBridge）──────────────────
+    // 官方要求：进入可分享页面注册、离开页面（含退后台）注销。
+    // 能力闸门在 bridge 内部按「设备类型 + sdkApiVersion」逐设备判定
+    // （平板 knockShare 要 API23，`canIUse` 判不出来 —— 取证见 bridge 文件头证据 3/4）；
+    // 不支持的设备会**静默跳过**，不影响系统分享面板这条老路径。
+    const ctx: common.UIAbilityContext =
+      this.getUIContext().getHostContext() as common.UIAbilityContext
+    BookShareBridge.get().acquire(OWNER_MANAGE, ctx).catch((e: Error): void => {
+      console.error('share acquire failed: ' + e.message)
+    })
   }
 
   aboutToDisappear(): void {
-    // 官方要求：不需要碰一碰或离开页面/退后台时及时取消监听，避免资源浪费与异常触发
-    if (canIUse('SystemCapability.Collaboration.HarmonyShare')) {
-      harmonyShare.off('knockShare')
-    }
+    // 离开可分享页面必须注销监听，否则会出现"在别的页面碰一碰却发出本页选中的书"
+    BookShareBridge.get().release(OWNER_MANAGE)
   }
 
   //初始
@@ -218,76 +211,19 @@ export default struct BookManagePage {
     if (this.bookTypeNumber === 1) {
       this.getGroupList()
       this.isMoveStatus = 1
-    } else if (this.bookTypeNumber === 5){
-      this.getWorkLists()
-      this.isMoveStatus = 2
     } else {
+      // 2026-10-25：书单分支（`=== 5`）随书单功能删除
       this.getBookList()
       this.isMoveStatus = 0
     }
   }
 
-  /**
-   * 「加入书单」统一弹窗（2026-10-01 从 bindSheet 改 CustomDialog）。
-   * sheet 载不了沉浸光感材质（SheetOptions 无 systemMaterial 字段，取证见
-   * AddToBookListDialog 类注释）；控制器**打开时新建**——SDK NOTE「Custom dialog box
-   * parameters do not support dynamic updates」，ids/bookOrFolder 随勾选变化只能快照。
-   * 本页是整页（非弹窗），背后无需退出，子关闭后原地刷新列表即可。
-   */
-  private addToBookListDialog: CustomDialogController | null = null
-  private openAddToBookList(): void {
-    this.addToBookListDialog = new CustomDialogController({
-      builder: AddToBookListDialog({
-        currentIndex: this.currentIndex,
-        ids: this.checkListNumber,
-        bookOrFolder: this.bookOrFolder,
-        // ══════════════════════════════════════════════════════════════════════
-        // 2026-10-12 九修：**「取消」不再清除勾选**（用户反馈）
-        // ══════════════════════════════════════════════════════════════════════
-        // ── 症状（用户原话）────────────────────────────────────────────────────
-        //   「选定一本书，点击加入书单，然后点击加入书单的取消之后，这个选定没了？？
-        //     实际上选定之后移动至或者删除被中断都不会清除选定」
-        //
-        // ── 根因 ──────────────────────────────────────────────────────────────
-        //   这里原来调的是 `this.refreshData()`，而 `refreshData()` 末尾有一行
-        //   **`this.dataMoveCheckList(false)`**（见本文件 `refreshData()`）——
-        //   它把 `checkLists` 里**所有 key 强制写成 false** ⇒ 勾选被清空。
-        //   「移动至」/「删除」被中断时**不调 `refreshData()`**，所以勾选保留
-        //   ⇒ 三个入口行为不一致，正是用户察觉到的那种"不一样"。
-        //
-        // ── 修法：取消 = 只关弹窗，**不碰勾选、不重查列表** ────────────────────
-        //   理由：用户点「取消」的语义是"我这次不加入书单了"，
-        //   **不含**"顺便取消我选中的书"。勾选由用户自己在列表里点掉。
-        //   列表也不需要重查 —— 取消没有改任何数据（只有确认加入才会改，
-        //   那条路径由 `AddToBookListDialog` 内部的成功回调负责刷新）。
-        //
-        //   ⚠️ 回退：把 `this.refreshData()` 加回来即恢复"取消也清空勾选"的旧行为。
-        //   ⚠️ 若将来"确认加入"后需要刷新列表，请在 AddToBookListDialog 的
-        //      **成功回调**里调 `refreshData()`，不要把刷新挂在取消路径上。
-        cancel: () => {
-          this.addToBookListDialog?.close()
-          this.addToBookListDialog = null
-        }
-      }),
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      width: '80%',
-      height: 400,
-      cornerRadius: 20,
-      customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      // 遮罩 / 返回键：与「取消」同一条路径（同样不碰勾选）
-      cancel: (): void => {
-        this.addToBookListDialog?.close()
-        this.addToBookListDialog = null
-      }
-    })
-    this.addToBookListDialog.open()
-  }
+  // ── 2026-10-25：整块删除「加入书单」弹窗 ──────────────────────────────────
+  // 用户口径：「书单功能早就没了，能删就删了吧」。
+  // 原实现（`addToBookListDialog` 字段 + `openAddToBookList()` + `AddToBookListDialog`
+  // 组件）此前已从底部操作栏移除入口（2026-10-19），只剩死代码，本次连同组件一并删除。
+  // ⚠️ 回退：需要恢复时从 git 历史取回本段，并恢复 `AddToBookListDialog` 组件文件。
   @State showNumber:number = 0
-  @State bookOrFolder:number = 0
   build() {
     // ══════════════════════════════════════════════════════════════════════════
     // 底部手势条那一带（2026-10-12 三修，用户截图：底部有一条**白边**）
@@ -316,7 +252,9 @@ export default struct BookManagePage {
     //   ④ 底部 dock 自己带 `bottomRectHeight + 8` 的底部外边距（悬浮在手势条上方）。
     //
     // 一键回退：把 ② 的填充与 ① 的 margin 加回去（即回到 2026-09-25 那一版的行为）。
-    Column(){
+    // 2026-10-25：外层由 Column 改 Stack —— 只为把「碰一碰引导」浮在页面顶部
+    // 而不挤动 Header（Column 里加子节点会垂直排布、把内容顶下去）。
+    Stack({ alignContent: Alignment.Top }) {
       Column(){
         Header({
           customLeftBuilder: () => {
@@ -346,6 +284,20 @@ export default struct BookManagePage {
           [ShelfColors.gradientEnd(this.theme.secondColor), 0.2]]
       })
       .borderRadius({ bottomRight: 5, bottomLeft: 5 })
+      .width('100%')
+      .height('100%')
+
+      // ── 顶部碰一碰/隔空传送引导（2026-10-25）──────────────────────────────
+      // 官方素材逐帧播放（`common/share/ShareGuideTip.ets`）；`active` 只在有勾选时
+      // 为真；不支持该能力的设备组件内部完全不渲染。
+      // ⚠️ 下移量必须算进**状态栏/摄像头区域**：本页根节点挂了
+      //   `.expandSafeArea([SafeAreaType.SYSTEM])`（见下方 ③），所以 y=0 是**物理屏幕顶**，
+      //   原来写死 `margin({top:12})` 会让气泡直接压在**前置摄像头**上（用户真机反馈）。
+      //   状态栏/摄像头这一整段的高度就是 `topRectHeight` ⇒ 至少要让开它整段：
+      //   只下移 2/3 仍会压到摄像头下沿，故取 `topRectHeight + 8`。
+      //   回退/微调：只改这一个表达式即可。
+      ShareGuideTip({ active: this.checkListNumber.length > 0 })
+        .margin({ top: this.topRectHeight + 8 })
     }
     .width('100%')
     .height('100%')
@@ -382,36 +334,25 @@ export default struct BookManagePage {
     HdsTabs({ index: 0, barPosition: BarPosition.End, controller: this.manageTabController }) {
       TabContent() {
         Scroll(){
-          if (this.bookTypeNumber === 5){
-            WorksBookLists({
-              worksLists:this.worksLists,
+          // 2026-10-25：书单分支（`bookTypeNumber === 5`）整块删除 ⇒ 只剩「分组 / 书籍」两路
+          if (this.bookTypeNumber === 1){
+            BookFolderManages({
               checkGroup:this.checkLists,
               EXHIBIT:this.EXHIBIT,
-              isShowCheck:true,
+              bookGroups:this.bookGroups,
               onSelect:()=>{
                 this.listenCheckList()
               }
             })
           } else {
-            if (this.bookTypeNumber === 1){
-              BookFolderManages({
-                checkGroup:this.checkLists,
-                EXHIBIT:this.EXHIBIT,
-                bookGroups:this.bookGroups,
-                onSelect:()=>{
-                  this.listenCheckList()
-                }
-              })
-            } else {
-              bookListManage({
-                checkGroup:this.checkLists,
-                EXHIBIT:this.EXHIBIT,
-                bookList:this.bookList,
-                onSelect:()=>{
-                  this.listenCheckList()
-                }
-              })
-            }
+            bookListManage({
+              checkGroup:this.checkLists,
+              EXHIBIT:this.EXHIBIT,
+              bookList:this.bookList,
+              onSelect:()=>{
+                this.listenCheckList()
+              }
+            })
           }
         }
         // ════════════════════════════════════════════════════════════════════
@@ -517,7 +458,7 @@ export default struct BookManagePage {
         //     手势条 / 三键导航 / 平板，不会各算各的。
         //
         //   ⚠️ 回退：删掉本行 ⇒ 恢复"最后一本书被 dock 压住"。
-        .contentEndOffset(ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight))
+        .contentEndOffset(this.manageContentEndOffset())
       }
       // ⚠️ 2026-10-12 四修：**不要把 `tabBar` 指向一个"再嵌套调用别的 @Builder"的
       //   中转 builder**。上一版是 `.tabBar(this.manageTabBar())`，而
@@ -529,7 +470,8 @@ export default struct BookManagePage {
       //   （`.tabBar(this.TabBuilder(item.index, item.title, item.symbol!))`，
       //     而 `TabBuilder` 内部直接画 Column/Flex/SymbolGlyph，**不再转发**）。
       //   ⇒ 这里照做：三元选择**内容 builder 本身**，去掉 `manageTabBar()` 中转层。
-      .tabBar(this.bookTypeNumber === 5 ? this.footerDel() : this.footerTitle())
+      // 2026-10-25：书单已删除 ⇒ tabBar 恒为操作栏（原 `=== 5 ? footerDel() : footerTitle()`）
+      .tabBar(this.footerTitle())
       // 官方参考实现（documentId `…/沉浸光感典型场景/arkts-immersive-light-sample`）把
       // `.expandSafeArea([SafeAreaType.SYSTEM])` 同时挂在 Tabs 与每个 TabContent 上，
       // 理由原文：「设置底部 Tabs 悬浮并为 Tabs 组件开启沉浸光感，同时使用 ExpandSafeArea
@@ -540,8 +482,13 @@ export default struct BookManagePage {
     //   「悬浮样式仅在 **barOverlap 为 true**、vertical 为 false、barPosition 为
     //     BarPosition.End 时生效，三个条件需同时满足，否则 systemMaterial 设置不生效。」
     //   本处：barPosition = End ✓、vertical 未设（默认 false）✓ ⇒ 必须补 barOverlap(true)。
+    // ⚠️ 2026-10-25：注意 `barOverlap` 同时是**整套悬浮几何**的开关 —— API<26 上
+    //   `isOn()` 为假 ⇒ 悬浮几何（barWidth/barSideMargin/barBottomMargin）全部失效，
+    //   平板因此退回贴底矮条。补救见 `dockBarHeight()` 一节的注释。
     .barOverlap(ImmersiveMaterialUtil.isOn())
     .scrollable(false)
+    // 2026-10-25：操作栏高度（仅非手机生效；手机仍为 HDS 默认 56，见 dockBarHeight()）
+    .barHeight(this.dockBarHeight())
     // 与书架 dock **同款悬浮样式**（同一份 `manageFloatingStyle()`，
     // 几何/材质/关蒙层的做法逐字段对齐 `Index.hdsFloatingStyle()`）
     //
@@ -578,6 +525,86 @@ export default struct BookManagePage {
    *   ⚠️ 想更散就把这个数调大（上限约 52vp，再大首尾会顶到圆角）。
    */
   private readonly MANAGE_DOCK_ITEM_SPACE: number = 28
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 平板 / 2in1 的底部操作栏尺寸（2026-10-25 新增）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 用户原话：「平板和2n1模式下，批量管理页底部的dock太小了…别影响手机模式下哦，
+  //   只是作用在手机以外的模式下。」
+  //
+  // ── 为什么平板上会"小"（真机 + SDK 双向取证，不是猜）──────────────────────
+  //   ① 悬浮几何（`barWidth` / `barSideMargin` / `barBottomMargin`）**只在
+  //      `barOverlap(true)` 时生效** —— 本页 `.barOverlap(ImmersiveMaterialUtil.isOn())`。
+  //   ② 而 `ImmersiveMaterialUtil.isOn()` 的闸门是 **API ≥ 26**
+  //      （`ImmersiveMaterialUtil.ets:77` `MIN_API_IMMERSIVE = 26`）。
+  //   ③ 实测设备：MatePad Pro = **API 24**（`param get const.ohos.apiversion` = 24）、
+  //      手机 Mate 80 Pro Max = API 26。
+  //   ⇒ 平板：`barOverlap(false)` ⇒ 官方**静默忽略**整套悬浮几何 ⇒ 退回 HDS 默认贴底条。
+  //     真机 dump（1840×2800px，密度 2.25 ⇒ 817×1244vp）：
+  //       TabBar 内容 `[0, 2692, 1840, 2800]` = **满宽 817vp / 高仅 48vp / 贴屏幕最底**
+  //       四个按钮合计只有 `707..1133` = **189vp**（占屏 23%），图标 24vp、文字 11vp。
+  //     对照书架 dock（同机）：`[0, 2611, 1840, 2737]` 高 56vp ⇒ 管理页明显更矮更挤。
+  //
+  // ── 所以：**几何不能依赖 barFloatingStyle** ────────────────────────────────
+  //   `barHeight()` 是 Tabs/HdsTabs 的**基础属性**（不是 23 才有的悬浮能力），
+  //   任何 API 都生效 ⇒ 非手机用它把条撑高；再配合内容尺寸放大 + 底部让出手势区。
+  //   ⚠️ 手机一行都不改（返回的仍是 56 / 24 / 11 / 28 / 0），零回归。
+  //
+  // ⚠️ 一键回退：把 `isPhoneDevice()` 恒返回 `true`，全部尺寸立刻回到手机口径。
+  /** 是否手机（手机走 HDS 悬浮胶囊，尺寸已适配，本组方法对它全部返回原值） */
+  private isPhoneDevice(): boolean {
+    return deviceInfo.deviceType === 'phone'
+  }
+
+  /**
+   * 操作栏高度（vp）。
+   * 手机 56 = HDS 默认（与 `Index.ets:1415` 书架同值）；非手机 72 + 手势区让位。
+   */
+  private dockBarHeight(): number {
+    if (this.isPhoneDevice()) {
+      return ImmersiveMaterialUtil.TAB_BAR_HEIGHT
+    }
+    return 72 + this.bottomRectHeight
+  }
+
+  /** 图标尺寸（vp）：手机 24（现状），非手机 28 */
+  private dockIconSize(): number {
+    return this.isPhoneDevice() ? 24 : 28
+  }
+
+  /** 文字字号（vp）：手机 11（现状），非手机 13 */
+  private dockLabelSize(): number {
+    return this.isPhoneDevice() ? 11 : 13
+  }
+
+  /**
+   * 按钮项间距（vp）：手机沿用 `MANAGE_DOCK_ITEM_SPACE`（28，真机调过的值）；
+   * 非手机放大到 64 —— 平板上 4~5 个按钮若还用 28，会挤在条中央一小坨（实测 189vp / 817vp）。
+   */
+  private dockItemSpace(): number {
+    return this.isPhoneDevice() ? this.MANAGE_DOCK_ITEM_SPACE : 64
+  }
+
+  /**
+   * 操作栏内容的底部内边距（vp）—— **让出系统手势条**。
+   * 手机靠 HDS 悬浮样式的 `barBottomMargin` 让位（已生效）；非手机悬浮样式失效，
+   * 条又贴在屏幕最底（实测内容底边 = 2800px = 屏幕底），必须自己让。
+   */
+  private dockBottomInset(): number {
+    return this.isPhoneDevice() ? 0 : this.bottomRectHeight
+  }
+
+  /**
+   * 列表底部避让（`Scroll.contentEndOffset`）。
+   * 手机沿用 `ImmersiveMaterialUtil.dockContentEndOffset()`（含安全区，见其注释）；
+   * 非手机条更高（72 + 安全区）⇒ 用本页实际条高 + 12 呼吸位，避免最后一排被压住。
+   */
+  private manageContentEndOffset(): number {
+    if (this.isPhoneDevice()) {
+      return ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
+    }
+    return this.dockBarHeight() + 12
+  }
 
   /** `manageBarWidth()` 的缓存（render 期间不重复查显示信息） */
   private manageBarWCache: number = 0
@@ -757,12 +784,7 @@ export default struct BookManagePage {
           return true
         }
         break
-      case 5:
-        if (this.worksLists.length === 0){
-          showMessage('页面暂无操作数据')
-          return true
-        }
-        break
+      // 2026-10-25：`case 5`（书单）随书单功能删除
       default:
         if (this.bookList.length === 0){
           showMessage('页面暂无操作数据')
@@ -777,23 +799,31 @@ export default struct BookManagePage {
   //遍历列表数据
   dataMoveCheckList(value:boolean){
 
-    this.checkLists = {};
+    // ⚠️ 2026-10-25：**先整体构造再一次性赋值**。
+    //   旧写法是 `this.checkLists = {}` 之后在循环里逐条 `this.checkLists[id] = value`。
+    //   现在格子组件用 `@Watch` 监听本对象的**引用变化**来同步勾选视觉
+    //   （见 `ManageBrush.ets` 的 MANAGE_SEL_VERSION_KEY 说明与 `BookInfoGridManage`），
+    //   若先赋空对象，`@Watch` 会在循环填充**之前**触发 ⇒ 读到空表 ⇒ 全选后一个都不亮。
+    const next: Record<number, boolean> = {}
     if (this.bookTypeNumber === 1){
       this.bookGroups.forEach((item)=>{
-        item.groupId && !item.isSystem && item.show ?this.checkLists[item.groupId] = value:''
+        item.groupId && !item.isSystem && item.show ? next[item.groupId] = value:''
       })
-    } else if (this.bookTypeNumber === 5){
-      this.worksLists.forEach((item)=>{
-        item.worksId?this.checkLists[item.worksId] = value:''
+    } else if (this.bookTypeNumber === 1){
+      this.bookGroups.forEach((item)=>{
+        item.groupId && !item.isSystem && item.show ? next[item.groupId] = value:''
       })
     } else {
       this.bookList.forEach((item)=>{
-        item.id?this.checkLists[item.id] = value:''
+        item.id?next[item.id] = value:''
       })
     }
+    this.checkLists = next;
     if(!value){
       this.allCheck = false;
     }
+    // 全选 / 取消全选 ⇒ 广播，让所有格子回读新状态（2026-10-25）
+    bumpSelectionVersion()
   }
 
 
@@ -810,29 +840,16 @@ export default struct BookManagePage {
       // 组件还活着时写，保证书架（BookContent / GroupType / BookFolder）收到信号。
       if (this.bookTypeNumber === 1) {
         this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      } else if (this.bookTypeNumber !== 5) {
+      } else {
         this.isBookRefreshing++
       }
       // 迁 Navigation 第 4 期：本页现在是 NavDestination ⇒ 必须走门面返回。
       AppRouter.back()
     })
   }
-  //书单底部操作栏（同为 HdsTabs 的 tabBar 内容 ⇒ 撑满页签栏高度、不自己画背景）
-  @Builder footerDel(){
-    Column(){
-      Text('删除').fontSize(16).fontWeight(500).lineHeight(24).fontColor('#EF4444')
-    }.onClick(()=>{
-      Haptics.tap();
-      if (this.checkListNumber.length <= 0) {
-        showMessage('请选择要操作的内容');
-        return
-      }
-      this.delDialog?.open();
-    })
-    .justifyContent(FlexAlign.Center)
-    .width('100%')
-    .height('100%')
-  }
+  // 2026-10-25：`footerDel()`（书单专用的单按钮「删除」操作栏）随书单功能删除。
+  //   原实现是 `bookTypeNumber === 5` 时 tabBar 只画一个「删除」；
+  //   书单下线后 tabBar 恒为 `footerTitle()`（多按钮操作栏），故本 builder 不再需要。
   // 底部操作栏（2026-09-30 v3 回填：图标全面 symbol 化 + 新增「分享」）
   // symbol 名全部经 SDK 符号表（sysResource.js，4042 项）核实存在。
   //
@@ -924,11 +941,14 @@ export default struct BookManagePage {
    *      ⇒ 回到"等分 221px 但图标间距不均"的上一版。
    */
   @Builder footerTitle(){
-      Row({ space: this.MANAGE_DOCK_ITEM_SPACE }){
+      // 2026-10-25：项间距 / 图标 / 字号按设备分流（手机全部取原值，见 dockItemSpace() 等）
+      Row({ space: this.dockItemSpace() }){
         ForEach(this.bookTypeNumber===1?this.buttonListInfo5:this.buttonListInfo4,(item:buttonList)=>{
           ManageToolButton({
             icon: item.icon,
             label: item.id === 1 ? this.topTitle : item.title,
+            iconSize: this.dockIconSize(),
+            labelSize: this.dockLabelSize(),
             onTap: (): void => {
               this.bookInfoButton(item.id)
             }
@@ -941,6 +961,8 @@ export default struct BookManagePage {
       .alignItems(VerticalAlign.Center)
       // ③ 五项整组在 HDS 条内**居中**（左右留白自动相等）
       .justifyContent(FlexAlign.Center)
+      // 2026-10-25：非手机让出底部手势区（手机为 0，见 dockBottomInset()）
+      .padding({ bottom: this.dockBottomInset() })
     }
   //底部操作栏功能
   bookInfoButton(index:number){
@@ -958,12 +980,7 @@ export default struct BookManagePage {
           console.error('openMoveGroup failed: ' + e.message)
         }); break;
       case 3 :
-        if (this.bookTypeNumber === 1) {
-          this.bookOrFolder = 1
-        } else {
-          this.bookOrFolder = 0
-        }
-        this.openAddToBookList();
+        // 2026-10-25：「加入书单」入口与弹窗已随书单功能删除 ⇒ 本分支不再可达
         break;
       case 4 :
         this.clickHideDialog?.open()
@@ -976,27 +993,25 @@ export default struct BookManagePage {
   }
 
   /**
-   * 分享选中书籍（2026-09-30 回填）——官方 API：
+   * 分享选中书籍（2026-09-30 回填；2026-10-25 收口到 BookShareBridge）——官方 API：
    * `systemShare.SharedData`（SharedRecord: utd+uri，官方 share-system-share 示例同款）
    * + `ShareController.show(context, options)` 拉起系统分享面板。
-   * utd 由文件后缀运行时解析（官方 knock 示例：
-   * `uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix)`）；
-   * 沙箱路径转 uri 用 `fileUri.getUriFromPath`（官方 Share Kit 术语/uri 说明）。
-   * 对端装了喵阅（注册 ShareExtensionAbility）⇒ 分享面板推荐区直达 ⇒ 分享即入库。
+   * utd 由文件后缀运行时解析、沙箱路径转 uri 用 `fileUri.getUriFromPath`
+   * —— 这两件事现在只有一份实现（`BookShareBridge.buildSharedData`），
+   * 与碰一碰/隔空传送共用，保证「三种分享方式发出去的内容完全一致」。
    */
   private async manageShare(){
     if (this.bookTypeNumber === 1) {
       showMessage('分组暂不支持分享，请选择书籍');
       return
     }
-    const checked = new Set<number>(this.checkListNumber)
-    const books: Books[] = this.bookList.filter((b: Books) => checked.has(b.id ?? -1) && !!b.bookUrl)
-    if (books.length <= 0) {
+    const sel: ShareSelection | null = this.currentSelection()
+    if (sel === null) {
       showMessage('选中书籍没有可分享的文件');
       return
     }
     try {
-      const shareData: systemShare.SharedData | null = this.buildBookShareData(books)
+      const shareData: systemShare.SharedData | null = BookShareBridge.buildSharedData(sel)
       if (shareData === null) {
         showMessage('书籍文件不存在，无法分享');
         return
@@ -1015,56 +1030,28 @@ export default struct BookManagePage {
     }
   }
 
-  /** 把选中书籍构造成 SharedData（首条进构造器、其余 addRecord，官方范式） */
-  private buildBookShareData(books: Books[]): systemShare.SharedData | null {
-    let data: systemShare.SharedData | null = null
-    for (const b of books) {
-      const path: string = b.bookUrl ?? ''
-      if (!path) {
-        continue
-      }
-      const suffix: string = path.substring(path.lastIndexOf('.'))
-      let utdId: string = 'general.text'
-      try {
-        utdId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix) ?? 'general.text'
-      } catch (err) {
-        // 后缀无法识别时退回 general.text（txt 场景的官方声明值）
-      }
-      const record: systemShare.SharedRecord = {
-        utd: utdId,
-        uri: fileUri.getUriFromPath(path),
-        title: b.bookName ?? '书籍'
-      }
-      if (data === null) {
-        data = new systemShare.SharedData(record)
-      } else {
-        data.addRecord(record)
-      }
-    }
-    return data
-  }
-
   /**
-   * 碰一碰回调（2026-09-30 回填）——官方 API（最佳实践 bpta-application-knock-file-share）：
-   * `harmonyShare.on('knockShare', (target: harmonyShare.SharableTarget) => {...})`
-   * 回调里构建 SharedData 后 `target.share(shareData)`；页面离开/后台必须 off。
-   * 约束：双端亮屏+解锁+华为分享开启；应用路由需手动签名（联调注意）。
+   * 由当前勾选构造「选定快照」（2026-10-25 新增）。
+   *
+   * 这是本页写进 `BookShareBridge` 的**唯一入口**，`manageShare` 与
+   * 碰一碰/隔空传送都读它 ⇒ 三条路径选中集合必然一致。
+   * 分组（`bookTypeNumber===1`）没有可分享文件，直接返回 null。
    */
-  private knockCallback(target: harmonyShare.SharableTarget): void {
-    if (this.bookTypeNumber === 1 || this.checkListNumber.length <= 0) {
-      showMessage('请先勾选要碰一碰分享的书籍');
-      return
+  private currentSelection(): ShareSelection | null {
+    if (this.bookTypeNumber === 1) {
+      return null
     }
     const checked = new Set<number>(this.checkListNumber)
     const books: Books[] = this.bookList.filter((b: Books) => checked.has(b.id ?? -1) && !!b.bookUrl)
     if (books.length <= 0) {
-      return
+      return null
     }
-    const shareData: systemShare.SharedData | null = this.buildBookShareData(books)
-    if (shareData === null) {
-      return
-    }
-    target.share(shareData)
+    return buildSelection(books)
+  }
+
+  /** 把当前勾选同步进 bridge（`dataCheckList()` 末尾统一调用） */
+  private syncShareSelection(): void {
+    BookShareBridge.get().setSelection(this.currentSelection())
   }
   //置顶功能
   // ⚠️ 2026-09-29 重写（审核问题②「置顶成功后数据未实时更新」）：
@@ -1165,15 +1152,15 @@ export default struct BookManagePage {
       case 1:
         await this.getGroupList();
         break;
-      case 5:
-        await this.getWorkLists();
-        break;
+      // 2026-10-25：`case 5`（书单）随书单功能删除
       default:
         await this.getBookList();
         break;
     }
     // 只重算"选中 id 列表"，不动 checkLists 本身
     this.dataCheckList()
+    // 2026-10-25：列表项是重建的（ForEach 同键复用），勾选视觉要从 checkLists 重新回读
+    bumpSelectionVersion()
   }
   //删除确认弹窗
   @State delCache:boolean = false
@@ -1196,8 +1183,7 @@ export default struct BookManagePage {
       switch (this.bookTypeNumber){
         case 1:
           bookGroupUtil.delGroupById(item); break;
-        case 5:
-          worksListsUtils.delWorksByIds(item);break;
+        // 2026-10-25：`case 5`（书单）随书单功能删除
         default:
           booksUtil.delBooksById(item);break;
       }
@@ -1333,9 +1319,7 @@ export default struct BookManagePage {
        await this.getGroupList();
        this.BOOK_IS_BOOK_GROUPS_REFRESHING++
        break;
-     case 5:
-       await this.getWorkLists();
-       break;
+       // 2026-10-25：`case 5`（书单）随书单功能删除
        default:
          await this.getBookList();
          // this.isBookRefreshing++
@@ -1351,6 +1335,9 @@ export default struct BookManagePage {
       .filter(key => this.checkLists[Number(key)])
       .map(key => Number(key));
     this.checkListNumber = keys
+    // ★ 2026-10-25：勾选的**唯一收敛点**（单选/全选/刷新后回填都经过这里）
+    //   ⇒ 碰一碰/隔空传送的选定快照在这里同步，三条分享路径选中的书必然一致。
+    this.syncShareSelection()
   }
   //判断checkLists变化值当key的值为false移除当前值
   listenCheckList() {
@@ -1389,6 +1376,13 @@ export default struct BookManagePage {
 struct ManageToolButton {
   icon: Resource = $r('sys.symbol.pin')
   label: string = ''
+  /**
+   * 图标尺寸（vp）。默认 24 = 书架 `TabBuilder` 的真机口径（手机现状，不许动）。
+   * 2026-10-25 新增：平板/2in1 上由父级传 28（平板 dock 太小的补救，见 `dockIconSize()`）。
+   */
+  iconSize: number = 24
+  /** 文字字号（vp）。默认 11 = 手机现状；平板/2in1 传 13。 */
+  labelSize: number = 11
   onTap: () => void = (): void => {}
   @State jellyScale: number = 1
 
@@ -1400,11 +1394,11 @@ struct ManageToolButton {
         justifyContent: FlexAlign.Center
       }) {
         SymbolGlyph(this.icon)
-          .fontSize(24)
+          .fontSize(this.iconSize)
           .fontColor([ShelfColors.icon()])
           .scale({ x: this.jellyScale, y: this.jellyScale })
         Text(this.label)
-          .fontSize(11)
+          .fontSize(this.labelSize)
           .fontColor(ShelfColors.icon())
           .margin({ top: 5 })
           .maxLines(1)
