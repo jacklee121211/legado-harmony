@@ -88,6 +88,8 @@ export class Haptics {
    * ⚠️ 2026-10-22 用户口径变更（上架前定稿）：「震动强度 500，震感第三档」。
    *   原来 250 = 中等强度 ⇒ 改为上限 500（`intensity = 500/5 = 100`，即
    *   `VibratePreset.intensity` 的合法上限，见文件头 `@ohos.vibrator.d.ts:628-635`）。
+   *   ⚠️ 2026-10-25：其中「震感第三档」已再改为**第 2 档**（见下面 `MODE_DEFAULT`）；
+   *      强度 500 保持不变。
    *   默认值只在**本地从未写过该键**时生效（`getSync(key, def)` 语义，见
    *   `harmony-utils PreferencesUtil.ets:105-109`）⇒ 用户调过的值不受影响。
    */
@@ -97,14 +99,22 @@ export class Haptics {
   /** 震感模式持久化键（0-500，每 50 一档 → 10 种官方效果拼配，见 MODE_TABLE） */
   static readonly KEY_MODE: string = 'HapticsMode';
   /**
-   * 震感模式默认值 = **第三档**（`MODE_TABLE[2]` = '利落'，`EFFECT_CLOCK_TIMER`）。
+   * 震感模式默认值 = **第二档**（`MODE_TABLE[1]` = '清脆'）。
    *
    * 换算链（与 `modeIndex()` 逐字一致）：
    *   `idx = round(mode / 50)` ⇒ `clamp(1, 10)` ⇒ `-1` 得到 0 基下标。
-   *   要落在第 3 档（下标 2）⇒ `round(mode/50) = 3` ⇒ **mode = 150**。
-   *   （原默认 250 ⇒ round(5)=5 ⇒ 下标 4 = 第 5 档「轻柔」，与本次要求不符。）
+   *   要落在第 2 档（下标 1）⇒ `round(mode/50) = 2` ⇒ **mode = 100**。
+   *
+   * ⚠️ 历史口径变更（只改默认值，不动任何已有用户数据）：
+   *   · 2026-10-22 之前：默认 250 ⇒ 第 5 档「轻柔」（= 用户说的"5档"）；
+   *   · 2026-10-22：改成 150 ⇒ 第 3 档「利落」；
+   *   · 2026-10-25（本次，用户原话「首次安装应该是强度 500，震感 2 档」）：改成 100 ⇒ 第 2 档「清脆」。
+   * 默认值只在**本地从未写过该键**时生效（`getSync(key, def)` 语义，
+   * `harmony-utils PreferencesUtil.ets:105-109`）⇒ 用户调过的值不受影响；
+   * 存量用户的"旧默认"由 `KeyVolDefaultMigration.ets` 的 `HapticsDefaultMigration` 负责，
+   * 见那边 `LEGACY_MODE` 与 V2 段注释。
    */
-  static readonly MODE_DEFAULT: number = 150;
+  static readonly MODE_DEFAULT: number = 100;
 
   /**
    * 震感模式表（10 档，全部由官方预置效果拼配，用户要求"比如清脆，线性等等"）。
@@ -161,8 +171,50 @@ export class Haptics {
     }
   }
 
-  /** 强度滑块值 0-500（读不到时默认 250） */
+  // ══════════════════════════════════════════════════════════════════════════
+  // 拖动滑块的「内存预览值」（2026-10-25 新增）
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── 修的是什么（用户反馈原话）────────────────────────────────────────────
+  //   「震动这两个滑块，滑动起来没有直观变化…通过滑动感觉不到强弱变化，
+  //     甚至震感模式滑动的时候，清脆的字样都不变。应该有边滑边有变化反馈。」
+  //
+  // ── 根因（读码定位，不是猜）───────────────────────────────────────────────
+  //   `getStrength()` / `getMode()` 都走 `PreferencesUtil.getSync(...)`，
+  //   而设置页滑块**只在松手（`SliderChangeMode.End`/`Click`）才 `putSync`**
+  //   （`MySetPage` 那两个 `onChange`，注释写明"避免拖动过程频繁 flush"）。
+  //   ⇒ 拖动期间 `Haptics.tick()` → `fire()` 读到的仍是**松手前的旧值**
+  //     ⇒ 每一档震感完全一样；`modeName()` 同理，字样也停在旧档。
+  //
+  // ── 做法：预览值优先于落盘值，但**不写盘** ───────────────────────────────
+  //   · `setPreview(strength, mode)`：拖动中调用，把"当前手指位置的值"放进内存；
+  //   · `clearPreview()`：松手落盘后调用，之后一切回到读 Preferences；
+  //   · `-1` = 无预览（默认）。
+  //   ⇒ 既保住"拖动过程不频繁 flush"，又让试震/文案实时跟随手指。
+  //   ⚠️ 必须保证松手时清掉：否则后续全 App 的震动都会用这个预览值。
+  private static previewStrength: number = -1;
+  private static previewMode: number = -1;
+
+  /**
+   * 设置拖动预览值（设置页两个滑块 `onChange` 里调用）。
+   * @param strength 0-500 的实时强度
+   * @param mode 0-500 的实时震感档位值
+   */
+  static setPreview(strength: number, mode: number): void {
+    Haptics.previewStrength = Math.min(Haptics.STRENGTH_MAX, Math.max(0, Math.round(strength)));
+    Haptics.previewMode = Math.min(Haptics.STRENGTH_MAX, Math.max(0, Math.round(mode)));
+  }
+
+  /** 清除拖动预览（松手落盘后 / 离开设置页时调用） */
+  static clearPreview(): void {
+    Haptics.previewStrength = -1;
+    Haptics.previewMode = -1;
+  }
+
+  /** 强度滑块值 0-500（拖动预览优先，其次落盘值，最后默认 500） */
   static getStrength(): number {
+    if (Haptics.previewStrength >= 0) {
+      return Haptics.previewStrength;
+    }
     try {
       const v = PreferencesUtil.getSync(Haptics.KEY_STRENGTH, Haptics.STRENGTH_DEFAULT) as number;
       return Math.min(Haptics.STRENGTH_MAX, Math.max(0, Math.round(v)));
@@ -171,8 +223,11 @@ export class Haptics {
     }
   }
 
-  /** 震感模式滑块值 0-500（读不到时默认 250） */
+  /** 震感模式滑块值 0-500（拖动预览优先，其次落盘值，最后默认 100 = 第 2 档） */
   static getMode(): number {
+    if (Haptics.previewMode >= 0) {
+      return Haptics.previewMode;
+    }
     try {
       const v = PreferencesUtil.getSync(Haptics.KEY_MODE, Haptics.MODE_DEFAULT) as number;
       return Math.min(Haptics.STRENGTH_MAX, Math.max(0, Math.round(v)));
@@ -181,15 +236,29 @@ export class Haptics {
     }
   }
 
-  /** 当前模式档位序号（0 基 0..9；滑块 50 → 第 1 档，500 → 第 10 档） */
-  static modeIndex(): number {
-    const idx = Math.round(Haptics.getMode() / Haptics.STRENGTH_STEP);
+  /**
+   * 指定 mode 值的档位序号（0 基 0..9；50 → 第 1 档，500 → 第 10 档）。
+   * 2026-10-25 抽出：设置页滑块要用**实时值**算档位名，不能等落盘。
+   */
+  static modeIndexOf(mode: number): number {
+    const clamped: number = Math.min(Haptics.STRENGTH_MAX, Math.max(0, Math.round(mode)));
+    const idx = Math.round(clamped / Haptics.STRENGTH_STEP);
     return Math.min(10, Math.max(1, idx)) - 1;
+  }
+
+  /** 当前模式档位序号（0 基 0..9） */
+  static modeIndex(): number {
+    return Haptics.modeIndexOf(Haptics.getMode());
+  }
+
+  /** 指定 mode 值的震感模式名（设置页滑块拖动时用它实时刷新文案） */
+  static modeNameOf(mode: number): string {
+    return Haptics.MODE_TABLE[Haptics.modeIndexOf(mode)].name;
   }
 
   /** 当前震感模式名（设置页滑块旁显示用） */
   static modeName(): string {
-    return Haptics.MODE_TABLE[Haptics.modeIndex()].name;
+    return Haptics.modeNameOf(Haptics.getMode());
   }
 
   /** 全局开关（含强度>0）—— 给暂不迁移的旧路径（TtsControlPanel）做守卫用 */

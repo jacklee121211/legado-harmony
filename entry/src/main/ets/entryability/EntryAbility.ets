@@ -485,11 +485,18 @@ export default class EntryAbility extends UIAbility {
     //    同样必须早于首屏渲染（设置页首帧要按迁移后的值渲染）。
     KeyVolDefaultMigration.runOnce();
     // ── 「震动强度 / 震感模式」默认值一次性迁移（2026-10-22）─────────────────────
-    //    新默认值 = 强度 500 / 震感第三档（用户上架前定稿）；**只对新装生效**，
+    //    新默认值 = 强度 500 / 震感**第 2 档**（2026-10-25 由第 3 档再改，用户口径
+    //    「首次安装应该是强度 500，震感 2 档」）；**只对新装生效**，
     //    老用户（升级安装）若从未拖过滑块，显式写回改造前的 250 / 250（不改变手感）。
     //    幂等：独立标记键 `hapticsDefaultMigratedV1` ⇒ 以后版本更新不再执行。
     //    同样必须早于首屏渲染（设置页首帧要按迁移后的值渲染）。
     HapticsDefaultMigration.runOnce();
+    // ── V2（2026-10-25）：把"仍停在旧默认 250/250 上"的存量配置升到新默认 ──────────
+    //    由 `HapticsDefaultMigration.UPGRADE_LEGACY_DEFAULTS` 控制，**当前开启**
+    //    （用户 2026-10-25 拍板选"全员生效"口径）：只升级"值仍精确等于旧默认 250/250"
+    //    的键，用户真正拖过的值一律不动；跑一次即落 `hapticsDefaultMigratedV2` 永不再跑。
+    //    详见该类 V2 段注释（含一键回退：把该常量改回 false）。
+    HapticsDefaultMigration.runOnceV2();
     WindowAbility.getInstance().setWindowStage(windowStage);
     // 一镜到底官方库初始化（2026-10-02 迁移 @hmanimations/ezcustomtransition，
     // skill: hmos-arkui-longtake-transition Step 2 —— 缺它转场 API 全部不可用）

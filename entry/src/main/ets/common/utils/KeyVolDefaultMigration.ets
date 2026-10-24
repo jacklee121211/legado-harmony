@@ -154,18 +154,18 @@ function isUpgradeInstall(): boolean {
  *
  * ── 为什么必须显式写旧默认值 ──────────────────────────────────────────────
  * 两个键的默认值已改成 `Haptics.STRENGTH_DEFAULT = 500` /
- * `Haptics.MODE_DEFAULT = 150`（见 `Haptics.ets`）。而
- * `PreferencesUtil.getSync(key, defValue)` 在**键从未写入过**时返回 `defValue`
+ * `Haptics.MODE_DEFAULT = 100`（见 `Haptics.ets`；2026-10-25 由 150 再改为 100 = 第 2 档）。
+ * 而 `PreferencesUtil.getSync(key, defValue)` 在**键从未写入过**时返回 `defValue`
  * （`oh_modules/@pura/harmony-utils/.../PreferencesUtil.ets:105-109` 转发
  * `preferences.getSync`）⇒ 绝大多数老用户从没拖过滑块、本地**没有**这两个键
- * ⇒ 直接改默认值会让他们一起变成 500/第三档，正是用户要避免的"手感被改"。
+ * ⇒ 直接改默认值会让他们一起变成 500/第 2 档，正是用户要避免的"手感被改"。
  *
  * ── 处理（每个安装**只跑一次**）─────────────────────────────────────────────
  *   ① 标记 `hapticsDefaultMigratedV1` 已存在 ⇒ 直接返回（以后版本更新不再执行）；
  *   ② 某键**已存在**（用户自己调过）⇒ 一律不动，尊重用户选择；
  *   ③ 判定为**升级安装** ⇒ 给缺失的键显式写入**旧默认值**
  *      （强度 250 / 震感 250，即改造前的 `STRENGTH_DEFAULT` / `MODE_DEFAULT`）；
- *   ④ 判定为**新装** ⇒ 不写，让 `Haptics` 里的新默认值（500 / 150）生效；
+ *   ④ 判定为**新装** ⇒ 不写，让 `Haptics` 里的新默认值（500 / 100）生效；
  *   ⑤ 最后写标记。失败则不写标记（下次启动重试），且绝不抛异常影响启动。
  *
  * ── 一键回退 ───────────────────────────────────────────────────────────────
@@ -187,6 +187,83 @@ export class HapticsDefaultMigration {
    */
   private static readonly LEGACY_STRENGTH: number = 250;
   private static readonly LEGACY_MODE: number = 250;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // V2（2026-10-25）：把"仍停在旧默认值上"的存量配置升级到新默认
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 是否执行 V2 升级 —— **两种口径的总开关**。
+   *
+   * ── 用户给的两个方案（原话）──────────────────────────────────────────────
+   *   ①「不覆盖老用户现有设置，只为新用户实现这个默认数据」；
+   *   ②「这个版本全员使用这个参数，但是用户如果自行修改了，下个版本则不再覆盖这个参数了，
+   *      而是集成老用户修改过的参数」。
+   *
+   * ── 取值 ──────────────────────────────────────────────────────────────────
+   *   `true`（**当前默认，2026-10-25 用户拍板选方案②**）= 方案②的安全版：
+   *      **只把"值仍精确等于旧默认 250/250"的键**升级到新默认 500/100；
+   *      任何其它值（= 用户自己拖过的）**一律不动**。
+   *      ⇒ 这样"全员用上新参数"的同时，真正的用户选择一个都不会被覆盖。
+   *   `false` = 方案①：V1 已经把老用户的旧默认 250/250 显式写进本地，V2 什么都不做
+   *      ⇒ 存量用户手感**一律不变**，只有新装用户拿到 500/100。
+   *      （一键回退点：把本常量改回 `false` 即可。）
+   *
+   * ── 为什么方案②要按"值是否等于旧默认"来判定，而不是简单全员覆盖 ──────────
+   *   250/250 这个组合在**没有用户偏好信息**时与"用户手动设成 250/250"不可区分；
+   *   但它绝大多数情况下是我们 V1 迁移写进去的（用户从没碰过滑块）。
+   *   ⇒ 只升级这个"无信息"的值，是能同时满足两句话的唯一判据。
+   *   ⚠️ 唯一代价：恰好手动设成 250/250 的极少数用户会被一起改掉。
+   *
+   * ── 想切回方案① ──────────────────────────────────────────────────────────
+   *   把本常量改成 `false` 即可（无需其它改动）。V2 标记**只在真正执行时才写**，
+   *   所以保持 `false` 不影响将来再开启（开启后仍会在各机器上跑一次）。
+   */
+  static readonly UPGRADE_LEGACY_DEFAULTS: boolean = true;
+
+  /** V2 一次性标记：只在**真正执行过**升级时写，保证"以后版本不再覆盖" */
+  static readonly KEY_MIGRATED_V2: string = 'hapticsDefaultMigratedV2';
+
+  /**
+   * 启动时调用一次（`EntryAbility.onWindowStageCreate` 里，紧跟 `runOnce()`）。
+   *
+   * 与 V1 的分工：V1 负责"新装 vs 升级"的分流（新装什么都不写，升级写回旧默认）；
+   * V2 负责"把写回去的旧默认再升到新默认"（仅当 `UPGRADE_LEGACY_DEFAULTS = true`）。
+   * 两者各有独立标记键，互不干扰，且都是**幂等**的。
+   */
+  static runOnceV2(): void {
+    if (!HapticsDefaultMigration.ENABLED) {
+      return;
+    }
+    if (!HapticsDefaultMigration.UPGRADE_LEGACY_DEFAULTS) {
+      // 方案①：完全不动存量配置，也**不写标记**（将来切成 true 仍能生效）
+      return;
+    }
+    try {
+      if (PreferencesUtil.hasSync(HapticsDefaultMigration.KEY_MIGRATED_V2) === true) {
+        return;
+      }
+      const strength: number = PreferencesUtil.getSync(Haptics.KEY_STRENGTH,
+        Haptics.STRENGTH_DEFAULT) as number;
+      const mode: number = PreferencesUtil.getSync(Haptics.KEY_MODE,
+        Haptics.MODE_DEFAULT) as number;
+      let changed: boolean = false;
+      if (Math.round(strength) === HapticsDefaultMigration.LEGACY_STRENGTH) {
+        PreferencesUtil.putSync(Haptics.KEY_STRENGTH, Haptics.STRENGTH_DEFAULT);
+        changed = true;
+      }
+      if (Math.round(mode) === HapticsDefaultMigration.LEGACY_MODE) {
+        PreferencesUtil.putSync(Haptics.KEY_MODE, Haptics.MODE_DEFAULT);
+        changed = true;
+      }
+      hilog.info(0x0000, TAG,
+        'hapticsMigrateV2: legacy defaults upgraded=%{public}s (strength=%{public}d mode=%{public}d)',
+        String(changed), Haptics.STRENGTH_DEFAULT, Haptics.MODE_DEFAULT);
+      PreferencesUtil.putSync(HapticsDefaultMigration.KEY_MIGRATED_V2, true);
+    } catch (e) {
+      // 失败不写标记 ⇒ 下次启动重试；绝不阻断启动
+      hilog.warn(0x0000, TAG, 'hapticsMigrateV2 failed, will retry next launch');
+    }
+  }
 
   /**
    * 启动时调用一次（`EntryAbility.onWindowStageCreate` 里，与音量键翻页迁移并排）。

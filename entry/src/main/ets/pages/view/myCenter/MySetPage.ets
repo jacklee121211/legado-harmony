@@ -246,6 +246,17 @@ export default struct MySetPage{
   /** 标定模式（开发者）开关（2026-09-26 迁入，仅解锁后随组出现） */
   @State calibDevOn: boolean = false
 
+  /**
+   * 离开设置页时**兜底清掉震动预览值**（2026-10-25）。
+   *
+   * 正常路径下松手（`SliderChangeMode.End`）就已经 `clearPreview()` 了；
+   * 这里只防极端情况（拖动中页面被销毁 / 手势被打断没收到 End）——
+   * 一旦预览值残留，全 App 后续的震动都会用它而不是用户落盘的值。
+   */
+  aboutToDisappear(): void {
+    Haptics.clearPreview()
+  }
+
   aboutToAppear(): void {
     // 冷启动回填：AppStorage 的 setHaptics 初值与 Preferences 对齐
     this.setHaptics = Haptics.isEnabled()
@@ -1091,22 +1102,36 @@ export default struct MySetPage{
                       .opacity(this.setHaptics ? 1 : 0.4)
                       // 滑动时每**跨一档**（50）震一次（Haptics 内部还有 80ms 节流兜底）；
                       // 落盘只在松手（End）/点击（Click）时做，避免拖动过程频繁 flush。
+                      //
+                      // ⚠️ 2026-10-25 修「拖动时感觉不到强弱变化」（用户反馈）：
+                      //   根因是 `Haptics.tick()` 内部读 `getStrength()` → Preferences，
+                      //   而 Preferences 只在松手才写 ⇒ 拖动全程都按**旧强度**震。
+                      //   ⇒ 现在每帧先把"手指位置的实时值"塞进 `Haptics.setPreview()`，
+                      //     试震与文案都按实时值走；松手落盘后 `clearPreview()` 复位。
                       .onChange((value: number, mode: SliderChangeMode) => {
                         this.hapticStrength = Math.round(value)
+                        // ① 先同步预览（必须早于 tick，否则这一声还是旧强度）
+                        Haptics.setPreview(this.hapticStrength, this.hapticMode)
+                        // ② 跨档才震一次（同一档内连续移动不重复震）
                         const step = Math.round(this.hapticStrength / Haptics.STRENGTH_STEP)
                         if (step !== this.lastStrengthStep) {
                           this.lastStrengthStep = step
                           Haptics.tick()
                         }
+                        // ③ 松手/点击才落盘，落盘后清预览
                         if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
                           PreferencesUtil.putSync(Haptics.KEY_STRENGTH, this.hapticStrength)
+                          Haptics.clearPreview()
                         }
                       })
 
                     Row(){
                       Text('震感模式').fontSize(FontConstants.ITEM)
                       Blank()
-                      Text(`${Haptics.modeName()}`)
+                      // ⚠️ 2026-10-25：改用 `modeNameOf(this.hapticMode)` —— 原来的
+                      //   `modeName()` 读 Preferences（松手才更新）⇒ 拖动时字样一直不变。
+                      //   现在跟随 `@State hapticMode` 实时刷新。
+                      Text(`${Haptics.modeNameOf(this.hapticMode)}`)
                         .fontSize(FontConstants.CAPTION)
                         .fontColor($r('app.color.text_tertiary'))
                     }.width('100%')
@@ -1121,8 +1146,11 @@ export default struct MySetPage{
                       .enabled(this.setHaptics)
                       .opacity(this.setHaptics ? 1 : 0.4)
                       // 滑动跨档即以**新模式**试震一次（即时对比手感）；落盘只在松手/点击时
+                      // ⚠️ 2026-10-25：同「震动强度」—— 先 `setPreview` 再 `tick`，
+                      //   否则试震用的还是落盘里的旧档位（听起来完全一样）。
                       .onChange((value: number, mode: SliderChangeMode) => {
                         this.hapticMode = Math.round(value)
+                        Haptics.setPreview(this.hapticStrength, this.hapticMode)
                         const step = Math.round(this.hapticMode / Haptics.STRENGTH_STEP)
                         if (step !== this.lastModeStep) {
                           this.lastModeStep = step
@@ -1130,6 +1158,7 @@ export default struct MySetPage{
                         }
                         if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
                           PreferencesUtil.putSync(Haptics.KEY_MODE, this.hapticMode)
+                          Haptics.clearPreview()
                         }
                       })
                   }
