@@ -57,6 +57,12 @@ import ContactPage from './view/myCenter/about/ContactPage'
 import { common } from '@kit.AbilityKit'
 import { NightMode, ShelfColors } from '../common/utils/NightMode'
 import CommonConstants from '../common/constants/CommonConstants'
+// ── PuraX 外屏「极简阅读」（2026-10-24）──────────────────────────────────────
+// 判定收口在 `common/utils/OuterScreen.ets`（文件头有完整 SDK 取证）；
+// 本页只订阅 AppStorage 广播键，**不自己判断形态**。
+// 外屏时的首页是 `OuterHomeCard`（单本"继续阅读"卡片），四页签书架整块不挂载。
+import { KEY_OUTER_MINIMAL } from '../common/utils/OuterScreen'
+import OuterHomeCard from './view/OuterHomeCard'
 // ── 底部页签迁 HDS（2026-10-09）────────────────────────────────────────────────
 // 官方最佳实践原文（documentId `最佳实践/沉浸光感/bpta-spatiality-immersive`）：
 //   「应用需要将传统的Navigation、Tabs等组件替换为HDS系列组件」
@@ -335,6 +341,105 @@ struct Main {
 
   onQuickActionChanged(): void {
     this.consumeQuickAction();
+  }
+
+  // ---------- PuraX 外屏「极简阅读」（2026-10-24）----------
+  /**
+   * 当前是否处于**外屏极简形态**（PuraX 折叠态 1:1 小方屏）。
+   *
+   * 由 `common/utils/OuterScreen.ets` 统一计算后写进 `AppStorage('outerMinimal')`，
+   * 本页只订阅。用 `@StorageProp + @Watch` 而不是每次 `OuterScreen.isOn()`：
+   *   · `@StorageProp` ⇒ 折叠/展开时本页**自动重渲染**（书架 ↔ 极简卡片切换）；
+   *   · `@Watch`      ⇒ 切到外屏的那一刻要**自动进书**，光重渲染不够。
+   *
+   * ⚠️ 内屏 / 手机 / 平板 / 2in1 上这个值恒为 false ⇒ 本页走原有分支，零行为变化。
+   */
+  @StorageProp(KEY_OUTER_MINIMAL) @Watch('onOuterMinimalChanged') outerMinimal: boolean = false
+
+  /**
+   * 「外屏自动进书」是否已经做过（一次性闸）。
+   *
+   * 为什么必须要有：`@Watch` 在折叠过程中可能响多次（窗口尺寸会连报几次），
+   * 而 `outerMinimal` 保持 true 期间不该反复 push 阅读器（会叠出多个阅读页）。
+   * 语义：**每次"进入外屏态"最多自动跳一次**；用户从阅读器返回后停在极简卡片上，
+   * 不会又被弹回去。展开再合上（false → true）时重置，符合直觉。
+   */
+  private outerAutoOpened: boolean = false
+
+  /**
+   * 上一次「自动进书」的时间戳（ms）。用于**抗折叠抖动**。
+   *
+   * 为什么光靠 `outerAutoOpened` 不够：折叠过程中 `compute()` 可能来回抖
+   * （例如先算出 326×326 命中 → 中间一帧 440×707 不命中 → 又命中），
+   * 于是 `outerMinimal` 走 false→true→false→true，`onOuterMinimalChanged()`
+   * 在 false 那一步会把 `outerAutoOpened` 复位 ⇒ 下一次 true 又会进一次。
+   * 若此时上一次的 `getLastReadBook()` 异步还没回来、`topName()` 仍不是 READER，
+   * 就会**连推两个阅读页**。
+   * ⇒ 加一道时间窗：距上次自动进书不足 `OUTER_AUTO_OPEN_COOLDOWN_MS` 时一律跳过。
+   *   一次物理折叠远短于 3 秒，而用户"真的再合一次手机"通常远长于 3 秒。
+   */
+  private outerAutoOpenedAt: number = 0
+
+  /** 自动进书的冷却窗（ms）。见 `outerAutoOpenedAt` 注释 */
+  private static readonly OUTER_AUTO_OPEN_COOLDOWN_MS: number = 3000
+
+  onOuterMinimalChanged(): void {
+    if (!this.outerMinimal) {
+      // 回到内屏：复位闸门，下次再合上还能自动进书
+      this.outerAutoOpened = false
+      return
+    }
+    this.autoEnterReaderOnOuter()
+  }
+
+  /**
+   * 外屏形态下**自动进入阅读器**（读最后阅读的那本书）。
+   *
+   * 用户口径：「外屏只有一个功能…就是在外屏点击后，快速阅读！我们现在快捷方式就能实现这个功能！」
+   * ⇒ 完全复用现成的快速阅读链路（`openLastReadBook(false)`），不新写跳转。
+   *
+   * 与 `consumeQuickAction()` 同款的两道门（那里踩过坑，见其注释）：
+   *   ① `startupStackCleared` —— 冷启动时页面栈可能还没立起来；
+   *   ② `AppRouter.isReady()` —— 路由门面未 attach 时 push 恒失败。
+   * 另加第三道：`AppRouter.topName() === RouteName.READER` ⇒ 已经在阅读页，不重复 push
+   * （例如"内屏正在看书 → 合上手机"，此时阅读页就地切精简版，不需要跳转）。
+   * 第四道：`outerAutoOpenedAt` 冷却窗 ⇒ 抗折叠抖动导致的连推（见该字段注释）。
+   *
+   * 失败兜底：`openLastReadBook` 自己会 toast「还没有阅读记录」，
+   * 同时本页会渲染 `OuterHomeCard` 的空态卡片 ⇒ 不会留下黑屏/死路。
+   */
+  private autoEnterReaderOnOuter(attempt: number = 0): void {
+    if (!this.outerMinimal) {
+      return
+    }
+    if (this.outerAutoOpened) {
+      return
+    }
+    if (Date.now() - this.outerAutoOpenedAt < Main.OUTER_AUTO_OPEN_COOLDOWN_MS) {
+      return
+    }
+    if (!(AppStorage.get<boolean>('startupStackCleared') ?? false) || !AppRouter.isReady()) {
+      if (attempt < 25) {
+        setTimeout(() => {
+          this.autoEnterReaderOnOuter(attempt + 1)
+        }, 200)
+      }
+      return
+    }
+    // 已经在阅读页（内屏看书时合上）⇒ 就地切精简版，不跳转
+    try {
+      if (AppRouter.topName() === RouteName.READER) {
+        this.outerAutoOpened = true
+        this.outerAutoOpenedAt = Date.now()
+        return
+      }
+    } catch (e) {
+      // 取不到栈顶就按正常流程走
+    }
+    this.outerAutoOpened = true
+    this.outerAutoOpenedAt = Date.now()
+    hilog.info(0x0000, 'OuterScreen', 'auto enter reader on outer screen')
+    this.openLastReadBook(false)
   }
 
   /**
@@ -885,6 +990,11 @@ struct Main {
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
     // ★ 首次安装模式选择（2026-10-13）：流程正常启动，主界面立住后再弹引导。
     this.maybeShowFirstRunDialog()
+    // ★ PuraX 外屏（2026-10-24）：冷启动时 `outerMinimal` 在**本页挂载前**就已经是 true
+    //   （`EntryAbility` 在 loadContent 之前就写好了）⇒ `@Watch` 一次都不会触发
+    //   （`@StorageProp` 只在值**变化**时回调）。所以这里必须主动补一次。
+    //   非外屏设备上 `autoEnterReaderOnOuter()` 第一行就 return，零副作用。
+    this.autoEnterReaderOnOuter()
   }
 
   /**
@@ -1229,6 +1339,21 @@ struct Main {
     //   ⇒ 这里**必须**保持 `Column` 是 Navigation 的直接子节点，结构不许再包一层。
     //   书名条改由迷你栏 builder 自己向上溢出绘制（`enableMiniBarClip: false` 已开）。
     Column() {
+      if (this.outerMinimal) {
+        // ── PuraX 外屏极简首页（2026-10-24）──────────────────────────────────
+        // 四页签书架**整块不挂载**（不是 `visibility` 隐藏）：
+        //   ① 326×326vp 上宫格封面每本只有 ~90vp，书名不可读；
+        //   ② 用户明确要求「外屏只有一个功能…不需要全量的功能，比如书架」；
+        //   ③ 不挂载 ⇒ 书架的数据查询/入场动画/一镜到底几何全部不跑，外屏更轻。
+        // ⚠️ 下面 `else` 分支里的代码缩进**刻意保持原样**（未整体右移 2 格）：
+        //    本文件 2400+ 行、书架块 160 行，整体重排会让这次改动的 diff 无法审阅。
+        //    功能上完全等价（ArkTS 不依赖缩进），且 `else` 分支内容**一个字符都没改**。
+        OuterHomeCard({
+          onOpen: (): void => {
+            this.openLastReadBook(false)
+          }
+        })
+      } else {
       HdsTabs({
         index: this.currentTabIndex,
         barPosition: BarPosition.End,
@@ -1387,6 +1512,7 @@ struct Main {
 
       if (this.showReadShow) {
         ReadShow({ showReadShow: this.showReadShow }).offset({ y: -150 - this.bottomRectHeight })
+      }
       }
     }
     .width("100%")

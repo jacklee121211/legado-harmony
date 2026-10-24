@@ -506,6 +506,66 @@ export class LongTakeSession {
 
   public setNewSize(newSize: SizeOptions): void {
     this.navDestSize = newSize;
+    // 窗口尺寸变了 ⇒ 让书盒跟上（折叠 / 旋转 / 2in1 拖窗口）。见 syncBoxToWindow 注释。
+    this.syncBoxToWindow();
+  }
+
+  /**
+   * **让书盒跟随窗口尺寸**（2026-10-24 新增，PuraX 外屏适配的配套修复）。
+   *
+   * ── 修的到底是什么 bug ────────────────────────────────────────────────────
+   * `CardLongTakeDelegate.build()` 用 `winWvp × winHvp` 给阅读页定布局基准
+   * （`CardLongTakeDelegate.ets` 里那个内层 Stack），而这两个值只在
+   * `initGeometry()` 里算**一次**。旧实现 `setNewSize()` 只写 `navDestSize`，
+   * **没有任何地方重算盒子** ⇒ 走一镜到底时阅读页永远住在一个"不随窗口变化"的盒子里。
+   * 手机原本窗口尺寸恒定（`EntryAbility` 锁 PORTRAIT）所以没暴露；
+   * 但**折叠屏手机折叠/展开时窗口尺寸剧变**（PuraX：440×707vp ↔ 326×326vp）
+   * ⇒ 排版尺寸与 XComponent surface 分配尺寸分叉 ⇒ 内容被压进错尺寸的 surface
+   * （真机现象：挤压 / 右侧空白 / 整页被拉伸）。
+   *
+   * ── 为什么这样改是安全的 ──────────────────────────────────────────────────
+   *   ① 只在**已落定阅读态**生效（`bookScale === 1` 且 `radiusProgress === 0`）；
+   *      转场进行中直接 return ⇒ 飞行轨迹一个像素都不受影响。
+   *   ② 数据源用 `WindowUtils.windowWidth_px/Height_px` —— 它已经由
+   *      `WindowUtils.init()` 里的 `on('windowSizeChange')` **实时维护**
+   *      （`WindowUtils.ets:41-47`），不需要再开一个监听。
+   *   ③ 本类是 `@Observed`、delegate 用 `@ObjectLink` 接 ⇒ 改字段即驱动重绘。
+   *   ④ 一键回退：`UiMotion.LT_BOX_FOLLOW_WINDOW = false`。
+   *
+   * ── 收益 ──────────────────────────────────────────────────────────────────
+   *   所有折叠机型（PuraX / PuraX Max / Mate X / XT）**继续保留一镜到底**，
+   *   而不是"为了外屏把整个折叠品类的一镜到底都关掉"。
+   */
+  private syncBoxToWindow(): void {
+    if (!UiMotion.LT_BOX_FOLLOW_WINDOW) {
+      return;
+    }
+    // 转场进行中一律不动（改基准会把飞行轨迹改歪）
+    if (this.bookScale < 0.999 || this.radiusProgress > 0.001) {
+      return;
+    }
+    const wPx: number = WindowUtils.windowWidth_px;
+    const hPx: number = WindowUtils.windowHeight_px;
+    if (!wPx || !hPx) {
+      return;
+    }
+    if (this.cardItemInfo_px.width <= 0 || this.cardItemInfo_px.height <= 0) {
+      return;
+    }
+    const wVp: number = px2vp(wPx);
+    const hVp: number = px2vp(hPx);
+    if (Math.abs(wVp - this.winWvp) < 0.5 && Math.abs(hVp - this.winHvp) < 0.5) {
+      return; // 尺寸没变（去重，避免无谓重排）
+    }
+    hilog.info(0x0000, TAG,
+      `syncBoxToWindow: ${this.winWvp}x${this.winHvp} -> ${wVp}x${hVp}`);
+    this.winWvp = wVp;
+    this.winHvp = hVp;
+    // 返回动画的起点比例也依赖窗口宽（s0 = 封面宽 / 窗宽），同步重算
+    this.s0 = this.cardItemInfo_px.width / wPx;
+    // 阅读态：书盒 = 整窗、书脸铺满（等价于进场末帧）
+    this.applyReadingFull();
+    this.logProbe('window-sync');
   }
 
   public getNavDestinationId(): string {

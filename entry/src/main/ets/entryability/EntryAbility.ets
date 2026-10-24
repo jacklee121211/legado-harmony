@@ -32,6 +32,8 @@ import { FMT_MASTER_ENABLED, FMT_SHARE_INTAKE_ENABLED } from '../common/format/F
 import { ContinueBridge } from '../common/utils/ContinueBridge';
 // 书架宫格列数（2026-10-23 多端适配）：启动时把用户手动设定回填到 AppStorage
 import ShelfPrefs from '../common/utils/ShelfPrefs';
+// PuraX 外屏「极简阅读」形态判定（2026-10-24）：全工程唯一的形态判断入口
+import { OuterScreen } from '../common/utils/OuterScreen';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -227,12 +229,45 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
+  /**
+   * 外屏形态的**调试强制位**（2026-10-24 新增）。
+   *
+   * ── 为什么需要它 ──────────────────────────────────────────────────────────
+   * 外屏形态只出现在真 PuraX 折叠态；而模拟器的折叠/展开只能在窗口里手点，
+   * `devecocli ui` 没有折叠命令 ⇒ 无法脚本化验证精简版 UI。
+   * 有了这个位，就能在**现有手机**上强制进入外屏态做验收与 A/B。
+   *
+   * ── 用法（零 UI 侵入，不留任何界面痕迹）──────────────────────────────────
+   *   hdc shell aa start -a EntryAbility -b com.jk.reader --ps outerMinimalDebug true
+   * 取消：`--ps outerMinimalDebug false`，或杀进程重开（AppStorage 是内存态）。
+   *
+   * 与 `captureQuickAction` 同一条约定：**解析失败必须静默忽略**，绝不影响正常启动。
+   */
+  private captureOuterDebugFlag(want: Want): void {
+    try {
+      const p = want.parameters;
+      if (p === undefined) {
+        return;
+      }
+      const v = p['outerMinimalDebug'];
+      if (typeof v === 'string') {
+        OuterScreen.setDebugForce(v === 'true');
+      } else if (typeof v === 'boolean') {
+        OuterScreen.setDebugForce(v);
+      }
+    } catch (e) {
+      // 忽略
+    }
+  }
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
     webview.WebviewController.initializeWebEngine() //初始化web控件
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
     AppUtil.init(this.context);
     WindowAbility.getInstance().initContext(this.context)
     this.captureQuickAction(want);
+    // PuraX 外屏形态调试强制位（2026-10-24）：必须在首帧渲染前解析
+    this.captureOuterDebugFlag(want);
     // 分享 / 用其他应用打开（2026-10-19）：只登记，由书架消费导入
     this.captureIncomingFiles(want);
     // 应用接续（2026-10-24）：对端**冷启动**恢复
@@ -268,6 +303,8 @@ export default class EntryAbility extends UIAbility {
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam) {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onNewWant');
     this.captureQuickAction(want);
+    // 外屏形态调试强制位（2026-10-24）：应用已在后台时重新拉起也能切换
+    this.captureOuterDebugFlag(want);
     // 应用已在后台时，从「文件管理 → 用其他应用打开」或分享面板进来走这里
     this.captureIncomingFiles(want);
     // 应用接续（2026-10-24）：对端**热启动**恢复（singleton 启动模式下走这里）
@@ -503,6 +540,30 @@ export default class EntryAbility extends UIAbility {
           AppStorage.get<string>('currentBreakpoint') ?? '');
       } catch (e) {
         hilog.error(0x0000, 'testTag', 'breakpoint live failed: %{public}s',
+          e instanceof Error ? e.message : String(e));
+      }
+
+      // ══ PuraX 外屏形态判定（2026-10-24）══════════════════════════════════════
+      // 判定收口在 `common/utils/OuterScreen.ets`（文件头有完整取证），这里只负责
+      // 「启动算一次 + 跟随窗口变化重算」两件事，结果写进 `AppStorage('outerMinimal')`。
+      //
+      // 为什么挂在**断点注册旁边**：两者输入完全同源（窗口宽度），生命周期也同源
+      //   （`windowSizeChange` 覆盖折叠展开 / 旋转 / 2in1 拖窗口 / 分屏），
+      //   放一起便于以后一起维护；且此时窗口已完成首次布局，`windowRect` 是真实值。
+      // 为什么 `windowSizeChange` 是**主信号**：官方 FAQ `faqs-arkui-1589` 明确
+      //   「云调试环境下，`display.on('foldStatusChange')` 无法监听折叠屏屏幕状态的改变」
+      //   ⇒ 折叠状态事件在模拟器/云调试下拿不到，窗口尺寸变化才是可靠的。
+      //   `foldStatusChange` 由 `OuterScreen` 内部注册作辅助（真机上能更早感知）。
+      try {
+        OuterScreen.init(windowClass);
+        windowClass.on('windowSizeChange', () => {
+          OuterScreen.refresh();
+        });
+        hilog.info(0x0000, 'testTag', 'outerScreen live: init=%{public}s',
+          OuterScreen.isOn() ? 'true' : 'false');
+      } catch (e) {
+        // 判定失败绝不能影响启动 —— 静默降级为"不是外屏"
+        hilog.error(0x0000, 'testTag', 'outerScreen live failed: %{public}s',
           e instanceof Error ? e.message : String(e));
       }
 

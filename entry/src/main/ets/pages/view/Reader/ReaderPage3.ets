@@ -79,6 +79,13 @@ import { Haptics } from '../../../common/utils/Haptics';
 import MySetConstants from '../../../common/constants/MySetConstants';
 import { ListenUnlock } from '../../../common/utils/ListenUnlock';
 import { ListenSession } from '../../../tts/ListenSession';
+// ── 整书进度百分比换算（2026-10-25 新增：dock 滑条由"章节索引"改为"整书百分比"）──
+import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent } from './ReaderProgressMap';
+// ── PuraX 外屏「极简阅读」（2026-10-24）────────────────────────────────────────
+// 判定收口在 `common/utils/OuterScreen.ets`。本页**只订阅** `outerMinimal`，
+// 不自己判断形态；`true` 时按用户口径裁掉：听书 / 上一章下一章进度条 / 顶栏 / 设置 / 系统状态栏，
+// 保留：目录 / 书签 / 日间夜间自由 / 信息窗（顶部信息窗 + 底部 3 个 dock 图标）。
+import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
 
 interface ParamsObj {
   bookData: Books,
@@ -229,6 +236,47 @@ const HL_DEV_DEFAULT: boolean = false;
 const HL_ADVANCE_RATIO: number = 1.0;
 /** 段首 text-indent 占几个字位：实测 121.5px = 2em ⇒ **2** */
 const HL_INDENT_SLOTS: number = 2;
+
+/**
+ * 整书进度滑条的**内部单位**：1 单位 = 0.1%，所以 0..100% 就是 `0..1000` 的整数。
+ *
+ * ⚠️⚠️ 2026-10-25 真机定案（"能点、拖不动"）：**绝对不要用浮点 step**。
+ *   第一版写的是 `Slider({ min: 0, max: 100, step: 0.1 })`，真机表现是
+ *   「点轨道能跳、拖动完全没反应」。根因有两条，都是浮点 step 引起的：
+ *     ① `100 / 0.1` 在二进制里不是整数（≈999.9999999999999）⇒ Slider 内部按
+ *        `(max-min)/step` 算吸附格数时算错，拖动被丢弃；
+ *     ② 拖动中回写 `value` 时，回写的值一旦与内部值差 1e-15，Slider 会认为
+ *        "外部改了值" ⇒ 重建拖动状态 ⇒ 手势被取消 ⇒ 松手收不到 `End` ⇒ 不跳转。
+ *   ⇒ 现在改成**整数步进**（`min:0 / max:1000 / step:1`），浮点问题从根上消失；
+ *     百分比只在外层做一次 `/10`。
+ */
+const PROGRESS_UNIT_PER_PCT: number = 10;
+
+/** 滑条上限（= 100% 对应的单位数） */
+const PROGRESS_UNIT_MAX: number = 100 * PROGRESS_UNIT_PER_PCT;
+
+/**
+ * 进度气泡宽度（vp）：够放"12.3%" + 一行"312/765 · 章节名"。
+ *
+ * 关于精度：**0.1%**，显示一位小数。为什么不是 0.01%——滑条轨道实测约 210vp
+ * （390vp 屏扣掉左右内边距 + 两个"上一章/下一章"文本 + 两处间距），1 vp ≈ 0.48%、
+ * 1 个物理像素 ≈ 0.16% ⇒ 手指横拖的物理极限就在 0.1%~0.5% 之间。写 0.01% 只是
+ * "数字好看、手感骗人"（用户 2026-10-25 明确：「精度低一点也没关系，只是为了方便用户使用」）。
+ */
+const PROGRESS_TIP_W: number = 176;
+
+/** 进度气泡自动隐藏延时（ms） */
+const PROGRESS_TIP_MS: number = 1200;
+
+/**
+ * "拖动锁"静默兜底时长（ms）。
+ *
+ * 为什么需要：手指落在轨道上（不是 thumb 上）按下时，ArkUI 先报 `Click`，
+ * 之后手指继续拖会报 `Moving`，但**抬起时不一定再报 `End`**（因为这次交互的
+ * 起点被判成了点击）。没有兜底的话锁就永远开着 ⇒ 引擎回写永久失效 ⇒ thumb 再不跟随。
+ * 700ms ≈ 两次事件间隔的 10 倍以上，正常拖动不会被误解锁。
+ */
+const PROGRESS_HOLD_MS: number = 700;
 
 // —— 可微调项默认值 ——
 const HL_DEF_TOP_PX: number = 230;          // 文本区首行顶部 y（px）
@@ -1293,6 +1341,81 @@ export default struct ReaderPage3 {
    */
   @State readerStatusBarOn: boolean = false
 
+  // ── PuraX 外屏「极简阅读」（2026-10-24 新增）────────────────────────────────
+  /**
+   * 当前是否处于**外屏极简形态**（PuraX 折叠态 1:1 小方屏）。
+   *
+   * 由 `common/utils/OuterScreen.ets` 统一计算后写进 `AppStorage('outerMinimal')`。
+   * 用 `@StorageProp`（而非 `@State`）⇒ **折叠/展开时本页自动重渲染**，
+   * 实现官方要求的「开合连续」：内屏看书时合上手机，阅读器就地切成精简版，进度不丢。
+   *
+   * ⚠️ 本页所有"精简"分支都只看这一个值；内屏 / 手机 / 平板 / 2in1 恒为 false
+   *    ⇒ 所有分支不进入，行为与改动前逐字节一致。
+   *
+   * 精简内容（用户 2026-10-24 原话逐条对应）：
+   *   取消：听书模块、上一章/下一章/进度条、顶部栏、设置模块、显示系统状态栏（开关开着也无效）
+   *   保留：目录、书签、日间/夜间/自由、信息窗（顶部信息窗 + 底部 3 个 dock 图标）
+   */
+  @StorageProp(KEY_OUTER_MINIMAL) @Watch('onOuterMinimalChanged') outerMinimal: boolean = false
+
+  /**
+   * 外屏形态**切换时**的就地纠正（折叠 / 展开）。
+   *
+   * ── 为什么必须有它（否则是个真 bug）──────────────────────────────────────
+   * `readerStatusBarOn` 只在 `aboutToAppear` 从 Preferences 读**一次**。
+   * 内屏开着「显示系统状态栏」时合上手机 ⇒ 那个值仍是 `true`，
+   * 而 `aboutToAppear` 里那段 `setTimeout(… LT_ENTER_DUR + 60)` 不会再跑
+   * ⇒ **状态栏会留在外屏上**，违反用户口径「就算这个开关开着，对于外屏也无效」。
+   * ⇒ 这里在形态切换时重新下发一次系统栏状态（外屏强制关、展开回内屏按设置恢复）。
+   *
+   * 同时把已经打开的听书/设置面板收起 —— 外屏不提供这两个入口，
+   * 若内屏正开着面板就合上手机，面板会悬在外屏上（`@CustomDialog` 不随 dock 消失）。
+   *
+   * ⚠️ 刻意**不做**的事：
+   *   · 不动 `freezeTopRect()` / `syncAbilityColorMode()` —— 那两个在 `aboutToAppear`
+   *     的延迟块里已做过，重复调用会把配色重涂一次（工程反复记过的"屏闪"成因）。
+   *   · **不停播**听书 —— 与工程「退出阅读页不停播」的既定口径一致。
+   */
+  onOuterMinimalChanged(): void {
+    if (this.outerMinimal) {
+      // 外屏：强制不显示系统状态栏（与 aboutToAppear 读取处的短路同源）
+      this.readerStatusBarOn = false;
+      this.applyReaderSystemBar();
+      // 收起可能残留的听书面板
+      if (this.isShowListen) {
+        this.isShowListen = false;
+        this.listenDialog?.close();
+      }
+      // 收起可能残留的设置面板
+      if (this.isShowContentSetting) {
+        this.isShowContentSetting = false;
+        this.settingDialog?.close();
+      }
+    } else {
+      // 展开回内屏：按设置页的落盘值恢复（幂等；用户没开过就还是 false）
+      this.readerStatusBarOn =
+        PreferencesUtil.getSync(MySetConstants.SET_READER_STATUS_BAR, false) as boolean;
+      this.applyReaderSystemBar();
+    }
+  }
+
+  /**
+   * 只重下发「系统栏显隐」（不碰避让冻结、不碰 Ability 配色）。
+   *
+   * 抽出来的原因：`aboutToAppear` 的延迟块与 `onOuterMinimalChanged()` 都要用，
+   * 且语义必须完全一致（否则会出现"折叠后状态栏颜色/显隐与进场时不同"）。
+   * 取值依据与注释见 `aboutToAppear` 里那段延迟块。
+   */
+  private applyReaderSystemBar(): void {
+    if (this.readerStatusBarOn) {
+      WindowAbility.getInstance().toggleWindowSystemBar(['status'], this.getUIContext().getHostContext());
+      WindowAbility.getInstance().setStatusBarTransparent(
+        this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+    } else {
+      WindowAbility.getInstance().toggleWindowSystemBar([], this.getUIContext().getHostContext());
+    }
+  }
+
   // ── 信息窗元素子开关（2026-10-19 新增，用户需求：设置页信息窗为主开关 + 5 个元素子项）──
   // 与设置页（`MySetPage` 的 `syncInfoWinChildRows`）同一批 Preferences 键，进场各读一次。
   /** 时间显示：0 = 关，1 = 时:分，2 = 时:分:秒（**默认 1 = 时:分**，用户 2026-10-19 定稿） */
@@ -1666,6 +1789,44 @@ export default struct ReaderPage3 {
   }
 
   @State CatalogList: BasicDataSource<bookParser.CatalogItem> = new BasicDataSource<bookParser.CatalogItem>(); //章节数据
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 整书进度滑条（2026-10-25：由"章节索引滑条"改为"整书百分比滑条"）
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 进度值（0..`PROGRESS_UNIT_MAX`，1 单位 = 0.1%）—— **唯一的进度状态**。
+   *
+   * ⚠️⚠️ 2026-10-25 三轮真机教训后，改为**官方 `$$` 双向绑定**（文档原文：
+   *   `SliderOptions.value`「从API version 10开始，该属性支持 `$$` 双向绑定变量…
+   *    `$$` 运算符为系统组件提供 TS 变量的引用，使 TS 变量和 Slider 组件的 `value`
+   *    值保持同步」，官方示例7 / FAQ `faqs-arkui-588` 都是 `value: $$this.xxx`）。
+   *
+   * 为什么必须用 `$$`（前两版都栽在这里）：
+   *   · `value: this.x` 是**单向**参数。拖动时 ArkUI 只改自己内部的值，`this.x` 不变；
+   *     一旦这一帧有任何 `@State` 变化导致重建（气泡显隐、数字更新…），框架就会把
+   *     **旧的** `this.x` 重新写回 Slider ⇒ thumb 被拽回旧位置 ⇒ 表现为"拖不动/不跟手"。
+   *     在 0% 起点尤其明显：`this.x` 一直是 0，于是每帧都被拽回 0。
+   *   · 手动在 `onChange` 里回写 `this.x` 也不行：那是"外部改值"，同样会打断拖动状态
+   *     （第一版就是"能点、拖不动"）。
+   *   · `$$` 由框架负责同步：拖动中 `progressUnit` 自己就跟上了，重建时写回的是**当前值**
+   *     ⇒ 既跟手、又允许程序改（引擎翻页回写、点轨道跳转）。
+   */
+  @State progressUnit: number = 0;
+  /** true = 手指正在滑条上（拖动/按住中：不接受引擎回写，避免抢方向盘） */
+  @State progressDragging: boolean = false;
+  /** 进度气泡显隐（拖动中 + 抬手后 `PROGRESS_TIP_MS` 内显示） */
+  @State progressTipShow: boolean = false;
+  /** 气泡自动隐藏定时器句柄（-1 = 无） */
+  private progressTipTimer: number = -1;
+  /** "拖动锁"静默兜底定时器句柄（-1 = 无，见 `armProgressHold`） */
+  private progressHoldTimer: number = -1;
+  /** 上一次已提交的单位值（去重：点轨道时 Click 与 End 可能连着来两次） */
+  private lastCommitUnit: number = -1;
+  /** 上一次提交的时刻（去重窗口用） */
+  private lastCommitAt: number = 0;
+  /** 滑条轨道实测宽度（vp，`onAreaChange` 量出来；给气泡定位用） */
+  private progressTrackW: number = 0;
+
   readerComponentController: readerCore.ReaderComponentController = new readerCore.ReaderComponentController();
   //阅读器设置
   /**
@@ -4044,8 +4205,13 @@ export default struct ReaderPage3 {
     this.infoWinOn = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN, true) as boolean;
     // 显示系统状态栏（2026-10-19 新增）：全局开关，进场读一次（与信息窗同款口径）。
     // ⚠️ 必须在下面那个 620ms 的"进入沉浸"块之前读到，否则那个块拿不到用户的选择。
-    this.readerStatusBarOn =
-      PreferencesUtil.getSync(MySetConstants.SET_READER_STATUS_BAR, false) as boolean;
+    // ⚠️ 2026-10-24 外屏：**强制关**。用户原话「显示系统状态栏（就算这个开关开着，
+    //    对于外屏也无效）」—— 外屏只有 326×326vp，状态栏会吃掉宝贵的纵向空间。
+    //    这里在读取处直接短路，后面所有消费点（`readerTopInset()` / 系统栏设置 /
+    //    信息窗左段显隐）都不用各自判断，单点收口。
+    this.readerStatusBarOn = this.outerMinimal
+      ? false
+      : (PreferencesUtil.getSync(MySetConstants.SET_READER_STATUS_BAR, false) as boolean);
     // 信息窗元素子开关（2026-10-19 新增）：与设置页同一批键、同一套默认值
     // （时间 2 = 时:分:秒；电量/书签/防窥/定时 默认开 ⇒ 默认观感与改动前一致）。
     this.infoWinTimeMode = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIME, 1) as number;
@@ -4145,13 +4311,10 @@ export default struct ReaderPage3 {
       // 开：只显示状态栏（`['status']`；names 是**要显示**的栏，空数组才是全隐藏），
       //     并把它的底色设成全透明 ⇒ 露出我们自己的阅读背景（真穿透）。
       //     导航栏仍然隐藏，底部菜单/悬浮条的布局完全不变。
-      if (this.readerStatusBarOn) {
-        WindowAbility.getInstance().toggleWindowSystemBar(['status'], this.getUIContext().getHostContext());
-        WindowAbility.getInstance().setStatusBarTransparent(
-          this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
-      } else {
-        WindowAbility.getInstance().toggleWindowSystemBar([], this.getUIContext().getHostContext());
-      }
+      // ⚠️ 2026-10-24：具体动作抽到 `applyReaderSystemBar()` —— 折叠到外屏时
+      //    `onOuterMinimalChanged()` 要用**同一套**动作把状态栏关掉，
+      //    两处必须同源，否则会出现"折叠后状态栏颜色/显隐与进场时不同"。
+      this.applyReaderSystemBar();
       this.syncAbilityColorMode();
     }, UiMotion.LT_ENTER_DUR + 60);
   }
@@ -4281,6 +4444,7 @@ export default struct ReaderPage3 {
       this.bookHandlerReady = true;
       // 换书 ⇒ 正文号↔目录号 的映射缓存作废（见 catalogIndexForSpine）
       this.spineToCatalog = null;
+      this.catalogToSpine = null;
       // ⚠️ 必须直注册默认 handler（2026-09-27 回退）：委托型 handler（加粗 CSS 注入）
       //   在**第二次进阅读器**时会让引擎策略层停摆（内容排版/截图完成但
       //   onPageDataNeedUpdate 不再触发 ⇒ Draw Cur Page 不执行 ⇒ XComponent 无帧黑屏，
@@ -4303,6 +4467,10 @@ export default struct ReaderPage3 {
       // 注：目录过滤数据源已随弹窗改造搬到 `ReaderCatalogDialog` 内部 ——
       //     它在每次打开时从 `CatalogList.getOriginDataArray()` 重新构建，这里不需要再同步。
       hilog.info(0x0000, 'testTag', 'catalog list length: ' + this.CatalogList.totalCount());
+      // 整书进度滑条（2026-10-25）：目录刚就绪 ⇒ 立刻把 thumb 摆到"上次读到哪"。
+      // 为什么不只靠 `pageShow` 回写：首次 `pageShow` 可能早于目录 push 完成，
+      // 那时 `totalCount()=0` 会直接 return ⇒ thumb 停在 0（用户反馈"第二次进来都是 0"）。
+      this.syncSliderPctFromPosition();
       this.checkWebSyncAnchor(resourceIndex || 0);   // 进度同步 v1（2026-10-01）：web 端锚点检查
       this.registerWebSyncListener();                // v1.1：阅读中电脑翻章 → toast 知会
     } catch (err) {
@@ -5174,6 +5342,9 @@ export default struct ReaderPage3 {
       // 翻页后刷新书签图标状态（实心/空心）。用 pageRange 的真实位置而不是
       // `bookData.durChapterPos`（后者未必随翻页更新）。
       this.syncBookmarkState();
+      // 整书进度滑条（2026-10-25）：把真实位置回写成百分比 ⇒ thumb 跟随阅读进度。
+      // ⚠️ 内部自带"拖动中跳过"的门闩（否则手指还在拖、引擎把旧位置写回去 ⇒ thumb 被拽走）。
+      this.syncSliderPctFromPosition();
       // 从「我的 → 书签」点进来时的回跳（只尝试一次，见 tryBookmarkJump）
       this.tryBookmarkJump();
       // 「读完」判定（2026-09-21）：读到**最后一章的最后一页**即写入 `finishedTime`。
@@ -6411,6 +6582,8 @@ export default struct ReaderPage3 {
    * 换书时（`startPlay` 重新拿到 `BookHandler`）必须重置。
    */
   private spineToCatalog: Map<number, number> | null = null
+  /** 目录号 → spine 号（2026-10-25 新增，与上面那张成对建立，见 `ensureSpineMaps`） */
+  private catalogToSpine: Map<number, number> | null = null
 
   /**
    * 正文号（spine）→ 目录号 的换算。
@@ -6426,31 +6599,69 @@ export default struct ReaderPage3 {
    * 匹配语义与旧实现**完全一致**：同一 spine 取**目录中第一个**匹配的项。
    */
   private catalogIndexForSpine(spineIndex: number): number {
-    if (this.spineToCatalog === null) {
-      const m = new Map<number, number>()
-      try {
-        const spines = this.BookHandler?.getSpineList() ?? []
-        const catalog = this.BookHandler?.getCatalogList() ?? []
-        const hrefToSpine = new Map<string, number>()
-        for (let s = 0; s < spines.length; s++) {
-          const h = spines[s].href ?? ''
-          if (h.length > 0 && !hrefToSpine.has(h)) {
-            hrefToSpine.set(h, s)
-          }
+    this.ensureSpineMaps()
+    return this.spineToCatalog?.get(spineIndex) ?? -1
+  }
+
+  /**
+   * **目录号 → 正文号**（2026-10-25 新增，整书进度滑条用）。
+   *
+   * 为什么不复用 `getResourceItemByCatalog()`（`:10880` 附近）：
+   * 那个方法**匹配不上时会静默回退到 `spineList[0]`（第 1 章）**
+   * （原文：`else if (spineList.length > 0) { return spineList[0] }`）。
+   * 章节跳转偶尔踩到它，用户只当"跳错了章"；但百分比跳转是连续动作，
+   * 一旦踩到就会出现"拖到 80% 突然回到开头"这种极难排查的现象。
+   * ⇒ 这里返回 **-1 表示"这一章没有可用的正文文件"**，由调用方提示并停在原地。
+   *
+   * @returns spine 号；找不到返回 -1（**绝不猜测**）
+   */
+  private spineForCatalogIndex(catalogIdx: number): number {
+    this.ensureSpineMaps()
+    const s = this.catalogToSpine?.get(catalogIdx)
+    return s === undefined ? -1 : s
+  }
+
+  /**
+   * 一次性建立 **spine ⇄ 目录** 双向映射（懒建，一本书内常量）。
+   *
+   * 为什么两份都要：`pageShow` 每翻一页要"正文号 → 目录号"（同步目录号/标题），
+   * 滑条跳转要"目录号 → 正文号"（去 startPlay）。两次都遍历整个目录（765 项）太浪费。
+   */
+  private ensureSpineMaps(): void {
+    if (this.spineToCatalog !== null) {
+      return
+    }
+    const m = new Map<number, number>()
+    const r = new Map<number, number>()
+    try {
+      const spines = this.BookHandler?.getSpineList() ?? []
+      const catalog = this.BookHandler?.getCatalogList() ?? []
+      const hrefToSpine = new Map<string, number>()
+      for (let s = 0; s < spines.length; s++) {
+        const h = spines[s].href ?? ''
+        if (h.length > 0 && !hrefToSpine.has(h)) {
+          hrefToSpine.set(h, s)
         }
-        for (let i = 0; i < catalog.length; i++) {
-          const h = catalog[i].resourceFile ?? ''
-          const s = h.length > 0 ? hrefToSpine.get(h) : undefined
-          if (s !== undefined && !m.has(s)) {
+      }
+      for (let i = 0; i < catalog.length; i++) {
+        const h = catalog[i].resourceFile ?? ''
+        const s = h.length > 0 ? hrefToSpine.get(h) : undefined
+        if (s !== undefined) {
+          // 反向（目录→正文）：**第一个**匹配的目录项优先（与旧实现一致）
+          if (!m.has(s)) {
             m.set(s, i)
           }
+          // 正向（目录→正文）：同一目录号只认第一个命中的 spine
+          if (!r.has(i)) {
+            r.set(i, s)
+          }
         }
-      } catch (e) {
-        // 忽略：建不出映射就退化为"不同步目录号"（与旧实现未匹配时行为一致）
       }
-      this.spineToCatalog = m
+    } catch (e) {
+      // 忽略：建不出映射就退化为"不同步目录号 / 滑条跳转提示失败"
     }
-    return this.spineToCatalog.get(spineIndex) ?? -1
+    this.spineToCatalog = m
+    this.catalogToSpine = r
   }
 
   /**
@@ -7873,6 +8084,12 @@ export default struct ReaderPage3 {
       }
 
       // 沉浸听读层（可选）：自绘本页 + 句内高亮画在文字内部；整层穿透触摸
+      // ⚠️ 2026-10-24 PuraX 外屏：**刻意不给它加 `!outerMinimal` 门**。
+      //   原因（工程既有真机事故，见 AGENTS.md §7 / 本文件 aboutToDisappear 注释）：
+      //   「退出听书后沉浸层撤掉，露出的是一张**没排版好的底页** ⇒ 黑屏」。
+      //   折叠到外屏时若正在沉浸听读，强行不渲染这一层就会复现同一个黑屏。
+      //   而这一层本身画的就是**正文 + 句内高亮**，观感上就是"在读的书"，
+      //   留在外屏不违背"取消听书模块"（取消的是**入口/面板/迷你条**，不是这一层）。
       if (this.immersiveActive()) {
         this.ImmersiveListenLayer()
       }
@@ -8054,12 +8271,24 @@ export default struct ReaderPage3 {
       // 朗读迷你条：面板关闭时仍可见/可控（点文本回面板，点按钮暂停/续播）
       // ⚠️ 叠加 `listeningThisBook()`：在听《神墓》时打开《鬼墓》，
       //   《鬼墓》必须是**纯普通阅读模式**，不该出现别人的朗读浮条（用户 2026-10-09 要求）。
-      if (this.ttsState !== 'stopped' && this.listeningThisBook()) {
+      // ⚠️ 2026-10-24 PuraX 外屏：迷你条同样属于「听书模块」⇒ 外屏不渲染（不停播）。
+      if (this.ttsState !== 'stopped' && this.listeningThisBook() && !this.outerMinimal) {
         this.TtsMiniBar()
       }
 
       Column() {
         if (this.isShowSetting) { // 阅读器-上方弹框
+          // ── 顶部栏（2026-10-24 PuraX 外屏：**整条取消**）────────────────────
+          // 用户原话（逐条对应）：「顶部栏模块」取消。
+          // 为什么外屏可以不要它：
+          //   · 外屏 326×326vp，这一条（返回 + 章节名 + 防窥 + 书签）要吃掉一整行；
+          //   · 退出改由**系统侧滑/返回键** → 落到 `Index` 的极简卡片（用户已拍板）；
+          //   · 书签仍有 dock 那一格；章节名仍有「目录」弹窗；
+          //   · 防窥是 VIP 入口，外屏不卖这项权益（用户未列入保留项）。
+          // ⚠️ 信息窗**不受影响** —— 它是另一层（见下方 `!this.isShowSetting && this.infoWinOn`），
+          //    用户明确要求保留「顶部信息窗」。
+          // ⚠️ 缩进刻意保持原样（不整体右移），理由同 `Index.ets` 同款：可审阅的最小 diff。
+          if (!this.outerMinimal) {
           Column() {
             Row({ space: 8 }) {
               Image($r("app.media.ic_public_return_left"))
@@ -8239,6 +8468,7 @@ export default struct ReaderPage3 {
           //   「使用**图形变换属性**变化组件，而**不是直接修改布局属性**…降低丢帧率」。
           // 回退：`UiMotion.MOTION_ENABLED = false` ⇒ 参数变 `{ duration: 0 }`（无动画）。
           .transition(TransitionEffect.move(TransitionEdge.TOP).animation(UiMotion.transitionParam()))
+          }
 
           Blank(1).onClick(() => {
             Haptics.tap();
@@ -8271,6 +8501,12 @@ export default struct ReaderPage3 {
             }
           })
 
+          // ── 阅读器-下方「进度胶囊」（2026-10-24 PuraX 外屏：**整块取消**）──────────
+          // 用户原话：「上一章下一章进度条这个模块」取消。
+          // 为什么外屏可以不要它：翻页靠点按/滑动正文，跳章仍有「目录」弹窗 ⇒ 这一条是纯冗余，
+          // 而它要吃掉外屏 326×326vp 里整整一行高度（滑条 + 两个文字按钮）。
+          // ⚠️ 缩进刻意保持原样（不整体右移），理由同 `Index.ets` 同款：可审阅的最小 diff。
+          if (!this.outerMinimal) {
           // 阅读器-下方弹框
           Column({ space: 20 }) {
             // 原来这里有一条 `Divider()` 横贯整条底栏。2026-09-21 底栏改成**悬浮胶囊**后，
@@ -8296,59 +8532,95 @@ export default struct ReaderPage3 {
                   }
                 })
 
-              Slider({
-                value: this.bookData.durChapterIndex,
-                // ⚠️ max 最低钳到 0：目录未加载完成时 totalCount()=0 ⇒ max=-1 且 min=0，
-                //   非法配置会让 onChange 吐出越界值写进 durChapterIndex —— 单章节书
-                //   （catalog list length: 1）拖进度条崩溃（jscrash 2026-09-26 16:11，
-                //   "Cannot read property catalogName of undefined"）的源头就在这。
-                max: Math.max(0, this.CatalogList.totalCount() - 1),
-                min: 0,
-                step: 1,
-                style: SliderStyle.InSet
-              })
-                .selectedColor(this.sliderSelectedColor())
-                .blockSize({ width: 30, height: 30 })
-                // 沉浸光感（2026-09-23 二次定案，滑条用 `sliderMaterial()`）。
-                // 官方《沉浸式系统材质视效》原文：「沉浸式系统材质支持设置**交互形变**和
-                // **点光源**效果…点光源…手指触摸组件时会产生**流光跟随**效果」；
-                // 「沉浸式系统材质**默认自带阴影效果（applyShadow 为 true）**，优先于 shadow 通用属性」。
-                // ⇒ 原来 `controlMaterial()` 开了 `interactive:true`（弹性形变）+ 默认阴影 true
-                //   = 拖动时形变 + 一团暗影（用户说的"裤子反穿"）；现在三项显式写死：
-                //   `applyShadow:false` + `interactive:false` + `lightEffect:{}`（只留流光）。
-                // 另注：材质的"底/框"去不掉（官方：材质**接管组件的背景、边框、阴影**）。
-                // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.systemMaterial(...)`**。
-                //   `systemMaterial(material: SystemUiMaterial | undefined)` 是 **API 26.0.0**
-                //   才有（SDK `…\openharmony\ets\component\common.d.ts:22642` `@since 26.0.0`），
-                //   声明式语法编译成裸调用 `Slider.systemMaterial(...)`
-                //   ⇒ 鸿蒙6 上 `undefined is not callable` ⇒ 阅读页闪退。
-                //   ⚠️ 传 `undefined` 也救不了：`sliderMaterial()` 关闭时返回 undefined，
-                //      但方法调用本身仍然发生 ⇒ 必须整条搬进 modifier 回调。
-                .attributeModifier(ImmersiveMaterialUtil.sliderMaterialModifier())
-                // ★ 材质那层"底"是滑条自己的框画的 ⇒ 做成圆角胶囊 + 左右内缩，
-                //   让它看起来就是"轨道本身"（见 sliderMaterial() 的注释）
-                .borderRadius(20)
-                .padding({ left: 8, right: 8 })
-                .layoutWeight(1)
-                .onChange((value, mode) => {
-                  //结束滑动后再跳转到对应章节
-                  if (mode == SliderChangeMode.End) {
-                    Haptics.tick();
-                    // 夹取到合法章节区间（目录未加载/单章节时 value 可能越界，见上方 max 钳制注释）
-                    const total = this.CatalogList.totalCount();
-                    const v = Math.max(0, Math.min(Math.round(value), total - 1));
-                    if (total <= 0 || v === this.bookData.durChapterIndex) {
-                      return;
-                    }
-                    this.bookData.durChapterIndex = v
-                    const item = this.CatalogList.getData(v)
-                    if (item === undefined || item === null) {
-                      this.getUIContext().getPromptAction().showToast({ message: '章节信息异常，请重新进入本书' });
-                      return;
-                    }
-                    this.jumpToCatalogItem(item)
-                  }
+              // ── 整书进度滑条（2026-10-25 重做：章节索引 → 整书百分比）────────────
+              // 旧实现是 `value: durChapterIndex / min:0 / max: totalCount-1 / step:1`，
+              // 只在 `SliderChangeMode.End` 跳章 ⇒ 拖动时正文纹丝不动，松手也只到**章首**。
+              // 现在改成"整书百分比 0..100，0.1% 一格"：
+              //   · 拖动中：**只更新气泡文字**（纯 ArkUI 状态，零引擎调用）⇒ 天然跟手、不卡；
+              //   · 抬手：`commitProgressSeek()` 一次跳到"该百分比对应的章 + 章内段落"。
+              // 为什么拖动中不跳：一次 `startPlay` 要让原生引擎重排整章，快速滑动时必然堆帧、
+              //   闪、卡（用户 2026-10-25 拍板「松手才跳」，与微信读书/掌阅同形态）。
+              Stack({ alignContent: Alignment.Start }) {
+                Slider({
+                  // ⚠️ `$$` 双向绑定（官方示例7 / FAQ faqs-arkui-588 的标准写法）：
+                  //   拖动中框架自己把值同步进 `progressUnit`，程序改 `progressUnit` 也会
+                  //   反映到 Slider。**不要**改回 `this.progressUnit`，也不要手写回写 ——
+                  //   见 `progressUnit` 的注释（两种写法都会让 thumb 在拖动中被拽回去）。
+                  value: $$this.progressUnit,
+                  // ⚠️ 0..1000 是**常量**区间 ⇒ 不再有旧实现那种 "目录未加载 ⇒ max=-1 < min=0"
+                  //   的非法配置（那曾导致单章节书拖动崩溃，见 git 历史 2026-09-26 jscrash）。
+                  min: 0,
+                  max: PROGRESS_UNIT_MAX,
+                  // 整数步进（1 单位 = 0.1%）。官方文档：`step` 取值范围 [0.01, max-min]，
+                  // 浮点 step 会引入 35.70000076293945 这类残差（FAQ `faqs-arkui-1280`
+                  // 《解决Slider精度问题》）⇒ 这里用整数单位，彻底绕开浮点。
+                  step: 1,
+                  style: SliderStyle.InSet
                 })
+                  .selectedColor(this.sliderSelectedColor())
+                  .blockSize({ width: 30, height: 30 })
+                  // 沉浸光感（2026-09-23 二次定案，滑条用 `sliderMaterial()`）。
+                  // 官方《沉浸式系统材质视效》原文：「沉浸式系统材质支持设置**交互形变**和
+                  // **点光源**效果…点光源…手指触摸组件时会产生**流光跟随**效果」；
+                  // 「沉浸式系统材质**默认自带阴影效果（applyShadow 为 true）**，优先于 shadow 通用属性」。
+                  // ⇒ 原来 `controlMaterial()` 开了 `interactive:true`（弹性形变）+ 默认阴影 true
+                  //   = 拖动时形变 + 一团暗影（用户说的"裤子反穿"）；现在三项显式写死：
+                  //   `applyShadow:false` + `interactive:false` + `lightEffect:{}`（只留流光）。
+                  // 另注：材质的"底/框"去不掉（官方：材质**接管组件的背景、边框、阴影**）。
+                  // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.systemMaterial(...)`**。
+                  //   `systemMaterial(material: SystemUiMaterial | undefined)` 是 **API 26.0.0**
+                  //   才有（SDK `…\openharmony\ets\component\common.d.ts:22642` `@since 26.0.0`），
+                  //   声明式语法编译成裸调用 `Slider.systemMaterial(...)`
+                  //   ⇒ 鸿蒙6 上 `undefined is not callable` ⇒ 阅读页闪退。
+                  //   ⚠️ 传 `undefined` 也救不了：`sliderMaterial()` 关闭时返回 undefined，
+                  //      但方法调用本身仍然发生 ⇒ 必须整条搬进 modifier 回调。
+                  //   ✅ 本次改造**没有换掉 Slider**（也没自绘轨道）就是为了保住这条降级链：
+                  //      `sliderMaterialModifier()` 在 API<26 上自动挂空实现（`NoopSliderModifier`），
+                  //      与书架 dock 的 `floatingTabBarAvailable()` 是同一套运行时门控。
+                  .attributeModifier(ImmersiveMaterialUtil.sliderMaterialModifier())
+                  // ★ 材质那层"底"是滑条自己的框画的 ⇒ 做成圆角胶囊 + 左右内缩，
+                  //   让它看起来就是"轨道本身"（见 sliderMaterial() 的注释）
+                  .borderRadius(20)
+                  .padding({ left: 8, right: 8 })
+                  .width('100%')
+                  // 关系统气泡：官方 FAQ `faqs-arkui-1198` 场景二明确「滑动中气泡内容实时更新」
+                  // 需自己实现（`showTips(false)` + 自绘 Text），本工程 RGB 滑条已是同款做法。
+                  .showTips(false)
+                  // 量轨道宽度给气泡定位（`Area.width` 单位 vp，见 `common.d.ts` `onAreaChange`）
+                  .onAreaChange((oldArea: Area, newArea: Area) => {
+                    this.progressTrackW = Number(newArea.width)
+                  })
+                  .onChange((value: number, mode: SliderChangeMode) => {
+                    this.onProgressSliderChange(value, mode)
+                  })
+
+                // 气泡：显示"37.4% + 第 N/M 章 · 章节名"。纯 Text，不涉及任何 API26 组件。
+                // ⚠️ 2026-10-25 真机教训：**不要用 `if (show)` 控制显隐**。
+                //   拖动开始那一刻插入/移除子节点 = 结构变化，会让正在进行的 Slider 手势
+                //   重建（表现为"拖不动"）。改成"常驻 + `opacity` 控制"，全程只是属性变化。
+                Column({ space: 2 }) {
+                  Text(formatProgressPercent(this.progressUnit / PROGRESS_UNIT_PER_PCT))
+                    .fontSize(13)
+                    .fontWeight(600)
+                    .fontColor('#FFFFFF')
+                  Text(this.progressTipTitle())
+                    .fontSize(10)
+                    .fontColor('rgba(255,255,255,0.86)')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .width(PROGRESS_TIP_W)
+                .alignItems(HorizontalAlign.Center)
+                .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+                .backgroundColor('rgba(0, 0, 0, 0.78)')
+                .borderRadius(8)
+                .position({ x: this.progressTipX(), y: -54 })
+                .opacity(this.progressTipShow ? 1 : 0)
+                .animation({ duration: 120, curve: Curve.EaseOut })
+                // 气泡只负责显示，绝不能吃掉落手指（否则滑条拖不动）
+                .hitTestBehavior(HitTestMode.None)
+              }
+              .layoutWeight(1)
 
               Text("下一章")
                 .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
@@ -8398,6 +8670,7 @@ export default struct ReaderPage3 {
           .shadow({ radius: 18, color: 'rgba(0, 0, 0, 0.10)', offsetX: 0, offsetY: 4 })
           // 出入场统一走 UiMotion 弹簧令牌（原 `{ duration: 500 }`）
           .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
+          }
           // ── 底部四图标：**真 Tabs**（2026-09-23 重构，用户点名要求）──────────────
           // 【为什么必须换成 Tabs】官方对沉浸光感的生效范围有硬性限定（documentId
           // `开发指南/ArkUI_方舟UI框架/…/沉浸光感/…/开启沉浸光感/arkts-immersive-light-sense-enable`）原文：
@@ -8426,21 +8699,22 @@ export default struct ReaderPage3 {
           //   ⚠️ 动作由每个图标自己的 `onClick` 派发，**不要**改回 `Tabs.onTabBarClick()`
           //      （真机实测：一次点击派发多次且第一个 index 恒为 0 ⇒ 点听书/设置都弹目录）。
           Tabs({ barPosition: BarPosition.End }) {
-            TabContent() {
-              Column()
-            }.tabBar(this.ReaderBarItem(0, 0))
-            TabContent() {
-              Column()
-            }.tabBar(this.ReaderBarItem(1, 1))
-            TabContent() {
-              Column()
-            }.tabBar(this.ReaderBarItem(2, 2))
-            TabContent() {
-              Column()
-            }.tabBar(this.ReaderBarItem(3, 3))
-            TabContent() {
-              Column()
-            }.tabBar(this.ReaderBarItem(4, 4))
+            // ── 页签序列由数组驱动（2026-10-24 PuraX 外屏）────────────────────
+            // 正常：0=目录 1=书签 2=听书 3=日夜 4=设置（5 格，与改动前完全一致）
+            // 外屏：0=目录 1=书签 3=日夜（3 格；去掉听书与设置）
+            // ★ 关键：`action` 保持**原 id**，只让 `pos`（页签位置）重新从 0 排
+            //   ⇒ `dispatchBarAction(action)` 与 `readerBarLabel(action)` **一行都不用改**，
+            //     也绕开了工程历史上的坑（"按下标分发导致点听书弹目录"）。
+            //   `barScale` 数组长度仍是 5，外屏只用 pos 0..2，无需调整。
+            // ⚠️ 为什么用 `ForEach` 而不是 `if` 包 `TabContent`：
+            //   ① 折叠时 TabContent 数量会变，数组驱动不会让 Tabs 的页签缓存/索引错位；
+            //   ② 这个写法在 `pages/Index.ets` 的 `HdsTabs` 上已真机验证
+            //      （`ForEach(this.nav, (item: NavItem) => { TabContent(){…}.tabBar(…) })`）。
+            ForEach(this.barActions(), (a: number, i: number) => {
+              TabContent() {
+                Column()
+              }.tabBar(this.ReaderBarItem(a, i))
+            }, (a: number) => `readerbar-${a}`)
           }
           // ⚠️ 这里**故意不挂 `.onTabBarClick()`** —— 动作由每个图标自己的 `onClick` 派发
           //   （见 `ReaderBarItem()`）：真机实测一次点击 `onTabBarClick` 会派发多次、
@@ -8550,7 +8824,21 @@ export default struct ReaderPage3 {
       // 这里放大态把指头数改成 9（单指/双指都触发不了）⇒ 等价于"放大态关闭下拉书签"；
       // 100% 时仍是 `fingers: 1`，下拉书签行为完全不变。
       PanGesture({
-        fingers: this.isPdfZoomed() ? 9 : 1,
+        // ⚠️⚠️ 2026-10-25 修「进度滑条向右拖不动」的**根因**（真机 + 日志实证）：
+        //   本手势是**整页**的 `priorityGesture`（同类型手势**父级优先识别**），
+        //   而滚动模式下它的方向被扭成了 `PanDirection.Right`（见下面 direction 的注释）
+        //   ⇒ **全页任何"向右"的横滑都被它先抢走**，再加上根容器的 `monopolizeEvents(true)`
+        //   （官方：「一旦首先响应，本次交互内其他组件的事件不会响应」）
+        //   ⇒ dock 里的进度滑条：
+        //        · 向左拖 → 本手势方向不匹配、识别失败 → 滑条拿到 ✅
+        //        · 向右拖 → 本手势识别成功并独占 → 滑条**一条 onChange 都收不到** ❌
+        //   真机日志铁证（`progress: onChange`）：从轨道往右拖只有 `mode=0/2`、`unit` 不变；
+        //   往左拖正常出现数值变化。
+        //   ⇒ 修法：**dock 展开时把本手势关掉**（`fingers: 9` 让单指/双指都触发不了，
+        //     与"PDF 放大态关闭下拉书签"完全同一套做法，工程内已验证）。
+        //   为什么关得合理：dock 展开时用户就是在操作 dock（滑条/上一章/下一章/四个页签），
+        //   此时不该再让"下拉加书签"抢手势；要加书签先点一下正文收起 dock 即可。
+        fingers: (this.isPdfZoomed() || this.isShowSetting) ? 9 : 1,
         // 2026-10-20：滚动模式扭到**横轴（右滑）** —— 见 `bmPullX` 注释。
         // 竖轴在滚动模式下属于 `List` 滚动，抢走它会把滚动功能弄坏。
         direction: this.scrollModeOn() ? PanDirection.Right : PanDirection.Down,
@@ -9394,6 +9682,12 @@ export default struct ReaderPage3 {
    *   原因见那段注释（`$xxx` 在普通方法里不会变成 @Link，会直接崩）。
    */
   openListenDialog(): void {
+    // ── PuraX 外屏：听书面板不可达（2026-10-24）──────────────────────────────
+    // 外屏 dock 已没有听书格（见 `Tabs` 的 `outerMinimal` 分支），这里再兜一道：
+    // 防止任何残留路径（如快速听书快捷方式在外屏拉起）把面板弹出来。
+    if (this.outerMinimal) {
+      return
+    }
     this.isShowListen = true
     this.listenDialog.open()
   }
@@ -9493,6 +9787,20 @@ export default struct ReaderPage3 {
   }
 
   /**
+   * 底部 dock 的**动作序列**（2026-10-24 PuraX 外屏新增）。
+   *
+   * 正常（内屏 / 手机 / 平板 / 2in1）：`[0,1,2,3,4]` = 目录/书签/听书/日夜/设置 ——
+   *   **与改动前的 5 格逐一对应，顺序完全一致**。
+   * 外屏：`[0,1,3]` = 目录/书签/日夜（去掉听书 2 与设置 4）。
+   *
+   * ⚠️ 返回的是**动作 id**，页签位置由 `ForEach` 的下标 `i` 提供 ——
+   *   两套编号语义不同（见 `ReaderBarItem` 注释），别合并。
+   */
+  private barActions(): number[] {
+    return this.outerMinimal ? [0, 1, 3] : [0, 1, 2, 3, 4]
+  }
+
+  /**
    * 底部页签条文案（与改造前 `Grid` 里的 `Text` 一致）。
    *
    * ⚠️ 入参是**动作 id**（不是页签位置）：第 2 格（日/夜/自由）沿用改造前的
@@ -9525,6 +9833,12 @@ export default struct ReaderPage3 {
    */
   private dispatchBarAction(index: number): void {
     hilog.info(0x0000, 'testTag', 'readerBarAction: index=%{public}d', index)
+    // ── PuraX 外屏：听书(2) / 设置(4) 两个动作不可达（2026-10-24）──────────────
+    // dock 在外屏只渲染 0/1/3 三格，正常点不到这两格；这里兜一道，
+    // 保证"即使有人改错了 tabBar 配置"也不会在外屏弹出听书面板/设置面板。
+    if (this.outerMinimal && (index === 2 || index === 4)) {
+      return
+    }
     if (index === 0) {
       // 目录（**2026-10-13 拆分后只剩目录**，书签见下面 index===1）—— @CustomDialog
       this.openCatalogDialog()
@@ -9592,6 +9906,12 @@ export default struct ReaderPage3 {
    *   `isShowContentSetting` 退化为**纯图标态**（实心/空心），不再影响布局。
    */
   private toggleSettingDialog(): void {
+    // ── PuraX 外屏：设置面板不可达（2026-10-24）──────────────────────────────
+    // 用户口径：「设置模块」取消。外屏 dock 已没有设置格（见 `Tabs` 的 `outerMinimal` 分支），
+    // 这里再兜一道，防止任何残留路径把设置面板弹出来。
+    if (this.outerMinimal) {
+      return
+    }
     if (this.isShowContentSetting) {
       this.isShowContentSetting = false
       this.settingDialog?.close()
@@ -10548,6 +10868,251 @@ export default struct ReaderPage3 {
   pageTransition() {
     PageTransitionEnter({ duration: 0, curve: Curve.Sharp });
     PageTransitionExit({ duration: 0, curve: Curve.Sharp });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 整书进度滑条（2026-10-25）
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * 滑条 `onChange` 的唯一入口 —— **拖动中只显示气泡，抬手才动引擎**。
+   *
+   * ══════════════════════════════════════════════════════════════════════════
+   * 三轮真机教训（2026-10-25），别再走回头路
+   * ══════════════════════════════════════════════════════════════════════════
+   * ① **`value` 必须用 `$$` 双向绑定**，且**不要**在 `onChange` 里手写 `progressUnit`：
+   *    · `value: this.x`（单向）⇒ 拖动中任何 `@State` 变化触发重建时，框架把**旧**值写回
+   *      ⇒ thumb 被拽回 ⇒ "拖不动"（在 0% 起点最明显：`x` 恒为 0，每帧被拽回 0）。
+   *    · 手动回写 `x` ⇒ 等于"外部改值" ⇒ 打断拖动状态 ⇒ "能点、拖不动"。
+   *    · `$$` 由框架同步 ⇒ 重建时写回的是**当前值** ⇒ 跟手。
+   * ② **任何** `onChange` 事件都要打开"拖动锁"`progressDragging`，且**不能**在 `Click`
+   *    里提前关掉 —— 手指落在轨道上（不是 thumb 上）时 ArkUI 先报 `Click`，
+   *    若此时解锁，跳转落地后的引擎回写会把 thumb 拽到引擎落点 ⇒ "不跟手"。
+   * ③ 官方文档对 `onChange` 的语义说明（`ts-basic-components-slider`）：
+   *    「Begin和End状态在点击时触发，Moving和Click状态在value值变化时触发。
+   *      连贯拖动动作不触发Click状态。」
+   *    ⇒ 连续拖动只会来 Begin/Moving/End；`Click` 只出现在"点轨道"那一下。
+   */
+  private onProgressSliderChange(value: number, mode: SliderChangeMode): void {
+    const u: number = this.clampProgressUnit(Math.round(Number.isFinite(value) ? value : 0));
+    // 诊断打点：真机上"跟手/不跟手"的争议全靠这几行区分（Begin=0/Moving=1/End=2/Click=3）。
+    // 只打非 Moving（Moving 一秒几十条，会把日志冲掉）。
+    if (mode !== SliderChangeMode.Moving) {
+      hilog.info(0x0000, 'testTag', 'progress: onChange mode=%{public}d unit=%{public}d hold=%{public}s',
+        mode, u, String(this.progressDragging));
+    }
+    // ★ 任何触摸事件先上锁（含 Click）—— 见上方教训 ②
+    this.progressDragging = true;
+    this.armProgressHold();
+    this.showProgressTip();
+
+    if (mode === SliderChangeMode.End) {
+      // 抬手：提交 + **立即解锁**（让引擎回写把 thumb 校准到真实落点）
+      this.commitProgressSeek(u);
+      this.releaseProgressHold();
+      return;
+    }
+    if (mode === SliderChangeMode.Click) {
+      // 点轨道：立刻跳一次（保住"点击即跳"的既有手感），但**锁不放** ——
+      // 手指很可能还按着继续拖，此时绝不能允许引擎回写打断拖动。
+      this.commitProgressSeek(u);
+      return;
+    }
+    // Begin / Moving：`$$` 已把值同步进 `progressUnit`，这里什么都不用做
+  }
+
+  /**
+   * 续期"拖动锁"（每次 onChange 都调用）。
+   * `End` 不来时（点轨道后直接拖、或系统吞了抬起事件）由它兜底解锁。
+   */
+  private armProgressHold(): void {
+    if (this.progressHoldTimer >= 0) {
+      clearTimeout(this.progressHoldTimer);
+    }
+    this.progressHoldTimer = setTimeout((): void => {
+      this.progressHoldTimer = -1;
+      this.progressDragging = false;
+    }, PROGRESS_HOLD_MS);
+  }
+
+  /** 立即解锁（抬手时用） */
+  private releaseProgressHold(): void {
+    if (this.progressHoldTimer >= 0) {
+      clearTimeout(this.progressHoldTimer);
+      this.progressHoldTimer = -1;
+    }
+    this.progressDragging = false;
+  }
+
+  /** 夹到 `[0, PROGRESS_UNIT_MAX]` 的整数单位 */
+  private clampProgressUnit(u: number): number {
+    if (!Number.isFinite(u) || u < 0) {
+      return 0;
+    }
+    return u > PROGRESS_UNIT_MAX ? PROGRESS_UNIT_MAX : u;
+  }
+
+  /** 显示气泡，并（重新）开始 `PROGRESS_TIP_MS` 后自动隐藏的计时 */
+  private showProgressTip(): void {
+    this.progressTipShow = true;
+    if (this.progressTipTimer >= 0) {
+      clearTimeout(this.progressTipTimer);
+    }
+    this.progressTipTimer = setTimeout((): void => {
+      this.progressTipTimer = -1;
+      this.progressTipShow = false;
+    }, PROGRESS_TIP_MS);
+  }
+
+  /** 气泡横向位置（跟随 thumb 中心，夹在轨道内） */
+  private progressTipX(): number {
+    const track: number = this.progressTrackW;
+    if (track <= 0) {
+      return 0;
+    }
+    // thumb 直径 30 ⇒ 两端各留 15vp 才是 thumb 中心的实际行程
+    const usable: number = Math.max(1, track - 30);
+    const center: number = 15 + usable * (this.progressUnit / PROGRESS_UNIT_MAX);
+    const maxX: number = Math.max(0, track - PROGRESS_TIP_W);
+    const x: number = center - PROGRESS_TIP_W / 2;
+    return Math.max(0, Math.min(maxX, x));
+  }
+
+  /** 气泡第二行：「312/765 · 章节名」 */
+  private progressTipTitle(): string {
+    const total: number = this.CatalogList.totalCount();
+    if (total <= 0) {
+      return '目录加载中…';
+    }
+    const pct: number = this.progressUnit / PROGRESS_UNIT_PER_PCT;
+    const pos: ChapterRatio = percentToChapter(pct, total);
+    const name: string = (this.CatalogList.getData(pos.chapterIndex)?.catalogName ?? '')
+      .replace(new RegExp('\\s{1,}', 'g'), ' ')
+      .replaceAll('=', '');
+    if (name === '') {
+      return `${pos.chapterIndex + 1}/${total} 章`;
+    }
+    return `${pos.chapterIndex + 1}/${total} · ${name}`;
+  }
+
+  /**
+   * 抬手：把百分比提交成一次真实跳转。
+   *
+   * 顺序很重要 —— **先更新目录号**（目录/书签/标题/「读完」判定都看它），再发定位请求。
+   */
+  private commitProgressSeek(unit: number): void {
+    const total: number = this.CatalogList.totalCount();
+    if (total <= 0) {
+      // 目录未就绪：不跳、不报错（旧实现在这里会把非法值写进 durChapterIndex 并崩溃）
+      this.toastLocate('目录还没加载完，请稍后再试');
+      return;
+    }
+    const pct: number = this.clampProgressUnit(unit) / PROGRESS_UNIT_PER_PCT;
+    const pos: ChapterRatio = percentToChapter(pct, total);
+    const idx: number = pos.chapterIndex;
+    const item = this.CatalogList.getData(idx);
+    if (item === undefined || item === null) {
+      this.toastLocate('章节信息异常，请重新进入本书');
+      return;
+    }
+    // 去重：点轨道时 `Click` 与 `End` 可能连着来两次（同值同位置），只跳一次。
+    // 400ms 窗口足够覆盖"一次手势的两条事件"，又不会误吞用户 0.4 秒后的再次点击。
+    const now: number = Date.now();
+    if (unit === this.lastCommitUnit && now - this.lastCommitAt < 400) {
+      return;
+    }
+    this.lastCommitUnit = unit;
+    this.lastCommitAt = now;
+    Haptics.tick();
+    this.bookData.durChapterIndex = idx;
+    this.bookData.durChapterTitle = item.catalogName ?? this.bookData.durChapterTitle;
+    hilog.info(0x0000, 'testTag', 'progress: commit pct=%{public}s → catalog=%{public}d ratio=%{public}s',
+      formatProgressPercent(pct), idx, pos.ratio.toFixed(3));
+    this.seekToChapterRatio(idx, pos.ratio);
+  }
+
+  /**
+   * 跳到「第 `catalogIdx` 章的第 `ratio`（0..1）个位置」。
+   *
+   * 三种阅读方式的落点策略：
+   *   · 分页（仿真/横滑）⇒ `requestLocate(spine, node, 0, silent, **noFallback**)`；
+   *   · 上下滚动     ⇒ 同一个 `requestLocate`（它自己分流到 `scrollSeek*`）；
+   *   · PDF          ⇒ 一章 = `FMT_PDF_PAGES_PER_CHAPTER` 张页图，按页定位。
+   *
+   * ⚠️ `noFallback = true` 是本方法的**关键**：定位没落准时的兜底是
+   *    「每 120ms 翻一页、最多 60 次」（`beginSearch`/`flipOnce`），最坏 7 秒连续重排。
+   *    滑条跳转必须"宁可差一点、也不要卡住"（与「我的→书签」回跳同一档）。
+   */
+  private async seekToChapterRatio(catalogIdx: number, ratio: number): Promise<void> {
+    const item = this.CatalogList.getData(catalogIdx);
+    if (item === undefined || item === null) {
+      return;
+    }
+    // 目录号 → 正文号：走精确映射表（**不用** getResourceItemByCatalog 的"回退第 1 章"）
+    const spine: number = this.spineForCatalogIndex(catalogIdx);
+    if (spine < 0) {
+      this.toastLocate('这一章没有可用的正文文件，已停在原地');
+      return;
+    }
+    // ── PDF：按页定位 ────────────────────────────────────────────────────────
+    // PDF 的 domPos 是「X = 2×图片下标」（真机探测：第 1 张 `0#0`、第 2 张 `2#0`），
+    // 与正文的「X = 2×块节点+1」不是同一套换算 ⇒ 必须自己拼，不能走 `requestLocate`。
+    if (this.isPdfBook) {
+      const per: number = FMT_PDF_PAGES_PER_CHAPTER > 0 ? FMT_PDF_PAGES_PER_CHAPTER : 1;
+      const page: number = Math.max(0, Math.min(per - 1, Math.round(ratio * (per - 1))));
+      this.lastNavMs = Date.now();
+      this.startPlayAt(spine, `${2 * page}=0#0;@;0`);
+      return;
+    }
+    // ── 正文：章内比例 → 块节点号 ────────────────────────────────────────────
+    // 节点数与 ReaderKit 的块节点 1:1（`tts/ChapterNodes.buildChapterNodes`），
+    // 所以「第 ratio 个位置」= `round(ratio × (节点数−1))`，落点误差在 1~2 屏内。
+    const nodes: string[] | null = await TtsEngine.previewNodeTexts(this.BookHandler ?? null, spine);
+    if (nodes === null || nodes.length === 0) {
+      // 拿不到节点模型 ⇒ 退回"跳到章首"（与改造前行为一致，不会更差）
+      if (this.scrollModeOn()) {
+        this.requestLocate(spine, 0, 0, true);
+      } else {
+        this.startPlayAt(spine, '');
+      }
+      return;
+    }
+    const node: number = Math.max(0, Math.min(nodes.length - 1,
+      Math.round(ratio * (nodes.length - 1))));
+    this.requestLocate(spine, node, 0, true, true);
+    // 朗读中手动跳进度：朗读跟随阅读（与 `jumpToCatalogItem` 同款）
+    if (TtsEngine.getState() !== 'stopped') {
+      TtsEngine.seekToChapter(spine, node, 0);
+    }
+  }
+
+  /**
+   * 引擎翻页后，把"真实位置"回写到滑条（thumb 跟随阅读进度）。
+   *
+   * ⚠️ 拖动中**必须跳过**：否则手指还在拖、引擎把旧位置写回来 ⇒ thumb 被拽走。
+   * 章内比例用「页首块节点 / 本章节点总数」，节点总数取 `webSyncAnchors()` 顺手缓存的
+   * `anchorNodeCache`（同章翻页零开销）；缓存还没建好时退化为"章首"（即按章计）。
+   */
+  private syncSliderPctFromPosition(): void {
+    if (this.progressDragging) {
+      return;
+    }
+    const total: number = this.CatalogList.totalCount();
+    if (total <= 0) {
+      return;
+    }
+    const idx: number = this.bookData.durChapterIndex ?? 0;
+    const r: PageRange | null = this.pageRange;
+    let ratio: number = 0;
+    if (r !== null && this.anchorNodeCache !== null && this.anchorNodeCacheSpine === r.spine
+      && this.anchorNodeCache.length > 1) {
+      ratio = Math.min(1, Math.max(0, r.startNode / (this.anchorNodeCache.length - 1)));
+    }
+    const pct: number = chapterToPercent(idx, ratio, total);
+    // ⚠️ 取整到 0.1% 单位：Slider 的 `value` 必须是 `step` 的整数倍，
+    //   写一个任意浮点（如 4.7123）会让内部吸附算错（见 `PROGRESS_UNIT_PER_PCT` 注释）。
+    const u: number = this.clampProgressUnit(Math.round(pct * PROGRESS_UNIT_PER_PCT));
+    this.progressUnit = u;
   }
 
   /**

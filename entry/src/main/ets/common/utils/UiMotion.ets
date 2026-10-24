@@ -335,6 +335,28 @@ export default class UiMotion {
   static readonly LONGTAKE_ENABLED: boolean = true
 
   /**
+   * **书盒跟随窗口**（2026-10-24 新增，PuraX 外屏适配的配套修复）。
+   *
+   * ── 为什么需要它 ──────────────────────────────────────────────────────────
+   * 见下面 `longTakeAllowed()` 头注释记录的结构性缺陷：`CardLongTakeDelegate` 把阅读页
+   * 包进 `winWvp × winHvp` 的固定盒子，而这两个值只在 `initGeometry()` 里算一次。
+   * 手机原本"窗口尺寸恒定"所以没暴露；但**折叠屏手机折叠/展开时窗口尺寸剧变**
+   * （PuraX：内屏 440×707vp ↔ 外屏 326×326vp）⇒ 盒子与窗口分叉 ⇒ 阅读页被裁/挤压。
+   *
+   * ── 修复方式（不是关功能，而是让盒子跟上）────────────────────────────────
+   * `LongTakeSession.syncBoxToWindow()` 在窗口尺寸变化后重算 `winWvp/winHvp`，
+   * 并且**只在"已落定阅读态"生效**（转场进行中直接跳过，不会把飞行轨迹改歪）。
+   * ⇒ 所有折叠机型（PuraX / PuraX Max / Mate X / XT）**继续保留一镜到底**，
+   *    同时消除"折叠后阅读页被毒化"的隐患。
+   *
+   * ── 一键回退 ──────────────────────────────────────────────────────────────
+   * 改成 `false` ⇒ 恢复"盒子固定尺寸"的旧行为（等价于改动前）。
+   * 回退后必须验证：① 手机进入阅读器的一镜到底动画不变；
+   *                ② 折叠屏折叠后阅读页是否又出现挤压（旧 bug 复现即符合预期）。
+   */
+  static readonly LT_BOX_FOLLOW_WINDOW: boolean = true
+
+  /**
    * 一镜到底「当前是否允许」—— **全工程唯一的设备闸门**（2026-10-23 用户最终拍板）。
    *
    * ── 用户口径（原话）──────────────────────────────────────────────────────
@@ -362,6 +384,12 @@ export default class UiMotion {
    *   ① 总开关 `LONGTAKE_ENABLED` 关 → 不允许（一键回退语义）；
    *   ② `deviceType !== 'phone'`（tablet / 2in1 / 未知）→ **一律不允许**；
    *   ③ 手机 → 允许（`EntryAbility` 已锁 PORTRAIT，窗口尺寸恒定，盒子不会与窗口分叉）。
+   *
+   * ⚠️ 2026-10-24 补充：上面 ③ 里"窗口尺寸恒定"这个前提**对折叠屏手机不成立**
+   *   （PuraX 折叠/展开会让窗口 440×707vp ↔ 326×326vp 剧变）。
+   *   但**不要**因此把折叠机型也拦掉 —— 那会让 PuraX Max / Mate X / XT 全部失去一镜到底。
+   *   正确做法是让盒子跟上窗口：见 `LT_BOX_FOLLOW_WINDOW` 与
+   *   `LongTakeSession.syncBoxToWindow()`。本方法的判定规则保持不变。
    *
    * ⚠️ 曾经这里还有「2in1 不允许」「横屏不允许」两条 —— 已删除：
    *   它们是"按形态/方向打补丁"，与 `ezCustomTransition.isLongTakeEnabledDevice()`

@@ -19,7 +19,7 @@ export const APP_VERSION_FALLBACK: string = 'V2.2.4'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.2.4 A',
+    version: 'V2.2.4 B',
     date: '2026-10-24',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
@@ -64,6 +64,11 @@ export const VERSION_LOGS: VersionEntry[] = [
       '新增上下滑动的翻页模式',
       '新增应用接续',
       '适配平板/2n1设备，适配API20-API26.0.0全设备',
+      '应用内「开源许可」页新增「许可证全文」卡：GPL-3.0/MPL-2.0/Apache-2.0/MIT四条，标注各自覆盖范围，点击经openLink打开官方全文页，地址行可长按复制兜底',
+      '该项补齐GPL-3.0§5(d)强制要求：§0对AppropriateLegalNotices的定义含「howtoviewacopyofthisLicense」，此前应用内只写「以官方仓库许可证原文为准」而无任何可点击入口',
+      'THIRD_PARTY_NOTICES新增第6「许可证全文入口」表格，并把「更新方式从两处同步改为三处（依赖清单/LICENSES/LICENSE_TEXTS）',
+      '预埋PuraX外屏适配',
+      '优化阅读器-进度条的使用效果',
       '应用内「开源许可」页新增「许可证全文」卡：GPL-3.0 / MPL-2.0 / Apache-2.0 / MIT 四条，标注各自覆盖范围，点击经 openLink 打开官方全文页，地址行可长按复制兜底',
       '该项补齐 GPL-3.0 §5(d) 强制要求：§0 对 Appropriate Legal Notices 的定义含「how to view a copy of this License」，此前应用内只写「以官方仓库许可证原文为准」而无任何可点击入口',
       'THIRD_PARTY_NOTICES 新增第 6 节「许可证全文入口」表格，并把「更新方式」从两处同步改为三处（依赖清单 / LICENSES / LICENSE_TEXTS）',
