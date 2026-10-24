@@ -70,6 +70,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '预埋PuraX外屏适配',
       '优化阅读器-进度条的使用效果',
       '优化振动反馈参数以及滑块预览效果',
+      '全面接入碰一碰、隔空传送',
     ]
   },
 ]
