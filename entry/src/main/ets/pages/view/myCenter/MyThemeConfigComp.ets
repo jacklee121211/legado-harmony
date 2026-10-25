@@ -27,6 +27,71 @@ export struct MyThemeConfigComp {
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
 
+  /**
+   * 当前横向断点（`xs`/`sm`/`md`/`lg`/`xl`），2026-10-26 多端适配新增。
+   *
+   * 由 `EntryAbility.updateBreakpoint()` 写入 AppStorage（阈值 320/600/840/1440vp，
+   * 见 `entryability/EntryAbility.ets:115-142`），与书架 `BookContent` 消费的是同一个键。
+   * 默认 `'sm'` ⇒ 冷启动极早期（键还没写入）按手机两列渲染，与改造前完全一致，
+   * 不会出现"进主题页先闪一下列数"。
+   */
+  @StorageProp('currentBreakpoint') currentBreakpoint: string = 'sm'
+
+  /**
+   * 色块宽高比（2026-10-26）。取手机基线实测值：列宽 167vp / 色块高 77vp ≈ 2.169。
+   *
+   * ⚠️ 为什么不再写死 `height(77)`：色块宽度是 `100%`（跟着列宽走），高度写死 ⇒
+   *   窗口越宽格子越扁（平板横屏 1244vp 时 592×77，比例 7.7:1，成了一条长条）。
+   *   改成 `aspectRatio` 后高度随列宽等比缩放，任何宽度下比例都是设计基线那一版。
+   */
+  private static readonly TILE_ASPECT: number = 167 / 77
+
+  /** 色块最小高度（vp）：小屏（xs，<320vp）列宽只有 ~130vp，按比例算出来仅 ~60vp，
+   *  装不下「图标 26 + 文案 11 + VIP 8」，故用下限兜住 —— 手机端因此恒为 77vp，零回归。 */
+  private static readonly TILE_MIN_H: number = 77
+
+  /**
+   * 一行放几个主题格子（2026-10-26 多端适配）。
+   *
+   * 取值规则与书架 `ShelfPrefs.autoColumns()` 同一套「列数递增原则」，
+   * 但基线是主题页的 **2 列**（不是书架的 3 列）：sm=2（不变）、md=3、lg=4、xl=5。
+   * · `xl`（PC / 2in1 全屏、外接大屏）取 5：默认主题 5 个 + 「自定义主题」瓦片正好一屏排满。
+   * · `xs`/`sm`/空串/未知一律 2 ⇒ **手机端永远是现在的样子**。
+   */
+  private themeColumns(): number {
+    switch (this.currentBreakpoint) {
+      case 'md':
+        return 3
+      case 'lg':
+        return 4
+      case 'xl':
+        return 5
+      default:
+        return 2
+    }
+  }
+
+  /**
+   * `Grid.columnsTemplate` 的取值：按列数拼出 N 个 `1fr`（如 3 列 → `'1fr 1fr 1fr'`）。
+   *
+   * ⚠️ 为什么用 `1fr` 而不是 `repeat(auto-fill, 150)` 这类固定列宽：
+   *   `1fr` 只均分「容器宽 − gap」，没有余数 ⇒ 不会在右侧留一条空白，
+   *   手机端 gap 20 与列宽 167 完全不变（零回归）。
+   *   而 `repeat(auto-*)` 是固定 track-size，手机上 gap 或右侧留白会变（非零回归），
+   *   且该关键字在 `compatibleSdkVersion 6.0.0(20)` 上是否生效需真机验证。
+   *
+   * 状态追踪：本方法在 `build()` 里被调用，读到的是 `@StorageProp currentBreakpoint`，
+   * 键一变即重跑 build ⇒ 旋转 / 折叠 / 2in1 拖窗口都会立刻重排列数。
+   */
+  private gridColumnsTemplate(): string {
+    const n: number = this.themeColumns()
+    let tpl: string = '1fr'
+    for (let i = 1; i < n; i++) {
+      tpl += ' 1fr'
+    }
+    return tpl
+  }
+
   /*
    * 精简模式（2026-10-13 方案 A）：本组件**不再**订阅 `offlineOn`。
    * 自定义主题离线可用 ⇒ 精简模式下保留可见；判据统一走
@@ -143,7 +208,9 @@ export struct MyThemeConfigComp {
           .fontWeight(600)
       }
       .width('100%')
-      .height(77)
+      // 2026-10-26：固定 `height(77)` → 保比例 + 最小高度（与主题色块同构，见 TILE_ASPECT 注释）
+      .aspectRatio(MyThemeConfigComp.TILE_ASPECT)
+      .constraintSize({ minHeight: MyThemeConfigComp.TILE_MIN_H })
       .justifyContent(FlexAlign.Center)
       .border({
         width: 1,
@@ -159,7 +226,8 @@ export struct MyThemeConfigComp {
         .width('100%')
     }
     .width('100%')
-    .height(107)
+    // 2026-10-26：去掉写死的 `.height(107)`（107 = 色块 77 + space 8 + 文案 22）。
+    //   色块高度改为随列宽等比后，格子高度必须由内容撑开；手机端仍是 77+8+22 = 107，像素不变。
   }
 
   /** 个性化配置入口瓦片（2026-10-10 新增） */
@@ -179,7 +247,9 @@ export struct MyThemeConfigComp {
           .fontWeight(400)
       }
       .width('100%')
-      .height(77)
+      // 2026-10-26：同 addThemeTile —— 保比例 + 最小高度，避免宽屏被拉成长条
+      .aspectRatio(MyThemeConfigComp.TILE_ASPECT)
+      .constraintSize({ minHeight: MyThemeConfigComp.TILE_MIN_H })
       .justifyContent(FlexAlign.Center)
       .border({
         width: 1,
@@ -195,7 +265,6 @@ export struct MyThemeConfigComp {
         .width('100%')
     }
     .width('100%')
-    .height(107)
   }
 
   dialog: CustomDialogController = new CustomDialogController({
@@ -275,7 +344,9 @@ export struct MyThemeConfigComp {
         }
       }
       .width('100%')
-      .height(77)
+      // 2026-10-26：固定 `height(77)` → 保比例 + 最小高度（见 TILE_ASPECT / TILE_MIN_H 注释）
+      .aspectRatio(MyThemeConfigComp.TILE_ASPECT)
+      .constraintSize({ minHeight: MyThemeConfigComp.TILE_MIN_H })
       .borderRadius(8)
       .backgroundColor(item.mainColor)
 
@@ -286,7 +357,8 @@ export struct MyThemeConfigComp {
         .width('100%')
     }
     .width('100%')
-    .height(107)
+    // 2026-10-26：去掉写死的 `.height(107)`，由「色块 + space 8 + 文案 22」撑开
+    //   （手机端 77+8+22 仍 = 107，像素不变；大屏色块变高后格子自动跟着变高）。
   }
 
   build() {
@@ -338,7 +410,28 @@ export struct MyThemeConfigComp {
           )
         })
       }
-      .columnsTemplate('1fr 1fr')
+      // ★★ 2026-10-26 多端适配：列数从「写死两列」改为「按横向断点自适应」★★
+      // ── 问题 ──────────────────────────────────────────────────────────────────
+      //   `1fr 1fr` 只均分「容器宽 − gap」（下方 2026-10-13 段已用真机实测确认），
+      //   而色块高度当时写死 77vp ⇒ 窗口越宽单格越扁：
+      //     · 手机 394vp 屏：列宽 ≈167vp ⇒ 色块 167×77（2.17:1，设计基线）
+      //     · 平板横屏 1244vp：列宽 ≈592vp ⇒ 色块 592×77（7.7:1）＝一条长条
+      //   ⇒ 只加 gap 治不了（只会让列更窄，Grid 自身宽度不变），必须改列数与高度策略。
+      // ── 改法（三处，缺一不可）──────────────────────────────────────────────────
+      //   ① 列数走断点：`themeColumns()` = xs/sm 2、md 3、lg 4、xl 5
+      //      （断点键 `currentBreakpoint` 由 `EntryAbility.updateBreakpoint()` 写入，
+      //        与书架 `ShelfPrefs.effectiveColumns()` 同一套基建）；
+      //   ② 色块由 `height(77)` 改为 `aspectRatio(TILE_ASPECT)` 保比例，高度随列宽等比缩放，
+      //      并用 `constraintSize.minHeight: 77` 兜住小屏 ⇒ 手机端仍恒为 77vp，零回归；
+      //   ③ 三处写死高度（`themeItemBuilder` / `addThemeTile` / `plugboardTile`）同步收口。
+      // ── 为什么用 `1fr` 而不是 `repeat(auto-fill, 150)` ─────────────────────────
+      //   `1fr` 无余数 ⇒ 不会在右侧留空白，手机端列宽/gap 完全不变；
+      //   `repeat(auto-*)` 是固定 track-size（SDK `grid.d.ts:342-358`），手机上 gap 或
+      //   右侧留白会变，且该关键字在 `compatibleSdkVersion 6.0.0(20)` 上需真机验证。
+      // ── 实时性 ────────────────────────────────────────────────────────────────
+      //   `gridColumnsTemplate()` 在 build 里读 `@StorageProp currentBreakpoint`，
+      //   键一变即重跑 build ⇒ 旋转 / 折叠 / 2in1 拖窗口立即重排，无需退出重进主题页。
+      .columnsTemplate(this.gridColumnsTemplate())
       // 2026-10-13 宽度对齐「关于我们」卡片（用户需求：两列共宽 B = A 宽）。
       // 真机实测（Mate 80 Pro Max，屏宽 1320px，scale 3.35）：
       //   · 关于我们卡片行 bounds = [67, ‥, 1253] ⇒ A 宽 = 1186px（= 屏宽 − 2×20vp padding）
