@@ -835,6 +835,10 @@ export default struct PdfViewerPage {
       .columnsGap(2)
       .width('100%')
       .layoutWeight(1)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `grid.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ PDF 目录缩略图
+      //   `Grid` 不写就没有越界反馈（页数多时滑到底"硬停"）。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .width('100%')
     .height('100%')

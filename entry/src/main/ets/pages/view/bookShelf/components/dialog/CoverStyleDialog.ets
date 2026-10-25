@@ -257,6 +257,9 @@ export default struct CoverStyleDialog {
       .rowsGap(10)
       .height(200)
       .width('100%')
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `grid.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ 不写就没有越界反馈。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
 
       // ── 自定义图片 ──
       Row({ space: 10 }) {

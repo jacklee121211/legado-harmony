@@ -240,7 +240,9 @@ export default struct MyCenter {
               } else {
                 Row({ space: 3 }) {
                   SymbolGlyph($r('sys.symbol.crown'))
-                    .fontSize(11)
+                    // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：11 → 12vp
+                    //   （标准要求 ≥12vp 推荐 / ≥8vp 必须；原值 11 低于推荐线）。
+                    .fontSize(12)
                     .fontColor([Color.White])
                   Text('开通 VIP')
                     .fontSize(12)
@@ -307,7 +309,7 @@ export default struct MyCenter {
                 .fontColor($r('app.color.text_tertiary'))
               Blank()
               SymbolGlyph($r('sys.symbol.chevron_forward'))
-                .fontSize(14)
+                .fontSize(16)
                 .fontColor([$r('app.color.text_primary')])
                 .opacity(0.35)
             }
@@ -366,6 +368,17 @@ export default struct MyCenter {
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动越界反馈」修复。
+      //   根因（SDK `scroll.d.ts:1244-1262` 原文）：「Effect used when the scroll boundary is
+      //   reached. …Default value: **EdgeEffect.None**」⇒ 本页主滚动容器是 `Scroll`，
+      //   **不写就完全没有越界反馈**（书架是 `List`，`list.d.ts` 默认 `Spring` 才有回弹，
+      //   这也是"我的页手感比书架生硬"的同一个根因，见 `readStatisticsDataList.ets:221-231`）。
+      //
+      // ⚠️ `alwaysEnabled` **不传**（用 SDK 默认值 `true`），不要写 `false`：
+      //   `scroll.d.ts:1250-1254` 原文「…**{ alwaysEnabled: false }** means the opposite.
+      //   **Default value: { alwaysEnabled: true }** [since 11]」
+      //   ⇒ 写 `false` 反而是"内容不足一屏时不弹"，与本条自检判定相反。
+      .edgeEffect(EdgeEffect.Spring)
     }
     .attributeModifier(this.Column)
     .linearGradient({

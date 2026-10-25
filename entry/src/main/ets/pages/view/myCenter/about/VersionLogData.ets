@@ -14,13 +14,13 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V2.2.5'
+export const APP_VERSION_FALLBACK: string = 'V3.0.0'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V2.2.5',
-    date: '2026-10-24',
+    version: 'V3.0.0',
+    date: '2026-10-25',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -71,6 +71,7 @@ export const VERSION_LOGS: VersionEntry[] = [
       '优化阅读器-进度条的使用效果',
       '优化振动反馈参数以及滑块预览效果',
       '全面接入碰一碰、隔空传送',
+      '优化阅读器-设置页-背景预览触发双重震动的bug',
     ]
   },
 ]

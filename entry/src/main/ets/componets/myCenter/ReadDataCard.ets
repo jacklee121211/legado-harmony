@@ -218,7 +218,17 @@ export struct ReadDataCard {
         Text(periodLabel(this.mode, this.anchor))
           .fontSize(13).fontColor(ShelfColors.textSub())
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(11)
+          // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：11 → **16vp**。
+          //   为什么不是 12（deveco 那轮改成 12 仍不达标，真机实测）：
+          //   自检判定用的是**实际绘制尺寸**，不是 fontSize 声明值。报告原文
+          //   （`capture_20261025134618476.bmp`）：「控件类型：[SymbolGlyph]的实际尺寸为 5*9vp」
+          //   ⇒ 拿 fontSize 反推，chevron 的**墨迹宽 ≈ 0.52 × fontSize**。
+          //   两台真机 dump 实测（2026-10-25）：
+          //     手机 Mate 80 / API26：fontSize 12 → 21×40px ÷ 密度 3.35 = **6.3 × 11.9vp**
+          //     平板 MRO-W00 / API24：fontSize 12 → 14×27px ÷ 密度 2.25 = **6.2 × 12.0vp**
+          //   ⇒ 12vp 只有 ~6.3vp 宽，仍 < 8vp「必须」下限。
+          //   16vp ⇒ 16 × 0.52 ≈ **8.3vp**，两台设备同时达标（与机型/API/HDS 无关）。
+          .fontSize(16)
           .fontColor([ShelfColors.textSub()])
       }
       .onClick(() => {
@@ -272,7 +282,11 @@ export struct ReadDataCard {
       Text(`${num}`)
         .fontSize(14).fontWeight(600).fontColor(ShelfColors.textMain())
       SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(10)
+        // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：10 → **16vp**。
+        //   判定依据是**实际绘制尺寸**（chevron 墨迹宽 ≈ 0.52 × fontSize）：
+        //   12vp 实测只有 6.3vp（手机 API26）/ 6.2vp（平板 API24），仍 < 8vp 必须下限；
+        //   16vp ⇒ ≈8.3vp 两台设备同时达标。
+        .fontSize(16)
         .fontColor([ShelfColors.textSub()])
     }
     .height(30)

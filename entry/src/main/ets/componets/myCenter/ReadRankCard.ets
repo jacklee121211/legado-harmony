@@ -204,7 +204,11 @@ export struct ReadRankCard {
         Text(this.filterLabel())
           .fontSize(12).fontColor(ShelfColors.textSub())
         SymbolGlyph($r('sys.symbol.chevron_down'))
-          .fontSize(10)
+          // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：10 → **16vp**。
+          //   判定依据是**实际绘制尺寸**：chevron 墨迹宽 ≈ 0.52 × fontSize
+          //   （手机 API26 实测 12→6.3vp；平板 API24 实测 12→6.2vp）
+          //   ⇒ 12vp 仍 < 8vp「必须」下限；16vp ⇒ ≈8.3vp 两台设备同时达标。
+          .fontSize(16)
           .fontColor([ShelfColors.textSub()])
       }
       .bindMenu(this.menuItems())
@@ -277,7 +281,11 @@ export struct ReadRankCard {
           .fontColor(ShelfColors.textSub())
         Blank()
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(10)
+          // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：10 → **16vp**。
+          //   判定依据是**实际绘制尺寸**（chevron 墨迹宽 ≈ 0.52 × fontSize）：
+          //   12vp 实测只有 6.3vp（手机 API26）/ 6.2vp（平板 API24），仍 < 8vp 必须下限；
+          //   16vp ⇒ ≈8.3vp 两台设备同时达标。
+          .fontSize(16)
           .fontColor([ShelfColors.textSub()])
       }
       .width('100%')

@@ -178,6 +178,10 @@ export default struct BookSelectGroupDialog{
       .align(Alignment.Top)
       .height('65%')
       .scrollBar(BarState.Off)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `scroll.d.ts`「Default value: **EdgeEffect.None**」⇒ 本弹窗滚动容器是 `Scroll`，
+      //   不写就没有越界反馈（分组多时滑到底"硬停"）。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       Divider().strokeWidth(0.5)
       // ══════════════════════════════════════════════════════════════════════
       // 「取消」按钮（2026-10-12 修：点它没反应 / 弹窗不消失 / 父弹窗被召回）

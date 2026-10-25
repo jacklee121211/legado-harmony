@@ -2642,7 +2642,7 @@ export struct TtsControlPanel {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .constraintSize({ maxWidth: '70%' })
               SymbolGlyph($r('sys.symbol.chevron_forward'))
-                .fontSize(14)
+                .fontSize(16)
                 .fontColor([this.fgSub()])
             }
             .width('100%')
@@ -3085,7 +3085,13 @@ export struct TtsControlPanel {
                           this.onApplyAiSpeakerProfile(p);
                         })
                       SymbolGlyph($r('sys.symbol.xmark'))
-                        .fontSize(11)
+                        // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：11 → **16vp**。
+                        //   判定依据是**实际绘制尺寸**而非 fontSize 声明值：
+                        //   自检报告原文「[SymbolGlyph]的实际尺寸为 5*9vp」；
+                        //   真机 dump（手机 API26 / 平板 API24，2026-10-25）实测
+                        //   fontSize 12 的细长符号只有 6.2~6.3vp 宽 ⇒ 仍 < 8vp 必须下限。
+                        //   16vp ⇒ 墨迹宽 ≈ 8.3vp，两台设备同时达标。
+                        .fontSize(16)
                         .fontColor([this.fgSub()])
                         .onClick(() => {
                           Haptics.tap();
@@ -3304,6 +3310,10 @@ export struct TtsControlPanel {
       .layoutWeight(this.compactMode ? 0 : 1)
       .width('100%')
       .scrollBar(BarState.Off)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `scroll.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ 听书面板的
+      //   主滚动容器是 `Scroll`，不写就完全没有越界反馈。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .align(Alignment.Top)
       // 探针：滚动区高度
       .onAreaChange((_o: Area, n: Area) => {

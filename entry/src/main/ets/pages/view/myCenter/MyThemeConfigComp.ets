@@ -353,6 +353,21 @@ export struct MyThemeConfigComp {
       //   中间开一个 158px 的洞）。列宽随之 513.9 → 559.5px，比例不变、格子更饱满。
       .columnsGap(20)
       .rowsGap(12)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动越界反馈」修复。
+      //   根因（SDK `grid.d.ts:849-864` 原文）：「Effect used when the scroll boundary is reached.
+      //   …Default value: **EdgeEffect.None**」⇒ `Grid` 不写就**完全没有**越界反馈
+      //   （`list.d.ts:1024-1025` 才是默认 `Spring`）。主题页主滚动容器正是本 `Grid`。
+      //
+      // ⚠️ **必须是 `alwaysEnabled: true`**（2026-10-25 真机复核纠正 deveco 那轮的 false）：
+      //   同一段 SDK 原文（`grid.d.ts:854-856`）：
+      //     「**options** - Whether to enable the scroll effect **when the component content
+      //      is smaller than the component itself**. **{ alwaysEnabled: true }** means to
+      //      enable … **{ alwaysEnabled: false }** means the opposite.」
+      //   ⇒ `false` = 「内容不足一屏时**不启用**」。
+      //   真机 dump（Mate 80 / API26 / 2026-10-25）：`Grid 67,556,1253,2498`
+      //   ⇒ 容器高 1942px；末个 GridItem 底边 1720px ⇒ 内容高 1164px < 1942px
+      //   ⇒ 写 `false` 改完仍然零反馈，自检照旧不通过。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
       .height('100%')
     }

@@ -81,7 +81,7 @@ export struct SetListView{
           // 字号取 15：原 PNG 里箭头实际绘制区只有 19×30 px（画布 72），按 25vp 显示约 6.6×10.4vp
           // ⇒ 15 号 chevron 的观感最接近原样。
           SymbolGlyph($r('sys.symbol.chevron_forward'))
-            .fontSize(15)
+            .fontSize(16)
             .fontColor([ShelfColors.icon()])
         }else if (this.setList.hideControl !== true) {
           Toggle({ type: ToggleType.Switch, isOn: this.setList.toggleStatus})

@@ -169,6 +169,10 @@ export default struct BookContentRefresh {
               .padding({ left: 10, right: 10, bottom: 30 })
             }
             .scrollBar(BarState.Off)
+            // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+            //   `scroll.d.ts`「Default value: **EdgeEffect.None**」⇒ 分组卡片页的滚动容器
+            //   是 `Scroll`（书架主列表才是 `List`，默认 Spring），不写就没有越界反馈。
+            .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
           }
         }
         .width('100%')
@@ -209,7 +213,7 @@ export default struct BookContentRefresh {
       if (this.shouldShowBackToGroups()) {
         Row({ space: 6 }) {
           SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(14)
+            .fontSize(16)
             .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
           Text(this.currentGroupName)
             .fontSize(13)

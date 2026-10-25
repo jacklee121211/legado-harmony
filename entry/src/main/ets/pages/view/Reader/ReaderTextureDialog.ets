@@ -263,6 +263,10 @@ export struct ReaderTextureDialog {
       .height(360)
       .width('100%')
       .scrollBar(BarState.Off)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `grid.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ 材质网格不写
+      //   就没有越界反馈（材质多于可视区时滑到底"硬停"）。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     }
     .width('100%')
     .padding(20)

@@ -256,7 +256,7 @@ export default struct LicensePage {
                     // 有上游地址才显示「前往」指示，避免给不可点的条目假承诺
                     if (entry.url.length > 0) {
                       SymbolGlyph($r('sys.symbol.chevron_forward'))
-                        .fontSize(14)
+                        .fontSize(16)
                         .fontColor([$r('app.color.text_primary')])
                         .opacity(0.35)
                     }
@@ -309,7 +309,7 @@ export default struct LicensePage {
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
                 SymbolGlyph($r('sys.symbol.chevron_forward'))
-                  .fontSize(14)
+                  .fontSize(16)
                   .fontColor([$r('app.color.text_primary')])
                   .opacity(0.35)
               }
@@ -390,7 +390,10 @@ export default struct LicensePage {
                       .fontSize(12)
                       .fontColor('#0A84FF')
                     SymbolGlyph($r('sys.symbol.chevron_forward'))
-                      .fontSize(13)
+                      // ★ 2026-10-25 官方 UX 自检 2.1.4.3.2「界面图标大小」修复：13 → **16vp**。
+                      //   判定依据是实际绘制尺寸（chevron 墨迹宽 ≈ 0.52 × fontSize）：
+                      //   真机实测 12vp 仅 6.2~6.3vp 宽，仍 < 8vp 必须下限；16vp ⇒ ≈8.3vp。
+                      .fontSize(16)
                       .fontColor([$r('app.color.text_primary')])
                       .opacity(0.35)
                   }

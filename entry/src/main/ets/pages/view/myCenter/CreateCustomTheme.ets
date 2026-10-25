@@ -168,6 +168,10 @@ export default struct CreateCustomTheme {
         .scrollable(ScrollDirection.Horizontal)
         .scrollBar(BarState.Off)
         .height('100%')
+        // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+        //   `scroll.d.ts`「Default value: **EdgeEffect.None**」⇒ 色板横向 `Scroll`
+        //   不写就没有越界反馈；横向同样适用（左右滑到首/末色不弹一下）。
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       }
       .height(72)
       .width('100%')

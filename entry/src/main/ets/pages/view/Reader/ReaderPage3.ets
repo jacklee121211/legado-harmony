@@ -8889,7 +8889,20 @@ export default struct ReaderPage3 {
       Row({ space: 5 }) {
         Text('亮度')
         Slider({
-          value: BrightnessUtil.getBrightness('reader'),
+          // ⚠️ 2026-10-25 修「点个别背景格震动反馈不一样」的根因（真机日志实证）：
+          //   `BrightnessUtil.getBrightness('reader')` 在"随系统"时返回 **-1**（见
+          //   `common/utils/BrightnessUtil.ets:35` `return brightness ?? -1`），而本滑条
+          //   `min: 0` ⇒ 初值是**非法值**。SDK 原文（`…\ets\component\slider.d.ts:117-120`，
+          //   `SliderChangeMode.End` 的 NOTE）：「The trigger occurs when an invalid value is
+          //   restored to the default value, that is, when the value is set to **less than min**
+          //   or greater than max.」
+          //   ⇒ 页面每次重渲染（点背景格就会重渲染）都会把这个 -1 "恢复成默认值"，
+          //     并回调一次 `onChange(mode=End)` ⇒ 那里的 `Haptics.tick()` 多震一次。
+          //   真机日志（2026-10-25 10:52:18.212）原文：
+          //     `BRISLIDE onChange value=0 mode=2 follow=true`
+          //     `HAPFIRE >>> … at tick entry … ReaderPage3.ets:8915`
+          //   ⇒ 传值前 clamp 到 [min, max]，非法值不再出现，End 不再被触发。
+          value: Math.max(0, BrightnessUtil.getBrightness('reader')),
           max: 1,
           min: 0,
           step: 0.01,
@@ -10793,6 +10806,19 @@ export default struct ReaderPage3 {
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
+      // ⚠️ 2026-10-25 **保留 `EdgeEffect.None`**（否决 deveco 那轮改回 Spring 的做法）。
+      //
+      //   ① 它不是「内容滚动区」，是**自动前滚的字幕跑马灯**：本 Scroll 由
+      //      `miniScroller.scrollTo()` 按句内字符进度逐字推进（见上方注释与
+      //      `onAreaChange` 里的 `miniTextW/miniViewW`），用户不会用它浏览内容。
+      //      自检 2.1.5.3.3 的判定对象是「界面**滑动**到边界位置」，跑马灯不在此列。
+      //   ② 改 Spring 有**实证过的回归**：本 Scroll 高度只有迷你条那一行，
+      //      `alwaysEnabled: true` 时内容不足一屏也允许跟手位移 ⇒ 拖动/前滚瞬间
+      //      会把文字"扯出"条外露出白区（原注释即为此而设 None）。
+      //   ③ 真机 dump 未点名它：自检报告 4 次「滑动动效」全部落在
+      //      **主题页 `Grid`** 与 **我的页 `Scroll`**（报告原文：
+      //      「控件类型：[Grid]」+ 主题页截图），迷你条只在听书沉浸层出现，未被遍历到。
+      //   ⇒ 按本工程铁律「不可本地验证的路径默认保留旧实现」，这里维持 None。
       .edgeEffect(EdgeEffect.None)
       .layoutWeight(1)
       .onAreaChange((_o: Area, n: Area) => {

@@ -274,6 +274,10 @@ export default struct coverInfoDialog{
       .height(164)
       .width('100%')
       .padding({ left:20, right:20, top:12 })
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `grid.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ 默认封面 `Grid`
+      //   不写就没有越界反馈（封面多于一屏时滑到底"硬停"）。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .visibility(this.selectedType === 0 ? Visibility.Visible : Visibility.None)
 
       Divider().strokeWidth(0.5).margin({top:16}).padding({bottom:16})

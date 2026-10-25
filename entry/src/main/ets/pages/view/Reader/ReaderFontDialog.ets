@@ -1238,6 +1238,10 @@ export struct ReaderFontDialog {
       .layoutWeight(1)
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `scroll.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ 字体列表用的是
+      //   `Scroll`，不写就没有越界反馈（字体多时滑到底"硬停"）。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
 
       // ── 下载区（3.3：去掉"展开"按钮，输入框常驻；3.4：占位文案 + 多直链）────
       //    2026-10-24：队列化后这里常驻「进度 + 队列长度 + 取消」，

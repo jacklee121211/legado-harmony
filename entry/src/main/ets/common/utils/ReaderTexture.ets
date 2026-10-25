@@ -71,8 +71,9 @@ export class ReaderTexture {
    * getRawFdSync 从 001 试到第一个断号为止（上限 300，防极端坏数据卡死）。
    */
   /** rawfile 材质集版本：材质图内容按编号重排时递增 ⇒ 一次性清掉按编号落盘的合成/模糊缓存
-   *  （2026-10-07 用户要求 001↔004 内容互换 ⇒ 升到 2；否则旧缓存会顶着新编号继续显示） */
-  private static readonly TEX_SET_VER: number = 2;
+   *  （2026-10-07 用户要求 001↔004 内容互换 ⇒ 升到 2；否则旧缓存会顶着新编号继续显示）
+   *  （2026-10-25 用户要求 001↔015 内容互换 ⇒ 升到 3，同理） */
+  private static readonly TEX_SET_VER: number = 3;
   private static readonly KEY_TEX_SET_VER: string = 'ReaderTexSetVer';
   private static setVerChecked: boolean = false;
 

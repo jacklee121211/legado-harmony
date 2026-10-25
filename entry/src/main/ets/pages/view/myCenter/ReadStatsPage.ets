@@ -436,33 +436,49 @@ export default struct ReadStatsPage {
 
   @Builder
   periodRow() {
-    Row({ space: 18 }) {
-      SymbolGlyph($r('sys.symbol.chevron_left'))
-        .fontSize(14)
-        .fontColor([this.mode === READ_MODE_ALL || this.mode === READ_MODE_CUSTOM
-          ? ShelfColors.textSub() : ShelfColors.icon()])
-        .opacity(this.mode === READ_MODE_ALL || this.mode === READ_MODE_CUSTOM ? 0.3 : 0.5)
-        .onClick(() => {
-          this.step(-1)
-        })
+    // ★ 2026-10-25 用户反馈「时间左右两个箭头太小，点击不便」⇒ 放大图标 + 撑满点击热区。
+    //   改动前：`SymbolGlyph.fontSize(14)` 且箭头**自身就是热区**（约 14vp×14vp），
+    //   远低于官方 UX 标准 2.1.3.3「触屏可点击热区需 ≥40vp×40vp（必须），≥48vp 推荐」。
+    //   改法：图标 14→20vp，外面各包一个 44vp×44vp 的 Row 承载点击（视觉不变、热区达标）；
+    //   间隔由原来的 `space: 18` 收成 2 —— 44vp 盒子里图标居中后左右各留 12vp，
+    //   视觉间距 = 12 + 2 + 12 ≈ 26vp，比原来的 18vp 只略宽，不会把日期挤瘦。
+    Row({ space: 2 }) {
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(20)
+          .fontColor([this.mode === READ_MODE_ALL || this.mode === READ_MODE_CUSTOM
+            ? ShelfColors.textSub() : ShelfColors.icon()])
+          .opacity(this.mode === READ_MODE_ALL || this.mode === READ_MODE_CUSTOM ? 0.3 : 0.5)
+      }
+      .width(44)
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => {
+        this.step(-1)
+      })
       Text(this.periodText())
         .fontSize(15).fontWeight(600)
         .fontColor(ShelfColors.textMain())
         .onClick(() => {
           this.pickPeriod()
         })
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(14)
-        .fontColor([ShelfColors.icon()])
-        .opacity(this.canForward() ? 0.5 : 0.15)
-        .onClick(() => {
-          this.step(1)
-        })
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(20)
+          .fontColor([ShelfColors.icon()])
+          .opacity(this.canForward() ? 0.5 : 0.15)
+      }
+      .width(44)
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => {
+        this.step(1)
+      })
     }
     .width('100%')
-    .height(30)
+    .height(44)
     .justifyContent(FlexAlign.Center)
-    .margin({ top: 12 })
+    .margin({ top: 6 })
   }
 
   @Builder
@@ -699,7 +715,15 @@ export default struct ReadStatsPage {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       // 回弹手感与书架一致（`scroll.d.ts` 默认是 None，List 默认是 Spring ⇒ 必须显式给）
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      // ★ 2026-10-25 用户反馈「整页是居中对齐的，应该顶部对齐，否则切换月份整页乱跳」。
+      //   根因：`align` 是**通用属性**（`common.d.ts`「Sets the alignment mode of the component
+      //   content in the drawing area … Default value: **Alignment.Center**」）⇒ 本 `Scroll`
+      //   只写了 `layoutWeight(1)`（高度确定）却没写 `align`，当内容不足一屏时**内容块被
+      //   垂直居中**；切换日/月/年后柱状图与 Top 榜行数变化 ⇒ 内容高度变化 ⇒ 整块上下位移
+      //   （用户看到的"乱跳"）。与 `TtsControlPanel.ets`（`.align(Alignment.Top)`）、
+      //   `readStatisticsDataList.ets`（`.align(Alignment.TopStart)`）是同一个坑、同一种修法。
+      .align(Alignment.Top)
     }
     .width('100%')
     .height('100%')

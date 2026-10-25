@@ -304,12 +304,16 @@ export struct ReaderSchemeDialog {
             }
           }, (card: SchemeCard): string => 'sv3-' + card.key)
         }
-        .columnsTemplate('1fr 1fr 1fr 1fr')
-        .columnsGap(10)
-        .rowsGap(10)
-        .height(320)
-        .width('100%')
-        .scrollBar(BarState.Off)
+      .columnsTemplate('1fr 1fr 1fr 1fr')
+      .columnsGap(10)
+      .rowsGap(10)
+      .height(320)
+      .width('100%')
+      .scrollBar(BarState.Off)
+      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
+      //   `grid.d.ts` 原文「…Default value: **EdgeEffect.None**」⇒ 方案网格不写
+      //   就没有越界反馈（方案多于可视区时滑到底"硬停"）。
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       }
     }
     .width('100%')
