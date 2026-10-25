@@ -35,6 +35,15 @@
  * 8. `thumbnailUri` 只接受**应用文件 URI / 用户文件 URI**，不接受 http/rawfile；
  *    而 `thumbnail`（Uint8Array）有 32KB 限制 ⇒ 一律走 `thumbnailUri`
  *    —— `share-system-share` SharedRecord 字段说明。
+ * 9. **碰一碰卡片不吃 `thumbnail` / `thumbnailUri`**（2026-10-25 真机三次实测）：
+ *    URI 通道（`file://<bundleName>/…`）、内联 JPEG、内联 PNG 三条全试过，卡片主图
+ *    始终是"与内容类型匹配的图标"；`title` / `description` 却都生效。
+ *    ⇒ 文件记录的卡片没有图片位，应用侧换不掉。缩略图仅对**系统分享面板**有效。
+ * 10. 卡片文案的两条官方前提（`knock-share-between-phones-content` §设置配套的卡片样式）：
+ *    · 只传 thumbnailUri ⇒ 纯图片布局（推荐用于**文件**）
+ *    · title + description + thumbnailUri 且宽高比 <1:1 ⇒ 沉浸式大卡（推荐用于**链接**）
+ *    实测：两种模板下文件记录都不显示预览图，但"纯图片布局"会白丢书名
+ *    ⇒ 取"带文案的沉浸式大卡"（信息量最大）。
  *
  * ── 闸门策略（2026-10-25 与用户敲定）────────────────────────────────────────
  * 不支持的设备**静默降级**：不注册、不提示、不显示引导。
@@ -49,7 +58,10 @@ import { common } from '@kit.AbilityKit'
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { Books } from '../../database/entities/Books'
-import { coverPathToUri } from '../utils/CoverSource'
+import { coverPathToUri, stripBookExt } from '../utils/CoverSource'
+import MySetConstants from '../constants/MySetConstants'
+import { PreferencesUtil } from '@pura/harmony-utils'
+import { coverThumb, ShareThumb } from './CoverThumb'
 
 const DOMAIN: number = 0x0000
 const TAG: string = 'ShareBridge'
@@ -61,6 +73,23 @@ const TAG: string = 'ShareBridge'
 export const SHARE_KNOCK_ENABLED: boolean = true
 export const SHARE_GESTURE_ENABLED: boolean = true
 export const SHARE_GUIDE_ANIM_ENABLED: boolean = true
+/**
+ * 分享预览图（书籍封面）总开关。
+ * 置 false ⇒ 不传 `thumbnail` / `thumbnailUri`，分享面板退回系统图标；
+ * 其余逻辑（分享内容、文案、通道）完全不受影响。
+ * ⚠️ 只影响**系统分享面板**的预览卡，碰一碰/隔空传送的卡片不吃这两个字段（见文件头证据 9）。
+ */
+export const SHARE_COVER_THUMB_ENABLED: boolean = true
+/**
+ * 预热条数：官方硬约束「触发事件到 share() 3 秒内完成」
+ * （`bpta-application-gesture-share`）⇒ 500 本不可能全部生成缩略图，只备前几本。
+ */
+export const SHARE_THUMB_WARM_COUNT: number = 3
+/**
+ * 是否把「纯文本系 utd」归一成 `general.file`（理由见 `utdOf()`）。
+ * 置 false ⇒ 退回按后缀原样取 utd。
+ */
+export const SHARE_TEXT_UTD_AS_FILE: boolean = true
 
 /** 官方硬上限：单次分享最多 500 条记录（超了直接拒绝，不截断） */
 export const MAX_SHARE_RECORDS: number = 500
@@ -140,8 +169,12 @@ export class ShareSelection {
   title: string = ''
   /** 碰一碰卡片描述（仅 1 行） */
   description: string = ''
-  /** 预览图 URI（只接受应用文件 URI / 用户文件 URI） */
+  /** 预览图 URI（只接受应用文件 URI / 用户文件 URI）—— 第一条记录（卡片正面）的封面 */
   thumbUri: string = ''
+  /** 逐条缩略图（与 `books` 同序，未预热到的位置为 ''） */
+  recordThumbs: string[] = []
+  /** 第一条记录封面的内联字节（`SharedRecord.thumbnail`，≤30KB） */
+  firstThumbBytes: Uint8Array | null = null
 
   constructor(books: Books[], title: string, description: string, thumbUri: string) {
     this.books = books
@@ -151,43 +184,61 @@ export class ShareSelection {
   }
 }
 
-/** 后缀 → utd（官方推荐 `getUniformDataTypeByFilenameExtension`，解析失败退回 general.text） */
+/**
+ * 后缀 → utd。
+ *
+ * ⚠️ 2026-10-25 修复：**纯文本系 utd 归一成 `general.file`**。
+ * `getUniformDataTypeByFilenameExtension('.txt')` 返回 `general.plain-text`，而 Share Kit
+ * 把它当**纯文本（一段文字）记录**，不是文件记录。官方两处原文：
+ *   · `.../常见分享场景/分享文本/share-utd-text`：「纯文本类型分享支持将**一段文字**分享到
+ *     目标设备/目标应用。目标设备接收时，文本会转化为 .txt 文件保存在文件管理中。」
+ *   · `.../Share_Kit常见问题/分享数据类型不支持/share-faq-2`：「分享数据不支持**文件类型与
+ *     纯文本类型混合分享**；分享数据**不支持多条纯文本类型分享**。」
+ * ⇒ 多选多本 txt 会撞上"多条纯文本不支持"（批量分享曾经坏掉的根因）；
+ *   我们分享的本来就是**文件**（record 带 `uri`），故归一成 `general.file`
+ *   （`@ohos.data.uniformTypeDescriptor.d.ts:1137`，ENTITY 类型）。
+ *   epub/pdf/docx 等本身是 ENTITY 类型，保持精确 utd 不动（精确 utd 决定能分享给哪些目标应用）。
+ */
 function utdOf(path: string): string {
+  const fallback: string = SHARE_TEXT_UTD_AS_FILE ? 'general.file' : 'general.text'
   const dot: number = path.lastIndexOf('.')
   if (dot < 0) {
-    return 'general.text'
+    return fallback
   }
   const suffix: string = path.substring(dot)
   try {
     const id: string = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix) ?? ''
-    return id !== '' ? id : 'general.text'
+    if (id === '') {
+      return fallback
+    }
+    if (SHARE_TEXT_UTD_AS_FILE && (id === 'general.text' || id === 'general.plain-text')) {
+      return 'general.file'
+    }
+    return id
   } catch (e) {
-    return 'general.text'
+    return fallback
   }
 }
 
 /**
- * 书籍封面 → 可直接给 `thumbnailUri` 的 URI。
+ * 书籍封面 → **可直接**给 `thumbnailUri` 的 URI（同步、不做任何解码）。
  *
  * 只接受**本地**封面（沙箱路径 / file / datashare）：官方字段说明里
  * `thumbnailUri` 只支持应用文件 URI 与用户文件 URI，http 与 rawfile 都不行（证据 8）。
- * 无本地封面 ⇒ 返回 ''（卡片退回系统默认图标，不阻塞分享）。
+ * 无本地封面 ⇒ 返回 ''（此时交给 `CoverThumb.coverThumb()` 的异步管线生成）。
+ *
+ * ⚠️ 2026-10-25 修优先级：**自定义封面 > 自带封面**，与书架
+ * `CoverSource.resolveBookCover()` 同序。原实现把 `builtinCoverUrl` 排在前面，
+ * 导致「用户换了自定义封面，分享出去还是自带封面」。
  */
 export function thumbUriOf(book: Books): string {
-  const builtin: string = coverPathToUri(book.builtinCoverUrl ?? '')
-  if (builtin !== '') {
-    return builtin
-  }
   const custom: string = book.customCoverUrl ?? ''
-  if (custom.startsWith('file://') || custom.startsWith('datashare://')) {
-    return custom
-  }
   // default:// 是 rawfile 内置封面、http(s):// 是网络图 —— 都不满足 thumbnailUri 的 URI 要求
   if (custom !== '' && !custom.startsWith('default://')
     && !custom.startsWith('http://') && !custom.startsWith('https://')) {
     return coverPathToUri(custom)
   }
-  return ''
+  return coverPathToUri(book.builtinCoverUrl ?? '')
 }
 
 /** 取第一本有本地封面的书作为预览图（多本拼图见文件末尾 TODO） */
@@ -202,25 +253,78 @@ function firstThumb(books: Books[]): string {
 }
 
 /**
+ * 卡片上显示的书名：跟随「我的-设置-显示文件拓展名」开关
+ * （`MySetConstants.SET_EXT_NAME`，读取方式与 `ListenSession.ets:96` 一致）。
+ * 原来直接用 `book.bookName`（带 `.txt`），截图里卡片标题就是「黄昏书店.txt」。
+ */
+function displayName(book: Books): string {
+  const raw: string = book.bookName ?? ''
+  if (raw === '') {
+    return '书籍'
+  }
+  let showExt: boolean = false
+  try {
+    showExt = PreferencesUtil.getSync(MySetConstants.SET_EXT_NAME, false) as boolean
+  } catch (e) {
+    showExt = false
+  }
+  const name: string = stripBookExt(raw, showExt)
+  return name !== '' ? name : raw
+}
+
+/**
  * 由书籍列表构造选定快照（两个入口共用，保证「选定内容一致」）。
  *
- * 卡片文案规则（2026-10-25 默认值，用户已确认）：
- *   单本 → title=书名，description=作者（空则用书名）
+ * 卡片文案规则（2026-10-25 用户确认）：
+ *   单本 → title=书名（跟随拓展名开关），description=作者（空则用书名）
  *   多本 → title=`已选 N 本书`，description=前 3 个书名以「、」连接
  */
 export function buildSelection(books: Books[]): ShareSelection {
   if (books.length === 1) {
     const b: Books = books[0]
-    const name: string = (b.bookName ?? '') !== '' ? b.bookName : '书籍'
+    const name: string = displayName(b)
     const author: string = b.author ?? ''
     return new ShareSelection(books, name, author !== '' ? author : name, thumbUriOf(b))
   }
   const names: string[] = []
   for (let i = 0; i < books.length && i < 3; i++) {
-    names.push((books[i].bookName ?? '') !== '' ? books[i].bookName : '书籍')
+    names.push(displayName(books[i]))
   }
   const desc: string = names.join('、')
   return new ShareSelection(books, `已选 ${books.length} 本书`, desc, firstThumb(books))
+}
+
+/**
+ * 预热缩略图（异步，调用方不 await）。
+ *
+ * 只备前 `SHARE_THUMB_WARM_COUNT` 条（3 秒预算内不可能全量生成）；
+ * 单条先走 `CoverThumb` 的规整管线，解码失败则退回 `thumbUriOf()` 的"原图直用"。
+ */
+export async function prepareThumbs(ctx: common.UIAbilityContext, sel: ShareSelection | null): Promise<void> {
+  if (sel === null || !SHARE_COVER_THUMB_ENABLED) {
+    return
+  }
+  const limit: number = Math.min(sel.books.length, SHARE_THUMB_WARM_COUNT)
+  for (let i = 0; i < limit; i++) {
+    let thumb: ShareThumb = new ShareThumb('', null)
+    try {
+      thumb = await coverThumb(ctx, sel.books[i])
+    } catch (e) {
+      thumb = new ShareThumb('', null)
+    }
+    let uri: string = thumb.uri
+    if (uri === '') {
+      uri = thumbUriOf(sel.books[i])
+    }
+    sel.recordThumbs[i] = uri
+    if (i === 0) {
+      sel.thumbUri = uri
+      // 内联字节只备第一本：多条各带 20~30KB 会把 want 撑爆
+      sel.firstThumbBytes = thumb.bytes
+    }
+    hilog.info(DOMAIN, TAG, 'thumb[%{public}d] %{public}s bytes=%{public}d', i,
+      uri === '' ? '<none>' : uri, thumb.bytes === null ? 0 : thumb.bytes.byteLength)
+  }
 }
 
 /**
@@ -245,6 +349,12 @@ export class BookShareBridge {
   private windowId: number = -1
   private knockOn: boolean = false
   private gestureOn: boolean = false
+  /**
+   * 宿主传入的 UIAbilityContext（`acquire` 里落存）。
+   * 缩略图管线要 `cacheDir` 与 `resourceManager`，而 `setSelection` 是同步调用
+   * ⇒ 只能由 bridge 自己留着上下文。
+   */
+  private ctx: common.UIAbilityContext | null = null
 
   // 官方 off 需要同一个 callback 引用 ⇒ 必须存成稳定的箭头字段
   private readonly knockCb = (target: harmonyShare.SharableTarget): void => {
@@ -262,13 +372,35 @@ export class BookShareBridge {
   /**
    * 写入/清空选定快照。
    *
-   * 预览图在**写入选定时**就已算好（`buildSelection` 里同步取本地封面 URI），
-   * 回调里不再做任何重活 —— 官方要求 3 秒内调 `share()`。
+   * 文案在 `buildSelection` 里同步算好；**封面缩略图**（3:4 / 600×800 JPEG）
+   * 由 `prepareThumbs` 在这里异步预热 —— 回调里不再做任何重活，
+   * 官方要求「触发事件到 share() 3 秒内完成」。
    */
   setSelection(sel: ShareSelection | null): void {
     this.selection = sel
     const has: boolean = sel !== null && sel.books.length > 0
     AppStorage.setOrCreate(SHARE_HAS_CONTENT_KEY, has)
+    this.warmThumbs(sel)
+  }
+
+  /**
+   * 触发缩略图预热（fire-and-forget）。
+   *
+   * 幂等：已经备够 `SHARE_THUMB_WARM_COUNT` 条就直接返回，
+   * 避免勾选变化时反复重算（`dataCheckList()` 每次勾选都会调 `setSelection`）。
+   */
+  private warmThumbs(sel: ShareSelection | null): void {
+    const ctx: common.UIAbilityContext | null = this.ctx
+    if (sel === null || ctx === null || !SHARE_COVER_THUMB_ENABLED) {
+      return
+    }
+    const want: number = Math.min(sel.books.length, SHARE_THUMB_WARM_COUNT)
+    if (sel.recordThumbs.length >= want) {
+      return
+    }
+    prepareThumbs(ctx, sel).catch((e: Error): void => {
+      hilog.warn(DOMAIN, TAG, 'prepareThumbs failed: %{public}s', e.message)
+    })
   }
 
   /** 清空选定（等价 setSelection(null)，语义化别名） */
@@ -283,6 +415,9 @@ export class BookShareBridge {
    * 不重复注册（避免同窗口双注册行为未定义，见收尾说明）。
    */
   async acquire(owner: string, ctx: common.UIAbilityContext): Promise<void> {
+    // 上下文**先落存**：`setSelection` 可能早于注册完成（管理页 aboutToAppear
+    // 与首次勾选是两条异步线），没有 ctx 就没法预热缩略图。
+    this.ctx = ctx
     const cap: ShareCapability = shareCapability()
     if (!cap.any()) {
       // 静默降级：不支持的设备/版本一律不注册（用户已确认不要任何提示）
@@ -292,6 +427,7 @@ export class BookShareBridge {
     if (this.owner !== '' && this.owner !== owner) {
       // 已有其它宿主持有：只迁移持有权，注册状态不变
       this.owner = owner
+      this.warmThumbs(this.selection)
       return
     }
     this.owner = owner
@@ -323,6 +459,8 @@ export class BookShareBridge {
         hilog.error(DOMAIN, TAG, 'gesturesShare register failed: %{public}s', err.message ?? '')
       }
     }
+    // 注册完成后再补一次预热：覆盖"先 setSelection 后 acquire"的调用顺序
+    this.warmThumbs(this.selection)
   }
 
   /**
@@ -379,9 +517,16 @@ export class BookShareBridge {
     }
   }
 
-  /** 构造 SharedData（首条进构造器，其余 addRecord —— 官方范式） */
+  /**
+   * 构造 SharedData（首条进构造器，其余 addRecord —— 官方范式）。
+   *
+   * 首条 = 卡片正面：`title` / `description` 用选定级别文案，`thumbnail` / `thumbnailUri`
+   * 带第一本的封面（仅对**系统分享面板**有效，碰一碰卡片不吃，见文件头证据 9）。
+   * `sel.books` 的顺序来自书架列表顺序（`BookManagePage.currentSelection()`）。
+   */
   static buildSharedData(sel: ShareSelection): systemShare.SharedData | null {
     let data: systemShare.SharedData | null = null
+    let index: number = 0
     for (const b of sel.books) {
       const path: string = b.bookUrl ?? ''
       if (path === '') {
@@ -393,10 +538,22 @@ export class BookShareBridge {
       } catch (e) {
         continue
       }
+      // 首条用选定级别文案（单本=书名/作者，多本=已选 N 本书/前 3 个书名），
+      // 其余记录保持各自书名，避免接收端认不出是哪一本。
+      const thumb: string = index < sel.recordThumbs.length ? sel.recordThumbs[index] : ''
       const record: systemShare.SharedRecord = {
         utd: utdOf(path),
         uri: uri,
-        title: (b.bookName ?? '') !== '' ? b.bookName : '书籍'
+        title: index === 0 && sel.title !== '' ? sel.title : displayName(b)
+      }
+      if (thumb !== '') {
+        record.thumbnailUri = thumb
+      }
+      if (index === 0 && sel.firstThumbBytes !== null) {
+        record.thumbnail = sel.firstThumbBytes
+      }
+      if (index === 0 && sel.description !== '') {
+        record.description = sel.description
       }
       if (data === null) {
         data = new systemShare.SharedData(record)
@@ -411,6 +568,7 @@ export class BookShareBridge {
           hilog.warn(DOMAIN, TAG, 'addRecord skipped: %{public}s', err.message ?? '')
         }
       }
+      index++
     }
     return data
   }
@@ -419,7 +577,7 @@ export class BookShareBridge {
    * 事件回调（碰一碰 / 隔空传送共用）。
    *
    * 注意：这里**只做取快照 + 发数据**，任何重活（渲染缩略图、下载封面）都会
-   * 撞上官方「3 秒内必须调 share()」的硬限制。
+   * 撞上官方「3 秒内必须调 share()」的硬限制（缩略图已在 `setSelection` 时预热）。
    */
   private handleTarget(target: harmonyShare.SharableTarget, channel: string): void {
     const sel: ShareSelection | null = this.selection
@@ -438,6 +596,11 @@ export class BookShareBridge {
       this.endShare(target, '选中的书籍没有可分享的文件')
       return
     }
+    // 打点：首条的封面/utd 状态（排查分享面板预览用）
+    hilog.info(DOMAIN, TAG, '%{public}s send books=%{public}d thumbs=%{public}d utd=%{public}s inline=%{public}d first=%{public}s',
+      channel, sel.books.length, sel.recordThumbs.length, utdOf(sel.books[0].bookUrl ?? ''),
+      sel.firstThumbBytes === null ? 0 : sel.firstThumbBytes.byteLength,
+      sel.thumbUri === '' ? '<none>' : sel.thumbUri)
     target.share(data).then((): void => {
       hilog.info(DOMAIN, TAG, '%{public}s share ok, books=%{public}d', channel, sel.books.length)
     }).catch((e: BusinessError): void => {
@@ -475,9 +638,10 @@ export class BookShareBridge {
   }
 }
 
-// ── TODO（下一步，需真机验证后再上）────────────────────────────────────────
-// 多本「封面宫格拼图」预览图：目前 `firstThumb()` 退化为「首本封面」。
-// 升级方案（已调研，未落地）：用 `UIContext.getComponentSnapshot().createFromBuilder()`
-// （SDK `@ohos.arkui.componentSnapshot.d.ts:581` 全局版 @since 10，UIContext 版推荐）
-// 把 2×2 / 3×3 宫格 builder 截成 PixelMap → ImagePacker 落 cache → thumbnailUri。
-// 之所以先不做：它依赖离屏渲染时序，必须在真机上验证 3 秒预算，不能凭经验设默认值。
+// ── TODO（未落地，需真机验证）─────────────────────────────────────────────
+// 多本「封面宫格拼图」：当前是"逐条记录各带自己的封面"（`ShareSelection.recordThumbs`）。
+// 由于碰一碰卡片对文件记录不渲染缩略图（见文件头证据 9），拼图目前**没有消费方**；
+// 只有当系统分享面板需要"多本合并成一张预览图"时才值得做：
+// 用 `UIContext.getComponentSnapshot().createFromBuilder()`
+// （SDK `@ohos.arkui.componentSnapshot.d.ts:581`，全局版 @since 10，UIContext 版推荐）
+// 把 2×2 / 3×3 宫格 builder 截成 PixelMap → ImagePacker 落盘 → thumbnailUri。
