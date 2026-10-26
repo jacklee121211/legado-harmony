@@ -206,6 +206,30 @@ export default struct IndexShelf {
    * `BookContent` 已加同名 `@StorageLink`，见那边的注释。
    */
   @StorageLink('SHELF_SORT_TICK') sortTick: number = 0
+  /**
+   * 小艺「带我去导入页」触发信号（2026-10-26 新增，端插件 foreground 通道）。
+   *
+   * 链路：`entryability/InsightIntentExecutorImpl.ets` 收到 `OpenImportPage` 意图
+   *   → 写 `quickAction = 'tab:0'` + `pendingShelfAction = 'import'`
+   *   → `pages/Index.ets` 的 `consumeQuickAction()` 切到书架页签后写本键（时间戳）
+   *   → 本组件 `@Watch` 收到 ⇒ 直接拉起本地导入选择器（复用 `pickLocalBooks()`）。
+   *
+   * ⚠️ 用**时间戳**而不是布尔：`@Watch` 只在值变化时触发，
+   *   连点两次「带我去导入」时布尔值 `true→true` 不触发，时间戳则每次都变。
+   * 一键回退：删除本字段与 `onShelfTriggerImport` 即可，`Index` 侧写键无人消费，无副作用。
+   */
+  @StorageLink('shelfTriggerImport') @Watch('onShelfTriggerImport') shelfTriggerImport: number = 0
+
+  /** 收到「带我去导入」信号 ⇒ 拉起本地导入（300ms 后再等一帧，确保书架已渲染） */
+  onShelfTriggerImport(): void {
+    if (this.shelfTriggerImport === 0) {
+      return;
+    }
+    Haptics.tap();
+    this.pickLocalBooks().catch((e: Error): void => {
+      console.error('shelfTriggerImport pickLocalBooks failed: ' + e.message);
+    });
+  }
   /** 三横（≡）按钮的 Q弹缩放（2026-10-20 从 `GroupType` 搬到本组件） */
   @State sortScale: number = 1
   /** 排序/显示设置面板控制器（每次打开新建，理由见 GroupType 同款注释） */

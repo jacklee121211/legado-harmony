@@ -1,0 +1,64 @@
+{
+  "insightIntents": [
+    {
+      "domain": "ToolsDomain",
+      "intentName": "OpenImportPage",
+      "intentVersion": "1.0.0",
+      "srcEntry": "./ets/entryability/InsightIntentExecutorImpl.ets",
+      "uiAbility": {
+        "ability": "EntryAbility",
+        "executeMode": [
+          "foreground"
+        ]
+      }
+    },
+    {
+      "domain": "ToolsDomain",
+      "intentName": "OpenShelfPage",
+      "intentVersion": "1.0.0",
+      "srcEntry": "./ets/entryability/InsightIntentExecutorImpl.ets",
+      "uiAbility": {
+        "ability": "EntryAbility",
+        "executeMode": [
+          "foreground"
+        ]
+      }
+    },
+    {
+      "domain": "ToolsDomain",
+      "intentName": "OpenSettingsPage",
+      "intentVersion": "1.0.0",
+      "srcEntry": "./ets/entryability/InsightIntentExecutorImpl.ets",
+      "uiAbility": {
+        "ability": "EntryAbility",
+        "executeMode": [
+          "foreground"
+        ]
+      }
+    },
+    {
+      "domain": "ToolsDomain",
+      "intentName": "OpenMyPage",
+      "intentVersion": "1.0.0",
+      "srcEntry": "./ets/entryability/InsightIntentExecutorImpl.ets",
+      "uiAbility": {
+        "ability": "EntryAbility",
+        "executeMode": [
+          "foreground"
+        ]
+      }
+    },
+    {
+      "domain": "ToolsDomain",
+      "intentName": "OpenListenPage",
+      "intentVersion": "1.0.0",
+      "srcEntry": "./ets/entryability/InsightIntentExecutorImpl.ets",
+      "uiAbility": {
+        "ability": "EntryAbility",
+        "executeMode": [
+          "foreground"
+        ]
+      }
+    }
+  ]
+}

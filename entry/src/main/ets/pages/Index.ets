@@ -1,4 +1,4 @@
-﻿import { showMessage } from '../componets/common/promptShow'
+import { showMessage } from '../componets/common/promptShow'
 import { ezCustomTransition, LongTakeSession, LongTakeTransitionDelegate } from '../common/ezlt'
 import { hostContext } from '../common/utils/HostContextUtil'
 import ReadShow from '../componets/common/ReadShow'
@@ -85,6 +85,8 @@ import {
 // 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
 import HdsCompat, { HdsFloatingStyleModifier } from '../common/utils/HdsCompat'
 import { ListenDock, ListenTitleBar } from '../components/tts/ListenDock'
+// 小喵入口悬浮按钮（2026-10-26，临时验证用；回退见该文件头注释）
+import { AgentEntryFab } from '../components/agent/AgentEntryFab'
 import { ListenSession } from '../tts/ListenSession'
 import { ListenLauncher } from '../tts/ListenLauncher'
 import { ListenUnlock } from '../common/utils/ListenUnlock'
@@ -456,6 +458,29 @@ struct Main {
    */
   private consumeQuickAction(attempt: number = 0): void {
     const action = this.quickAction;
+    // ── 小艺「带我去」跳转（2026-10-26 新增，端插件 foreground 通道）──────────
+    // 由 `entryability/InsightIntentExecutorImpl.ets` 写入，形如 `tab:2`。
+    // 与 `listen` / `read` 走**同一条** `quickAction` 通道，不引入第二套机制。
+    // 只切底部页签，不需要 AppRouter 就绪 ⇒ 单独分支、不走下面的重试链。
+    if (action.startsWith('tab:')) {
+      const idx: number = Number(action.substring(4));
+      if (!isNaN(idx) && idx >= 0 && idx < this.nav.length) {
+        AppStorage.setOrCreate('quickAction', '');
+        this.currentTabIndex = idx;
+        // 书架页签且要求「打开导入」⇒ 追加一次导入动作（`pendingShelfAction`）
+        const pending: string = AppStorage.get<string>('pendingShelfAction') ?? '';
+        if (pending === 'import' && idx === 0) {
+          AppStorage.setOrCreate('pendingShelfAction', '');
+          // 等书架渲染后再触发导入选择器（复用书架页自身的入口，避免这里直接调文件选择器）
+          setTimeout(() => {
+            AppStorage.setOrCreate('shelfTriggerImport', Date.now());
+          }, 300);
+        }
+      } else {
+        AppStorage.setOrCreate('quickAction', '');
+      }
+      return;
+    }
     if (action !== 'listen' && action !== 'read') {
       return;
     }
@@ -1584,6 +1609,29 @@ struct Main {
     })
     .width('100%')
     .height('100%')
+    // ── 小喵入口悬浮按钮（2026-10-26，临时验证用）────────────────────────────
+    // ⚠️⚠️ 2026-10-26 15:3x **已临时停用**：真机日志证明它导致「dock 栏以上整片触摸失效」。
+    //   证据（`C:\Users\Administrator\Documents\日志`）：点击上半区时
+    //     `ITK Id:..., TTHNI:fId: 0` 后面**一个节点都没有**，紧跟
+    //     `W  Touch test result is empty.`（18 次）；
+    //   而同期点底部 TabBar 命中链正常（`{ T: TabBar, D: 11 };{ T: Stack, D: 13 }`），
+    //   点内容区也正常（`{ T: Tabs, D: 10 };{ T: Swiper, D: 11 };{ T: List, D: 19 }`）
+    //   ⇒ 根节点正常，是**某一块区域被整片遮住**。
+    //   已排除的修法：给按钮加 `.clip(true)` + `.hitTestBehavior(HitTestMode.Transparent)`
+    //   无效（`Transparent` 是"自己响应但不阻塞兄弟/祖先"，容器自身仍参与命中）。
+    //
+    // 本步只做 A/B 验证：**先确认"摘掉它 ⇒ 触摸恢复"**，再决定正确写法。
+    // 恢复方式：把下面 4 行（`.overlay(...)` 整段）取消注释即可。
+    // .overlay(this.agentEntryOverlay(), {
+    //   align: Alignment.BottomEnd,
+    //   offset: { x: -16, y: -96 }
+    // })
+  }
+
+  /** 小喵入口（全页悬浮，四个页签都能看到） */
+  @Builder
+  agentEntryOverlay() {
+    AgentEntryFab()
   }
 
   // ═══ 一镜到底：转场 delegate 与进/出两段编排 ═══════════════════════════════
