@@ -72,7 +72,12 @@ import { ReaderBgPalette } from './ReaderBgPalette';
 // ── 上下滚动阅读（2026-10-20 新增：阅读方式第三档）──────────────────────────
 // ReaderKit 只有仿真/横滑两档（`flipMode` '0'/'1'，SDK 全文无滚动字段），
 // 这一档由我们自己用 ArkUI 铺段落实现，见 `ReaderScrollView.ets` 文件头。
-import { ReaderScrollView } from './ReaderScrollView';
+import { ReaderScrollView, SCROLL_PARA_GAP_EM } from './ReaderScrollView';
+// ── 无动画阅读（2026-10-26 新增：阅读方式第四档）────────────────────────────
+// 与上下滚动是"一母同胞"：同一套自绘排版，只是把"连续行流"按页容量切开。
+// 分页算法与沉浸听读层共用 `ReaderPager.paginateNodes()`（唯一实现，防漂移）。
+import { ReaderPageNoAnim } from './ReaderPageNoAnim';
+import { paginateNodes, PaginateResult } from './ReaderPager';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics';
@@ -391,6 +396,26 @@ const READER_BAR_BOTTOM_GAP: number = 10;
 const READ_MODE_FLIP_CURL: number = 0;    // 仿真
 const READ_MODE_FLIP_SLIDE: number = 1;   // 横滑
 const READ_MODE_SCROLL: number = 2;       // 上下滚动（本工程自绘）
+/**
+ * **第四档：无动画**（2026-10-26 用户要求，已真实接入）。
+ *
+ * 为什么必须自绘：ReaderKit 的翻页方式只有两档 —— SDK
+ * `@hms.core.readerservice.readerComponent.d.ets:169` 原文只声明 `flipMode: string;`
+ * 且无枚举注释；`ReaderSetting` 全文 13 个字段（`:69-200`）里**没有任何**
+ * 动画开关/时长字段；官方文档（documentId
+ * `…/修改翻页方式_字体大小及行间距/reader-setting-other`）原文
+ * 「0代表仿真翻页，1代表横滑翻页」 ⇒ **全文没有"无动画"这一档**。
+ * ⇒ 与 `READ_MODE_SCROLL`（上下滚动）完全同级的做法：本档由我们自绘，
+ *   `readerSetting.flipMode` **不承载**本值（仍只容纳 '0'/'1'）。
+ *   实现见 `ReaderPageNoAnim.ets`（把连续行流按页切开，翻页 = 换一个整数）。
+ */
+const READ_MODE_NONE: number = 3;
+/**
+ * 设置面板里「阅读方式」这一行的**展示顺序**（2026-10-26 用户指定）：
+ * 横滑 → 仿真 → 上下 → 无动画。**不是**数值顺序，改顺序只改这一个数组。
+ */
+const READ_MODE_OPTIONS: number[] =
+  [READ_MODE_FLIP_SLIDE, READ_MODE_FLIP_CURL, READ_MODE_SCROLL, READ_MODE_NONE];
 /** 按书保存阅读方式的 Preferences 键前缀 */
 const READ_MODE_KEY_PREFIX: string = 'ReaderMode_';
 /** 滚动模式下写进度的最小间隔（ms）——滚动回调很密，落盘必须节流 */
@@ -1090,9 +1115,16 @@ export default struct ReaderPage3 {
   //   ② 三种方式互切**进度统一** —— 全靠全工程唯一坐标 `(spine, 块节点, 字符)`：
   //      滚动时把「可视首段」写回 `pageRange`，于是书签/TTS 跟随/双端同步/读完判定
   //      /目录跳转全部**零改动**继续工作；
-  //   ③ 不能影响原有功能：分页模式下本页所有分支原样保留（见各处 `scrollModeOn()` 守卫）。
+  //   ③ 不能影响原有功能：分页模式下本页所有分支原样保留（见各处 `scrollModeOn()` /
+  //      `selfDrawnModeOn()` 守卫）。
+  // ⚠️ 2026-10-26：新增第四档「无动画」（`READ_MODE_NONE`），共用 `scrollSeek*` /
+  //   `scrollPage*` / `scrollHl*` / `scrollSpine/scrollNode`（语义是"自绘层状态"），
+  //   只有「初始位置」分两套序列号（`scrollInit*` / `noAnimInit*`）。
   // ══════════════════════════════════════════════════════════════════════════
-  /** 阅读方式：0=仿真 1=横滑 2=上下滚动（按书持久化，见 `READ_MODE_KEY_PREFIX`） */
+  /**
+   * 阅读方式：0=仿真 1=横滑 2=上下滚动 3=无动画
+   * （按书持久化，见 `READ_MODE_KEY_PREFIX`）
+   */
   @State readMode: number = READ_MODE_FLIP_CURL
   /** 滚动视图初始位置（`scrollInitSerial` 变化 = 重新载入窗口） */
   @State scrollInitSpine: number = 0
@@ -1111,9 +1143,24 @@ export default struct ReaderPage3 {
   @State scrollHlFrom: number = -1
   @State scrollHlTo: number = -1
   @State scrollHlSerial: number = 0
+  // ── 无动画阅读（2026-10-26 新增：阅读方式第四档）────────────────────────────
+  // 与滚动层**共用** `scrollSeek* / scrollPage* / scrollHl* / scrollSpine/scrollNode`：
+  // 那些字段的语义就是"自绘层当前的位置与请求"，两档不会同时生效，共用不会串。
+  // 只有"初始位置"必须分开 —— 两档各自有自己的载入序列号（切换时只递增目标那一档）。
+  /** 无动画层初始位置（`noAnimInitSerial` 变化 = 重新载入窗口） */
+  @State noAnimInitSpine: number = 0
+  @State noAnimInitNode: number = 0
+  @State noAnimInitSerial: number = 0
+
   /** 滚动模式进度落盘节流时间戳 */
   private scrollPersistAt: number = 0
-  /** 最近一次滚动上报的位置（切回分页时用它定位） */
+  /**
+   * 最近一次自绘层（滚动 / 无动画）上报的位置 —— 切回分页时用它定位。
+   *
+   * ⚠️ 两档**共用**这两个字段：它们表达的是"自绘层此刻停在哪一段"，
+   *    而两档不会同时生效（`readMode` 是单值），所以共用不会串。
+   *    切档动作只会改写 `scrollInit*` / `noAnimInit*` 之一，不影响这里。
+   */
   private scrollSpine: number = 0
   private scrollNode: number = 0
   /**
@@ -2572,7 +2619,7 @@ export default struct ReaderPage3 {
    * 背景格的**公共渲染体**（2026-09-25 抽出）：纯色 / 材质选择格 / 颜色方案 / 材质方案
    * 四种格子共用一套外观（含选中橙圈与删除小 X）。
    * `inScroll` = 是否在横向滚动行里：滚动行固定 60 宽；网格行 `layoutWeight(1)` 等分四列。
-   * ⚠️ 与 `FlipModeButton()` 同理：@Builder 里读的是页面自己的 @State（选中态、自定义开关），
+   * ⚠️ 与 `ReadModeRow()` 同理：@Builder 里读的是页面自己的 @State（选中态、自定义开关），
    *    由父级重建驱动刷新，`item` 是普通对象参数（每次 allSwatches() 重建时随 key 更新）。
    */
   @Builder
@@ -4040,6 +4087,9 @@ export default struct ReaderPage3 {
     //    ⇒ 下一本 txt 的"右滑返回书架"（CardLongTakeDelegate 的手势）会被误禁。
     if (!this.isPdfBook) {
       AppStorage.setOrCreate('PDF_ZOOM_ACTIVE', false);
+    // ★ 同理清掉「无动画档」标志（2026-10-26）：它决定 `Index.onBackPress()` 要不要
+    //   吞掉侧滑返回。若退出时残留 'none'，下一本用其它阅读方式的书**右滑就退不出去**。
+    AppStorage.setOrCreate('READER_READ_MODE', '');
     }
     // ★ 2026-10-13 阅读时长：**记账起点就在这里**。
     //   ⚠️ 位置不能上移：本行之前 `this.bookData` 还是字段初始值 `new Books()`（`:1038`），
@@ -4115,7 +4165,11 @@ export default struct ReaderPage3 {
       this.readerSetting.nightMode = temp.continueNightMode;
     }
     if (temp.continueFlipMode !== undefined && temp.continueFlipMode.length > 0) {
-      this.readerSetting.flipMode = temp.continueFlipMode;
+      // ⚠️ 只对**分页两档**回写引擎的 `flipMode`：'0'/'1' 是 ReaderKit 合法取值，
+      //   '2'（滚动）/ '3'（无动画）是自绘档，写进引擎会被当非法值。
+      if (temp.continueFlipMode === '0' || temp.continueFlipMode === '1') {
+        this.readerSetting.flipMode = temp.continueFlipMode;
+      }
       // ⚠️⚠️ 只改 `readerSetting.flipMode` **不生效**（2026-10-23 真机日志定案）：
       //   `loadReadMode()`（:3947 调用）优先读**按书持久化**的
       //   `ReaderMode_${bookName}`，`readerSetting.flipMode` 只是 `getSync` 的
@@ -4126,7 +4180,8 @@ export default struct ReaderPage3 {
       try {
         const mode: number = temp.continueFlipMode === '1'
           ? READ_MODE_FLIP_SLIDE
-          : (temp.continueFlipMode === '2' ? READ_MODE_SCROLL : READ_MODE_FLIP_CURL);
+          : (temp.continueFlipMode === '2' ? READ_MODE_SCROLL
+            : (temp.continueFlipMode === '3' ? READ_MODE_NONE : READ_MODE_FLIP_CURL));
         PreferencesUtil.putSync(`${READ_MODE_KEY_PREFIX}${this.bookData.bookName}`, mode);
         this.readMode = mode;
         hilog.info(0x0000, 'ContinueIdx',
@@ -4157,7 +4212,7 @@ export default struct ReaderPage3 {
     //   滚动模式走的是**这条独立入口**，之前漏了 ⇒ 所以"只有滚动模式不对等"。
     // 修法：接续进来且有落点（`continueSpine >= 0`）时**优先用接续坐标**；
     //   否则退回持久化进度（原有行为，不变）。
-    if (this.scrollModeOn()) {
+    if (this.selfDrawnModeOn()) {
       const cSpine: number = temp.continueSpine ?? -1;
       let ri: number = this.bookData.localBookDurChapterPos?.resourceIndex ?? 0;
       let nd: number = this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
@@ -4167,23 +4222,32 @@ export default struct ReaderPage3 {
         const cNode: number = temp.continueNode ?? -1;
         nd = cNode >= 0 ? cNode : this.parseDomPos(temp.continueDomPos ?? '')[0];
         hilog.info(0x0000, 'ContinueIdx',
-          'scroll init from CONTINUE: spine=%{public}d node=%{public}d (local was spine=%{public}d)',
+          'selfDrawn init from CONTINUE: spine=%{public}d node=%{public}d (local was spine=%{public}d)',
           ri, nd, this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
       }
-      this.scrollInitSpine = ri;
-      this.scrollInitNode = nd;
-      this.scrollSpine = this.scrollInitSpine;
-      this.scrollNode = this.scrollInitNode;
-      this.scrollInitSerial++;
-      hilog.info(0x0000, 'testTag', 'scroll mode on enter: spine=%{public}d node=%{public}d',
-        this.scrollInitSpine, this.scrollInitNode);
+      this.scrollSpine = ri;
+      this.scrollNode = nd;
+      // 两档各自有自己的载入序列号：只递增**当前这一档**，否则另一档也会跟着重建窗口
+      if (this.readMode === READ_MODE_SCROLL) {
+        this.scrollInitSpine = ri;
+        this.scrollInitNode = nd;
+        this.scrollInitSerial++;
+      } else {
+        this.noAnimInitSpine = ri;
+        this.noAnimInitNode = nd;
+        this.noAnimInitSerial++;
+      }
+      hilog.info(0x0000, 'testTag', 'selfDrawn mode on enter(mode=%{public}d): spine=%{public}d node=%{public}d',
+        this.readMode, ri, nd);
     }
     // ── 按键翻页（2026-10-07）：阅读页存活期间才订阅（官方要求"确定响应时才激活"），
     //    音量上=上一页、下=下一页；智控键仅支持的机型生效。退订在 aboutToDisappear。
     //    2026-10-20：滚动模式下"上一页/下一页"没有意义 ⇒ 改成**翻一屏**，
     //    由滚动视图按当前可视行数滚动（键位语义在两种模式下保持一致的手感）。
+    //    2026-10-26：无动画档是**分页**语义 ⇒ 就是"翻一页"，同样走 `scrollPageReq`
+    //    （两个自绘组件都有 `pageReq`，语义各自解释）。
     ReaderKeyTurn.attachReader((isNext: boolean): void => {
-      if (this.scrollModeOn()) {
+      if (this.selfDrawnModeOn()) {
         this.scrollPageDir = isNext ? 1 : -1;
         this.scrollPageReq++;
         return;
@@ -5235,13 +5299,13 @@ export default struct ReaderPage3 {
 
   private registerPageShow(): void {
     this.readerComponentController.on('pageShow', (data: readerCore.PageDataInfo): void => {
-      // ── 上下滚动模式：**忽略引擎的页**（2026-10-20）─────────────────────────
-      // 滚动模式下 ReaderKit 仍在下面跑（为的是切回仿真/横滑时零等待），它照旧会
-      // 产出 pageShow。但此刻"页"已经不是用户看到的东西了 —— 位置由滚动层上报
-      // （`onScrollPos()`）。若不在这里早退，引擎的页首会把滚动层的坐标覆盖掉，
-      // 表现为：滚动时进度/书签/目录号乱跳，退出重进还会跳回引擎那一页。
+      // ── 自绘层（滚动 / 无动画）：**忽略引擎的页**（2026-10-20，2026-10-26 扩档）──
+      // 自绘档下 ReaderKit 仍在下面跑（为的是切回仿真/横滑时零等待），它照旧会
+      // 产出 pageShow。但此刻"页"已经不是用户看到的东西了 —— 位置由自绘层上报
+      // （`onSelfDrawnPos()`）。若不在这里早退，引擎的页首会把自绘层的坐标覆盖掉，
+      // 表现为：滚动/翻页时进度/书签/目录号乱跳，退出重进还会跳回引擎那一页。
       // 只保留一个作用：首屏信号（让「正在排版…」占位有机会撤掉）。
-      if (this.scrollModeOn()) {
+      if (this.selfDrawnModeOn()) {
         if (!this.firstPageReady) {
           this.firstPageReady = true;
         }
@@ -5998,6 +6062,9 @@ export default struct ReaderPage3 {
     //   它同时被 `CardLongTakeDelegate`（右滑返回手势）与 `Index.onBackPress` 读取，
     //   若在 150% 直接返回书架而残留为 true，下一本书（尤其非 PDF）的右滑返回会被误禁。
     AppStorage.setOrCreate('PDF_ZOOM_ACTIVE', false);
+    // ★ 同理清掉「无动画档」标志（2026-10-26）：它决定 `Index.onBackPress()` 要不要
+    //   吞掉侧滑返回。若退出时残留 'none'，下一本用其它阅读方式的书**右滑就退不出去**。
+    AppStorage.setOrCreate('READER_READ_MODE', '');
     // ★ 2026-10-13 阅读时长：先结算并停表（放在最前 —— 后面的 releaseBook / disposed
     //   都会让后续代码不再执行，记账不能依赖它们之后）。
     ReadTimeRecorder.get().detach()
@@ -6321,53 +6388,12 @@ export default struct ReaderPage3 {
     //   此前按"整段"切页：当"已用行数 + 整段行数 > 上限"时只能提前关页，
     //   大段落会白白浪费半页（实测 estLines=6/12 = 50%），观感就是每页占屏比例乱跳。
     //   改成按行填满：每页精确 maxLines 行，只有本章末页才会不满。
-    const pages: number[][][] = [];
-    const map: number[] = [];
-    for (let i = 0; i < nodes.length; i++) {
-      map.push(-1);
-    }
-    let curPage: number[][] = [];
-    let used = 0;
-    for (let i = 0; i < nodes.length; i++) {
-      const t = nodes[i];
-      if (t.trim().length === 0) {
-        continue;
-      }
-      const len = t.length;
-      let from = 0;
-      while (from < len) {
-        const indent = from === 0 ? HL_INDENT_SLOTS : 0;
-        const nl = Math.max(1, Math.ceil((len - from + indent) / cpl));
-        const room = maxLines - used;
-        if (nl <= room) {
-          if (map[i] < 0) {
-            map[i] = pages.length; // 该节点起始页
-          }
-          curPage.push([i, from, len]);
-          used += nl;
-          from = len;
-        } else if (room <= 0) {
-          pages.push(curPage);
-          curPage = [];
-          used = 0;
-        } else {
-          // 本页剩余空间放不下整段 ⇒ 按行切：本页放 room 行，余下到下一页
-          const takeChars = Math.max(1, room * cpl - indent);
-          const to = Math.min(len, from + takeChars);
-          if (map[i] < 0) {
-            map[i] = pages.length;
-          }
-          curPage.push([i, from, to]);
-          from = to;
-          pages.push(curPage);
-          curPage = [];
-          used = 0;
-        }
-      }
-    }
-    if (curPage.length > 0) {
-      pages.push(curPage);
-    }
+    // ⚠️ 2026-10-26：算法**抽到 `ReaderPager.paginateNodes()`**，与无动画阅读层共用同一份
+    //   （两份实现会漂移 ⇒「上下 ↔ 无动画」互切时页边界对不上）。
+    //   这里的 `gapLines = 0` 走的正是**抽出前的原分支**，行为逐字等价、零变化。
+    const res: PaginateResult = paginateNodes(nodes, cpl, maxLines, 0);
+    const pages: number[][][] = res.pages;
+    const map: number[] = res.pageOfNode;
     this.immPages = pages;
     this.immPageOfNode = map;
     this.immPagesKey = key;
@@ -6764,8 +6790,8 @@ export default struct ReaderPage3 {
     if (!this.continueFineTuneArmed || this.continueFineTuned) {
       return;
     }
-    if (this.scrollModeOn()) {
-      // 滚动模式的位置由滚动层自己的 seek 负责，不做分页微调
+    if (this.selfDrawnModeOn()) {
+      // 自绘层的位置由自己的 seek 负责，不做分页微调（滚动 / 无动画同理）
       this.continueFineTuned = true;
       return;
     }
@@ -6801,10 +6827,10 @@ export default struct ReaderPage3 {
     noFallback: boolean = false): void {
     const n = Math.max(0, node);
     const c = Math.max(0, char);
-    // ── 上下滚动模式：同一套坐标，只是执行者换成滚动视图 ──────────────────────
-    // 这是"三种方式进度统一"的关键接缝：目录跳转、书签回跳、TTS 跟随、沉浸层交接
+    // ── 自绘层（滚动 / 无动画）：同一套坐标，只是执行者换成自绘组件 ────────────
+    // 这是"四种方式进度统一"的关键接缝：目录跳转、书签回跳、TTS 跟随、沉浸层交接
     // 全都调本方法，这里按当前阅读方式分流 ⇒ 上层调用方**一行都不用改**。
-    if (this.scrollModeOn()) {
+    if (this.selfDrawnModeOn()) {
       this.locateTarget = null;
       this.flipSearch = null;
       this.lastNavMs = Date.now();
@@ -7582,10 +7608,10 @@ export default struct ReaderPage3 {
 
   private updateHighlightInner(): void {
     this.updateCalibRuler();
-    // ── 上下滚动模式：高亮画在滚动视图的 Text 内部，这里不参与逐行矩形计算 ──
-    // （`hlBands`/`hlTop` 那套是"栅格化页面上叠色块"，滚动模式没有栅格页，
-    //   也不需要测量通道 ⇒ 直接算句内字符区间交给滚动视图。）
-    if (this.scrollModeOn()) {
+    // ── 自绘层（滚动 / 无动画）：高亮画在自绘组件的 Text 内部，这里不参与逐行矩形计算 ──
+    // （`hlBands`/`hlTop` 那套是"栅格化页面上叠色块"，自绘层没有栅格页，
+    //   也不需要测量通道 ⇒ 直接算句内字符区间交给自绘组件。）
+    if (this.selfDrawnModeOn()) {
       this.clearHighlight();
       this.wasImmersive = false;
       this.updateScrollHighlight();
@@ -7971,10 +7997,10 @@ export default struct ReaderPage3 {
       // 位置：**盖在 `ReadPageComponent` 之上、菜单/弹窗之下**。
       //  · 为什么不替换掉 `ReadPageComponent`：它在下方保持存活，切回仿真/横滑时是
       //    "换一层"而不是"重建引擎" ⇒ 三种方式互切零黑屏、零重排版等待；
-      //  · 为什么不与沉浸层并存：`immersiveActive()` 在滚动模式恒 false（见该方法注释），
-      //    滚动视图自带句内高亮，天然满足"边听边看"，不需要那层自绘分页。
+      //  · 为什么不与沉浸层并存：`immersiveActive()` 在自绘档恒 false（见该方法注释），
+      //    自绘组件自带句内高亮，天然满足"边听边看"，不需要那层自绘分页。
       // 排版参数（字体/字号/行高/缩进/背景）全部取自 `readerSetting` 与标定值，
-      // 与引擎、与沉浸听读层**同源**，所以三种方式看起来是同一本书、同一个版式。
+      // 与引擎、与沉浸听读层**同源**，所以几种方式看起来是同一本书、同一个版式。
       if (this.scrollModeOn() && this.bookHandlerReady) {
         ReaderScrollView({
           fontName: this.scrollFontFamily(),
@@ -8016,13 +8042,81 @@ export default struct ReaderPage3 {
             return spines.length;
           },
           onPos: (spine: number, node: number, endNode: number): void => {
-            this.onScrollPos(spine, node, endNode);
+            this.onSelfDrawnPos(spine, node, endNode);
           },
           onTap: (): void => {
             this.isShowSetting = true;
           },
           onReady: (): void => {
-            this.onScrollReady();
+            this.onSelfDrawnReady();
+          }
+        })
+          .width('100%')
+          .height('100%')
+      }
+
+      // ── 无动画阅读层（2026-10-26 新增：阅读方式第四档）──────────────────────
+      // 位置与滚动层**同一 z 位**（盖在 `ReadPageComponent` 之上、菜单/弹窗之下），
+      // 两者互斥（`readMode` 是单值）⇒ 不会同时存在。
+      // 与滚动层是"一母同胞"：段模型 / 版式参数 / 段间距 / 分页算法全部同源
+      // （见 `ReaderPageNoAnim.ets` 文件头），所以两档互切时版式不跳。
+      // 差别只有一处：本层把"连续行流"按页切开，翻页 = 换一个整数，**没有任何动画**。
+      if (this.noAnimModeOn() && this.bookHandlerReady) {
+        ReaderPageNoAnim({
+          fontName: this.scrollFontFamily(),
+          fontSize: this.readerSetting.fontSize,
+          fontWeight: this.readerSetting.fontWeight,
+          fontColor: this.readerSetting.fontColor,
+          lineHeightFp: this.scrollLineHeightFp(),
+          indentFp: this.scrollIndentFp(),
+          // 段间距系数与滚动层**必须是同一个值**（两档互切时段落疏密不能变）
+          gapEm: SCROLL_PARA_GAP_EM,
+          bgColor: this.readerSetting.themeColor,
+          bgUri: this.scrollBgUri(),
+          sideInsetVp: this.textAreaLeftVp(),
+          topInsetVp: this.scrollTopInsetVp(),
+          bottomInsetVp: this.scrollBottomInsetVp(),
+          initSpine: this.noAnimInitSpine,
+          initNode: this.noAnimInitNode,
+          initSerial: this.noAnimInitSerial,
+          seekSpine: this.scrollSeekSpine,
+          seekNode: this.scrollSeekNode,
+          seekSerial: this.scrollSeekSerial,
+          pageDir: this.scrollPageDir,
+          pageReq: this.scrollPageReq,
+          hlSpine: this.scrollHlSpine,
+          hlNode: this.scrollHlNode,
+          hlFrom: this.scrollHlFrom,
+          hlTo: this.scrollHlTo,
+          hlSerial: this.scrollHlSerial,
+          fontSerial: this.fontSerial,
+          weightOffset: this.scrollWeightOffset(),
+          // dock 展开 / PDF 放大态时关掉本层横向手势 —— 否则会抢走 dock 进度滑条
+          // 的横向拖动（与本页下拉书签手势 `fingers: 9` 同一套做法，见该处注释）。
+          gestureEnabled: !this.isShowSetting && !this.isPdfZoomed(),
+          handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
+          spineCountProvider: (): number => {
+            const spines: bookParser.SpineItem[] = this.BookHandler?.getSpineList() ?? [];
+            return spines.length;
+          },
+          onPos: (spine: number, node: number, endNode: number): void => {
+            this.onSelfDrawnPos(spine, node, endNode);
+          },
+          onTap: (): void => {
+            this.isShowSetting = true;
+          },
+          onTapNext: (): void => {
+            // 右 1/3 点击 = 下一页（组件内部已 `Haptics.tap()`）——
+            // 复用"翻一页"同一条请求通道，避免出现第二种翻页入口
+            this.scrollPageDir = 1;
+            this.scrollPageReq++;
+          },
+          onTapPrev: (): void => {
+            this.scrollPageDir = -1;
+            this.scrollPageReq++;
+          },
+          onReady: (): void => {
+            this.onSelfDrawnReady();
           }
         })
           .width('100%')
@@ -9503,10 +9597,11 @@ export default struct ReaderPage3 {
             Haptics.tap();
             this.syncCustomBgGlobal()
           })
-        this.FlipModeButton()
+        // ⚠️ 2026-10-26：原来这里的「阅读方式」单按钮（点击循环切换）已**挪到下一行**
+        //   （见下方 `this.ReadModeRow()`），这一行只剩 [同步全局][保存方案]。
         // ⚠️ 2026-10-13 方案 A：「保存方案」**保留**在精简模式 —— 方案完全存在本地
         //   （`ReaderCustomBg` 走 Preferences），零网络依赖，且是 VIP 权益。
-        //    「同步全局」与「仿真翻页」**不改对齐代码** —— 本 Flex 已是
+        //    「同步全局」与「保存方案」**不改对齐代码** —— 本 Flex 已是
         //    `justifyContent: FlexAlign.Center`，少一个按钮后这两个会自动重新居中
         //    （原注释 `:7345` 记的正是这个居中布局意图）。
         if (OfflineMode.showReadingEnhancements()) {
@@ -9528,6 +9623,14 @@ export default struct ReaderPage3 {
         }
       }
       .width('100%')
+
+      // ══ 阅读方式（2026-10-26 用户要求：单按钮拆成一行四档）════════════════════
+      // 用户原话：「底部有个点击切换阅读方式的按钮…把这个按钮拆解，挪到下一行展开，
+      //   然后分别是横滑、仿真、上下、无动画。无动画是占位的，注释上，方便后续接入，
+      //   然后其他的是真实」。
+      // ⇒ 旧「点一下循环一档」的胶囊按钮**取消**，换成一行四格**直接选**
+      //   （点一次就到目标档，不用循环试），顺序由 `READ_MODE_OPTIONS` 定。
+      this.ReadModeRow()
     }.padding({
       left: 20, right: 20,
       // ★ 2026-09-23 用户：「（仿真翻页按钮）与容器贴底，加一点点间距」
@@ -9536,52 +9639,69 @@ export default struct ReaderPage3 {
   }
 
   /**
-   * 「阅读方式」胶囊按钮（2026-09-23 重做，2026-09-26 抽成 @Builder，
-   * 2026-10-20 扩成**三档**）。
+   * 「阅读方式」一行四档（**2026-10-26 用户要求，替代原来的单按钮循环切换**）。
    *
-   * 历史：原来直接用系统默认 Button（自带主题色底 + 默认圆角/内边距），放在这个自绘胶囊里
-   * 显得很突兀 ⇒ 改成与胶囊同色系的**半透明胶囊按钮**，并让文案直接反映**当前**模式
-   * （原来恒定写「仿真翻页」，而模式可能是"横滑"，属于会误导人的静态标签）。
+   * 用户原话：「底部有个点击切换阅读方式的按钮…把这个按钮拆解，挪到下一行展开，然后分别是
+   *   横滑、仿真、上下、无动画。无动画是占位的，注释上，方便后续接入，然后其他的是真实」。
    *
-   * ── 2026-10-20：加第三档「上下滚动」────────────────────────────────────────
-   * 点击按 仿真 → 横滑 → 上下滚动 → 仿真 循环，实际切换交给 `switchReadMode()`
-   * （它负责进度交接：分页↔滚动都在同一段上，见该方法注释）。
-   * ⚠️ 为什么循环而不是弹选择器：本按钮位于设置胶囊的一行里，空间只够一个胶囊；
-   *    三档循环与"仿真/横滑"两档时代的交互习惯一致（点一下换一个）。
+   * 与旧实现的差别（旧 = `FlipModeButton()`，已删除）：
+   * · 旧：一个胶囊，点一下按 仿真→横滑→上下滚动→仿真 循环，**要试才知道下一档是什么**；
+   * · 新：四格平铺**直接点**，点一次就到目标档，当前档高亮（蓝底白字），所见即所得。
    *
-   * ⚠️ 为什么抽成 @Builder：开启自定义背景后它要跟「同步全局 / 保存方案」同处一行，
-   *   而关闭自定义时又要留在原来的独立行 —— 同一个按钮出现在两个位置，只能有一份定义。
-   *   本 @Builder **不带参数**（按值传参的 @Builder 在参数变化时不保证刷新，
-   *   这里读的是页面自己的 `@State readMode`，由父级重建驱动，没有这个隐患）。
+   * ⚠️ 顺序由常量 `READ_MODE_OPTIONS` 决定（横滑/仿真/上下/无动画），**不是**数值顺序
+   *   （数值是 仿真0 / 横滑1 / 滚动2 / 无动画3）—— 想调顺序只改那个数组。
+   * ⚠️ 文案只用两字（`上下` 而非 `上下滚动`）：四格等分宽度，三字会挤；行首「阅读方式」已表意。
+   * ⚠️ 真实切换仍然交给 `switchReadMode()`（进度交接逻辑一行没动）；
+   *   本 @Builder 只负责"选谁"，不碰任何排版/落盘。
    */
   @Builder
-  FlipModeButton() {
-    Button(this.readModeLabel())
-      .fontSize(13)
-      .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-      .backgroundColor(this.colorMode == 0
-        ? 'rgba(248, 249, 250, 0.16)'
-        : 'rgba(19, 19, 19, 0.06)')
-      .borderRadius(18)
-      .height(34)
-      .padding({ left: 12, right: 12 })
-      .margin({ right: 10, top: 4, bottom: 4 })
-      .clickEffect(UiMotion.CLICK)
-      .onClick(() => {
-        Haptics.tap();
-        const next: number = this.readMode === READ_MODE_FLIP_CURL ? READ_MODE_FLIP_SLIDE
-          : (this.readMode === READ_MODE_FLIP_SLIDE ? READ_MODE_SCROLL : READ_MODE_FLIP_CURL);
-        this.switchReadMode(next);
-        this.getUIContext().getPromptAction().showToast({ message: this.readModeLabel() });
-      })
+  ReadModeRow() {
+    Row({ space: 6 }) {
+      Text('阅读方式')
+        .fontSize(12)
+        .width(52)
+        .maxLines(1)
+        .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)')
+      ForEach(READ_MODE_OPTIONS, (m: number) => {
+        Button(this.readModeOptionLabel(m))
+          .fontSize(13)
+          .fontColor(this.readMode === m
+            ? Color.White
+            : (this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'))
+          .backgroundColor(this.readMode === m
+            ? '#007DFF'
+            : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.16)' : 'rgba(19, 19, 19, 0.06)'))
+          .borderRadius(18)
+          .height(34)
+          .padding({ left: 6, right: 6 })
+          .layoutWeight(1)
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            Haptics.tap();
+            if (m === this.readMode) {
+              return;
+            }
+            this.switchReadMode(m);
+            this.getUIContext().getPromptAction().showToast({ message: this.readModeOptionLabel(m) });
+          })
+      }, (m: number): string => 'rm-' + m)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
-  /** 三档阅读方式的按钮文案（永远显示**当前**这一档） */
-  private readModeLabel(): string {
-    if (this.readMode === READ_MODE_SCROLL) {
-      return '阅读：上下滚动';
+  /** 阅读方式四档的按钮文案（四档都是真实档，2026-10-26 起「无动画」已接入） */
+  private readModeOptionLabel(m: number): string {
+    if (m === READ_MODE_FLIP_SLIDE) {
+      return '横滑';
     }
-    return this.readMode === READ_MODE_FLIP_SLIDE ? '阅读：横滑' : '阅读：仿真';
+    if (m === READ_MODE_SCROLL) {
+      return '上下';
+    }
+    if (m === READ_MODE_NONE) {
+      return '无动画';
+    }
+    return '仿真';
   }
 
   /**
@@ -9979,7 +10099,7 @@ export default struct ReaderPage3 {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 上下滚动阅读（2026-10-20 新增：阅读方式第三档）
+  // 自绘阅读层：上下滚动（第三档）+ 无动画（第四档）
   // ══════════════════════════════════════════════════════════════════════════
   /**
    * 当前是否处于「上下滚动」阅读方式。
@@ -9988,12 +10108,42 @@ export default struct ReaderPage3 {
    *  · PDF：正文是整页图（`ReadPageComponent` 渲染），滚动它没有意义，只能原地缩放；
    *  · `.doc` 仅预览：压根没有正文；
    *  · 转换失败：有错误卡要显示。
+   *
+   * ⚠️ 2026-10-26：本方法保持**只认滚动档**，不要改成 `isSelfDrawnModeOn()`。
+   *   两者语义不同（滚动 vs 分页-自绘），误合并会把滚动的横轴手势、
+   *   沉浸层关闭条件等一堆分支带偏。需要"两种自绘"时请用下面那个。
    */
   private scrollModeOn(): boolean {
     return this.readMode === READ_MODE_SCROLL
       && !this.isPdfBook
       && !this.previewOnlyBody
       && this.prepError.length === 0;
+  }
+
+  /**
+   * 当前是否处于「无动画」阅读方式（2026-10-26 新增第四档）。
+   *
+   * 门禁与滚动档**逐项相同**（PDF / .doc 预览 / 转换失败都不支持）——
+   * 理由：无动画是把正文按页切开自绘，PDF 的正文是整页图、.doc 压根没正文。
+   * 注：PDF 当前走独立页 `PdfViewerPage`（`FormatFlags.FMT_PDF_USE_PDFVIEW = true`），
+   * 本章根本不会出现在本页；这两道门是给「关掉 PdfView 回退旧方案」留的保险。
+   */
+  private noAnimModeOn(): boolean {
+    return this.readMode === READ_MODE_NONE
+      && !this.isPdfBook
+      && !this.previewOnlyBody
+      && this.prepError.length === 0;
+  }
+
+  /**
+   * 当前是否处于**任一自绘阅读层**（滚动 / 无动画）。
+   *
+   * 用途：凡是"引擎的页不算数、位置由自绘层上报"的地方都用它
+   * （`pageShow` 早退、`requestLocate` 分流、`currentPosition`、接续微调…）。
+   * 但凡涉及**手势轴向 / 沉浸层关闭**这类与"滚动"强绑定的判断，仍用 `scrollModeOn()`。
+   */
+  private selfDrawnModeOn(): boolean {
+    return this.scrollModeOn() || this.noAnimModeOn();
   }
 
   /** 读本书记忆的阅读方式（按书持久化；PDF 强制回分页） */
@@ -10006,20 +10156,24 @@ export default struct ReaderPage3 {
     } catch (e) {
       m = READ_MODE_FLIP_CURL;
     }
-    if (m !== READ_MODE_FLIP_CURL && m !== READ_MODE_FLIP_SLIDE && m !== READ_MODE_SCROLL) {
+    // 合法值集合（2026-10-26：加第四档「无动画」）
+    if (m !== READ_MODE_FLIP_CURL && m !== READ_MODE_FLIP_SLIDE
+      && m !== READ_MODE_SCROLL && m !== READ_MODE_NONE) {
       m = READ_MODE_FLIP_CURL;
     }
-    if (this.isPdfBook && m === READ_MODE_SCROLL) {
-      hilog.info(0x0000, 'testTag', 'readMode: PDF 不支持上下滚动，回落到横滑');
+    if (this.isPdfBook && (m === READ_MODE_SCROLL || m === READ_MODE_NONE)) {
+      hilog.info(0x0000, 'testTag', 'readMode: PDF 不支持自绘阅读（%{public}d），回落到横滑', m);
       m = READ_MODE_FLIP_SLIDE;
     }
     this.readMode = m;
-    // 分页两档要和引擎的 `flipMode` 对齐（滚动档不改它，保留上次的分页偏好）
+    // 分页两档要和引擎的 `flipMode` 对齐（滚动/无动画档不改它，保留上次的分页偏好）
     if (m === READ_MODE_FLIP_CURL || m === READ_MODE_FLIP_SLIDE) {
       this.readerSetting.flipMode = m === READ_MODE_FLIP_SLIDE ? '1' : '0';
     }
     hilog.info(0x0000, 'testTag', 'readMode loaded: %{public}d (flipMode=%{public}s)',
       m, this.readerSetting.flipMode);
+    // 无动画档要吞掉系统侧滑返回（见 `publishReadModeFlag` 注释）
+    this.publishReadModeFlag();
   }
 
   /** 落盘阅读方式 */
@@ -10049,23 +10203,29 @@ export default struct ReaderPage3 {
     if (next === this.readMode) {
       return;
     }
-    if (this.isPdfBook && next === READ_MODE_SCROLL) {
+    if (this.isPdfBook && (next === READ_MODE_SCROLL || next === READ_MODE_NONE)) {
       this.getUIContext().getPromptAction().showToast({ message: 'PDF 请用双指缩放阅读' });
       return;
     }
     const prev: number = this.readMode;
     this.readMode = next;
     this.saveReadMode(next);
+    // 切档后立刻刷新"是否要吞掉系统侧滑返回"的标志（见 `publishReadModeFlag` 注释）
+    this.publishReadModeFlag();
     hilog.info(0x0000, 'testTag', 'switchReadMode %{public}d → %{public}d', prev, next);
 
-    if (next === READ_MODE_SCROLL) {
-      // 分页 → 滚动：以"当前页首"为起点（没有 pageRange 时用持久化进度兜底）
+    const prevSelf: boolean = prev === READ_MODE_SCROLL || prev === READ_MODE_NONE;
+    const nextSelf: boolean = next === READ_MODE_SCROLL || next === READ_MODE_NONE;
+
+    if (nextSelf && !prevSelf) {
+      // ── 分页 → 自绘层（滚动 / 无动画）：以"当前页首"为起点 ──────────────────
+      // 两档共用同一段算法：坐标同源，只是交给不同的自绘层当初始位置。
       const r = this.pageRange;
       const spine: number = r !== null ? r.spine
         : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
       let node: number = r !== null ? r.startNode
         : this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
-      // ⚠️ 反"往回跑"：刚从分页切过来、且当前页仍覆盖我们上次请求的那一段 ⇒ 用它。
+      // ⚠️ 反"往回跑"：刚从自绘层切过来、且当前页仍覆盖我们上次请求的那一段 ⇒ 用它。
       //    （理由与实测数据见 `pagedRestoreSpine` 字段注释）
       if (r !== null && this.pagedRestoreSpine === r.spine && this.pagedRestoreNode >= 0
         && this.rangeCovers(r, this.pagedRestoreNode, 0)) {
@@ -10076,11 +10236,18 @@ export default struct ReaderPage3 {
       }
       this.pagedRestoreSpine = -1;
       this.pagedRestoreNode = -1;
+      // 两档共用 `scrollSpine/scrollNode` 这对"自绘层当前位置"字段
       this.scrollSpine = spine;
       this.scrollNode = node;
-      this.scrollInitSpine = spine;
-      this.scrollInitNode = node;
-      this.scrollInitSerial++;
+      if (next === READ_MODE_SCROLL) {
+        this.scrollInitSpine = spine;
+        this.scrollInitNode = node;
+        this.scrollInitSerial++;
+      } else {
+        this.noAnimInitSpine = spine;
+        this.noAnimInitNode = node;
+        this.noAnimInitSerial++;
+      }
       // 分页侧的定位/搜索全部作废（否则迟到的 pageShow 会把状态又写回去）
       this.locateTarget = null;
       this.flipSearch = null;
@@ -10089,8 +10256,8 @@ export default struct ReaderPage3 {
         this.locateTimer = -1;
       }
       this.clearHighlight();
-    } else {
-      // 滚动 → 分页（含 0↔1 之间切换）
+    } else if (!nextSelf && prevSelf) {
+      // ── 自绘层 → 分页：让引擎定位到自绘层的位置 ────────────────────────────
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
         this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
         try {
@@ -10103,40 +10270,111 @@ export default struct ReaderPage3 {
           PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting);
         }
       }
-      if (prev === READ_MODE_SCROLL) {
-        // 滚动 → 分页：让引擎定位到滚动位置。
-        // ⚠️ 先把 `pageRange` 清空：`requestLocate()` 会先判"目标是否已在当前页内"，
-        //    而此刻的 pageRange 还是**滚动层的可视范围**，不清就会误判"已可见"而跳过翻页。
-        const spine: number = this.scrollSpine;
-        const node: number = this.scrollNode;
-        // 记住这次请求落位的那一段：切回滚动时优先用它，避免"每往返一次退一页"
-        // （实测与机理见 `pagedRestoreSpine` 字段注释）
-        this.pagedRestoreSpine = spine;
-        this.pagedRestoreNode = node;
-        this.pageRange = null;
-        this.requestLocate(spine, node, 0, true, true);
+      // 自绘层 → 分页：让引擎定位到自绘位置。
+      // ⚠️ 先把 `pageRange` 清空：`requestLocate()` 会先判"目标是否已在当前页内"，
+      //    而此刻的 pageRange 还是**自绘层的可视范围**，不清就会误判"已可见"而跳过翻页。
+      const spine: number = this.scrollSpine;
+      const node: number = this.scrollNode;
+      // 记住这次请求落位的那一段：切回自绘层时优先用它，避免"每往返一次退一页"
+      // （实测与机理见 `pagedRestoreSpine` 字段注释）
+      this.pagedRestoreSpine = spine;
+      this.pagedRestoreNode = node;
+      this.pageRange = null;
+      this.requestLocate(spine, node, 0, true, true);
+    } else if (nextSelf && prevSelf) {
+      // ── 自绘层 ↔ 自绘层（滚动 ⇄ 无动画）──────────────────────────────────
+      // 同一套坐标、同一份版式 ⇒ 直接把现有位置交给目标层即可，**不碰引擎**。
+      // 这正是用户要的"天然自然过渡"：两边版式参数由同一批方法算出，页边界由同一个
+      // `paginateNodes()` 切，所以落在同一段上，不跳。
+      const spine: number = this.scrollSpine;
+      const node: number = this.scrollNode;
+      if (next === READ_MODE_SCROLL) {
+        this.scrollInitSpine = spine;
+        this.scrollInitNode = node;
+        this.scrollInitSerial++;
+      } else {
+        this.noAnimInitSpine = spine;
+        this.noAnimInitNode = node;
+        this.noAnimInitSerial++;
+      }
+      hilog.info(0x0000, 'testTag',
+        'switchReadMode: self-drawn handover spine=%{public}d node=%{public}d', spine, node);
+    } else {
+      // ── 分页 → 分页（0↔1）：只改引擎 flipMode ─────────────────────────────
+      if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
+        this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
+        try {
+          this.readerComponentController.setPageConfig(this.readerSetting);
+        } catch (e) {
+          hilog.warn(0x0000, 'testTag', 'switchReadMode setPageConfig failed');
+        }
+        const nm: string = this.bookData.bookName;
+        if (nm !== undefined && nm !== null && nm.length > 0) {
+          PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting);
+        }
       }
     }
     this.updateHighlight();
   }
 
-  /** 滚动视图首屏已上屏 ⇒ 撤掉「正在排版…」占位 */
-  private onScrollReady(): void {
+  /** 自绘层首屏已上屏 ⇒ 撤掉「正在排版…」占位（滚动 / 无动画共用） */
+  private onSelfDrawnReady(): void {
     if (!this.firstPageReady) {
       this.firstPageReady = true;
-      hilog.info(0x0000, 'testTag', 'scroll: 首屏已上屏，撤掉排版占位');
+      hilog.info(0x0000, 'testTag', 'selfDrawn: 首屏已上屏，撤掉排版占位');
     }
   }
 
   /**
-   * 滚动视图上报"可视首段/末段" ⇒ 写回全工程唯一坐标。
+   * 自绘层（滚动 / 无动画）上报"可视首段/末段" ⇒ 写回全工程唯一坐标。
    *
-   * 这是**滚动模式下的 `pageShow` 等价物**：下面这一串调用与 `registerPageShow()` 里
+   * 这是**自绘档下的 `pageShow` 等价物**：下面这一串调用与 `registerPageShow()` 里
    * 分页分支做的事一一对应（目录号跟随、书签图标、读完判定、进度落库、双端同步），
-   * 所以滚动模式下书签/TTS 跟随/统计/双端同步**无需任何改动**就能工作。
+   * 所以自绘档下书签/TTS 跟随/统计/双端同步**无需任何改动**就能工作。
+   *
+   * ⚠️ 两档共用本方法：上报的语义完全一样（"当前可视首段/末段"），
+   *    差别只在触发时机 —— 滚动是 `onScrollIndex`，无动画是"换页后"。
    */
-  private onScrollPos(spine: number, node: number, endNode: number): void {
-    if (!this.scrollModeOn()) {
+  private onSelfDrawnPos(spine: number, node: number, endNode: number): void {
+    if (!this.selfDrawnModeOn()) {
+      return;
+    }
+    // ⚠️⚠️ 2026-10-26 修「无动画档右滑把书划走 / 页面被关闭」的**真正根因** ⚠️⚠️
+    //
+    // 真机日志原文（`Documents\日志` 17:13:52.005，紧跟在一次翻页点击之后）：
+    //   `FIX THIS APPLICATION ERROR: @Component 'ReaderPage3': State variable 'bookData'
+    //    has changed during render! It's illegal to change @Component state while build
+    //    (initial render or re-render) is on-going. Application error!`
+    //
+    // 机理：本方法的调用方是**自绘组件的位置上报**，而它有两个非事件型触发点：
+    //   ① `@Watch('onPageReqChange')`（点右侧 1/3 / 音量键 ⇒ 父页 `scrollPageReq++`）——
+    //      `@Watch` 回调**运行在状态更新的渲染周期内**；
+    //   ② `onAreaChange`（首帧/换页后布局）—— 运行在**布局阶段**。
+    //   两者都在"渲染/布局进行中"，而下面这一串会写 `this.bookData`（`durChapterTitle`）
+    //   与 `this.pageRange` 等 `@State` ⇒ ArkUI 判为非法 → Application error → 页面被拆。
+    //   向右滑（回上一页）更容易跨章回退、命中 `durChapterTitle` 重新赋值 ⇒ 只有右滑复现，
+    //   与用户描述「从右向左正常、从左向右误触关闭」完全吻合。
+    //
+    // 修法：把这一串**整体挪出渲染帧**（`setTimeout(0)` = 下一个宏任务，此时
+    //   build/layout 已结束，写 @State 合法）。进度落盘本来就是节流的（`SCROLL_PERSIST_GAP_MS`），
+    //   推迟一帧对「退出重进的位置」「书签」「双端同步」都没有可感知影响。
+    //   ⚠️ 不要改回同步调用 —— 那不是"偶发"，是必现的非法状态写入。
+    const delaySpine: number = spine;
+    const delayNode: number = node;
+    const delayEnd: number = endNode;
+    setTimeout((): void => {
+      this.applySelfDrawnPos(delaySpine, delayNode, delayEnd);
+    }, 0);
+  }
+
+  /**
+   * `onSelfDrawnPos()` 的**实际落库部分**（必须在渲染帧之外运行，见上方注释）。
+   *
+   * 拆成独立方法是为了让"何时写状态"与"写什么"分开：
+   * 调用方只允许经 `setTimeout(0)` 进来。
+   */
+  private applySelfDrawnPos(spine: number, node: number, endNode: number): void {
+    if (!this.selfDrawnModeOn()) {
       return;
     }
     this.scrollSpine = spine;
@@ -10211,14 +10449,14 @@ export default struct ReaderPage3 {
    *     行为已验证，暂不强改；但**新增功能必须走本方法**。）
    *
    * ── 分模式取值 ────────────────────────────────────────────────────────────
-   * · **滚动模式**：读 `scrollSpine` / `scrollNode`（实时，未被节流）
+   * · **自绘层（滚动 / 无动画）**：读 `scrollSpine` / `scrollNode`（实时，未被节流）
    * · **分页模式**：读 `localBookDurChapterPos`（`pageShow` 每翻一页就更新，够实时）
    * · 两者都拿不到 ⇒ 兜底 `pageRange` 的页首；再不行 ⇒ `(0,0,0)`
    *
    * ⚠️ 不要在这里做节流/缓存：调用方语义就是"要此刻的准确位置"。
    */
   private currentPosition(): ReaderPosition {
-    if (this.scrollModeOn()) {
+    if (this.selfDrawnModeOn()) {
       return { spine: this.scrollSpine, node: this.scrollNode, char: 0 };
     }
     const pd: readerCore.PageDataInfo | null | undefined = this.bookData.localBookDurChapterPos;
@@ -10318,7 +10556,11 @@ export default struct ReaderPage3 {
       //   根因：`loadReadMode()` 里只有分页两档会回写 `readerSetting.flipMode`
       //     （`if (m === CURL || m === SLIDE) { … }`），**滚动档不回写** ⇒ 滚动时
       //     `readerSetting.flipMode` 仍是上一次分页的旧值（'0'/'1'），于是上报的是脏数据。
-      //   真正的权威状态是 `@State readMode`（0=仿真 / 1=横滑 / 2=滚动，见 :330-332）。
+      //   真正的权威状态是 `@State readMode`
+      //   （0=仿真 / 1=横滑 / 2=滚动 / 3=无动画，见 `READ_MODE_*` 常量）。
+      //   '3' 的跨版本兼容（2026-10-26 用户拍板"支持就支持，不支持就降级"）：
+      //   老版本对端把 '3' 解析成仿真（`applyContinue` 里三元链的兜底），
+      //   不崩溃、只是降级 —— 对端升级后自然就是无动画。
       flipMode: String(this.readMode),
       bgJson: bgJson,
       sessionId: '',
@@ -10525,10 +10767,10 @@ export default struct ReaderPage3 {
    * ⚠️ 必须叠加 `listeningThisBook()`：否则在听 A 时打开 B，B 会被渲染成 A 的沉浸听读。
    */
   private immersiveActive(): boolean {
-    // ⚠️ 上下滚动模式**不用**沉浸听读层：滚动视图本身就是原生 Text 排版，
+    // ⚠️ 自绘层（滚动 / 无动画）**不用**沉浸听读层：自绘组件本身就是原生 Text 排版，
     //   高亮直接画在文字里（`Span.textBackgroundStyle`），天然满足"边听边看"。
-    //   所以这里必须返回 false —— 否则沉浸层会盖在滚动层上，把滚动体验整个吃掉。
-    if (this.scrollModeOn()) {
+    //   所以这里必须返回 false —— 否则沉浸层会盖在自绘层上，把阅读体验整个吃掉。
+    if (this.selfDrawnModeOn()) {
       return false;
     }
     const base: boolean = this.ttsPrefs.immersiveListen && this.immReady
@@ -11096,7 +11338,7 @@ export default struct ReaderPage3 {
     const nodes: string[] | null = await TtsEngine.previewNodeTexts(this.BookHandler ?? null, spine);
     if (nodes === null || nodes.length === 0) {
       // 拿不到节点模型 ⇒ 退回"跳到章首"（与改造前行为一致，不会更差）
-      if (this.scrollModeOn()) {
+      if (this.selfDrawnModeOn()) {
         this.requestLocate(spine, 0, 0, true);
       } else {
         this.startPlayAt(spine, '');
@@ -11155,12 +11397,12 @@ export default struct ReaderPage3 {
     }
     // 根据目录项获取章节的索引
     const resourceIndex = this.getResourceItemByCatalog(catalogItem).index;
-    // ── 上下滚动模式：跳章交给滚动视图（2026-10-20）──────────────────────────
-    // 分页模式走 `startPlayAt()`（让引擎重排那一章）；滚动模式没有"页"可翻，
-    // 直接 `requestLocate(spine, 0, 0)` —— 它会分流到滚动视图并把视口滚到章首。
-    // ⚠️ 这里**不能**再调 `startPlayAt()`：那会让引擎偷偷换页，而滚动层的
+    // ── 自绘层（滚动 / 无动画）：跳章交给自绘组件 ──────────────────────────────
+    // 分页模式走 `startPlayAt()`（让引擎重排那一章）；自绘层没有"引擎的页"可翻，
+    // 直接 `requestLocate(spine, 0, 0)` —— 它会分流到当前自绘组件并定位到章首。
+    // ⚠️ 这里**不能**再调 `startPlayAt()`：那会让引擎偷偷换页，而自绘层的
     //    `pageRange` 由自己上报，两边会各说各话（表现为进度忽前忽后）。
-    if (this.scrollModeOn()) {
+    if (this.selfDrawnModeOn()) {
       this.requestLocate(resourceIndex, 0, 0, true);
       if (TtsEngine.getState() !== 'stopped') {
         TtsEngine.seekToChapter(resourceIndex);
@@ -11278,6 +11520,24 @@ export default struct ReaderPage3 {
    */
   private publishPdfZoomState(): void {
     AppStorage.setOrCreate('PDF_ZOOM_ACTIVE', this.pdfZoomPct > 100)
+  }
+
+  /**
+   * 把"当前是否无动画阅读档"同步到 AppStorage，供 `Index.ets` 的 `onBackPress()` 判定
+   * （2026-10-26 新增）。
+   *
+   * 为什么必须走 AppStorage 而不是本页自己的判断：真机日志实证
+   * （`Documents\日志` 18:30:42.579）—— 右滑时 `PAN RACC, T: Stack`（系统侧滑返回）
+   * 抢走手势，紧接着 `isPopPage: 1` 把整本书 pop 掉，而 `NavDestination.onBackPressed`
+   * **根本没被触发**（日志无 `PDFZOOM` 行）⇒ 侧滑返回只在 `@Entry` 页面层可拦。
+   * 本页的 `priorityGesture` 对它无效（那是系统级识别器，不是组件树父手势）。
+   *
+   * ⚠️ 取值只用 `'none'` / `''` 两种：`''` = 不是无动画档（不拦返回）。
+   *    仿真/横滑由引擎自己处理左右滑、上下滚动档右滑是加书签，都不该吞掉整页返回。
+   */
+  private publishReadModeFlag(): void {
+    AppStorage.setOrCreate('READER_READ_MODE',
+      this.readMode === READ_MODE_NONE ? 'none' : '');
   }
 
   /**

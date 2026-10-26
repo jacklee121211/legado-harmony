@@ -214,6 +214,20 @@ V2.0.2 封面圆角对齐 + 进场更顺
   手动档 = 设置页「布局 → 一行显示书籍数」滑块（**仅手机以外设备显示**，0 = 自动）。
   ⚠️ 加列数相关的 UI 时，`BookContent`（书籍）与 `BookFolder`（分组）**必须同源同一函数**，
   否则会出现"书籍变了、分组没变"的不一致。
+- **「右滑把书划走」的元凶是 `CardLongTakeDelegate.ExitGestureStyle()`，不是系统侧滑、也不是 `onBackPressed`**
+  （2026-10-26 第二次踩，走了两轮弯路才定案）：一镜到底转场的 delegate 根容器上挂着
+  `PanGesture({ fingers: 1, direction: PanDirection.Right })`，`onActionStart` 里**直接
+  `options?.pop()`** ⇒「从左往右划 = 回书架」是**我们自己的功能**。
+  排查时只看日志 `PAN RACC, T: Stack` 就断言"系统侧滑返回"是**错的**：
+  `T: Row` = 阅读页自己的横滑手势，`T: Stack` = **这个 delegate 的 Stack**
+  （每次 pop 前都有 `EZLT probe geom` / `probe pop-start` 探针行可对照）。
+  三个都管不到它：`priorityGesture`（在另一棵子树）、`NavDestination.onBackPressed`
+  （它不走返回链，日志里不会有任何 `onBackPress` 行）、`Index.onBackPress`（同理）。
+  **唯一可靠关法**：`fingers: 9` 让手势从源头不被识别 —— 必须**同时**用在 `fingers`
+  （注册期）与 `isGestureDisabled()`（回调期），因为「`PanGesture` 一旦被识别就会吞掉本次触摸」。
+  现有实现 `gestureFingers()`：PDF 放大态 或 `AppStorage('READER_READ_MODE')==='none'` ⇒ 9。
+  ⚠️ 下次遇到「某个手势打不过别人的手势」，**先搜全工程谁挂了同方向的 PanGesture**，
+  别默认是系统手势；工程内已有多处这类自绘手势（下拉书签、右滑返回、进度滑条）。
 
 ## 8. 截图/验证产物：一律放仓库外（2026-10-19 隐私事故后立的规矩）
 

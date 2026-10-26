@@ -76,8 +76,12 @@ const DOMAIN: number = 0x0000;
  *
  * 🔧 唯一可调项：真机若仍觉得比引擎紧就把 `SCROLL_PARA_GAP_EM` 调大，
  *    觉得太松就调小；设成 `0` 即完全关掉段间距（回到第一版的行为）。
+ *
+ * ⚠️ 2026-10-26：本常量已 **export**。理由：「无动画」档（`ReaderPageNoAnim`）
+ *    与上下滚动是"一母同胞"，必须用**同一个段间距系数**，否则两档互切时
+ *    段落疏密会变。导出后两处引用同一个值，改一次两边同时生效。
  */
-const SCROLL_PARA_GAP_EM: number = 0.45;
+export const SCROLL_PARA_GAP_EM: number = 0.45;
 /**
  * 字重微调（0 = 原样使用 `readerSetting.fontWeight`）。
  *
@@ -111,8 +115,11 @@ function scrollParaGapFp(fontSize: number): number {
 /**
  * 实际字重 = 引擎值 + 父页给的补偿，夹到 ArkUI 合法区间 [100, 900]，
  * 并对齐到 100 的整数倍（ArkUI 对非 100 整数倍的数值会静默忽略）。
+ *
+ * ⚠️ 2026-10-26：**export** 给「无动画」层（`ReaderPageNoAnim`）复用 ——
+ *    两档必须算出同一个字重，否则互切时字会突然变粗/变细。
  */
-function scrollFontWeight(base: number, offset: number): number {
+export function scrollFontWeight(base: number, offset: number): number {
   const v: number = base + offset;
   const clamped: number = v < SCROLL_FONT_WEIGHT_STEP ? SCROLL_FONT_WEIGHT_STEP
     : (v > 900 ? 900 : v);

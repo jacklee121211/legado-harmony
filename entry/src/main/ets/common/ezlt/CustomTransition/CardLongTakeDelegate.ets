@@ -30,14 +30,29 @@ export struct CardLongTakeDelegate {
   @BuilderParam contentBuilder: () => void;
   @ObjectLink longTakeSession: LongTakeSession;
   /**
-   * PDF 放大态标志（由 ReaderPage3 写入 AppStorage）。
+   * 右滑返回手势的**源头开关**（由 ReaderPage3 写入 AppStorage）。
    *
    * 为什么要挂在**手势注册**上、而不是只在回调里 return：
    * `PanGesture` 一旦被识别就会**吞掉本次触摸**，我们的缩放层就拿不到 ⇒ 真机表现正是
    * 「把页面拖到最左、再往右划，手势失灵」。所以放大态直接把它改成 9 指（永远识别不了），
    * 手势从源头上不存在，100% 时仍是 1 指、行为完全不变。
+   *
+   * ── 2026-10-26 扩展：无动画阅读档也要关掉它 ───────────────────────────────
+   * 事故：无动画档「从左往右滑」把整本书划走（用户报"手势和返回手势打架，还打不过人家"）。
+   * 真机日志（`Documents\日志` 18:40:28.265 / 30.670 / 31.993 / 33.465 / 34.721 / 50.085）原文：
+   *   `PAN RACC, T: Stack, DIS x 19.37 … 30.02`  紧接 2~5ms
+   *   `transition start … isPopPage: 1, isCustomAnimation: 1`
+   * 而同一份日志里**正常翻页**的每一次都是 `PAN RACC, T: Row, DIS x -42.75 …`。
+   * ⇒ `T: Row` = 阅读页自己的横滑手势；`T: Stack` = **本类的 `ExitGestureStyle()`**
+   *   （与本文件 2026-10-19 那条记录完全同一机理：「从左往右划 = 回书架」是**我们自己的功能**，
+   *     `onActionStart` 里直接 `options?.pop()`，既不是系统返回也不是 `NavDestination.onBackPressed`
+   *     ⇒ 所以 `Index.onBackPress()` **永远收不到**，只能在这里关）。
+   *
+   * 为什么可以关：无动画档的右滑语义是"翻上一页"（分页），不是"退出阅读"。
+   *   退出仍走**返回键 / 顶栏返回**，功能不丢。
+   * 关法与放大态完全同一套（`fingers: 9`），工程已验证。
    */
-  @StorageLink('PDF_ZOOM_ACTIVE') zoomActive: boolean = false;
+  @StorageLink('READER_READ_MODE') readModeFlag: string = '';
 
   private rectWidth: number = 0;
   private scaleValue: number = 0;
@@ -61,15 +76,37 @@ export struct CardLongTakeDelegate {
     if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
       return true;
     }
+    // ── 无动画阅读档：右滑 = "翻上一页"，不是"退出阅读"（2026-10-26）────────────
+    // 机理与上面放大态完全一致，见 `readModeFlag` 字段注释（含真机日志原文）。
+    if (this.readModeFlag === 'none') {
+      return true;
+    }
     return (((this.longTakeSession.getTransitionParam().options?.isGestureEnabled != undefined)
       && (!this.longTakeSession.getTransitionParam().options?.isGestureEnabled))
       || (this.longTakeSession.getTransitionParam().snapShotComponentId != undefined))
   }
 
+  /**
+   * 右滑返回手势当前是否**从源头关闭**（`fingers: 9` = 单指/双指都识别不了）。
+   *
+   * ⚠️ 必须同时用于 `fingers`（注册期）与 `isGestureDisabled()`（回调期）：
+   *   只判回调不够 —— `PanGesture` 一旦被识别就会**吞掉本次触摸**（见 `readModeFlag` 注释），
+   *   我们的横滑翻页就再也收不到事件。
+   */
+  private gestureFingers(): number {
+    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+      return 9;
+    }
+    if (this.readModeFlag === 'none') {
+      return 9;
+    }
+    return 1;
+  }
+
   @Styles
   ExitGestureStyle() {
     .gesture(
-      PanGesture({ fingers: this.zoomActive ? 9 : 1, direction: PanDirection.Right })
+      PanGesture({ fingers: this.gestureFingers(), direction: PanDirection.Right })
         .onActionStart((event: GestureEvent) => {
           if (this.isGestureDisabled()) {
             return;

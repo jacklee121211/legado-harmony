@@ -564,6 +564,21 @@ struct Main {
    * （日志里没有 `PDFZOOM` 行）⇒ 侧滑返回走的是 @Entry 页面这一层。
    * ⇒ 在这里拦：放大中直接返回 true（页面自己处理 = 不路由返回），并通知阅读页复位 100%。
    * 其它情况返回 false，保持系统默认返回行为不变。
+   *
+   * ── 2026-10-26：无动画档的右滑**不在这里处理**（重要，别再往回改）─────────
+   * 现象：无动画档「从左往右滑」把整本书划走。真机日志（`Documents\日志`）原文：
+   *   `PAN RACC, T: Stack, DIS x 19.37 … 30.02` 紧接 2~5ms
+   *   `transition start … isPopPage: 1, isCustomAnimation: 1`
+   * 同一份日志里**正常翻页**的每一次都是 `PAN RACC, T: Row, …`。
+   * ⇒ `T: Row` = 阅读页自己的横滑手势；`T: Stack` = **`CardLongTakeDelegate.ExitGestureStyle()`**
+   *   挂在阅读页容器上的「右滑回书架」手势（一镜到底的书本合上动效）。
+   *   它在 `onActionStart` 里直接 `options?.pop()` ⇒ **既不是系统侧滑返回、也不是
+   *   `NavDestination.onBackPressed`**，所以本方法**根本不会被调用**（日志里没有任何本方法的行）。
+   *   这正是 `CardLongTakeDelegate.ets:69-75` 早就记录过的同一机理
+   *   （2026-10-19 PDF 放大态那次"用户顽疾的真凶"）。
+   * ⇒ 正确修法在**那里**：`READER_READ_MODE === 'none'` 时把该手势的 `fingers` 设成 9
+   *   （从源头不让它被识别）。本方法只保留 PDF 放大态那一条，不要在这里加时间窗去猜
+   *   （`onBackPress` 同时服务返回键，猜错就会让返回键失灵）。
    */
   onBackPress(): boolean {
     if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
