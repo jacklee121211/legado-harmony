@@ -44,8 +44,10 @@
 
 import { bookParser } from '@kit.ReaderKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { display } from '@kit.ArkUI';
 import { buildChapterNodes } from '../../../tts/ChapterNodes';
 import { Haptics } from '../../../common/utils/Haptics';
+import { buildEngineLines, EngineLine, LineStyle } from './EngineLines';
 
 const TAG: string = 'ScrollReader';
 const DOMAIN: number = 0x0000;
@@ -128,22 +130,43 @@ export function scrollFontWeight(base: number, offset: number): number {
 
 
 
-/** 列表里的一行 = 一个块节点（`node` 就是 ReaderKit 坐标系的块节点号，空行占号但不渲染） */
+/**
+ * 列表里的一行 = **引擎排好的一行**（2026-10-27 换血）。
+ *
+ * ⚠️ 原来是"一个块节点（段）"，靠 ArkUI 自己换行；现在与「无动画」档共用
+ *    `EngineLines.buildEngineLines()` 的同一份行数据 ⇒ **两档互切逐字一致**。
+ *    `node` 仍是 ReaderKit 坐标系的块节点号（= `EngineLine.paraIndex`），
+ *    所以书签/进度/朗读的坐标语义不变。
+ */
 export class ScrollRow {
   /** 正文号（= ReaderKit 的 spine） */
   spine: number;
-  /** 块节点号（与 `pageRange.startNode` 同一坐标系；-1 保留给章节标题行） */
+  /** 块节点号（= `EngineLine.paraIndex`；-1 保留给章节标题行） */
   node: number;
-  /** 渲染文本 */
+  /** 渲染文本（**段首行含 2 个全角空格的缩进前缀**，与引擎排版完全一致） */
   text: string;
   /** LazyForEach 的稳定键 */
   key: string;
+  /** 段内起始字符（不含缩进前缀）—— 高亮定位用 */
+  charFrom: number = 0;
+  /** 段内结束字符（不含缩进前缀） */
+  charTo: number = 0;
+  /** 缩进前缀字符数（段首行 = 2，其余 = 0） */
+  prefixLen: number = 0;
+  /** 是否段首行（渲染时顶部加段间距） */
+  isParaStart: boolean = false;
 
-  constructor(spine: number, node: number, text: string) {
+  constructor(spine: number, node: number, text: string, charFrom: number, charTo: number,
+    prefixLen: number, isParaStart: boolean) {
     this.spine = spine;
     this.node = node;
     this.text = text;
-    this.key = `p-${spine}-${node}`;
+    this.charFrom = charFrom;
+    this.charTo = charTo;
+    this.prefixLen = prefixLen;
+    this.isParaStart = isParaStart;
+    // ⚠️ 键必须区分**同一段的多行**：只拼 node 会让同段第 2 行起全部撞键
+    this.key = `p-${spine}-${node}-${charFrom}`;
   }
 }
 
@@ -228,6 +251,8 @@ class ScrollDataSource implements IDataSource {
 export struct ReaderScrollView {
   // ── 排版参数（与 ReaderKit / 沉浸听读层同源）──────────────────────────────
   @Prop fontName: string = '鸿蒙黑体';
+  /** 自定义字体文件路径（沙箱绝对路径；'' = 系统字体）—— 引擎排行要用 */
+  @Prop fontPath: string = '';
   @Prop fontSize: number = 18;
   @Prop fontWeight: number = 400;
   @Prop fontColor: string = '#000000';
@@ -360,19 +385,26 @@ export struct ReaderScrollView {
     try {
       const content: string = await handler.getSpineItemContent(spine);
       const nodes: string[] = buildChapterNodes(content).nodes;
+      // ⚠️ **引擎排行**：与「无动画」档共用 `EngineLines`（同一份行数据）⇒ 两档互切逐字一致。
+      //    原来这里是把"段"直接当行交给 ArkUI 自己换行，与无动画档的切页结果对不上。
+      const style: LineStyle = this.buildLineStyle();
+      const lines: EngineLine[] = buildEngineLines(nodes, style);
       const rows: ScrollRow[] = [];
+      // 块节点号 → 该节点首行在 `rows` 里的下标（定位/上报仍按节点号）
       const map: number[] = [];
       for (let i = 0; i < nodes.length; i++) {
-        const t: string = nodes[i];
-        if (t.trim().length === 0) {
-          map.push(-1);
-          continue;
+        map.push(-1);
+      }
+      for (let k = 0; k < lines.length; k++) {
+        const ln: EngineLine = lines[k];
+        if (ln.paraIndex >= 0 && ln.paraIndex < map.length && map[ln.paraIndex] < 0) {
+          map[ln.paraIndex] = rows.length;
         }
-        map.push(rows.length);
-        rows.push(new ScrollRow(spine, i, t));
+        rows.push(new ScrollRow(spine, ln.paraIndex, ln.text, ln.charFrom, ln.charTo,
+          ln.prefixLen, ln.isParaStart));
       }
       this.chapRow.set(spine, map);
-      hilog.info(DOMAIN, TAG, 'loadChapter spine=%{public}d nodes=%{public}d rows=%{public}d',
+      hilog.info(DOMAIN, TAG, 'loadChapter(engine) spine=%{public}d nodes=%{public}d lines=%{public}d',
         spine, nodes.length, rows.length);
       return rows;
     } catch (e) {
@@ -380,6 +412,33 @@ export struct ReaderScrollView {
         spine, e instanceof Error ? e.message : String(e));
       return [];
     }
+  }
+
+  /** fp → px（字号/行高/缩进都是 fp） */
+  private fp2px(v: number): number {
+    return this.getUIContext().fp2px(v);
+  }
+
+  /** vp → px（文本区宽高实测是 vp） */
+  private vp2px(v: number): number {
+    return this.getUIContext().vp2px(v);
+  }
+
+  /** 组出引擎排行参数（**全 px**；与 `ReaderPageNoAnim.buildLineStyle()` 同口径） */
+  private buildLineStyle(): LineStyle {
+    const s: LineStyle = new LineStyle();
+    s.fontSizePx = this.fp2px(this.fontSize);
+    s.lineHeightPx = this.fp2px(this.lineHeightFp);
+    s.indentSlots = 2;
+    s.gapPx = this.fp2px(scrollParaGapFp(this.fontSize));
+    // 流式不需要切页：宽度 = 屏幕宽(px) − 左右 inset(px)，与渲染宽度一致即可保证断行准确
+    const screenPx: number = display.getDefaultDisplaySync().width;
+    s.widthPx = Math.max(1, screenPx - 2 * this.vp2px(this.sideInsetVp));
+    s.pageHeightPx = 1e9; // 流式不用切页，给个大值避免误用
+    s.fontFamily = this.fontName;
+    s.fontWeight = scrollFontWeight(this.fontWeight, this.weightOffset);
+    s.fontPath = this.fontPath;
+    return s;
   }
 
   /** 重建窗口：以 `spine` 为中心装 [spine-1 .. spine+1]，并定位到 `node` */
@@ -631,9 +690,35 @@ export struct ReaderScrollView {
    * （否则原生 Text 参数不变就不重排，字体永久停在系统默认字形）。
    * 只在换字体/开书注册完成时发生一次，无性能顾虑。
    */
+  /** 该行是否落在朗读高亮区间内（区间交集；换血后行是段内的一段，必须比 `charTo`） */
+  private isHlRow(row: ScrollRow): boolean {
+    if (this.hlFrom < 0 || row.spine !== this.hlSpine || row.node !== this.hlNode) {
+      return false;
+    }
+    return Math.max(row.charFrom, this.hlFrom) < Math.min(row.charTo, this.hlTo);
+  }
+
+  /** 行内高亮起点（`+ prefixLen`：段首行含 2 个全角空格缩进前缀） */
+  private hlRelFrom(row: ScrollRow): number {
+    const v: number = this.hlFrom - row.charFrom + row.prefixLen;
+    return Math.max(0, Math.min(v, row.text.length));
+  }
+
+  /** 行内高亮终点 */
+  private hlRelTo(row: ScrollRow): number {
+    const v: number = this.hlTo - row.charFrom + row.prefixLen;
+    const from: number = this.hlRelFrom(row);
+    return Math.max(from, Math.min(v, row.text.length));
+  }
+
+  /** 段首行的顶部间距（vp）—— 与 `EngineLines.gapPx` 同口径 */
+  private rowPadVp(row: ScrollRow): number {
+    return row.isParaStart ? scrollParaGapFp(this.fontSize) : 0;
+  }
+
   private rowKey(row: ScrollRow): string {
     const base: string = `${row.key}-f${this.fontSerial}`;
-    if (this.hlFrom >= 0 && row.spine === this.hlSpine && row.node === this.hlNode) {
+    if (this.isHlRow(row)) {
       return `${base}-h${this.hlSerial}`;
     }
     return base;
@@ -641,25 +726,23 @@ export struct ReaderScrollView {
 
   @Builder
   RowView(row: ScrollRow) {
-    if (this.hlFrom >= 0 && row.spine === this.hlSpine && row.node === this.hlNode) {
+    if (this.isHlRow(row)) {
       Text() {
-        Span(row.text.substring(0, Math.min(this.hlFrom, row.text.length)))
-        Span(row.text.substring(Math.min(this.hlFrom, row.text.length),
-          Math.min(this.hlTo, row.text.length)))
+        Span(row.text.substring(0, this.hlRelFrom(row)))
+        Span(row.text.substring(this.hlRelFrom(row), this.hlRelTo(row)))
           .textBackgroundStyle({ color: 'rgba(0, 125, 255, 0.20)', radius: 4 })
-        Span(row.text.substring(Math.min(this.hlTo, row.text.length)))
+        Span(row.text.substring(this.hlRelTo(row)))
       }
       .fontSize(this.fontSize)
       .fontWeight(scrollFontWeight(this.fontWeight, this.weightOffset))
       .fontFamily(this.fontName)
       .fontColor(this.fontColor)
       .lineHeight(this.lineHeightFp)
-      .textIndent(this.indentFp)
-      // 两端对齐：与引擎内部 `textAlign: 2` 一致（见文件头 SCROLL_PARA_GAP_EM 注释）
+      // ⚠️ **不要 textIndent**：缩进已经由引擎排进行文本的前缀里，
+      //    再缩一次会让首行少 2 个字位 ⇒ 与无动画档版式对不上。
       .textAlign(TextAlign.JUSTIFY)
       .width('100%')
-      // 段落间距：与引擎内部 `paragraphSpacing` 对齐（第一版漏了 ⇒ 文字偏密、观感更黑）
-      .padding({ top: scrollParaGapFp(this.fontSize) })
+      .padding({ top: this.rowPadVp(row) })
     } else {
       Text(row.text)
         .fontSize(this.fontSize)
@@ -667,10 +750,9 @@ export struct ReaderScrollView {
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
         .lineHeight(this.lineHeightFp)
-        .textIndent(this.indentFp)
         .textAlign(TextAlign.JUSTIFY)
         .width('100%')
-        .padding({ top: scrollParaGapFp(this.fontSize) })
+        .padding({ top: this.rowPadVp(row) })
     }
   }
 

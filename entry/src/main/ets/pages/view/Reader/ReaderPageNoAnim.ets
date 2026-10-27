@@ -60,6 +60,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { buildChapterNodes } from '../../../tts/ChapterNodes';
 import { Haptics } from '../../../common/utils/Haptics';
 import { paginateNodes, PaginateResult } from './ReaderPager';
+import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice } from './EngineLines';
 // 字重补偿与滚动层**必须共用同一个函数**（否则两档互切时字会突然变粗/变细）
 import { scrollFontWeight } from './ReaderScrollView';
 
@@ -75,16 +76,34 @@ const DOMAIN: number = 0x0000;
  */
 const SWIPE_TRIGGER_VP: number = 40;
 
+/**
+ * 一章的「行 + 分页」结果（`chapPages` 的值）。
+ *
+ * ⚠️ 2026-10-27 换血：原来是 `PaginateResult`（`pages[][][]` 是"段+字符区间"的算术估算），
+ *    现在是**引擎排好的行**（`EngineLine[]`）按页高切成 `PageSlice[]`。
+ *    理由见 `EngineLines.ets` 文件头：`cpl = floor(宽/字号)` 与实际断行不符 ⇒
+ *    放大字号溢出、缩小字号留白。
+ */
+class ChapterLines {
+  /** 整章的行（唯一权威，来自 `buildEngineLines`） */
+  lines: EngineLine[] = [];
+  /** 按页高切好的页区间 */
+  pages: PageSlice[] = [];
+  /** 块节点号 → 该节点起始页（-1 = 空块不渲染），保持旧 `indexOfNode` 语义 */
+  pageOfNode: number[] = [];
+}
+
 /** 一页 = 一条扁平记录（跨章连续寻址用；`spine` 让上报坐标不依赖窗口起点） */
-export class FlatPage {  spine: number;
-  /** 本页切片（切片 = [节点号, 起始字符, 结束字符]） */
-  segs: number[][];
+export class FlatPage {
+  spine: number;
+  /** 本页的行（引擎排好的，唯一权威） */
+  lines: EngineLine[];
   /** 稳定键 */
   key: string;
 
-  constructor(spine: number, segs: number[][], key: string) {
+  constructor(spine: number, lines: EngineLine[], key: string) {
     this.spine = spine;
-    this.segs = segs;
+    this.lines = lines;
     this.key = key;
   }
 }
@@ -98,16 +117,18 @@ export class FlatPage {  spine: number;
 @Component
 export struct ReaderPageNoAnim {
   // ── 排版参数（与 ReaderKit / 上下滚动层 / 沉浸听读层同源）──────────────────
-  @Prop fontName: string = '鸿蒙黑体';
-  @Prop fontSize: number = 18;
+  @Prop @Watch('onFontSerialChange') fontName: string = '鸿蒙黑体';
+  /** 自定义字体文件路径（沙箱绝对路径；'' = 系统字体）—— 引擎排行与渲染都要用 */
+  @Prop @Watch('onFontSerialChange') fontPath: string = '';
+  @Prop @Watch('onFontSerialChange') fontSize: number = 18;
   @Prop fontWeight: number = 400;
   @Prop fontColor: string = '#000000';
   /** 行高（fp）= readerSetting.lineHeight × fontSize × effectiveLineMul() */
-  @Prop lineHeightFp: number = 34;
+  @Prop @Watch('onFontSerialChange') lineHeightFp: number = 34;
   /** 段首缩进（fp）= fontSize × 2 */
-  @Prop indentFp: number = 36;
+  @Prop @Watch('onFontSerialChange') indentFp: number = 36;
   /** 段间距系数（em）—— 必须与 `ReaderScrollView.SCROLL_PARA_GAP_EM` 一致（0.45） */
-  @Prop gapEm: number = 0.45;
+  @Prop @Watch('onFontSerialChange') gapEm: number = 0.45;
   /** 背景纯色（= readerSetting.themeColor） */
   @Prop bgColor: string = '#FFFFFF';
   /** 背景图 URI（'' = 纯色） */
@@ -141,7 +162,7 @@ export struct ReaderPageNoAnim {
   @Prop hlSerial: number = 0;
 
   /** 字体就绪代数（字体异步注册完成后 +1 ⇒ 逼可见节点重建，见滚动层同名字段注释） */
-  @Prop fontSerial: number = 0;
+  @Prop @Watch('onFontSerialChange') fontSerial: number = 0;
 
   /** 字重补偿（系统中文黑体传 -100，其余 0）—— 理由见 `ReaderScrollView` 文件头 */
   @Prop weightOffset: number = 0;
@@ -183,14 +204,18 @@ export struct ReaderPageNoAnim {
   /** 已载入的章区间（闭区间；-1 = 还没加载） */
   private loadedFirst: number = -1;
   private loadedLast: number = -1;
-  /** spine → 该章分页结果（窗口内缓存，反复翻页零重算） */
-  private chapPages: Map<number, PaginateResult> = new Map<number, PaginateResult>();
+  /** spine → 该章的行与分页结果（窗口内缓存，反复翻页零重算） */
+  private chapPages: Map<number, ChapterLines> = new Map<number, ChapterLines>();
   /** spine → 该章块节点文本（渲染时同步取，绝不在 build 里 await） */
   private chapTexts: Map<number, string[]> = new Map<number, string[]>();
   /** 载入中标记（防重入） */
   private loadingTop: boolean = false;
   private loadingBottom: boolean = false;
-  /** 每行字数 / 每页行数（由实测文本区尺寸算出） */
+  /**
+   * ⚠️ 2026-10-27：`cpl` / `maxLines` **不再是分页依据**（那是算术估算，会溢出/留白）。
+   * 现在只保留为「几何签名」的一部分，用于判断"排版参数是否真的变了"。
+   * 真正的行切分由 `EngineLines.buildEngineLines()`（引擎）给出。
+   */
   private cpl: number = 20;
   private maxLines: number = 20;
   /** 实测文本区宽高（vp）；0 = 还不知道 */
@@ -216,13 +241,15 @@ export struct ReaderPageNoAnim {
   // ══════════════════════════════════════════════════════════════════════════
 
   /**
-   * 由实测文本区尺寸算出 `cpl` / `maxLines`。
-   * @returns true = 尺寸确实变了（调用方据此决定要不要重排窗口）
+   * 判断「排版几何是否变了」⇒ 决定要不要重排窗口。
+   * @returns true = 变了（调用方据此重建窗口）
    *
-   * `cpl` 用 `floor(宽 / 字宽)`，字宽取字号（工程实测 `HL_ADVANCE_RATIO = 1.0`，
-   * 中文等宽于字号 ⇒ 与 `ReaderPage3.cplFor()` 同一口径）。
-   * `maxLines` 用 `floor(可用高 / 行高)` —— 段间距在分页时以 `gapLines` 计入，
-   * 不从这里扣，否则会与 `gapLines()` 双算。
+   * ⚠️ 2026-10-27 换血：原来只比 `cpl` / `maxLines`（算术估算），
+   *    ⇒ **只改段间距（`gapEm`）或只改缩进（`indentFp`）时这两个值都不变**，
+   *      函数返回 false ⇒ 不重排 ⇒ 用户觉得"改了没生效"。
+   *   现在用**完整签名**：字号/行高/缩进/段距/字体族/字重/文本区尺寸，任一变化都必须重排。
+   *
+   * `cpl` / `maxLines` 仍算出来（日志与粗略兜底用），但**不再是分页依据**。
    */
   private applyLayout(): boolean {
     if (this.areaW <= 0 || this.areaH <= 0) {
@@ -230,13 +257,20 @@ export struct ReaderPageNoAnim {
     }
     const cpl: number = Math.max(4, Math.floor(this.areaW / Math.max(1, this.fontSize)));
     const maxLines: number = Math.max(1, Math.floor(this.areaH / Math.max(1, this.lineHeightFp)));
-    if (cpl === this.cpl && maxLines === this.maxLines && this.ready) {
+    const sig: string = `${this.areaW.toFixed(2)}|${this.areaH.toFixed(2)}`
+      + `|${this.fontSize}|${this.lineHeightFp}|${this.indentFp}|${this.gapEm}`
+      + `|${this.fontName}|${this.fontWeight}|${this.fontPath}`;
+    if (sig === this.layoutSig && this.ready) {
       return false;
     }
+    this.layoutSig = sig;
     this.cpl = cpl;
     this.maxLines = maxLines;
     return true;
   }
+
+  /** 上一次生效的排版签名（见 `applyLayout`） */
+  private layoutSig: string = '';
 
   /** 段间距折合行数（浮点）—— 与渲染端 `padding.top = fontSize × gapEm` 同源 */
   private gapLines(): number {
@@ -258,13 +292,36 @@ export struct ReaderPageNoAnim {
     try {
       const content: string = await handler.getSpineItemContent(spine);
       const nodes: string[] = buildChapterNodes(content).nodes;
-      const res: PaginateResult = paginateNodes(nodes, this.cpl, this.maxLines, this.gapLines());
+      // ⚠️ **引擎排行**（唯一权威）：`cpl/maxLines` 的算术估算已废弃，见 `EngineLines.ets`
+      const style: LineStyle = this.buildLineStyle();
+      const t0: number = Date.now();
+      const lines: EngineLine[] = buildEngineLines(nodes, style);
+      const pageSlices: PageSlice[] = paginateLines(lines, style.pageHeightPx, style.lineHeightPx);
+      // 块节点号 → 起始页（保持旧 `indexOfNode` 语义）
+      const pageOfNode: number[] = [];
+      for (let i = 0; i < nodes.length; i++) {
+        pageOfNode.push(-1);
+      }
+      for (let p = 0; p < pageSlices.length; p++) {
+        const sl: PageSlice = pageSlices[p];
+        for (let k = sl.from; k < sl.to; k++) {
+          const pi: number = lines[k].paraIndex;
+          if (pi >= 0 && pi < pageOfNode.length && pageOfNode[pi] < 0) {
+            pageOfNode[pi] = p;
+          }
+        }
+      }
+      const cl: ChapterLines = new ChapterLines();
+      cl.lines = lines;
+      cl.pages = pageSlices;
+      cl.pageOfNode = pageOfNode;
       this.chapTexts.set(spine, nodes);
-      this.chapPages.set(spine, res);
+      this.chapPages.set(spine, cl);
       hilog.info(DOMAIN, TAG,
-        'loadChapter spine=%{public}d nodes=%{public}d pages=%{public}d cpl=%{public}d maxLines=%{public}d',
-        spine, nodes.length, res.pages.length, this.cpl, this.maxLines);
-      return res.pages.length;
+        'loadChapter(engine) spine=%{public}d nodes=%{public}d lines=%{public}d pages=%{public}d 宽%{public}s 页高%{public}s 耗时%{public}dms',
+        spine, nodes.length, lines.length, pageSlices.length,
+        style.widthPx.toFixed(0), style.pageHeightPx.toFixed(0), Date.now() - t0);
+      return pageSlices.length;
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'loadChapter %{public}d failed: %{public}s',
         spine, e instanceof Error ? e.message : String(e));
@@ -272,7 +329,34 @@ export struct ReaderPageNoAnim {
     }
   }
 
-  /** 把 [from..to] 章拼进扁平页数组（分页缓存全清，按新几何重建） */
+  /** fp → px（字号/行高/缩进都是 fp，必须乘字体缩放） */
+  private fp2px(v: number): number {
+    return this.getUIContext().fp2px(v);
+  }
+
+  /** vp → px（文本区宽高实测是 vp） */
+  private vp2px(v: number): number {
+    return this.getUIContext().vp2px(v);
+  }
+
+  /** 组出引擎排行参数（**全 px**） */
+  private buildLineStyle(): LineStyle {
+    const s: LineStyle = new LineStyle();
+    s.fontSizePx = this.fp2px(this.fontSize);
+    s.lineHeightPx = this.fp2px(this.lineHeightFp);
+    s.indentSlots = 2;
+    // 段间距 px：与渲染端 `padding.top = fontSize × gapEm` 同口径（都用 fp→px 的字号）
+    s.gapPx = this.fp2px(this.fontSize) * this.gapEm;
+    s.widthPx = this.vp2px(this.areaW);
+    // ⚠️ 页高要扣掉上下 inset（`areaH` 已经由 `syncTextArea` 扣过了，这里直接用）
+    s.pageHeightPx = this.vp2px(this.areaH);
+    s.fontFamily = this.fontName;
+    s.fontWeight = scrollFontWeight(this.fontWeight, this.weightOffset);
+    s.fontPath = this.fontPath;
+    return s;
+  }
+
+  /** 把 [from..to] 章拼进扁平页数组（按当前排版几何重建） */
   private async buildFlat(from: number, to: number): Promise<FlatPage[]> {
     this.chapPages.clear();
     this.chapTexts.clear();
@@ -282,12 +366,14 @@ export struct ReaderPageNoAnim {
       if (n <= 0) {
         continue;
       }
-      const res: PaginateResult | undefined = this.chapPages.get(s);
-      if (res === undefined) {
+      const cl: ChapterLines | undefined = this.chapPages.get(s);
+      if (cl === undefined) {
         continue;
       }
-      for (let p = 0; p < res.pages.length; p++) {
-        out.push(new FlatPage(s, res.pages[p], `n-${s}-${p}`));
+      for (let p = 0; p < cl.pages.length; p++) {
+        const sl: PageSlice = cl.pages[p];
+        // 只切出本页的行（同一份 `EngineLine` 引用，不复制对象）
+        out.push(new FlatPage(s, cl.lines.slice(sl.from, sl.to), `n-${s}-${p}`));
       }
     }
     return out;
@@ -331,20 +417,20 @@ export struct ReaderPageNoAnim {
 
   /** (spine, 块节点号) → 扁平页下标（-1 = 不在窗口内；找不到就退到该章首页） */
   private indexOfNode(flat: FlatPage[], spine: number, node: number): number {
-    const res: PaginateResult | undefined = this.chapPages.get(spine);
-    if (res === undefined || res.pages.length === 0) {
+    const cl: ChapterLines | undefined = this.chapPages.get(spine);
+    if (cl === undefined || cl.pages.length === 0) {
       return -1;
     }
     // 1) 章内页号：`pageOfNode` 是"该节点起始页"，直接查
     let local: number = -1;
-    if (node >= 0 && node < res.pageOfNode.length) {
-      local = res.pageOfNode[node];
+    if (node >= 0 && node < cl.pageOfNode.length) {
+      local = cl.pageOfNode[node];
     }
     if (local < 0) {
       // 该节点不渲染（空块）⇒ 往后找第一个渲染块（宁可粗略也不跳空）
-      for (let i = Math.max(0, node); i < res.pageOfNode.length; i++) {
-        if (res.pageOfNode[i] >= 0) {
-          local = res.pageOfNode[i];
+      for (let i = Math.max(0, node); i < cl.pageOfNode.length; i++) {
+        if (cl.pageOfNode[i] >= 0) {
+          local = cl.pageOfNode[i];
           break;
         }
       }
@@ -371,12 +457,13 @@ export struct ReaderPageNoAnim {
       return;
     }
     const pg: FlatPage = flat[idx];
-    if (pg.segs.length === 0) {
+    if (pg.lines.length === 0) {
       return;
     }
-    const a: number[] = pg.segs[0];
-    const b: number[] = pg.segs[pg.segs.length - 1];
-    this.onPos(pg.spine, a[0], b[0] >= a[0] ? b[0] : a[0]);
+    // 段号 = 该行的 `paraIndex`（引擎排行时已记录）
+    const a: number = pg.lines[0].paraIndex;
+    const b: number = pg.lines[pg.lines.length - 1].paraIndex;
+    this.onPos(pg.spine, a, b >= a ? b : a);
   }  // ══════════════════════════════════════════════════════════════════════════
   // 翻页（核心：只改整数，无任何补间）
   // ══════════════════════════════════════════════════════════════════════════
@@ -415,17 +502,18 @@ export struct ReaderPageNoAnim {
     const n: number = await this.loadChapter(next);
     this.loadingBottom = false;
     this.loadedLast = next;
-    const res: PaginateResult | undefined = this.chapPages.get(next);
-    if (n <= 0 || res === undefined) {
+    const cl: ChapterLines | undefined = this.chapPages.get(next);
+    if (n <= 0 || cl === undefined) {
       return;
     }
     const merged: FlatPage[] = this.flat.slice();
-    for (let p = 0; p < res.pages.length; p++) {
-      merged.push(new FlatPage(next, res.pages[p], `n-${next}-${p}`));
+    for (let p = 0; p < cl.pages.length; p++) {
+      const sl: PageSlice = cl.pages[p];
+      merged.push(new FlatPage(next, cl.lines.slice(sl.from, sl.to), `n-${next}-${p}`));
     }
     this.flat = merged;
     hilog.info(DOMAIN, TAG, 'appendNext spine=%{public}d pages=%{public}d total=%{public}d',
-      next, res.pages.length, merged.length);
+      next, cl.pages.length, merged.length);
     if (thenTurn && this.pageIdx < this.flat.length - 1) {
       this.pageIdx = this.pageIdx + 1;
       this.reportAt(this.flat, this.pageIdx);
@@ -449,14 +537,15 @@ export struct ReaderPageNoAnim {
     const n: number = await this.loadChapter(prev);
     this.loadingTop = false;
     this.loadedFirst = prev;
-    const res: PaginateResult | undefined = this.chapPages.get(prev);
-    if (n <= 0 || res === undefined) {
+    const cl: ChapterLines | undefined = this.chapPages.get(prev);
+    if (n <= 0 || cl === undefined) {
       return;
     }
-    const shift: number = res.pages.length;
+    const shift: number = cl.pages.length;
     const merged: FlatPage[] = [];
     for (let p = 0; p < shift; p++) {
-      merged.push(new FlatPage(prev, res.pages[p], `n-${prev}-${p}`));
+      const sl: PageSlice = cl.pages[p];
+      merged.push(new FlatPage(prev, cl.lines.slice(sl.from, sl.to), `n-${prev}-${p}`));
     }
     for (const f of this.flat) {
       merged.push(f);
@@ -539,6 +628,33 @@ export struct ReaderPageNoAnim {
    *    `Documents\日志` 17:13:52.005 实证同类错误直接拆页）。⇒ 真正的重建**推迟一帧**，
    *    这里只记下尺寸（普通字段，不改状态）。
    */
+  /**
+   * **字号 / 行高 / 字体变化 ⇒ 必须重新分页**（2026-10-27 真机定案）。
+   *
+   * ⚠️⚠️ 原来 `fontSerial` 是 `@Prop` 但**没有 `@Watch`**：
+   *   用户在设置里改字号后，父页确实把 `fontSerial` 自增了，本组件也只是"重建"一次，
+   *   但 **`applyLayout()` 不会被调用 ⇒ 不会重新分页** ⇒ 页面仍按**旧字号**算出的行数渲染
+   *   （字号改小 → 只填半屏；字号改大 → 溢出到 dock 下面）。
+   *   这正是用户反馈的「放大溢出 / 缩小下半屏空白」。
+   *
+   * ⇒ 现在监听 `fontSerial`，变化时按「当前页首行段号」为锚重排（不跳章、不跳页）。
+   */
+  private onFontSerialChange(): void {
+    // ⚠️ `@Watch` 运行在状态更新的渲染周期内，此间改 @State / 重排都是非法的 ⇒ 推迟一帧
+    setTimeout((): void => {
+      if (!this.applyLayout()) {
+        return;
+      }
+      const anchor: FlatPage | null = this.pageIdx >= 0 && this.pageIdx < this.flat.length
+        ? this.flat[this.pageIdx] : null;
+      const sp: number = anchor !== null ? anchor.spine : this.initSpine;
+      const nd: number = anchor !== null && anchor.lines.length > 0
+        ? anchor.lines[0].paraIndex : this.initNode;
+      this.ready = false;
+      this.rebuildWindow(sp, nd, true);
+    }, 0);
+  }
+
   private syncTextArea(newW: number, newH: number): void {
     if (newW <= 0 || newH <= 0) {
       return;
@@ -556,7 +672,9 @@ export struct ReaderPageNoAnim {
     const anchor: FlatPage | null = this.pageIdx >= 0 && this.pageIdx < this.flat.length
       ? this.flat[this.pageIdx] : null;
     const sp: number = anchor !== null ? anchor.spine : this.initSpine;
-    const nd: number = anchor !== null && anchor.segs.length > 0 ? anchor.segs[0][0] : this.initNode;
+    // 锚点用当前页首行的段号（换血前是 `segs[0][0]`，现在行上直接带 `paraIndex`）
+    const nd: number = anchor !== null && anchor.lines.length > 0
+      ? anchor.lines[0].paraIndex : this.initNode;
     setTimeout((): void => {
       this.ready = false;
       this.rebuildWindow(sp, nd, true);
@@ -574,79 +692,85 @@ export struct ReaderPageNoAnim {
    *    块节点号在各章里都从 0 开始 ⇒ 只比 `seg[0]` 会把相邻章的同号段**误判成朗读段**
    *    （表现为"没在念的那一段也亮着"）。滚动层 `rowKey()` 也是同款双条件。
    */
-  private isHlSeg(seg: number[]): boolean {
-    if (this.hlFrom < 0 || seg[0] !== this.hlNode) {
+  // ══════════════════════════════════════════════════════════════════════════
+  // 行渲染（2026-10-27 换血：引擎排行 + 每行一个 Text）
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ 为什么从「每段一个 Text」改成「每行一个 Text」：
+  //   引擎（`@ohos.graphics.text`，与 ArkUI `Text` 同底层）已经把行切好了，
+  //   若仍按段交给 ArkUI 自己换行，等于**又排一遍**，与引擎结果可能差 1 字
+  //   ⇒ 溢出/留白回归。现在每行文本是引擎算定的，ArkUI 只负责画，不再参与断行。
+  //   实测：一页 10~15 行、一章几百行，`ForEach` 完全扛得住（无动画页不滚动）。
+
+  /** 该行是否落在当前高亮区间内（⚠️ 必须同时比 spine，理由见上方注释） */
+  private isHlLine(line: EngineLine): boolean {
+    if (this.hlFrom < 0 || line.paraIndex !== this.hlNode) {
       return false;
     }
     if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
       return false;
     }
-    return this.flat[this.pageIdx].spine === this.hlSpine;
+    if (this.flat[this.pageIdx].spine !== this.hlSpine) {
+      return false;
+    }
+    return Math.max(line.charFrom, this.hlFrom) < Math.min(line.charTo, this.hlTo);
+  }
+
+  /** 行内高亮起点（`+ prefixLen`：段首行文本含 2 个全角空格缩进前缀） */
+  private hlRelFrom(line: EngineLine): number {
+    const v: number = this.hlFrom - line.charFrom + line.prefixLen;
+    return Math.max(0, Math.min(v, line.text.length));
+  }
+
+  /** 行内高亮终点 */
+  private hlRelTo(line: EngineLine): number {
+    const v: number = this.hlTo - line.charFrom + line.prefixLen;
+    const from: number = this.hlRelFrom(line);
+    return Math.max(from, Math.min(v, line.text.length));
   }
 
   /**
-   * 段渲染键：**高亮那一段**把句序号与字体代数拼进键里，逼 ArkUI 重建它 ——
+   * 行渲染键：**高亮那一行**把句序号与字体代数拼进键里，逼 ArkUI 重建它 ——
    * 否则会复用旧组件、高亮不移动（与滚动层 `rowKey()` 同款做法）。
    */
-  private segKey(seg: number[]): string {
-    const base: string = `s-${seg[0]}-${seg[1]}-${seg[2]}-f${this.fontSerial}`;
-    return this.isHlSeg(seg) ? `${base}-h${this.hlSerial}` : base;
+  private lineKey(line: EngineLine): string {
+    const base: string = `l-${line.paraIndex}-${line.charFrom}-${line.charTo}-f${this.fontSerial}`;
+    return this.isHlLine(line) ? `${base}-h${this.hlSerial}` : base;
   }
 
-  /** 段文本（同步从本章缓存取，绝不 await） */
-  private segText(seg: number[]): string {
-    if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
-      return '';
-    }
-    const nodes: string[] | undefined = this.chapTexts.get(this.flat[this.pageIdx].spine);
-    if (nodes === undefined) {
-      return '';
-    }
-    const i: number = seg[0];
-    if (i < 0 || i >= nodes.length) {
-      return '';
-    }
-    return nodes[i].substring(seg[1], seg[2]);
+  /** 段首行的顶部间距（vp）—— 与 `EngineLines.gapPx` 同口径（都是 `fontSize × gapEm`） */
+  private linePadVp(line: EngineLine): number {
+    return line.isParaStart ? this.fontSize * this.gapEm : 0;
   }
 
   @Builder
-  SegView(seg: number[]) {
-    if (this.isHlSeg(seg)) {
+  LineView(line: EngineLine) {
+    if (this.isHlLine(line)) {
       Text() {
-        Span(this.segText(seg).substring(0,
-          Math.min(Math.max(0, this.hlFrom - seg[1]), this.segText(seg).length)))
-        Span(this.segText(seg).substring(
-          Math.min(Math.max(0, this.hlFrom - seg[1]), this.segText(seg).length),
-          Math.min(Math.max(0, this.hlTo - seg[1]), this.segText(seg).length)))
+        Span(line.text.substring(0, this.hlRelFrom(line)))
+        Span(line.text.substring(this.hlRelFrom(line), this.hlRelTo(line)))
           .textBackgroundStyle({ color: 'rgba(0, 125, 255, 0.20)', radius: 4 })
-        Span(this.segText(seg).substring(
-          Math.min(Math.max(0, this.hlTo - seg[1]), this.segText(seg).length)))
+        Span(line.text.substring(this.hlRelTo(line)))
       }
       .fontSize(this.fontSize)
       .fontWeight(scrollFontWeight(this.fontWeight, this.weightOffset))
       .fontFamily(this.fontName)
       .fontColor(this.fontColor)
       .lineHeight(this.lineHeightFp)
-      .textIndent(seg[1] === 0 ? this.indentFp : 0)
-      // 两端对齐：与引擎内部 `textAlign: 2` 一致（见 `ReaderScrollView` 文件头取证）
-      .textAlign(TextAlign.JUSTIFY)
+      .textAlign(TextAlign.Start)
       .width('100%')
-      // 段间距：与上下滚动层同一系数
-      .padding({ top: this.fontSize * this.gapEm })
+      .padding({ top: this.linePadVp(line) })
     } else {
-      Text(this.segText(seg))
+      Text(line.text)
         .fontSize(this.fontSize)
         .fontWeight(scrollFontWeight(this.fontWeight, this.weightOffset))
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
         .lineHeight(this.lineHeightFp)
-        .textIndent(seg[1] === 0 ? this.indentFp : 0)
-        .textAlign(TextAlign.JUSTIFY)
+        .textAlign(TextAlign.Start)
         .width('100%')
-        .padding({ top: this.fontSize * this.gapEm })
+        .padding({ top: this.linePadVp(line) })
     }
   }
-
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       // 背景：纯色打底 + 可选背景图（材质图 / 自定义图）
@@ -687,9 +811,9 @@ export struct ReaderPageNoAnim {
         // 为什么不用 List/LazyForEach：一页最多十几段，直接 ForEach 更快；
         // 而且"换页 = 整块重建"正是无动画语义（这里没有任何滚动容器可以做跟手/惯性）。
         Column() {
-          ForEach(this.curSegs(), (seg: number[]) => {
-            this.SegView(seg)
-          }, (seg: number[]): string => this.segKey(seg))
+          ForEach(this.curLines(), (line: EngineLine) => {
+            this.LineView(line)
+          }, (line: EngineLine): string => this.lineKey(line))
         }
         .width('100%')
         .height('100%')
@@ -793,11 +917,11 @@ export struct ReaderPageNoAnim {
     .height('100%')
   }
 
-  /** 当前页切片（`pageIdx` 越界时给空数组） */
-  private curSegs(): number[][] {
+  /** 当前页的行（`pageIdx` 越界时给空数组） */
+  private curLines(): EngineLine[] {
     if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
       return [];
     }
-    return this.flat[this.pageIdx].segs;
+    return this.flat[this.pageIdx].lines;
   }
 }

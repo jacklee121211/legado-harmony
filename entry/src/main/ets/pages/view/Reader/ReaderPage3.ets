@@ -8064,6 +8064,8 @@ export default struct ReaderPage3 {
       if (this.noAnimModeOn() && this.bookHandlerReady) {
         ReaderPageNoAnim({
           fontName: this.scrollFontFamily(),
+          // ⚠️ 引擎排行与渲染都要这个路径；不传的话自定义字体在自绘层会用默认字体
+          fontPath: this.scrollFontPath(),
           fontSize: this.readerSetting.fontSize,
           fontWeight: this.readerSetting.fontWeight,
           fontColor: this.readerSetting.fontColor,
@@ -10692,6 +10694,26 @@ export default struct ReaderPage3 {
       return `${ARK_FONT_SYS_CJK}, ${ARK_FONT_FALLBACK}`;
     }
     return `${primary}, ${ARK_FONT_SYS_CJK}, ${ARK_FONT_FALLBACK}`;
+  }
+
+  /**
+   * 自绘排版层要用的**字体文件路径**（给引擎 `FontCollection.loadFontSync` 注册）。
+   *
+   * ⚠️ 与 `readerSetting.fontPath` 的语义**不同**：
+   *   · 用户选了自定义字体 ⇒ 用那个路径；
+   *   · 否则（系统黑体）⇒ 返回 `SYSTEM_CJK_FONT_PATH`，让引擎能真加载到那个 ttf。
+   *
+   * 为什么必须给路径：引擎的 `FontCollection` 与 ArkUI 的字体注册**互不相通**，
+   * 只给族名而不 `loadFontSync` ⇒ 引擎回落默认字体 ⇒ 字宽不同 ⇒ **断行全错**
+   * （证据：`@ohos.graphics.text.d.ts:1335-1349`「the custom font effect can be displayed
+   *   only when the value of name is set in fontFamilies in TextStyle」）。
+   */
+  private scrollFontPath(): string {
+    const p: string = this.readerSetting.fontPath;
+    if (p !== undefined && p !== null && p.length > 0 && p !== SYSTEM_CJK_FONT_PATH) {
+      return p;
+    }
+    return SYSTEM_CJK_FONT_PATH;
   }
 
   /**
