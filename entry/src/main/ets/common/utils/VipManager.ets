@@ -44,17 +44,8 @@ export class VipManager {
 
   /** VIP 是否已解锁（读缓存位；阶段2 后由 refreshFromIap 刷新） */
   static isVip(): boolean {
-    // [TEMP-TEST 20261028] 真机截图验证「未开通」态（空心皇冠 + 开通VIP）与 VIP 推广弹窗，
-    // 临时把本机（IAP 已购）强制判成未开通。**验证完必须删除本段**，命令：
-    //   grep "TEMP-TEST 20261028" -r entry/src/main/ets  ⇒ 应 0 命中
-    if (VipManager.FORCE_NOT_VIP_TEMP) {
-      return false;
-    }
     return PreferencesUtil.getSync(VipManager.KEY_VIP, false) as boolean;
   }
-
-  /** [TEMP-TEST 20261028] 临时开关：true ⇒ isVip() 恒 false（仅截图/联调用，**提交前必须为 false 或删除**） */
-  private static readonly FORCE_NOT_VIP_TEMP: boolean = true;
 
   /** 写 VIP 缓存位并广播 */
   static setVip(v: boolean): void {

@@ -43,6 +43,8 @@ import { VipManager } from '../../../common/utils/VipManager'
 import { OfflineMode, STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode'
 // ── 首次安装模式选择（2026-10-13 新增）：本页只用到「开发者重放」入口 ──────────
 import { FirstRunMode } from '../../../common/utils/FirstRunMode'
+// ── 阅读里程碑推广（2026-10-28 新增）：本页只用到开发者暗门的 `debugReset()` ──
+import { ReadPromo } from '../../../common/utils/ReadPromo'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
 // 2026-10-19：「书架动画速度」滑块按用户要求**整项删除**（连 `shelfAnimSpeed` 读写一起去掉）
 // ⇒ 不再 import EntranceWave；书架入场波次回归 `EntranceWave` 内置默认档（level 3 = 0.75x）。
@@ -847,6 +849,12 @@ export default struct MySetPage{
   private devResetFirstRun(): void {
     Haptics.success()
     FirstRunMode.debugReset()
+    // 2026-10-28：同一个暗门顺带抹掉「阅读里程碑推广」的记账，用来重放评分引导 / VIP 弹窗。
+    //   为什么挂在同一个入口：`ReadPromo.debugReset()` 只清 `readPromo*` 五个键、不动 readDaily 表，
+    //   属于纯调试动作；而它**不该**有用户可见入口（会把"永不再骚扰"的承诺暴露成开关）。
+    //   ⚠️ 边界：历史秒数在下次冷启动会被 `ReadPromo.init()` 从 readDaily 表重新并入（取 max），
+    //   所以"想马上再看到弹窗"仍要靠**再读够门槛**（或临时改 `ReadPromo.RATING_THRESHOLD_SEC`）。
+    ReadPromo.debugReset()
     const t = FirstRunMode.shouldShow() ? '已重置：下次冷启动会重新弹出首启引导' : '已重置首启标记'
     // showToast 会抛异常 ⇒ 按本页既有写法包 try/catch（同 `onLoginOk` / `onInviteRedeemed`）
     try {

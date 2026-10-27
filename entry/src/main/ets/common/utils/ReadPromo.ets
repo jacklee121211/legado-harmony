@@ -106,22 +106,16 @@ export class ReadPromo {
   static readonly ENABLED: boolean = true
 
   /** 评分软引导门槛：累计阅读 1 小时（用户原话「超过 1 小时」） */
-  // [TEMP-TEST 20261028] 真机验证临时改 20 秒（原值 60 * 60），验证完必须改回
-  static readonly RATING_THRESHOLD_SEC: number = 20
-  // [TEMP-TEST 20261028] 临时旁路系统一年冷却，否则本机（历史已弹过）永远走不到软引导
-  static readonly TEST_BYPASS_SYSTEM_COOLDOWN: boolean = true
+  static readonly RATING_THRESHOLD_SEC: number = 60 * 60
 
   /** 评分被拒后的重试间隔：30 天（用户原话「30 天后再次弹出…每 30 天一次，直到评分」） */
-  // [TEMP-TEST 20261028] 临时改 60 秒（原值 30 * 24 * 60 * 60 * 1000），验证完必须改回
-  static readonly RATING_RETRY_MS: number = 60 * 1000
+  static readonly RATING_RETRY_MS: number = 30 * 24 * 60 * 60 * 1000
 
   /** VIP 弹窗门槛：累计阅读 10 小时（用户原话「超过十小时」） */
-  // [TEMP-TEST 20261028] 临时改 40 秒（原值 10 * 60 * 60），验证完必须改回
-  static readonly VIP_THRESHOLD_SEC: number = 40
+  static readonly VIP_THRESHOLD_SEC: number = 10 * 60 * 60
 
   /** VIP 第二次弹出的间隔：90 天（用户原话「90 天才主动打开第二次」） */
-  // [TEMP-TEST 20261028] 临时改 60 秒（原值 90 * 24 * 60 * 60 * 1000），验证完必须改回
-  static readonly VIP_RETRY_MS: number = 60 * 1000
+  static readonly VIP_RETRY_MS: number = 90 * 24 * 60 * 60 * 1000
 
   /**
    * VIP 弹窗自动弹出的**总次数上限**：2（第一次 + 90 天后第二次）。
@@ -188,7 +182,6 @@ export class ReadPromo {
     ReadPromo.inited = true
     try {
       if (!ReadPromo.readBool(ReadPromo.KEY_RATING_DONE, false) &&
-        !ReadPromo.TEST_BYPASS_SYSTEM_COOLDOWN && // [TEMP-TEST 20261028] 本机历史已弹过 ⇒ 临时旁路
         AppGalleryUtil.shouldSkipPrompt(ctx)) {
         // 系统口径「一年内已评过/达上限」⇒ 本模块永久静默（用户不会再看到软引导）
         ReadPromo.writeBool(ReadPromo.KEY_RATING_DONE, true)
@@ -274,7 +267,7 @@ export class ReadPromo {
           // 设备/版本不支持应用内评分（`AppGalleryUtil.ets:124`：syscap + API≥20 + 总开关）
           // ⇒ 不弹。弹了只能降级去跳商店，而"自动弹窗 + 突然跳应用市场"是骚扰。
           hilog.info(0x0000, TAG, 'check: comment capability unavailable, skip rating')
-        } else if (!ReadPromo.TEST_BYPASS_SYSTEM_COOLDOWN && AppGalleryUtil.shouldSkipPrompt(ctx)) {
+        } else if (AppGalleryUtil.shouldSkipPrompt(ctx)) {
           // 系统说一年内已评过 / 评论数达上限（`AppGalleryUtil.ets:196-207`）
           // ⇒ 问下去必然被拒，直接钉成完成位，永久静默。
           ReadPromo.writeBool(ReadPromo.KEY_RATING_DONE, true)
