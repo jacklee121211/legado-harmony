@@ -277,11 +277,15 @@ export struct ReaderScrollView {
   // ── 初始位置：`initSerial` 变化 = 重新载入窗口（进书 / 从分页切过来）──────
   @Prop initSpine: number = 0;
   @Prop initNode: number = 0;
+  /** 初始化时的段内字符偏移（切档交接；与 initNode 配套，见 indexOfNode 注释） */
+  @Prop initChar: number = 0;
   @Prop @Watch('onInitSerialChange') initSerial: number = 0;
 
   // ── 定位请求（TTS 跟随 / 目录 / 书签 / 沉浸层交接）───────────────────────
   @Prop seekSpine: number = 0;
   @Prop seekNode: number = 0;
+  /** 段内字符偏移（与 seekNode 组成精确锚点；2026-10-27 增，与无动画档同签名） */
+  @Prop seekChar: number = 0;
   @Prop @Watch('onSeekSerialChange') seekSerial: number = 0;
 
   // ── 翻一屏请求（音量键翻页）──────────────────────────────────────────────
@@ -318,8 +322,9 @@ export struct ReaderScrollView {
   handlerProvider: () => bookParser.BookParserHandler | null = () => null;
   /** 正文总章数（spine 数） */
   spineCountProvider: () => number = () => 0;
-  /** 可视区首段/末段变化 ⇒ 父页写进度（节流由父页做） */
-  onPos: (spine: number, node: number, endNode: number) => void = () => {};
+  /** 可视区首段/末段变化 ⇒ 父页写进度（节流由父页做）；含字符偏移供「从本页开始读」精确定位 */
+  onPos: (spine: number, node: number, endNode: number, startChar: number, endChar: number) => void =
+    (spine: number, node: number, endNode: number, startChar: number, endChar: number) => {};
   /** 轻点正文 ⇒ 父页拉起菜单 */
   onTap: () => void = () => {};
   /** 首屏文本已上屏 ⇒ 父页撤掉「正在排版…」占位 */
@@ -653,7 +658,7 @@ export struct ReaderScrollView {
     const a: ScrollRow = this.ds.getData(start);
     const e: number = Math.max(start, Math.min(end, total - 1));
     const b: ScrollRow = this.ds.getData(e);
-    this.onPos(a.spine, a.node, b.spine === a.spine ? b.node : a.node);
+    this.onPos(a.spine, a.node, b.spine === a.spine ? b.node : a.node, a.charFrom, b.charTo);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

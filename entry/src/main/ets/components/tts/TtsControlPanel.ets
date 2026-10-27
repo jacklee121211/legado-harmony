@@ -2268,24 +2268,10 @@ export struct TtsControlPanel {
           // ★ 收起档 + 播放中：这两行让位给「本章 + 滑块」（用户 2026-09-23 设计）
           .visibility(this.compactMode && this.ttsState !== 'stopped' ? Visibility.None : Visibility.Visible)
 
-          // 沉浸听读：听书时自绘当前页，句子高亮画在文字内部（像素级精确；代价是听书时看不到翻页动画）
-          Row({ space: 10 }) {
-            Text('沉浸听读').fontSize(14).fontColor(this.fg())
-            Toggle({ type: ToggleType.Switch, isOn: this.prefs.immersiveListen })
-              .selectedColor(this.accent())
-              .onChange((value: boolean) => {
-                Haptics.tap();
-                this.prefs.immersiveListen = value;
-                this.commitPrefs();
-              })
-            Text('自绘这一页，句子高亮在文字内部 · 更精确但听书时不显示翻页动画')
-              .fontSize(11)
-              .fontColor(this.fgSub())
-              .layoutWeight(1)
-              .maxLines(2)
-          }.width('100%')
-          // 同「方案」行：收起档 + 播放中不显示（让位给本章滑块）
-          .visibility(this.compactMode && this.ttsState !== 'stopped' ? Visibility.None : Visibility.Visible)
+    // ⚠️ 2026-10-28 按用户要求**删除「沉浸听读」开关**：
+    //   听书已经统一锁死在无动画档（见 ReaderPage3.enterListenMode 与 switchReadMode 的拦截），
+    //   高亮一直走自绘 Span，沉浸层永远不激活 ⇒ 这个开关已经没有作用，留着只会误导。
+    //   TtsPrefs.immersiveListen 字段保留（旧配置迁移用），immersiveActive() 恒 false。
 
           // 音色选择
           if (this.showVoices && !this.compactMode) {

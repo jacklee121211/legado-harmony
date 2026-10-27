@@ -14,29 +14,30 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V3.0.3'
+export const APP_VERSION_FALLBACK: string = 'V3.0.4'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.3 阅读器双引擎版式对齐 + 章标题样式 + 听书跟随修复',
+    version: 'V3.0.4 听书体系重构：锁死无动画 + 长按从此处听 + 定位精度修复',
     date: '2026-10-28',
     items: [
-      '新增 EngineLines.ets：用 @ohos.graphics.text 建立「引擎排行」层（layoutSync + getLineMetrics），产出每行文本/段首标记/段内字符区间/真实行高，作为自绘两档唯一的排版权威',
-      '「无动画」与「上下」两档改为同源消费该行数据，渲染从「每段一个 Text」改为「每行一个 Text」，彻底解决字号放大溢出、缩小下半屏空白',
-      '修复 StrutStyle 只给 height 不生效（实测 m.height 仅返回字体自然高度 95px，配置 193.61px 被忽略）：必须同时给 enabled/heightOverride/forceHeight，修复后 194px 与配置吻合',
-      '分页改用引擎实测的 LineMetrics.height 累加（而非配置行高），消除最后一行溢出到 dock 下方',
-      '新增正文字距 LETTER_SPACING_FP=1.7fp：实测同字号下 ReaderKit 86.2px/字、我们 80.4px/字，导致每行多塞 1 字、页边界系统性错位',
-      '行高去掉 effectiveLineMul()：该系数是旧架构「用 ReaderKit 每页行数反推行高」的产物，新架构下把行距撑大 25%（193px vs ReaderKit 154px）',
-      '段间距 SCROLL_PARA_GAP_EM 0.45→0.95',
-      '章标题样式：ChapterNodes 新增 isTitle[]，HTML 走 h1-h6 标签',
-      'TXT 因 getSpineItemContent 返回纯文本（探针实证 hasTag=NO），改用 ReaderKit 的目录名反查章首段。标题按 TITLE_FONT_SCALE=1.33、TITLE_FONT_WEIGHT=600、顶格不缩进渲染，实测标题宽度 775px vs ReaderKit 776px',
-      '自绘两档上下 inset 微调（SELF_DRAWN_TOP_TRIM_VP=10 / SELF_DRAWN_BOTTOM_PAD_VP=30）：章标题顶部 385px vs ReaderKit 384px，且消除第 3 页起「每页多装 1 行」的分叉',
-      'fontSerial/fontName/fontPath/fontSize/lineHeightFp/indentFp/gapEm 全部挂 @Watch：原来改字号只重建不重排，页面仍按旧字号行数渲染',
-      '修复 applySelfDrawnPos 的 endChar 恒为 0：rangeCovers 会把「朗读在页末段第 5 个字」误判为不在当前页，导致 autoFollowTts 白翻一页',
-      '新增 scrollFontPath()：自绘排版层需要真实字体文件路径给 FontCollection.loadFontSync 注册，否则引擎回落默认字体、字宽不同、断行全错',
-      '已知残留：段间距仍为 0.95em（ReaderKit 实测约 93px / 我们 77px），当前靠底部 inset 补偿维持页码对齐',
-      '换段落密度差异大的书需重新验证',
+      '听书模式锁死无动画：switchReadMode 拦截切到其它档位并提示「听书模式固定使用无动画，关闭听书后会自动切回」，退出听书时自动还原原档位',
+      'enterListenMode 判据从 selfDrawnModeOn 改为 noAnimModeOn：横滑/仿真/上下开听书一律切到无动画',
+      '修复切档后不自动翻页：applySelfDrawnPos 把「切档」误判成「用户手动翻走」导致 followSuspended=true、autoFollowTts 首行直接 return',
+      '新增 rearmListenFollow 在切档后清除挂起并刷新 lastNavMs',
+      '听书高亮体系统一：删除「沉浸听读」开关（TtsControlPanel），immersiveActive 恒 false —— 听书永远走自绘 Span 高亮，ReaderKit 的栅格色块/沉浸层不再有机会激活',
+      '新增长按「从此处听书」：长按正文任意一行弹出圆角胶囊气泡，点击后 TtsEngine.seekToChapter 从该段开始读。气泡挂在触摸分区层并用落点 y 逐行累加反算命中行（正文 Text 在 Stack 中层，收不到手势）',
+      '修复「从本页开始读跳到上一页」：applySelfDrawnPos 的 startChar 不再写死 0，改由 reportAt 上报页首行 charFrom',
+      'onPos 签名扩展为 (spine,node,endNode,startChar,endChar)',
+      '修复切档后落到上一页：新增 indexOfNode 的 char 参数，按「包含该字符」的页定位而非「该段起始页」',
+      'switchReadMode 交接时传递 scrollInitChar',
+      '修复点击书签后一路播放翻页动画：书签 char 恒为 0，与「页首是续段（startChar>0）」冲突时 rangeCovers 判为未落位 ⇒ 触发 beginSearch 逐页逼近（上限 60 页）。新增 locateHit：char<=0 时只按段号判定',
+      '书签弹窗入口补 noFallback',
+      '迷你条字幕改为「正在朗读的章节名」：ArkUI 原生 marqueeOptions（@since 18），放得下静态、放不下缓慢循环滚动，替代原先按字符比例滚动的跑马灯',
+      '悬浮条「从此页开始」改为「回当前进度」并修正行为：原实现是 playFromCurrentPage（从当前页开始读），改为解除挂起 + requestLocate 跳回朗读位置',
+      '设置页：QQ群 / 登录 / QQ群号整块从列表底部移到第一个 ListItem',
+      '删除后门里的「打开标定模式」（标尺/几何校准）开关及其 switch 分支、calibDevWrite、CalibMode import',
     ]
   },
 ]

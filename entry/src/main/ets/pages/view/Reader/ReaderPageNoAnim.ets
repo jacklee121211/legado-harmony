@@ -143,11 +143,20 @@ export struct ReaderPageNoAnim {
   // ── 初始位置：`initSerial` 变化 = 重新载入窗口（进书 / 从别的模式切过来）──
   @Prop initSpine: number = 0;
   @Prop initNode: number = 0;
+  /** 初始化时的段内字符偏移（切档交接；与 initNode 配套，见 indexOfNode 注释） */
+  @Prop initChar: number = 0;
   @Prop @Watch('onInitSerialChange') initSerial: number = 0;
 
   // ── 定位请求（TTS 跟随 / 目录 / 书签 / 模式交接）─────────────────────────
   @Prop seekSpine: number = 0;
   @Prop seekNode: number = 0;
+  /**
+   * 定位用的**段内字符偏移**（与 seekNode 一起构成精确锚点）。
+   * ⚠️ 2026-10-27 新增：只给段号时 indexOfNode 只能落到"该段**起始**的那一页"，
+   *   而分页模式下页首常常是"上一页延续下来的半段" ⇒ 切档后无动画会落到**上一页**
+   *   （用户感知："怎么搞到上一页的最后一段去了"）。带上字符偏移才能落到"包含该字的那一页"。
+   */
+  @Prop seekChar: number = 0;
   @Prop @Watch('onSeekSerialChange') seekSerial: number = 0;
 
   // ── 翻一页请求（音量键 / 智控键）──────────────────────────────────────────
@@ -184,7 +193,21 @@ export struct ReaderPageNoAnim {
   /** 正文总章数（spine 数） */
   spineCountProvider: () => number = () => 0;
   /** 当前位置变化（首段 spine / 首段 node / 末段 node）⇒ 父页写进度 */
-  onPos: (spine: number, node: number, endNode: number) => void = () => {};
+  /**
+   * 位置上报。startChar / ndChar = 页首行/页末行在该段内的**字符偏移**：
+   * ⚠️ 2026-10-27 新增：原来只报段号，父页 pplySelfDrawnPos() 只能把 startChar 写 0。
+   *   后果：当页首是"上一页延续下来的半段"时，"从本页开始读"会从该段**开头**读
+   *   ⇒ 又跳回上一页最后一段（用户实测："怎么搞到上一页的最后一段开始读去了"）。
+   */
+  onPos: (spine: number, node: number, endNode: number, startChar: number, endChar: number) => void =
+    (spine: number, node: number, endNode: number, startChar: number, endChar: number) => {};
+  /**
+   * 听书状态下的「从此处听书」：把被点那一行的段号回传给父页，由父页 TtsEngine.seekToChapter。
+   * ⚠️ 只在 listenActive 为真时才会被触发（见 LineView 的点击条件），平时不影响翻页手势。
+   */
+  onPlayFrom: (spine: number, node: number) => void = () => {};
+  /** 是否处于听书状态（true 时正文每行可点，弹出「从此处听书」气泡） */
+  @Prop listenActive: boolean = false;
   /** 轻点中间三分之一 ⇒ 父页拉起菜单 */
   onTap: () => void = () => {};
   /** 右侧三分之一 ⇒ 下一页；左侧三分之一 ⇒ 上一页 */
@@ -198,7 +221,9 @@ export struct ReaderPageNoAnim {
   @State flat: FlatPage[] = [];
   /** 当前页下标（**唯一**驱动翻页的状态；改它 = 换页，无任何补间） */
   @State pageIdx: number = 0;
-  @State ready: boolean = false;
+  @State ready: boolean = false
+  /** 当前弹出「从此处听书」气泡的行键（'' = 没有气泡） */
+  @State listenPopupKey: string = '';
   @State errText: string = '';
 
   /** 已载入的章区间（闭区间；-1 = 还没加载） */
@@ -224,6 +249,8 @@ export struct ReaderPageNoAnim {
   /** 首屏还没就绪时到来的定位请求（-1 = 无）—— 理由见滚动层同名注释 */
   private pendingSeekSpine: number = -1;
   private pendingSeekNode: number = 0;
+  /** 待消费的字符偏移（indexOfNode 用；换页/换章后清零） */
+  private pendingSeekChar: number = 0;
 
   aboutToAppear(): void {
     // 首次布局尺寸还未知，先用默认 `cpl/maxLines` 载一版（保证不是白屏）；
@@ -413,6 +440,10 @@ export struct ReaderPageNoAnim {
 
   /** 重建窗口：以 `spine` 为中心装 [spine-1 .. spine+1]，并定位到包含 `node` 的页 */
   private async rebuildWindow(spine: number, node: number, first: boolean): Promise<void> {
+    // 首次进入：把切档交接来的字符偏移灌进 pending，indexOfNode 才能落到"包含它"的那一页
+    if (first) {
+      this.pendingSeekChar = Math.max(0, this.initChar);
+    }
     const total: number = this.spineCountProvider();
     const target: number = Math.max(0, total > 0 ? Math.min(spine, total - 1) : spine);
     const from: number = Math.max(0, target - 1);
@@ -425,7 +456,7 @@ export struct ReaderPageNoAnim {
     this.loadedLast = to;
     this.errText = flat.length === 0 ? '这一章没有可显示的正文' : '';
 
-    const at: number = Math.max(0, this.indexOfNode(flat, target, node));
+    const at: number = Math.max(0, this.indexOfNode(flat, target, node, this.pendingSeekChar));
     this.flat = flat;
     this.pageIdx = at;
     this.ready = flat.length > 0;
@@ -448,14 +479,35 @@ export struct ReaderPageNoAnim {
   }
 
   /** (spine, 块节点号) → 扁平页下标（-1 = 不在窗口内；找不到就退到该章首页） */
-  private indexOfNode(flat: FlatPage[], spine: number, node: number): number {
+  /**
+   * (spine, 段号, 字符偏移) → 扁平页下标。
+   *
+   * ⚠️ 2026-10-27 新增 char 参数：只按段号找会落到「该段**起始**的那一页」，
+   *    而分页模式下页首常常是「上一页延续下来的半段」⇒ 切档后无动画会退到上一页。
+   *    带上字符偏移后，找的是「包含该字的那一页」，与用户看到的那一页一致。
+   *    找不到（越界/空块）时退回原来的「段起始页」行为。
+   */
+  private indexOfNode(flat: FlatPage[], spine: number, node: number, char: number = 0): number {
     const cl: ChapterLines | undefined = this.chapPages.get(spine);
     if (cl === undefined || cl.pages.length === 0) {
       return -1;
     }
-    // 1) 章内页号：`pageOfNode` 是"该节点起始页"，直接查
     let local: number = -1;
-    if (node >= 0 && node < cl.pageOfNode.length) {
+    // ① 优先：按 (段号 + 字符偏移) 找「真正包含这个字」的那一页
+    if (char > 0) {
+      for (let p = 0; p < cl.pages.length && local < 0; p++) {
+        const sl: PageSlice = cl.pages[p];
+        for (let k = sl.from; k < sl.to && k < cl.lines.length; k++) {
+          const ln: EngineLine = cl.lines[k];
+          if (ln.paraIndex === node && char >= ln.charFrom && char < ln.charTo) {
+            local = p;
+            break;
+          }
+        }
+      }
+    }
+    // ② 回退：该节点起始页
+    if (local < 0 && node >= 0 && node < cl.pageOfNode.length) {
       local = cl.pageOfNode[node];
     }
     if (local < 0) {
@@ -470,7 +522,7 @@ export struct ReaderPageNoAnim {
     if (local < 0) {
       local = 0;
     }
-    // 2) 章首页在扁平数组里的起点
+    // ③ 章首页在扁平数组里的起点
     for (let i = 0; i < flat.length; i++) {
       if (flat[i].spine === spine) {
         return Math.min(flat.length - 1, i + local);
@@ -493,10 +545,16 @@ export struct ReaderPageNoAnim {
       return;
     }
     // 段号 = 该行的 `paraIndex`（引擎排行时已记录）
-    const a: number = pg.lines[0].paraIndex;
-    const b: number = pg.lines[pg.lines.length - 1].paraIndex;
-    this.onPos(pg.spine, a, b >= a ? b : a);
-  }  // ══════════════════════════════════════════════════════════════════════════
+    // ⚠️ 2026-10-27：同时上报**字符偏移**，否则父页只能把 startChar 记成 0
+    //    ⇒ 页首是"上一页延续下来的半段"时，"从本页开始读"会从该段开头读、跳回上一页。
+    const first: EngineLine = pg.lines[0];
+    const last: EngineLine = pg.lines[pg.lines.length - 1];
+    const a: number = first.paraIndex;
+    const b: number = last.paraIndex;
+    this.onPos(pg.spine, a, b >= a ? b : a, first.charFrom, last.charTo);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // 翻页（核心：只改整数，无任何补间）
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -607,6 +665,8 @@ export struct ReaderPageNoAnim {
   onSeekSerialChange(): void {
     const spine: number = this.seekSpine;
     const node: number = this.seekNode;
+    // 字符偏移：与段号一起构成精确锚点（见 seekChar 字段注释）
+    this.pendingSeekChar = Math.max(0, this.seekChar);
     if (!this.ready) {
       // 首屏还没载入完 ⇒ 暂存，等 rebuildWindow 末尾补做
       this.pendingSeekSpine = spine;
@@ -619,7 +679,7 @@ export struct ReaderPageNoAnim {
       }, 0);
       return;
     }
-    const idx: number = this.indexOfNode(this.flat, spine, node);
+    const idx: number = this.indexOfNode(this.flat, spine, node, this.pendingSeekChar);
     if (idx >= 0) {
       setTimeout((): void => {
         this.pageIdx = idx;
@@ -784,6 +844,133 @@ export struct ReaderPageNoAnim {
     return this.lineHeightFp * TITLE_FONT_SCALE;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 听书状态下「点击任意一行 ⇒ 从此处听书」（2026-10-27）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 只在本档（无动画）实现：四档听书现在统一走无动画（见 `ReaderPage3.enterListenMode`），
+  // 所以这里加一次就等于全系统都有了。
+
+  /** 当前页所属正文号（气泡回传坐标要用） */
+  /** px → vp（气泡命中行要用 vp 累加，行高数据来自引擎是 px） */
+  private px2vp(v: number): number {
+    return this.getUIContext().px2vp(v);
+  }
+
+  /**
+   * 长按正文 ⇒ 按落点的 **y 坐标**反算命中哪一行，再弹「从此处听书」气泡。
+   *
+   * ⚠️⚠️ 为什么由**触摸分区层**来收这个长按（而不是每行 Text 自己挂手势）：
+   *    本组件的 Stack 从下到上是
+   *      ① 背景 Column ② 正文 Column（每行一个 Text）③ 触摸分区 Row（左1/3/中1/3/右1/3）。
+   *    ③ 在最上层且各分区都挂了 onClick ⇒ **触摸事件全被它接走**，
+   *    ② 里 Text 上的任何手势都**收不到**（真机日志：长按完全没有 play-from-line）。
+   *    ⇒ 只能把长按挂到 ③ 上，再用坐标自己算行号。
+   *
+   * 行高换算：逐行累加「真实行高 + 段首间距」，第一个"落点小于累计高度"的行即命中行。
+   * 比 y / lineHeight 的除法稳（段间距会破坏等距）。
+   */
+  private onBodyLongPress(localY: number): void {
+    if (!this.listenActive) {
+      return;
+    }
+    const lines: EngineLine[] = this.curLines();
+    if (lines.length === 0) {
+      return;
+    }
+    // localY 是相对触摸分区 Row 的 vp；正文从 topInsetVp 之下才开始
+    const y: number = localY - this.topInsetVp;
+    let acc: number = 0;
+    let hit: EngineLine = lines[lines.length - 1];
+    for (let i = 0; i < lines.length; i++) {
+      const hPx: number = lines[i].heightPx > 0 ? lines[i].heightPx : this.fp2px(this.lineHeightFp);
+      const hVp: number = this.px2vp(hPx) + this.linePadVp(lines[i]);
+      if (y < acc + hVp) {
+        hit = lines[i];
+        break;
+      }
+      acc += hVp;
+    }
+    Haptics.tap();
+    this.listenPopupKey = this.lineKey(hit);
+    hilog.info(DOMAIN, TAG,
+      'listen: long-press y=%{public}s topInset=%{public}s acc=%{public}s → para=%{public}d',
+      localY.toFixed(1), this.topInsetVp.toFixed(1), acc.toFixed(1), hit.paraIndex);
+  }
+
+  private spineOfPage(): number {
+    if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
+      return 0;
+    }
+    return this.flat[this.pageIdx].spine;
+  }
+
+  /**
+   * 点击正文某一行。
+   *
+   * ⚠️ 非听书状态**必须直接 return**（不 `Haptics`、不改状态）：
+   *    无动画档的整行都铺满了屏幕，拦截点击会把父页的"点右 1/3 翻页"手势吃掉。
+   */
+  private tapLine(line: EngineLine): void {
+    if (!this.listenActive) {
+      return;
+    }
+    Haptics.tap();
+    const k: string = this.lineKey(line);
+    this.listenPopupKey = this.listenPopupKey === k ? '' : k;
+  }
+
+  /** 这一行是否要显示「从此处听书」气泡 */
+  private popupShown(line: EngineLine): boolean {
+    return this.listenActive && this.listenPopupKey.length > 0
+      && this.listenPopupKey === this.lineKey(line);
+  }
+
+  /** 气泡配置（自定义 builder，整体可点） */
+  private popupOpts(line: EngineLine): CustomPopupOptions {
+    const opts: CustomPopupOptions = {
+      builder: (): void => {
+        this.ListenBubble(line)
+      },
+      placement: Placement.Top,
+      // 无遮罩：点别处直接关掉，不打断阅读
+      mask: false,
+      // ⚠️ 去掉箭头：箭头会把气泡往上顶约 8vp，导致"看着挂在了上一段下面"（用户实截图）。
+      enableArrow: false,
+      // 再往下压一点，让气泡底边正好贴住**命中行**的顶边（用户要求：对齐那一段的分隔线）
+      offset: { x: 0, y: 34 },
+      onStateChange: (e: PopupStateChangeParam): void => {
+        if (!e.isVisible && this.listenPopupKey === this.lineKey(line)) {
+          this.listenPopupKey = '';
+        }
+      }
+    };
+    return opts;
+  }
+
+  /** 气泡本体：一颗圆角胶囊「▶ 从此处听书」，整颗可点 */
+  @Builder
+  ListenBubble(line: EngineLine) {
+    Row() {
+      SymbolGlyph($r('sys.symbol.play_fill'))
+        .fontSize(13)
+        .fontColor(['#FFFFFF'])
+      Text('从此处听书')
+        .fontSize(13)
+        .fontColor('#FFFFFF')
+        .margin({ left: 6 })
+    }
+    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+    .backgroundColor('#1F2937')
+    .borderRadius(18)
+    .shadow({ radius: 8, color: 'rgba(0,0,0,0.25)', offsetY: 2 })
+    .onClick(() => {
+      Haptics.tap();
+      this.listenPopupKey = '';
+      // 段首开始读：`charFrom` 是行在段内的起点，这里统一从 0 起（从整段开头听才对）
+      this.onPlayFrom(this.spineOfPage(), line.paraIndex);
+    })
+  }
+
   @Builder
   LineView(line: EngineLine) {
     if (line.isTitle) {
@@ -797,6 +984,10 @@ export struct ReaderPageNoAnim {
         .textAlign(TextAlign.Start)
         .width('100%')
         .padding({ top: this.linePadVp(line) })
+        // 听书状态下整行可点 ⇒ 弹「从此处听书」气泡（详见 tapLine / ListenBubble 注释）
+        // ⚠️ 用**长按**而不是点击：整行铺满屏幕，onClick 会被父页的"点右 1/3 翻页"/"点中央出菜单"先接走，
+        //    气泡永远不出现（用户实测反馈）。长按与点击手势不冲突。
+        .bindPopup(this.popupShown(line), this.popupOpts(line))
     } else if (this.isHlLine(line)) {
       Text() {
         Span(line.text.substring(0, this.hlRelFrom(line)))
@@ -813,6 +1004,8 @@ export struct ReaderPageNoAnim {
       .textAlign(TextAlign.Start)
       .width('100%')
       .padding({ top: this.linePadVp(line) })
+      // 听书状态下长按整行 ⇒ 弹「从此处听书」气泡（长按避开点击手势冲突）
+      .bindPopup(this.popupShown(line), this.popupOpts(line))
     } else {
       Text(line.text)
         .fontSize(this.fontSize)
@@ -824,6 +1017,10 @@ export struct ReaderPageNoAnim {
         .textAlign(TextAlign.Start)
         .width('100%')
         .padding({ top: this.linePadVp(line) })
+        // 听书状态下整行可点 ⇒ 弹「从此处听书」气泡（详见 tapLine / ListenBubble 注释）
+        // ⚠️ 用**长按**而不是点击：整行铺满屏幕，onClick 会被父页的"点右 1/3 翻页"/"点中央出菜单"先接走，
+        //    气泡永远不出现（用户实测反馈）。长按与点击手势不冲突。
+        .bindPopup(this.popupShown(line), this.popupOpts(line))
     }
   }
   build() {
@@ -908,6 +1105,19 @@ export struct ReaderPageNoAnim {
         }
         .width('100%')
         .height('100%')
+        // ★ 听书状态下长按 ⇒ 弹「从此处听书」气泡。
+        //   必须挂在**这一层**（触摸分区 Row 在最上层，正文里的 Text 收不到事件），
+        //   用落点 y 反算命中行，详见 `onBodyLongPress()` 注释。
+        //   用普通 `gesture` 而非 priorityGesture：横滑翻页是 priorityGesture 的 Pan，
+        //   两者类型不同（长按 vs 拖动）不会互抢。
+        .gesture(LongPressGesture({ repeat: false, duration: 420 })
+          .onAction((e: GestureEvent) => {
+            // ⚠️ 不要写 `GestureEvent["fingerList"]`：ArkTS 禁用索引访问类型
+            //    （`arkts-no-aliases-by-index`），这里靠推断即可。
+            const fl = e.fingerList;
+            const y: number = fl.length > 0 ? fl[0].localY : 0;
+            this.onBodyLongPress(y);
+          }))
         // ── 横滑翻页（2026-10-26 修「右滑误触关闭」）──────────────────────────
         // 用户口径：「就算完整的左右滑动手势也没问题…这应该是天生支持的」。
         // ⇒ 全宽横向 pan，松手过阈值即翻页（不跟手：无动画语义）。

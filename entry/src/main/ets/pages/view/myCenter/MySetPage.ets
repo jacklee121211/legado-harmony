@@ -24,7 +24,6 @@ import { loadTtsPrefs, saveTtsPrefs } from '../../../tts/TtsPrefs'
 // 听书会话（2026-10-12）：「显示文件拓展名」开关一变就强制刷新迷你栏书名
 import { ListenSession } from '../../../tts/ListenSession'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
-import { CalibMode } from '../../../common/utils/CalibMode'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 // ── 测试账号（2026-09-28 迁入）：登录下线后，测试登录+彩蛋解锁入口迁到本页顶部 ──
@@ -342,14 +341,15 @@ export default struct MySetPage{
     if (dlpRow !== null) { dlpRow.toggleStatus = this.setAntiPeepDlp }
     if (capRow !== null) { capRow.toggleStatus = this.setAntiPeepCapture }
     if (ListenUnlock.isUnlocked()) {
+      // ⚠️ 2026-10-27 按用户要求**删除「打开标定模式」**（标尺/几何校准那套）：
+      //    「输入我爱李佳琦开启后门后除了 edgetts 还有一个标尺模式，把这个模式删了，没用了」。
+      //    连带清理：`calibDevOn` / `calibDevRead` / `calibDevWrite` / `SET_CALIB_DEV` 的 UI 分支。
+      //    `CalibOverlay` / `PlugboardZone` / `ReaderPage3.devMode` 的绘制代码保留但没有入口，
+      //    `CalibMode.read()` 恒 false ⇒ 永远不会激活，不影响运行时。
       this.engineSetList = [
         new SetList(false, '使用 Edge TTS 引擎', this.edgeTtsOn, '',
           '联网云端合成，音色更丰富、句级进度更准；关闭=系统本地引擎（离线可用）。仅供学习测试，禁止商用',
-          MySetConstants.SET_EDGE_TTS),
-        // 标定模式（2026-09-26 从阅读器-设置迁来）：开 = 阅读器-设置里出现几何标定那一套
-        new SetList(false, '打开标定模式', this.calibDevOn, '',
-          '阅读器-设置里出现首行标定/行高系数等开发者工具（HL 高亮对齐用）',
-          MySetConstants.SET_CALIB_DEV)
+          MySetConstants.SET_EDGE_TTS)
       ]
       this.setGroupList = this.setGroupList.concat(
         [new SetGroupList('听书引擎（进阶）', this.engineSetList)])
@@ -391,23 +391,6 @@ export default struct MySetPage{
       return typeof d === 'number' && (d as number) > 0
     } catch (e) {
       return false
-    }
-  }
-
-  private calibDevWrite(v: boolean): void {
-    try {
-      let o: Record<string, Object> = {}
-      const raw = PreferencesUtil.getSync('TtsHlCalibV3', '') as string
-      if (typeof raw === 'string' && raw.length > 0) {
-        const p = JSON.parse(raw) as Record<string, Object>
-        if (p !== null && p !== undefined) {
-          o = p
-        }
-      }
-      o['dev'] = v ? 1 : 0
-      PreferencesUtil.putSync('TtsHlCalibV3', JSON.stringify(o))
-    } catch (e) {
-      // 落盘失败不阻断 UI
     }
   }
 
@@ -917,6 +900,73 @@ export default struct MySetPage{
       TabHeader({ title: '设置' })
 
       List(){
+        //     QQ群按钮照旧显示（用户口径："其他时机均不消失"）。
+        if (!this.offlineOn) {
+          ListItem() {
+            Column({ space: 10 }) {
+              Row({ space: 12 }) {
+                // ── 加入QQ群 ──────────────────────────────────────────────────
+                // ⚠️ 图标用 `app.media.QQ_blue`（真企鹅 SVG，24×24，fill #188BFF）而不是
+                //    `sys.symbol.*`：**系统符号表里没有 QQ/企鹅**（实测 sysResource.js 的
+                //    `symbol` 段共 4043 个符号名，按 `qq|penguin|tencent` 检索 0 命中；
+                //    只有 `wechat` / `wechat_fill`）⇒ 这是本项目「三件套」中唯一可用
+                //    的图标来源，其余两件（Haptics + runJellyClick + clickEffect）照旧齐全。
+                Row({ space: 6 }) {
+                  Image($r('app.media.QQ_blue'))
+                    .width(18)
+                    .height(18)
+                    .scale({ x: this.qqScale, y: this.qqScale })
+                  Text('加入QQ群')
+                    .fontSize(FontConstants.VALUE)
+                    .fontWeight(FontConstants.W_TITLE)
+                    .fontColor($r('app.color.text_primary'))
+                }
+                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                .borderRadius(22)
+                .backgroundColor($r('app.color.card_bg'))
+                .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+                .clickEffect(UiMotion.CLICK)
+                .onClick(() => {
+                  Haptics.tap()
+                  runJellyClick((v: number): void => { this.qqScale = v })
+                  this.openQqGroup()
+                })
+
+                // ── 登录（测试账号入口，条件同 2026-10-13 口径）────────────────
+                if (this.loginType !== 'test') {
+                  Row({ space: 8 }) {
+                    SymbolGlyph($r('sys.symbol.person'))
+                      .fontSize(18)
+                      .fontColor([this.theme.mainColor])
+                    Text('登录')
+                      .fontSize(FontConstants.ITEM)
+                      .fontWeight(FontConstants.W_TITLE)
+                      .fontColor($r('app.color.text_primary'))
+                  }
+                  .padding({ left: 28, right: 28, top: 12, bottom: 12 })
+                  .borderRadius(22)
+                  .backgroundColor($r('app.color.card_bg'))
+                  .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+                  .clickEffect(UiMotion.CLICK)
+                  .onClick(() => {
+                    Haptics.tap();
+                    this.openTestAccountDialog()
+                  })
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+
+              // ── QQ群号（2026-10-21 用户要求）────────────────────────────────
+              // 兜底：跳转失败（没装 QQ / 无网 / 链接过期）时，用户至少能手动搜索加群。
+              Text(`QQ群号：${QQ_GROUP_CODE}`)
+                .fontSize(FontConstants.CAPTION)
+                .fontColor($r('app.color.text_tertiary'))
+            }
+          }
+          .width('100%')
+          .padding({ bottom: 12 })
+        }
         ForEach(this.setGroupList,(group:SetGroupList)=>{
           //分组头部
           ListItemGroup({header:this.itemHead(group.groupValue)}){
@@ -1239,73 +1289,6 @@ export default struct MySetPage{
         // 「加入QQ群」放「登录」左侧，两个胶囊整体在行内居中（大小不强求一致）。
         //   · 外层的 `!this.offlineOn` 是本行总闸（离线模式整行隐藏，与测试账号同口径）；
         //   · 「登录」仍按 `loginType !== 'test'` 单独判隐 —— 测试账号登录后只藏登录，
-        //     QQ群按钮照旧显示（用户口径："其他时机均不消失"）。
-        if (!this.offlineOn) {
-          ListItem() {
-            Column({ space: 10 }) {
-              Row({ space: 12 }) {
-                // ── 加入QQ群 ──────────────────────────────────────────────────
-                // ⚠️ 图标用 `app.media.QQ_blue`（真企鹅 SVG，24×24，fill #188BFF）而不是
-                //    `sys.symbol.*`：**系统符号表里没有 QQ/企鹅**（实测 sysResource.js 的
-                //    `symbol` 段共 4043 个符号名，按 `qq|penguin|tencent` 检索 0 命中；
-                //    只有 `wechat` / `wechat_fill`）⇒ 这是本项目「三件套」中唯一可用
-                //    的图标来源，其余两件（Haptics + runJellyClick + clickEffect）照旧齐全。
-                Row({ space: 6 }) {
-                  Image($r('app.media.QQ_blue'))
-                    .width(18)
-                    .height(18)
-                    .scale({ x: this.qqScale, y: this.qqScale })
-                  Text('加入QQ群')
-                    .fontSize(FontConstants.VALUE)
-                    .fontWeight(FontConstants.W_TITLE)
-                    .fontColor($r('app.color.text_primary'))
-                }
-                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
-                .borderRadius(22)
-                .backgroundColor($r('app.color.card_bg'))
-                .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-                .clickEffect(UiMotion.CLICK)
-                .onClick(() => {
-                  Haptics.tap()
-                  runJellyClick((v: number): void => { this.qqScale = v })
-                  this.openQqGroup()
-                })
-
-                // ── 登录（测试账号入口，条件同 2026-10-13 口径）────────────────
-                if (this.loginType !== 'test') {
-                  Row({ space: 8 }) {
-                    SymbolGlyph($r('sys.symbol.person'))
-                      .fontSize(18)
-                      .fontColor([this.theme.mainColor])
-                    Text('登录')
-                      .fontSize(FontConstants.ITEM)
-                      .fontWeight(FontConstants.W_TITLE)
-                      .fontColor($r('app.color.text_primary'))
-                  }
-                  .padding({ left: 28, right: 28, top: 12, bottom: 12 })
-                  .borderRadius(22)
-                  .backgroundColor($r('app.color.card_bg'))
-                  .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
-                  .clickEffect(UiMotion.CLICK)
-                  .onClick(() => {
-                    Haptics.tap();
-                    this.openTestAccountDialog()
-                  })
-                }
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Center)
-
-              // ── QQ群号（2026-10-21 用户要求）────────────────────────────────
-              // 兜底：跳转失败（没装 QQ / 无网 / 链接过期）时，用户至少能手动搜索加群。
-              Text(`QQ群号：${QQ_GROUP_CODE}`)
-                .fontSize(FontConstants.CAPTION)
-                .fontColor($r('app.color.text_tertiary'))
-            }
-          }
-          .width('100%')
-          .padding({ top: 16, bottom: 4 })
-        }
 
       }.width('100%')
       .height('100%')
@@ -1496,15 +1479,8 @@ export default struct MySetPage{
         if (statusBarRow !== null) { statusBarRow.toggleStatus = this.showReaderStatusBar }
         PreferencesUtil.putSync(MySetConstants.SET_READER_STATUS_BAR, this.showReaderStatusBar)
         break;
-      case MySetConstants.SET_CALIB_DEV:
-        // 标定模式（2026-09-26 从阅读器-设置迁来）：写 TtsHlCalibV3 的 dev 字段，
-        // 阅读页 loadCalib 打开时照读 ⇒ 开 = 阅读器-设置出现标定功能区。
-        // 2026-10-10 改造：走 CalibMode 工具类，同时同步广播 AppStorage('devMode')，
-        // 书架/我的/PlugboardZone 订阅后即可画经纬线 + 红边。
-        this.calibDevOn = !this.calibDevOn
-        this.engineSetList[1].toggleStatus = this.calibDevOn
-        CalibMode.setOn(this.calibDevOn)
-        break;
+      // ⚠️ 2026-10-27 已按用户要求删除「打开标定模式」开关（见 `engineSetList` 构建处注释）。
+      //    `SET_CALIB_DEV` 已无 UI 入口，此分支随之删除；`CalibMode` 恒读 false。
     }
   }
 

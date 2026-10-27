@@ -876,6 +876,14 @@ export default struct ReaderPage3 {
   // 朗读（TTS）状态
   @State ttsState: TtsState = 'stopped'
   @State ttsPrefs: TtsPrefs = loadTtsPrefs()
+  /**
+   * 听书自动切档的「进入前档位」（-1 = 当前没有因听书切过档）。
+   *
+   * ⚠️ 2026-10-27 听书改造：仿真/横滑档开听书时自动切到「无动画」，
+   *    退出听书时按这个值还原。用普通字段（不是 @State）：它只作内部状态，
+   *    参与渲染没有意义，反而会因为无谓的重建引入时序问题。
+   */
+  private listenForcedFrom: number = -1
   @State ttsChapterTitle: string = ''
   @State ttsSegIndex: number = 0
   @State ttsSegTotal: number = 0
@@ -1133,6 +1141,16 @@ export default struct ReaderPage3 {
   /** 滚动视图定位请求（TTS 跟随 / 目录 / 书签都走这里） */
   @State scrollSeekSpine: number = 0
   @State scrollSeekNode: number = 0
+  /**
+   * 自绘层定位用的**段内字符偏移**（与 scrollSeekNode 组成精确锚点）。
+   * ⚠️ 2026-10-27：分页档的页首常是「上一页延续下来的半段」，只给段号时
+   *    indexOfNode 只能落到「该段起始页」⇒ 切到无动画后显示的是**上一页**。
+   *    带上字符偏移才能落到「包含页首那个字」的页。
+   */
+  @State scrollSeekChar: number = 0
+  /** 自绘层**初始化**时的字符偏移（切档交接用；与 
+oAnimInitNode 配套） */
+  @State scrollInitChar: number = 0
   @State scrollSeekSerial: number = 0
   /** 翻一屏请求（音量键翻页在滚动模式下的等价动作） */
   @State scrollPageDir: number = 1
@@ -6251,6 +6269,11 @@ export default struct ReaderPage3 {
         if (s !== 'stopped') {
           this.ttsStarting = false;
         }
+        // ★ 听书开始 ⇒ 自动切到「无动画」（幂等，playing/paused 反复触发不会重复切）
+        //   只在真正开播时切，暂停不切（用户可能只是歇一会儿，页面上别乱动）
+        if (s === 'playing') {
+          this.enterListenMode();
+        }
         if (s === 'stopped') {
           this.ttsStarting = false;
           this.ttsSegText = '';
@@ -6259,6 +6282,8 @@ export default struct ReaderPage3 {
           this.immPagesKey = '';
           this.immReady = false;
           this.followSuspended = false;
+          // ★ 听书结束 ⇒ 还原进入前的档位，并定位回"刚才朗读到的那一段"
+          this.exitListenMode();
         }
         this.updateHighlight();
       },
@@ -6521,6 +6546,16 @@ export default struct ReaderPage3 {
    * 换句时调用方传 `ratio = 0`，此时不补间（`duration: 0`）立即归位，
    * 并重置节奏基准，避免把上一句的间隔带过来。
    */
+  /**
+   * 迷你条字幕前滚：把「当前读到的那几个字」推到**视口左侧约 35%** 处。
+   *
+   * ⚠️⚠️ 2026-10-27 修复「字幕跟不上朗读」（用户原话：不是跟着进度对齐的那种）：
+   *    旧公式是 `r * (textW - viewW)` —— 按「可滚动距离」的比例滚，而不是按「文本绝对位置」。
+   *    举例：文本 1000px、视口 200px ⇒ maxOff = 800；读到 50%（实际位置 500px）时只滚 400px
+   *    ⇒ **恒定滞后**（文本越长滞后越多，最长可差半个视口）。
+   *    正确做法：目标位置 = `r * textW`（文本绝对位置），再左移一点余量，
+   *    让当前字落在视口左 35% 处 —— 既能看到刚读过的几个字，又能提前看到后面。
+   */
   private scrollMiniBar(ratio: number): void {
     const maxOff = this.miniTextW - this.miniViewW;
     if (maxOff <= 0) {
@@ -6536,9 +6571,12 @@ export default struct ReaderPage3 {
       dur = Math.max(80, Math.min(500, gap));    // 贴合真实回调间隔
     }
     this.miniScrollAt = now;
+    // 目标：当前字符绝对位置 − 视口 35%（留出上下文），再夹到合法滚动区间
+    const target: number = r * this.miniTextW - this.miniViewW * 0.35;
+    const x: number = Math.max(0, Math.min(maxOff, target));
     try {
       this.miniScroller.scrollTo({
-        xOffset: r * maxOff,
+        xOffset: x,
         yOffset: 0,
         animation: { duration: dur, curve: Curve.Linear }
       });
@@ -6547,10 +6585,26 @@ export default struct ReaderPage3 {
     }
   }
 
-  /** 悬浮条主按钮：已翻走 ⇒ 一下「从此页开始」；否则 暂停/续播/开播 */
+  /**
+   * 悬浮条主按钮：跟随被挂起 ⇒ 一下「回当前进度」；否则 暂停/续播/开播。
+   *
+   * ⚠️ 2026-10-27 语义修正（用户反馈「从本页」和「从此页开始」两个按钮很奇怪）：
+   *    挂起态的主按钮原来是 `playFromCurrentPage()`（**从当前页开始读**，等于改读书的位置），
+   *    但那与「跟随被挂起」这个状态的用户意图相反 —— 用户是翻走看了几眼，
+   *    想要的是**跳回朗读正在读的地方**继续看。
+   *    ⇒ 改成：解除挂起 + `requestLocate(当前朗读段)`。
+   *    "从当前页开始读"仍由旁边的「从本页」按钮负责，两个动作彻底分开。
+   */
   private miniBarPrimary(): void {
     if (this.followSuspended) {
-      this.playFromCurrentPage();
+      this.followSuspended = false;
+      const seg = TtsEngine.currentSegment();
+      if (seg !== null) {
+        this.lastNavMs = Date.now();
+        this.requestLocate(seg.spineIndex, seg.nodeIndex, seg.charStart, true);
+        hilog.info(0x0000, 'testTag', 'listen: back to audio pos %{public}d#%{public}d',
+          seg.spineIndex, seg.nodeIndex);
+      }
       return;
     }
     if (this.ttsState === 'playing') {
@@ -6568,6 +6622,27 @@ export default struct ReaderPage3 {
     //   语义与听书面板对齐：面板在 stopped 时走 `onStart`（`TtsControlPanel.ets:807-816`），
     //   这里同样按"从阅读器当前页页首开始朗读"处理。
     this.ttsStart();
+  }
+
+  /**
+   * 【听书】从指定段开始朗读 —— 听书状态下点击正文任意一行触发（气泡「从此处听书」）。
+   *
+   * 与 `playFromCurrentPage()` 的区别：后者固定取"当前页首段"，这里由用户点哪段读哪段。
+   * ⚠️ 必须先清 `followSuspended`：用户主动指定了新位置，之前的"手动翻走"挂起语义已失效，
+   *    不清的话下一句 `autoFollowTts()` 会直接 return，看起来像"点了没反应"。
+   * ⚠️ `lastNavMs` 也要刷新：否则 `applySelfDrawnPos()` 会把随后的定位翻页误判成手动滚动。
+   */
+  private playFromNode(spine: number, node: number): void {
+    this.followSuspended = false;
+    this.lastNavMs = Date.now();
+    this.lastFollowNode = node;
+    hilog.info(0x0000, 'testTag', 'listen: play-from-line spine=%{public}d node=%{public}d',
+      spine, node);
+    TtsEngine.seekToChapter(spine, node, 0);
+    // 暂停态下点"从此处听书"应当直接续播（与点正文的直觉一致）
+    if (TtsEngine.getState() === 'paused') {
+      TtsEngine.resume();
+    }
   }
 
   /** 从阅读器当前页页首重新开始朗读（停掉旧流，重新合成播放） */
@@ -6733,6 +6808,26 @@ export default struct ReaderPage3 {
   }
 
   /** 当前页范围是否覆盖目标位置（含边界字符级校验） */
+  /**
+   * 定位"命中"判定（2026-10-28 修「点书签后一路播放翻页动画」）。
+   *
+   * ⚠️⚠️ 为什么不能直接用 `rangeCovers`：
+   *    `rangeCovers` 要求 `(node, char)` 落在 `[startNode#startChar, endNode#endChar]` 内。
+   *    而**书签 / 章节跳转 / 电脑端书签**的 `char` 恒为 **0**；
+   *    当目标段正好是「页首的续段」（`startChar > 0`，即该段从上一页延续过来）时，
+   *    `startChar <= 0` 为假 ⇒ 判成**没落位** ⇒ 走 `beginSearch` **逐页翻页逼近**
+   *    （上限 60 页）⇒ 用户看到的就是「屏幕一路仿真/横滑翻到目标页」。
+   *    自绘档不走这条路（`requestLocate` 有独立分支直接 seek），所以它反而"立即过去"，
+   *    与用户观察完全吻合。
+   *
+   * ⇒ 对"只要到某个段"的定位（`char <= 0`），段号落在本页范围内就算命中。
+   */
+  private locateHit(r: PageRange, node: number, char: number): boolean {
+    if (char <= 0) {
+      return r.startNode <= node && r.endNode >= node;
+    }
+    return this.rangeCovers(r, node, char);
+  }
   private rangeCovers(r: PageRange, node: number, char: number): boolean {
     const startOk = r.startNode < node || (r.startNode === node && r.startChar <= char);
     const endOk = r.endNode > node || (r.endNode === node && r.endChar >= char);
@@ -6836,6 +6931,8 @@ export default struct ReaderPage3 {
       this.lastNavMs = Date.now();
       this.scrollSeekSpine = spine;
       this.scrollSeekNode = n;
+      // ⚠️ 必须带字符偏移：否则只按段号落到「该段起始页」（页首半段时会退到上一页）
+      this.scrollSeekChar = c;
       this.scrollSeekSerial++;
       if (!silent) {
         this.toastLocate(`已定位到第 ${n + 1} 段`);
@@ -6913,7 +7010,7 @@ export default struct ReaderPage3 {
   private onPageShowLocate(r: PageRange): void {
     const t = this.locateTarget;
     if (t !== null) {
-      if (r.spine === t.spine && this.rangeCovers(r, t.node, t.char)) {
+      if (r.spine === t.spine && this.locateHit(r, t.node, t.char)) {
         // 诊断：目标落在页首/页中/页尾——用于确知 startPlay 的落点语义
         const where = r.startNode === t.node
           ? (r.startChar === t.char ? 'HEAD' : 'HEAD-partial')
@@ -6964,7 +7061,7 @@ export default struct ReaderPage3 {
     }
     s.lastNode = r.startNode;
     s.lastChar = r.startChar;
-    if (r.spine === s.target.spine && this.rangeCovers(r, s.target.node, s.target.char)) {
+    if (r.spine === s.target.spine && this.locateHit(r, s.target.node, s.target.char)) {
       this.flipSearch = null;
       this.finishLocate(s.target, true);
       return;
@@ -7055,6 +7152,94 @@ export default struct ReaderPage3 {
       this.followSkipReason = reason;
       hilog.info(0x0000, 'testTag', 'follow: skipped (%{public}s)', reason);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 听书自动切档（2026-10-27）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 设计：仿真/横滑档（ReaderKit 排版的 Chromium 引擎）开听书 → 自动切到「无动画」
+  //      → 退出听书 → 还原原档并定位回"刚才朗读到的那一段"。
+  //
+  // 为什么这样做（三条真机实证）：
+  //   ① 自绘档的高亮是 `Span.textBackgroundStyle` **直接画在正文里**，天然贴合；
+  //      而 ReaderKit 的高亮很差，当年才做了「沉浸听读层」去补（`ImmersiveListenLayer`）。
+  //   ② `immersiveActive()` 在自绘档恒返回 false（`ReaderPage3.ets:10795`）
+  //      ⇒ 切到无动画后沉浸层自然不出现，不需要额外收尾。
+  //   ③ 无动画档的听书跟随（`autoFollowTts` → `requestLocate`）已验证可自动翻页。
+
+  /**
+   * 听书开始 ⇒ 自动切到「无动画」。
+   *
+   * ⚠️ 幂等：`onState` 会在 playing/paused 反复触发，必须用 `listenForcedFrom` 去重，
+   *    否则每次暂复都会重新切一次档（视觉上疯狂重建页面）。
+   * ⚠️ 判据是 `noAnimModeOn()` 而**不是** `selfDrawnModeOn()`：
+   *    上下档在听书状态下也统一切过来（用户要求"全系统一"），
+   *    只有已经是无动画才跳过。
+   * ⚠️ PDF 不支持无动画（`switchReadMode` 里有拦截，这里提前 return 更干净）。
+   */
+  private enterListenMode(): void {
+    if (this.listenForcedFrom >= 0) {
+      return; // 已经切过
+    }
+    if (this.noAnimModeOn()) {
+      return; // 目标态就是无动画
+    }
+    if (this.isPdfBook) {
+      return;
+    }
+    const prev: number = this.readMode;
+    this.listenForcedFrom = prev;
+    hilog.info(0x0000, 'testTag', 'listen: auto switch readMode %{public}d → %{public}d (noAnim)',
+      prev, READ_MODE_NONE);
+    this.switchReadMode(READ_MODE_NONE);
+    this.rearmListenFollow();
+  }
+
+  /**
+   * 听书结束 ⇒ 还原进入前的档位，并定位到「刚才朗读到的那一段」所在页。
+   *
+   * ⚠️ 定位必须**延后一帧**：`switchReadMode` 内部有异步的位置交接
+   *    （自绘→分页会走 `startPlay`），立刻 `requestLocate` 会被随后的交接覆盖。
+   */
+  private exitListenMode(): void {
+    if (this.listenForcedFrom < 0) {
+      return;
+    }
+    const back: number = this.listenForcedFrom;
+    this.listenForcedFrom = -1;
+    // 先抓当前位置：切档会重置 pageRange，之后再取就拿不到了
+    const seg = TtsEngine.currentSegment();
+    const segSpine: number = seg !== null ? seg.spineIndex : -1;
+    const segNode: number = seg !== null ? seg.nodeIndex : -1;
+    const segChar: number = seg !== null ? seg.charStart : 0;
+    hilog.info(0x0000, 'testTag', 'listen: restore readMode %{public}d → %{public}d, anchor=%{public}d#%{public}d',
+      READ_MODE_NONE, back, segSpine, segNode);
+    this.switchReadMode(back);
+    if (segSpine >= 0 && segNode >= 0) {
+      setTimeout((): void => {
+        this.requestLocate(segSpine, segNode, segChar, true);
+      }, 0);
+    }
+  }
+
+  /**
+   * 切档后**重挂跟随**（解除 `followSuspended`）。
+   *
+   * ⚠️⚠️ 为什么必须做（2026-10-27 用户实测：仿真档听书切到无动画后不自动翻页）：
+   *    切档会挂载自绘层 → `onAreaChange` → `applySelfDrawnPos()`，那里的逻辑是
+   *      `navRecently = Date.now() - lastNavMs < 1500`，
+   *    而切档**不经过** `requestLocate`，`lastNavMs` 是旧的 ⇒ `navRecently = false`；
+   *    此时"朗读段"通常不在刚重建出来的这一页范围内 ⇒ 被判定成
+   *    「用户手动翻走了」⇒ `followSuspended = true` ⇒ `autoFollowTts()` 首行直接 return
+   *    ⇒ **自动翻页永久停摆**（直到用户点浮条"回到朗读"）。
+   *    ⇒ 切档完成（下一宏任务）后显式清掉挂起 + 刷新 `lastNavMs`。
+   */
+  private rearmListenFollow(): void {
+    setTimeout((): void => {
+      this.followSuspended = false;
+      this.lastNavMs = Date.now();
+      hilog.info(0x0000, 'testTag', 'listen: follow rearmed (suspended cleared)');
+    }, 0);
   }
 
   private autoFollowTts(): void {
@@ -8018,9 +8203,11 @@ export default struct ReaderPage3 {
           bottomInsetVp: this.scrollBottomInsetVp(),
           initSpine: this.scrollInitSpine,
           initNode: this.scrollInitNode,
+          initChar: this.scrollInitChar,
           initSerial: this.scrollInitSerial,
           seekSpine: this.scrollSeekSpine,
           seekNode: this.scrollSeekNode,
+          seekChar: this.scrollSeekChar,
           seekSerial: this.scrollSeekSerial,
           pageDir: this.scrollPageDir,
           pageReq: this.scrollPageReq,
@@ -8041,8 +8228,8 @@ export default struct ReaderPage3 {
             const spines: bookParser.SpineItem[] = this.BookHandler?.getSpineList() ?? [];
             return spines.length;
           },
-          onPos: (spine: number, node: number, endNode: number): void => {
-            this.onSelfDrawnPos(spine, node, endNode);
+          onPos: (spine: number, node: number, endNode: number, startChar: number, endChar: number): void => {
+            this.onSelfDrawnPos(spine, node, endNode, startChar, endChar);
           },
           onTap: (): void => {
             this.isShowSetting = true;
@@ -8080,9 +8267,11 @@ export default struct ReaderPage3 {
           bottomInsetVp: this.scrollBottomInsetVp(),
           initSpine: this.noAnimInitSpine,
           initNode: this.noAnimInitNode,
+          initChar: this.scrollInitChar,
           initSerial: this.noAnimInitSerial,
           seekSpine: this.scrollSeekSpine,
           seekNode: this.scrollSeekNode,
+          seekChar: this.scrollSeekChar,
           seekSerial: this.scrollSeekSerial,
           pageDir: this.scrollPageDir,
           pageReq: this.scrollPageReq,
@@ -8101,8 +8290,13 @@ export default struct ReaderPage3 {
             const spines: bookParser.SpineItem[] = this.BookHandler?.getSpineList() ?? [];
             return spines.length;
           },
-          onPos: (spine: number, node: number, endNode: number): void => {
-            this.onSelfDrawnPos(spine, node, endNode);
+          onPos: (spine: number, node: number, endNode: number, startChar: number, endChar: number): void => {
+            this.onSelfDrawnPos(spine, node, endNode, startChar, endChar);
+          },
+          // ★ 听书状态：正文每行可点 ⇒ 弹「从此处听书」气泡（气泡本体在组件内画）
+          listenActive: this.ttsState !== 'stopped',
+          onPlayFrom: (spine: number, node: number): void => {
+            this.playFromNode(spine, node);
           },
           onTap: (): void => {
             this.isShowSetting = true;
@@ -10205,6 +10399,27 @@ export default struct ReaderPage3 {
     if (next === this.readMode) {
       return;
     }
+    // ⚠️⚠️ 听书模式**锁死无动画**（2026-10-27 用户实测的漏网之鱼）
+    // ──────────────────────────────────────────────────────────────────────
+    // 漏洞现场：横滑档开听书 → 自动切到无动画 → 此时在设置里还能手动切回横滑
+    //   ⇒ 页面回到 ReaderKit，而听书高亮走的是**旧的栅格色块方案**（`hlBands`），
+    //     既不跟手也不沉浸，等于把已经淘汰的实现又顶上来。
+    // 约定：听书期间只有「无动画」是合法档位。
+    //   · 用户点其它档 ⇒ 直接失败 + 提示（不静默改，避免"点了没反应"）；
+    //   · 退出听书时 `exitListenMode()` 会自己调本方法还原原档，
+    //     那一刻 `ttsState` 已被 `onState('stopped')` 置回，不会撞上这道拦截。
+    if (this.ttsState !== 'stopped' && next !== READ_MODE_NONE) {
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: '听书模式固定使用无动画，关闭听书后会自动切回'
+        });
+      } catch (e) {
+        // toast 失败不影响拦截
+      }
+      hilog.info(0x0000, 'testTag', 'switchReadMode blocked by listen mode: %{public}d → %{public}d',
+        this.readMode, next);
+      return;
+    }
     if (this.isPdfBook && (next === READ_MODE_SCROLL || next === READ_MODE_NONE)) {
       this.getUIContext().getPromptAction().showToast({ message: 'PDF 请用双指缩放阅读' });
       return;
@@ -10238,6 +10453,11 @@ export default struct ReaderPage3 {
       }
       this.pagedRestoreSpine = -1;
       this.pagedRestoreNode = -1;
+      // ⚠️ 2026-10-27 同时交接**字符偏移**：
+      //   只给段号时，新档会落到「该段**起始**的那一页」；而分页档的页首常常是
+      //   「上一页延续下来的半段」⇒ 切到无动画后显示的是上一页（用户反馈的观感）。
+      //   带上 `r.startChar` 才能落到「包含页首那个字」的同一页。
+      this.scrollInitChar = Math.max(0, r !== null ? r.startChar : 0);
       // 两档共用 `scrollSpine/scrollNode` 这对"自绘层当前位置"字段
       this.scrollSpine = spine;
       this.scrollNode = node;
@@ -10337,7 +10557,8 @@ export default struct ReaderPage3 {
    * ⚠️ 两档共用本方法：上报的语义完全一样（"当前可视首段/末段"），
    *    差别只在触发时机 —— 滚动是 `onScrollIndex`，无动画是"换页后"。
    */
-  private onSelfDrawnPos(spine: number, node: number, endNode: number): void {
+  private onSelfDrawnPos(spine: number, node: number, endNode: number,
+    startChar: number, endChar: number): void {
     if (!this.selfDrawnModeOn()) {
       return;
     }
@@ -10364,8 +10585,10 @@ export default struct ReaderPage3 {
     const delaySpine: number = spine;
     const delayNode: number = node;
     const delayEnd: number = endNode;
+    const delayStartChar: number = startChar;
+    const delayEndChar: number = endChar;
     setTimeout((): void => {
-      this.applySelfDrawnPos(delaySpine, delayNode, delayEnd);
+      this.applySelfDrawnPos(delaySpine, delayNode, delayEnd, delayStartChar, delayEndChar);
     }, 0);
   }
 
@@ -10375,22 +10598,23 @@ export default struct ReaderPage3 {
    * 拆成独立方法是为了让"何时写状态"与"写什么"分开：
    * 调用方只允许经 `setTimeout(0)` 进来。
    */
-  private applySelfDrawnPos(spine: number, node: number, endNode: number): void {
+  private applySelfDrawnPos(spine: number, node: number, endNode: number,
+    startChar: number, endChar: number): void {
     if (!this.selfDrawnModeOn()) {
       return;
     }
     this.scrollSpine = spine;
     this.scrollNode = node;
+    // ⚠️⚠️ 2026-10-27 用**真实字符偏移**（不再写死 0）：
+    //   startChar 原来恒为 0，于是当页首是「上一页延续下来的半段」时，
+    //   playFromCurrentPage() 会 seekToChapter(spine, startNode, 0) 从该段开头读，
+    //   听书一开就从上一页的最后一段开始（用户实测反馈）。
+    //   现在由位置上报把页首行的 charFrom 一起带上来，起点精确到「页首那个字」。
     const range: PageRange = {
-      spine: spine, startNode: node, startChar: 0,
-      // ⚠️⚠️ `endChar` **不能是 0**（2026-10-27 修「无动画听书在页末段误翻页」）：
-      //   自绘组件的 `reportAt()` 只上报"页首段号 / 页末段号"，没有字符位置，
-      //   所以 `endChar: 0` 会被 `rangeCovers()` 解读成"页末段只覆盖到第 0 个字"
-      //   ⇒ 朗读走到**页末段的第 5 个字**时 `0 >= 5` 为假 ⇒ 误判"不在当前页"
-      //   ⇒ `autoFollowTts()` 白翻一页（用户看到"多翻了一页 / 来回抖"）。
-      //   用「足够大」表示"该段一直到段尾都在页内"，判定才正确。
-      //   （`startChar: 0` 是保守方向 —— 认为段首即在页内，不会误判，保持不动）
-      endNode: endNode >= node ? endNode : node, endChar: Number.MAX_SAFE_INTEGER
+      spine: spine, startNode: node, startChar: Math.max(0, startChar),
+      // endChar 兜底：上报方没给（<=0）时仍用「到段尾」的大值，避免页末段被误判出页
+      endNode: endNode >= node ? endNode : node,
+      endChar: endChar > 0 ? endChar : Number.MAX_SAFE_INTEGER
     };
     this.pageRange = range;
     // 目录号跟随（滚动跨章时标题/滑杆跟着走）
@@ -10842,8 +11066,9 @@ export default struct ReaderPage3 {
     if (this.selfDrawnModeOn()) {
       return false;
     }
-    const base: boolean = this.ttsPrefs.immersiveListen && this.immReady
-      && this.listeningThisBook();
+    // ⚠️ 2026-10-28：「沉浸听读」开关已删除，且听书统一锁死无动画
+    //    ⇒ 本层恒不激活（保留代码只为兼容旧字段/回滚，见 nterListenMode 注释）。
+    const base: boolean = false && this.immReady && this.listeningThisBook();
     if (!base) {
       return false;
     }
@@ -11078,7 +11303,10 @@ export default struct ReaderPage3 {
       }
 
       if (this.followSuspended) {
-        Text('从此页开始')
+        // ⚠️ 2026-10-27 文案修正：这里是"跟随被手动翻页挂起后，跳回朗读所在位置"，
+        //    不是"从这里开始读"。旧文案「从此页开始」会让人以为改读当前页，
+        //    与它的实际行为（`miniBarPrimary()` → `requestLocate(朗读段)`）不符。
+        Text('回当前进度')
           .fontSize(11)
           .fontColor('rgba(255,255,255,0.85)')
           .backgroundColor('rgba(255,255,255,0.18)')
@@ -11103,46 +11331,31 @@ export default struct ReaderPage3 {
       }
 
       // 当前句：横向 Scroll + 按句内字符进度自动前滚
-      Scroll(this.miniScroller) {
-        Text(this.ttsSegText.length > 0 ? this.ttsSegText : '正在朗读')
-          .fontSize(13)
-          .fontColor('#FFFFFF')
-          .maxLines(1)
-          .onAreaChange((_o: Area, n: Area) => {
-            const w = Number(n.width);
-            if (Number.isFinite(w) && Math.abs(w - this.miniTextW) > 0.5) {
-              this.miniTextW = w;
-            }
-          })
-      }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-      // ⚠️ 2026-10-25 **保留 `EdgeEffect.None`**（否决 deveco 那轮改回 Spring 的做法）。
-      //
-      //   ① 它不是「内容滚动区」，是**自动前滚的字幕跑马灯**：本 Scroll 由
-      //      `miniScroller.scrollTo()` 按句内字符进度逐字推进（见上方注释与
-      //      `onAreaChange` 里的 `miniTextW/miniViewW`），用户不会用它浏览内容。
-      //      自检 2.1.5.3.3 的判定对象是「界面**滑动**到边界位置」，跑马灯不在此列。
-      //   ② 改 Spring 有**实证过的回归**：本 Scroll 高度只有迷你条那一行，
-      //      `alwaysEnabled: true` 时内容不足一屏也允许跟手位移 ⇒ 拖动/前滚瞬间
-      //      会把文字"扯出"条外露出白区（原注释即为此而设 None）。
-      //   ③ 真机 dump 未点名它：自检报告 4 次「滑动动效」全部落在
-      //      **主题页 `Grid`** 与 **我的页 `Scroll`**（报告原文：
-      //      「控件类型：[Grid]」+ 主题页截图），迷你条只在听书沉浸层出现，未被遍历到。
-      //   ⇒ 按本工程铁律「不可本地验证的路径默认保留旧实现」，这里维持 None。
-      .edgeEffect(EdgeEffect.None)
-      .layoutWeight(1)
-      .onAreaChange((_o: Area, n: Area) => {
-        const w = Number(n.width);
-        if (Number.isFinite(w) && Math.abs(w - this.miniViewW) > 0.5) {
-          this.miniViewW = w;
-        }
-      })
-      .onClick(() => {
-        Haptics.tap();
-        // 点迷你条 → 打开听书面板
-        this.openListenDialog();
-      })
+      // ── 迷你条文案：显示「正在朗读的章节名」，不再跟句内进度滚动（2026-10-27）──────
+      // 用户原话："字幕是死的，完全没懂，感觉意义不大，把这个字幕显示改成正在读的章节算了"。
+      // 实现用 ArkUI 原生跑马灯（marqueeOptions，@since 18，本项目 API20 线内）：
+      //   · 章节名**放得下** ⇒ TextOverflow.MARQUEE 不会启动滚动，静态显示；
+      //   · 章节名**放不下** ⇒ 自动缓慢循环滚动（loop: -1），看得全也不挤。
+      // 这样不需要我们自己算字符宽度、也不需要 scrollMiniBar 维护偏移。
+      Text(this.ttsChapterTitle.length > 0 ? this.ttsChapterTitle : '正在朗读')
+        .fontSize(13)
+        .fontColor('#FFFFFF')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.MARQUEE })
+        .marqueeOptions({
+          start: true,
+          step: 1.5,        // 每帧前进像素（越小越慢，1.5 大约 40px/s）
+          loop: -1,         // -1 = 无限循环
+          fromStart: true,
+          delay: 900,       // 起始停顿，先让人看清开头
+          fadeout: true     // 两端淡出，滚动衔接不突兀
+        })
+        .layoutWeight(1)
+        .onClick(() => {
+          Haptics.tap();
+          // 点迷你条 → 打开听书面板
+          this.openListenDialog();
+        })
 
       // 「从本页」：从当前正在看的这一页开始读（原箭头位置，改为大一点的文字按钮，更好点）
       Text('从本页')
@@ -11533,7 +11746,9 @@ export default struct ReaderPage3 {
     // 防的是"两个弹窗控制器都非空"的异常态把面板留在屏幕上。
     this.readerBookmarkDialog?.close()
     this.readerCatalogDialog?.close()
-    this.requestLocate(spine, pos, 0, false)
+    // ⚠️ 必须 noFallback：书签的 char 是 0，落位判定一旦不中就会触发逐页翻页逼近
+    //    （用户实测：点远处书签，屏幕一路播放翻页动画翻过去，最长 60 页）。
+    this.requestLocate(spine, pos, 0, false, true)
   }
 
   /** 当前实际缩放倍率 = 档位 × PDF 满宽基准（见 `FMT_PDF_FIT_SCALE` 的实测推导）。 */
