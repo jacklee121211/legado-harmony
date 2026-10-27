@@ -60,7 +60,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { buildChapterNodes } from '../../../tts/ChapterNodes';
 import { Haptics } from '../../../common/utils/Haptics';
 import { paginateNodes, PaginateResult } from './ReaderPager';
-import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice } from './EngineLines';
+import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP } from './EngineLines';
 // 字重补偿与滚动层**必须共用同一个函数**（否则两档互切时字会突然变粗/变细）
 import { scrollFontWeight } from './ReaderScrollView';
 
@@ -291,11 +291,14 @@ export struct ReaderPageNoAnim {
     }
     try {
       const content: string = await handler.getSpineItemContent(spine);
-      const nodes: string[] = buildChapterNodes(content).nodes;
+      // 说明：txt 没有标签，标题靠目录名反推 —— 把本章 catalogName 传进去，由 ChapterNodes 比对章首段。
+      const cn = buildChapterNodes(content, this.chapterTitleOf(handler, spine));
+      // （已用探针验证：getSpineItemContent 对 txt 返回纯文本，hasTag=NO）
+      const nodes: string[] = cn.nodes;
       // ⚠️ **引擎排行**（唯一权威）：`cpl/maxLines` 的算术估算已废弃，见 `EngineLines.ets`
       const style: LineStyle = this.buildLineStyle();
       const t0: number = Date.now();
-      const lines: EngineLine[] = buildEngineLines(nodes, style);
+      const lines: EngineLine[] = buildEngineLines(nodes, style, cn.isTitle);
       const pageSlices: PageSlice[] = paginateLines(lines, style.pageHeightPx, style.lineHeightPx);
       // 块节点号 → 起始页（保持旧 `indexOfNode` 语义）
       const pageOfNode: number[] = [];
@@ -339,6 +342,31 @@ export struct ReaderPageNoAnim {
     return this.getUIContext().vp2px(v);
   }
 
+  /**
+   * 取「本章在目录里的名字」—— 用于识别 **TXT 的章标题段**。
+   *
+   * ⚠️ 为什么需要它：`getSpineItemContent()` 对 txt 返回的是**纯文本**
+   *    （真机探针实证 `hasTag=NO`），首行就是「第十章 澹台仙子」，与正文毫无区别
+   *    ⇒ 无法靠标签判断标题。而 ReaderKit 自己的目录（`getCatalogList()`）
+   *    已经把章节名识别出来了 ⇒ 直接拿它反查"章首段是不是标题"，
+   *    与 ReaderKit 的判断依据同源。
+   *
+   * ⚠️ `catalog[spine]` 不保证一一对应（某些 spine 无目录项）：越界或空名一律返回空串，
+   *    此时不标记标题（退化为旧行为）—— 宁可没有标题样式，也不误判正文。
+   */
+  private chapterTitleOf(handler: bookParser.BookParserHandler, spine: number): string {
+    try {
+      const list: bookParser.CatalogItem[] = handler.getCatalogList();
+      if (list === null || list === undefined || spine < 0 || spine >= list.length) {
+        return '';
+      }
+      const name: string = list[spine].catalogName;
+      return name !== undefined && name !== null ? name : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   /** 组出引擎排行参数（**全 px**） */
   private buildLineStyle(): LineStyle {
     const s: LineStyle = new LineStyle();
@@ -353,6 +381,10 @@ export struct ReaderPageNoAnim {
     s.fontFamily = this.fontName;
     s.fontWeight = scrollFontWeight(this.fontWeight, this.weightOffset);
     s.fontPath = this.fontPath;
+    // ⚠️ 字距：必须与渲染端 `.letterSpacing(LETTER_SPACING_FP)` 严格对应，
+    //    否则"引擎按 A 断行、ArkUI 按 B 渲染" ⇒ 溢出或换行错位。
+    //    没有它就每行多塞 1 个字 ⇒ 页边界与 ReaderKit 系统性错位。
+    s.letterSpacingPx = this.fp2px(LETTER_SPACING_FP);
     return s;
   }
 
@@ -742,9 +774,30 @@ export struct ReaderPageNoAnim {
     return line.isParaStart ? this.fontSize * this.gapEm : 0;
   }
 
+  /** 标题行字号（fp）= 正文字号 × `TITLE_FONT_SCALE`（与 `EngineLines` 算行高同一个值） */
+  private titleFontSizeFp(): number {
+    return this.fontSize * TITLE_FONT_SCALE;
+  }
+
+  /** 标题行行高（fp）= 正文行高 × `TITLE_FONT_SCALE`（必须同比放大，否则与下行重叠） */
+  private titleLineHeightFp(): number {
+    return this.lineHeightFp * TITLE_FONT_SCALE;
+  }
+
   @Builder
   LineView(line: EngineLine) {
-    if (this.isHlLine(line)) {
+    if (line.isTitle) {
+      // ── 章标题：大字号 + 加粗、顶格（对齐 ReaderKit `<h1>` 的观感与行数）──────
+      Text(line.text)
+        .fontSize(this.titleFontSizeFp())
+        .fontWeight(TITLE_FONT_WEIGHT)
+        .fontFamily(this.fontName)
+        .fontColor(this.fontColor)
+        .lineHeight(this.titleLineHeightFp())
+        .textAlign(TextAlign.Start)
+        .width('100%')
+        .padding({ top: this.linePadVp(line) })
+    } else if (this.isHlLine(line)) {
       Text() {
         Span(line.text.substring(0, this.hlRelFrom(line)))
         Span(line.text.substring(this.hlRelFrom(line), this.hlRelTo(line)))
@@ -756,6 +809,7 @@ export struct ReaderPageNoAnim {
       .fontFamily(this.fontName)
       .fontColor(this.fontColor)
       .lineHeight(this.lineHeightFp)
+          .letterSpacing(LETTER_SPACING_FP)
       .textAlign(TextAlign.Start)
       .width('100%')
       .padding({ top: this.linePadVp(line) })
@@ -766,6 +820,7 @@ export struct ReaderPageNoAnim {
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
         .lineHeight(this.lineHeightFp)
+          .letterSpacing(LETTER_SPACING_FP)
         .textAlign(TextAlign.Start)
         .width('100%')
         .padding({ top: this.linePadVp(line) })

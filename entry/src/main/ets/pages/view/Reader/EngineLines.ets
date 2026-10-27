@@ -46,6 +46,35 @@ const DOMAIN: number = 0x0000;
 /** 段首缩进字符：2 个全角空格 = 2 个字位（与 `ReaderPager.INDENT_SLOTS` 同义） */
 const INDENT_CHARS: string = '\u3000\u3000';
 
+/**
+ * 章标题字号倍数（相对正文）。
+ * ⚠️ **排版与渲染必须用同一个值**：EngineLines 按它算行高，渲染端按它设 `.fontSize`，
+ *    不一致会导致标题行实际高度与分页假设不符 ⇒ 溢出。
+ * 像素实测（ReaderKit 同一章首）：标题暗像素高 60px / 正文单行 50~55px、字宽比 ≈1.35。
+ */
+export const TITLE_FONT_SCALE: number = 1.33;
+/** 章标题字重（ReaderKit 的标题明显更粗） */
+export const TITLE_FONT_WEIGHT: number = 600;
+
+/**
+ * **正文字距（fp）** —— 让每行字数与 ReaderKit 一致的关键。
+ *
+ * ⚠️⚠️ 为什么必须加（2026-10-27 双截图逐像素实测定案）
+ * ─────────────────────────────────────────────────────────────
+ * 同一章、同一字号，实测两边「字高完全相同（74px）」但「每行字数不同」：
+ *   · ReaderKit：949px ÷ 11 字 = **86.2px/字**
+ *   · 我们    ：965px ÷ 12 字 = **80.4px/字**
+ * 字号一样（24fp → 81px）却能差 5.8px/字 ⇒ **ReaderKit 在正文上加了额外字距**。
+ *
+ * 后果不是"好不好看"，而是**页边界系统性错位**：我们每行多塞 1 个字，
+ * 一页 14 行就多 14 个字，几页之后整页偏移 ⇒ 切档跳页、听书位错。
+ *
+ * ⚠️ 引擎（`text.TextStyle.letterSpacing`，单位 **px**，`@since 12`）与
+ *    渲染（`Text.letterSpacing`，单位 **fp**）**必须用同一个值**换算，
+ *    否则"引擎按 A 断行、ArkUI 按 B 渲染" ⇒ 溢出或换行位置错。
+ */
+export const LETTER_SPACING_FP: number = 1.7;
+
 /** 一行（排版的唯一权威单位） */
 export class EngineLine {
   /**
@@ -76,6 +105,8 @@ export class EngineLine {
    *   用引擎实测的高度累加，页高才算得准。
    */
   heightPx: number = 0;
+  /** 是否**章标题行**（渲染时用大字号 + 加粗；见 `LineStyle.titleFontScale`） */
+  isTitle: boolean = false;
 }
 
 /** 排行用的排版参数（全部 px） */
@@ -98,6 +129,16 @@ export class LineStyle {
   fontWeight: number = 400;
   /** 自定义字体文件路径（沙箱绝对路径；空 = 系统字体） */
   fontPath: string = '';
+  /**
+   * 章标题字号倍数（相对正文字号）。
+   * ⚠️ ReaderKit 把 <h1>~<h6> 渲染成大标题；像素实测标题暗像素高约 60px、
+   *   正文单行约 50~55px、字宽比约 1.35 ⇒ 先取 1.3，**需要真机对比微调**。
+   */
+  titleFontScale: number = TITLE_FONT_SCALE;
+  /** 正文/标题字距（**px**）—— 见 LETTER_SPACING_FP 注释 */
+  letterSpacingPx: number = 0;
+  /** 章标题字重（ReaderKit 的标题明显更粗，取 600） */
+  titleWeight: number = TITLE_FONT_WEIGHT;
 }
 
 /** 一页 = 行索引区间 `[from, to)` */
@@ -177,7 +218,11 @@ function layoutLines(src: string, style: LineStyle): text.LineMetrics[] {
   const tStyle: text.TextStyle = {
     fontSize: style.fontSizePx,
     fontFamilies: families,
-    fontWeight: weightToEnum(style.fontWeight)
+    fontWeight: weightToEnum(style.fontWeight),
+    // ⚠️ 字距（**px**）。必须与渲染端 `Text.letterSpacing(fp)` 严格对应换算，
+    //    否则引擎断行与 ArkUI 渲染不一致 ⇒ 溢出/换行错位。
+    //    没有它就每行多塞 1 个字 ⇒ 页边界与 ReaderKit 系统性错位（见 LETTER_SPACING_FP 注释）。
+    letterSpacing: Math.max(0, style.letterSpacingPx)
   };
   // ⚠️⚠️ 行高只能走 StrutStyle，而且**只给 `height` 不生效**（2026-10-27 真机定案）：
   //   实测 `getLineMetrics().height` 只返回字体自然高度（32px 字 → 95px），
@@ -209,27 +254,57 @@ function layoutLines(src: string, style: LineStyle): text.LineMetrics[] {
   return para.getLineMetrics();
 }
 
+/** 由正文 style 派生**标题 style**（字号/行高同比放大、字重加粗、不缩进） */
+function titleStyleOf(s: LineStyle): LineStyle {
+  const t: LineStyle = new LineStyle();
+  t.fontSizePx = s.fontSizePx * Math.max(1, s.titleFontScale);
+  // ⚠️ 行高必须**同比放大**：只放大字号不放大行高会让标题与下一行文字重叠
+  t.lineHeightPx = s.lineHeightPx * Math.max(1, s.titleFontScale);
+  // ReaderKit 的章标题是**顶格**的（截图实证），不吃 2 字缩进
+  t.indentSlots = 0;
+  t.gapPx = s.gapPx;
+  t.widthPx = s.widthPx;
+  t.pageHeightPx = s.pageHeightPx;
+  t.fontFamily = s.fontFamily;
+  t.fontWeight = s.titleWeight;
+  t.titleFontScale = s.titleFontScale;
+  t.titleWeight = s.titleWeight;
+  // ⚠️ 标题**不加**正文字距：实测标题宽度已与 ReaderKit 一致（776 vs 775px），
+  //    再加字距会超出。标题观感由 `TITLE_FONT_SCALE` 单独控制。
+  t.letterSpacingPx = 0;
+  // 标题不是自定义字体路径的重点，沿用正文字体
+  t.fontPath = s.fontPath;
+  return t;
+}
+
 /**
  * **候选入口**：把整章的段落数组排成行数组。
  *
- * @param nodes 段落数组（`buildChapterNodes` 的输出；空串段会被跳过但保留段号）
- * @param style 排版参数（全 px）
+ * @param nodes   段落数组（`buildChapterNodes` 的输出；空串段会被跳过但保留段号）
+ * @param style   排版参数（全 px）
+ * @param isTitle 每段是否章标题（与 `nodes` 等长；缺省 = 全部非标题）。
+ *                ⚠️ 标题段会用 `titleStyleOf(style)` 排（大字号 + 加粗、不缩进），
+ *                这样行数与 ReaderKit 才接近，两种阅读方式的页边界才对得上。
  */
-export function buildEngineLines(nodes: string[], style: LineStyle): EngineLine[] {
+export function buildEngineLines(nodes: string[], style: LineStyle,
+  isTitle?: boolean[]): EngineLine[] {
   const out: EngineLine[] = [];
-  const indent: string = style.indentSlots > 0 ? INDENT_CHARS : '';
-  const indentLen: number = indent.length;
 
   for (let i = 0; i < nodes.length; i++) {
     const raw: string = nodes[i];
     if (raw.trim().length === 0) {
       continue;
     }
+    const titleSeg: boolean = isTitle !== undefined && i < isTitle.length && isTitle[i];
+    // 标题段用标题 style（字号/行高放大、加粗、不缩进）；正文段用原 style
+    const segStyle: LineStyle = titleSeg ? titleStyleOf(style) : style;
+    const indent: string = segStyle.indentSlots > 0 ? INDENT_CHARS : '';
+    const indentLen: number = indent.length;
     // 段首缩进用**真实字符前缀**（不用减宽度排版，那会改变断行）
     const src: string = indent + raw;
     let metrics: text.LineMetrics[] = [];
     try {
-      metrics = layoutLines(src, style);
+      metrics = layoutLines(src, segStyle);
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'layout failed para=%{public}d: %{public}s',
         i, e instanceof Error ? e.message : JSON.stringify(e));
@@ -242,7 +317,9 @@ export function buildEngineLines(nodes: string[], style: LineStyle): EngineLine[
       l.isParaStart = true;
       l.charFrom = 0;
       l.charTo = raw.length;
-      l.padTopPx = style.gapPx;
+      l.padTopPx = segStyle.gapPx;
+      l.heightPx = segStyle.lineHeightPx;
+      l.isTitle = titleSeg;
       out.push(l);
       continue;
     }
@@ -262,9 +339,10 @@ export function buildEngineLines(nodes: string[], style: LineStyle): EngineLine[
       // 段内区间**不含前缀**（父页的高亮坐标是按原文段内偏移给的）
       line.charFrom = Math.max(0, a - indentLen);
       line.charTo = Math.max(line.charFrom, z - indentLen);
-      line.padTopPx = k === 0 ? style.gapPx : 0;
+      line.padTopPx = k === 0 ? segStyle.gapPx : 0;
       // ⚠️ 真实行高（引擎实测），分页按它累加才不会溢出；兜底用配置值
-      line.heightPx = m.height > 0 ? m.height : style.lineHeightPx;
+      line.heightPx = m.height > 0 ? m.height : segStyle.lineHeightPx;
+      line.isTitle = titleSeg;
       out.push(line);
     }
   }

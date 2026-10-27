@@ -10383,7 +10383,14 @@ export default struct ReaderPage3 {
     this.scrollNode = node;
     const range: PageRange = {
       spine: spine, startNode: node, startChar: 0,
-      endNode: endNode >= node ? endNode : node, endChar: 0
+      // ⚠️⚠️ `endChar` **不能是 0**（2026-10-27 修「无动画听书在页末段误翻页」）：
+      //   自绘组件的 `reportAt()` 只上报"页首段号 / 页末段号"，没有字符位置，
+      //   所以 `endChar: 0` 会被 `rangeCovers()` 解读成"页末段只覆盖到第 0 个字"
+      //   ⇒ 朗读走到**页末段的第 5 个字**时 `0 >= 5` 为假 ⇒ 误判"不在当前页"
+      //   ⇒ `autoFollowTts()` 白翻一页（用户看到"多翻了一页 / 来回抖"）。
+      //   用「足够大」表示"该段一直到段尾都在页内"，判定才正确。
+      //   （`startChar: 0` 是保守方向 —— 认为段首即在页内，不会误判，保持不动）
+      endNode: endNode >= node ? endNode : node, endChar: Number.MAX_SAFE_INTEGER
     };
     this.pageRange = range;
     // 目录号跟随（滚动跨章时标题/滑杆跟着走）
@@ -10638,9 +10645,24 @@ export default struct ReaderPage3 {
     this.scrollHlSerial++;
   }
 
-  /** 滚动视图的行高（fp）：与引擎/沉浸层同源 */
+  /**
+   * 自绘两档（上下 / 无动画）的行高（fp）。
+   *
+   * ⚠️⚠️ **不再乘 `effectiveLineMul()`**（2026-10-27 真机像素实测定案）
+   * ──────────────────────────────────────────────────────────────────────
+   * 那个系数是**旧架构**的产物：当时自绘层没有排版权，只能"用 ReaderKit 每页行数
+   * 反推行高"（见 `recomputeAutoPitch()`），拿到的 `autoLineMul` ≈ 1.25。
+   *
+   * 现在自绘两档由引擎（`@ohos.graphics.text`）自己排版，行高就**应该直接等于**
+   * `lineHeight × fontSize` —— 与 ReaderKit 用的是同一个公式。
+   * 继续乘 1.25 的后果（同一章、同一字号实测）：
+   *   · 我们行距 **193px** vs ReaderKit **154px**（大 25%）⇒ 整页又疏又空；
+   *   · 每页行数偏少 ⇒ 页边界与 ReaderKit 差得更远 ⇒ 进度对不上。
+   *
+   * ⇒ 去掉系数后：154px（= 1.9 × 24fp × 3.375），与 ReaderKit 逐像素一致。
+   */
   private scrollLineHeightFp(): number {
-    return this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul();
+    return this.readerSetting.lineHeight * this.readerSetting.fontSize;
   }
 
   /** 滚动视图的段首缩进（fp）：2 个字位（`HL_INDENT_SLOTS`） */
@@ -10745,10 +10767,35 @@ export default struct ReaderPage3 {
    * 顺带解决信息窗：信息窗画在 `readerTopInset() + 12` 处、高度约 16~18vp，
    * 而 `calibTopPx/density ≈ 68vp` 远在它下面 ⇒ 正文不再贯穿信息窗。
    */
+  /**
+   * 自绘档（上下 / 无动画）的【顶部 inset 微调】，单位 vp。
+   *
+   * ⚠️ 2026-10-27 真机 10 张截图（同一章连续 5 页 × 两种模式）逐带实测定案：
+   *    同一章首，章标题顶部 **ReaderKit 384px / 我们 419px** ⇒ 我们低了约 35px。
+   *    35px ÷ 3.375 ≈ 10.4vp ⇒ 这里减 10vp。
+   *
+   * 调大 ⇒ 正文整体上移；调小 ⇒ 下移。改这一个值即可整体校准。
+   */
+  private readonly SELF_DRAWN_TOP_TRIM_VP: number = 10;
+
+  /**
+   * 自绘档（上下 / 无动画）的【底部 inset 微调】，单位 vp。
+   *
+   * ⚠️ 2026-10-27 同上实测：**第 3 页是分叉点** —— ReaderKit 末行停在 2311、
+   *    下一行（本该 2505）它放不下；我们却放到了 2560 ⇒ 我们的可用页底深了约 55~150px。
+   *    结果是我们每页多装 1 行，翻到第 3 页就整页错位。
+   *    100px ÷ 3.375 ≈ 30vp ⇒ 这里加 30vp（把手势条让出的位置收回一部分）。
+   *
+   * 调大 ⇒ 正文区变矮（每页少装行）；调小 ⇒ 变高。
+   */
+  private readonly SELF_DRAWN_BOTTOM_PAD_VP: number = 30;
+
   private scrollTopInsetVp(): number {
     const d: number = this.densityVp();
     const t: number = this.calibTopPx / (d > 0 ? d : 1);
-    return t > 0 ? t : 68;
+    const base: number = t > 0 ? t : 68;
+    // ⚠️ 减掉微调量：让正文首行与 ReaderKit 落在同一像素线（见常量注释）
+    return Math.max(0, base - this.SELF_DRAWN_TOP_TRIM_VP);
   }
 
   /**
@@ -10760,7 +10807,7 @@ export default struct ReaderPage3 {
    *   于是整块正文区域是"整体下移"的观感，而不是"上下各切一刀"。
    */
   private scrollBottomInsetVp(): number {
-    return this.bottomRectHeight + 8;
+    return this.bottomRectHeight + 8 + this.SELF_DRAWN_BOTTOM_PAD_VP;
   }
 
   /**

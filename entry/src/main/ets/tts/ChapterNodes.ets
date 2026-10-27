@@ -25,6 +25,11 @@
  */
 
 const BLOCK_SENTINEL = '\u0001';
+/** 标题标记（插在 </h1>~</h6> 产生的块边界**之前**，切分后该段以此标记结尾）
+ *  ⚠️ 2026-10-27：ReaderKit 会把 <h1>~<h6> 渲染成**大字号+加粗**的章标题，
+ *  而我们原来把所有标签都剥成普通正文 ⇒ 行数不同 ⇒ 页边界不同 ⇒ 进度错位。
+ *  这里保留标题语义，供 EngineLines 用标题样式排版。 */
+const TITLE_MARK = '\u0002';
 
 /** 章节块节点模型 */
 export interface ChapterNodes {
@@ -34,31 +39,81 @@ export interface ChapterNodes {
   nodeStart: number[];
   /** nodes 以 '\n' 连接后的明文 */
   plain: string;
+  /**
+   * 每段是否「章标题」（与 `nodes` 等长）。
+   *
+   * ⚠️ 2026-10-27 新增：ReaderKit 把 `<h1>`~`<h6>` 渲染成**大字号 + 加粗**的章标题，
+   *    而本模块原来把所有标签都剥成普通正文 ⇒ 同一段落一行大字号 vs 一行正文字号
+   *    ⇒ **行数不同 ⇒ 页边界不同 ⇒ 两种阅读方式的进度对不上**（真机实测：同一章
+   *    仿真档停在章首、无动画档已到章中，差好几页）。
+   *    ⇒ 现在保留标题语义，`EngineLines` 据此对标题段套用标题样式。
+   */
+  isTitle: boolean[];
 }
 
-export function buildChapterNodes(content: string): ChapterNodes {
-  const nodes: string[] = content.indexOf('<') < 0
-    ? splitTxtNodes(content)
-    : splitHtmlNodes(content);
+export function buildChapterNodes(content: string, chapterTitle?: string): ChapterNodes {
+  const isHtml: boolean = content.indexOf('<') >= 0;
+  const split: NodeSplit = isHtml ? splitHtmlNodes(content) : splitTxtNodes(content);
+  const nodes: string[] = split.nodes;
   const nodeStart: number[] = [];
   let abs = 0;
   for (let i = 0; i < nodes.length; i++) {
     nodeStart.push(abs);
     abs += nodes[i].length + 1; // +1 = 连接用的 '\n'
   }
+  // ⚠️ TXT 没有标签，`isTitle` 全是 false ⇒ 章标题会和正文一样大。
+  //   真机日志实证：`getSpineItemContent()` 对 txt 返回**纯文本**（`hasTag=NO`），
+  //   首行就是「第十章 澹台仙子」。ReaderKit 的标题样式是它内部按文本正则识别的。
+  //   ⇒ 我们**不猜它的正则**，直接用它的目录（`getCatalogList()` 已经识别出章节名）
+  //     反推：章首第一段若与该章目录名匹配，就认定为标题。
+  //   这样与 ReaderKit 的判断依据同源，命中率高且不会误判正文。
+  if (chapterTitle !== undefined && chapterTitle.length > 0 && nodes.length > 0) {
+    if (matchChapterTitle(nodes[0], chapterTitle)) {
+      split.isTitle[0] = true;
+    }
+  }
   const model: ChapterNodes = {
     nodes: nodes,
     nodeStart: nodeStart,
-    plain: nodes.join('\n')
+    plain: nodes.join('\n'),
+    isTitle: split.isTitle
   };
   return model;
+}
+
+/**
+ * 章首段是否就是章标题。
+ *
+ * 允许三种形态（目录名与正文标题常有细微差异）：
+ *   · 完全相等
+ *   · 正文以目录名开头（正文带额外前后缀）
+ *   · 目录名以正文开头（正文截断了）
+ * 都先 trim + 压缩空白，避免全角空格/多空格导致假阴性。
+ */
+function matchChapterTitle(node: string, title: string): boolean {
+  const a: string = node.replace(/\s+/g, ' ').trim();
+  const b: string = title.replace(/\s+/g, ' ').trim();
+  if (a.length === 0 || b.length === 0) {
+    return false;
+  }
+  // 太短的"标题"不可信（避免把"一"这种正文误判成标题）
+  if (a.length < 2 || b.length < 2) {
+    return false;
+  }
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
+/** 内部：切分结果（段文本 + 是否标题） */
+interface NodeSplit {
+  nodes: string[];
+  isTitle: boolean[];
 }
 
 /**
  * TXT：按物理行切节点，保留空行（空行占号但不朗读）。
  * 仅去掉文件末尾换行产生的尾部空节点——阅读器不会为文档末尾的换行生成可见块。
  */
-function splitTxtNodes(content: string): string[] {
+function splitTxtNodes(content: string): NodeSplit {
   const t = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const raw = t.split('\n');
   let end = raw.length;
@@ -66,35 +121,55 @@ function splitTxtNodes(content: string): string[] {
     end--;
   }
   const out: string[] = [];
+  const isTitle: boolean[] = [];
   for (let i = 0; i < end; i++) {
     out.push(raw[i]);
+    // TXT 没有标签，无法判断标题（纯文本里没有语义）
+    isTitle.push(false);
   }
-  return out;
+  const r: NodeSplit = { nodes: out, isTitle: isTitle };
+  return r;
 }
 
 /**
  * HTML：块级元素结束标签处切分。首尾因标签产生的空片段丢弃，
  * 中间的空片段保留（对应空块节点，与 ReaderKit 的占号行为一致）。
  */
-function splitHtmlNodes(content: string): string[] {
+function splitHtmlNodes(content: string): NodeSplit {
   let t = content.replace(/<(script|style)[\s\S]*?<\/\1\s*>/gi, '');
-  t = t.replace(/<\/(p|div|h[1-6]|li|tr|section|article|blockquote)\s*>/gi, BLOCK_SENTINEL);
+  // ⚠️ 标题结束标签**必须先处理**：插 `TITLE_MARK` 再复用块边界，
+  //    这样切分后"标题段"的文本会以 TITLE_MARK 结尾，可据此标记（且不污染正文）。
+  //    ⚠️ 顺序不能反：普通块正则里若仍含 `h[1-6]`，会把刚插入的标记当标签一起剥掉。
+  t = t.replace(/<\/h[1-6]\s*>/gi, TITLE_MARK + BLOCK_SENTINEL);
+  t = t.replace(/<\/(p|div|li|tr|section|article|blockquote)\s*>/gi, BLOCK_SENTINEL);
   // <br> 是块内换行，不产生新节点
   t = t.replace(/<br\s*\/?\s*>/gi, ' ');
   t = t.replace(/<[^>]+>/g, '');
   t = decodeHtmlEntities(t);
   const parts = t.split(BLOCK_SENTINEL);
   const out: string[] = [];
+  const isTitle: boolean[] = [];
   for (let i = 0; i < parts.length; i++) {
-    out.push(parts[i].replace(/\s+/g, ' ').trim());
+    let s: string = parts[i].replace(/\s+/g, ' ').trim();
+    let title: boolean = false;
+    if (s.endsWith(TITLE_MARK)) {
+      title = true;
+      s = s.substring(0, s.length - TITLE_MARK.length).trim();
+    }
+    out.push(s);
+    isTitle.push(title);
   }
+  // 首尾空段丢弃（`isTitle` 必须同步丢，否则与 `nodes` 错位）
   while (out.length > 0 && out[out.length - 1].length === 0) {
     out.pop();
+    isTitle.pop();
   }
   while (out.length > 0 && out[0].length === 0) {
     out.shift();
+    isTitle.shift();
   }
-  return out;
+  const r: NodeSplit = { nodes: out, isTitle: isTitle };
+  return r;
 }
 
 /** 明文（不带标签的纯文本内容）→ 单节点。用于兜底/兼容调用。 */

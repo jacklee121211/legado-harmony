@@ -47,7 +47,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { display } from '@kit.ArkUI';
 import { buildChapterNodes } from '../../../tts/ChapterNodes';
 import { Haptics } from '../../../common/utils/Haptics';
-import { buildEngineLines, EngineLine, LineStyle } from './EngineLines';
+import { buildEngineLines, EngineLine, LineStyle, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP } from './EngineLines';
 
 const TAG: string = 'ScrollReader';
 const DOMAIN: number = 0x0000;
@@ -83,7 +83,7 @@ const DOMAIN: number = 0x0000;
  *    与上下滚动是"一母同胞"，必须用**同一个段间距系数**，否则两档互切时
  *    段落疏密会变。导出后两处引用同一个值，改一次两边同时生效。
  */
-export const SCROLL_PARA_GAP_EM: number = 0.45;
+export const SCROLL_PARA_GAP_EM: number = 0.95;
 /**
  * 字重微调（0 = 原样使用 `readerSetting.fontWeight`）。
  *
@@ -155,9 +155,11 @@ export class ScrollRow {
   prefixLen: number = 0;
   /** 是否段首行（渲染时顶部加段间距） */
   isParaStart: boolean = false;
+  /** 是否章标题行（渲染时大字号 + 加粗） */
+  isTitle: boolean = false;
 
   constructor(spine: number, node: number, text: string, charFrom: number, charTo: number,
-    prefixLen: number, isParaStart: boolean) {
+    prefixLen: number, isParaStart: boolean, isTitle: boolean = false) {
     this.spine = spine;
     this.node = node;
     this.text = text;
@@ -165,6 +167,7 @@ export class ScrollRow {
     this.charTo = charTo;
     this.prefixLen = prefixLen;
     this.isParaStart = isParaStart;
+    this.isTitle = isTitle;
     // ⚠️ 键必须区分**同一段的多行**：只拼 node 会让同段第 2 行起全部撞键
     this.key = `p-${spine}-${node}-${charFrom}`;
   }
@@ -384,11 +387,13 @@ export struct ReaderScrollView {
     }
     try {
       const content: string = await handler.getSpineItemContent(spine);
-      const nodes: string[] = buildChapterNodes(content).nodes;
+      // ⚠️ txt 没有标签，标题靠目录名反推（与无动画档同一策略）
+      const cn = buildChapterNodes(content, this.chapterTitleOf(handler, spine));
+      const nodes: string[] = cn.nodes;
       // ⚠️ **引擎排行**：与「无动画」档共用 `EngineLines`（同一份行数据）⇒ 两档互切逐字一致。
       //    原来这里是把"段"直接当行交给 ArkUI 自己换行，与无动画档的切页结果对不上。
       const style: LineStyle = this.buildLineStyle();
-      const lines: EngineLine[] = buildEngineLines(nodes, style);
+      const lines: EngineLine[] = buildEngineLines(nodes, style, cn.isTitle);
       const rows: ScrollRow[] = [];
       // 块节点号 → 该节点首行在 `rows` 里的下标（定位/上报仍按节点号）
       const map: number[] = [];
@@ -401,7 +406,7 @@ export struct ReaderScrollView {
           map[ln.paraIndex] = rows.length;
         }
         rows.push(new ScrollRow(spine, ln.paraIndex, ln.text, ln.charFrom, ln.charTo,
-          ln.prefixLen, ln.isParaStart));
+          ln.prefixLen, ln.isParaStart, ln.isTitle));
       }
       this.chapRow.set(spine, map);
       hilog.info(DOMAIN, TAG, 'loadChapter(engine) spine=%{public}d nodes=%{public}d lines=%{public}d',
@@ -424,6 +429,24 @@ export struct ReaderScrollView {
     return this.getUIContext().vp2px(v);
   }
 
+  /**
+   * 取「本章在目录里的名字」—— 用于识别 **TXT 的章标题段**。
+   * 与 `ReaderPageNoAnim.chapterTitleOf()` 同一策略：txt 返回纯文本、无标签，
+   * 只能借 ReaderKit 已经识别好的目录名反查章首段。
+   */
+  private chapterTitleOf(handler: bookParser.BookParserHandler, spine: number): string {
+    try {
+      const list: bookParser.CatalogItem[] = handler.getCatalogList();
+      if (list === null || list === undefined || spine < 0 || spine >= list.length) {
+        return '';
+      }
+      const name: string = list[spine].catalogName;
+      return name !== undefined && name !== null ? name : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   /** 组出引擎排行参数（**全 px**；与 `ReaderPageNoAnim.buildLineStyle()` 同口径） */
   private buildLineStyle(): LineStyle {
     const s: LineStyle = new LineStyle();
@@ -431,6 +454,7 @@ export struct ReaderScrollView {
     s.lineHeightPx = this.fp2px(this.lineHeightFp);
     s.indentSlots = 2;
     s.gapPx = this.fp2px(scrollParaGapFp(this.fontSize));
+    s.letterSpacingPx = this.fp2px(LETTER_SPACING_FP);
     // 流式不需要切页：宽度 = 屏幕宽(px) − 左右 inset(px)，与渲染宽度一致即可保证断行准确
     const screenPx: number = display.getDefaultDisplaySync().width;
     s.widthPx = Math.max(1, screenPx - 2 * this.vp2px(this.sideInsetVp));
@@ -724,9 +748,30 @@ export struct ReaderScrollView {
     return base;
   }
 
+  /** 标题行字号（fp）= 正文字号 × TITLE_FONT_SCALE（与 EngineLines 算行高同一个值） */
+  private titleFontSizeFp(): number {
+    return this.fontSize * TITLE_FONT_SCALE;
+  }
+
+  /** 标题行行高（fp）= 正文行高 × TITLE_FONT_SCALE（同比放大，否则与下行重叠） */
+  private titleLineHeightFp(): number {
+    return this.lineHeightFp * TITLE_FONT_SCALE;
+  }
+
   @Builder
   RowView(row: ScrollRow) {
-    if (this.isHlRow(row)) {
+    if (row.isTitle) {
+      // ── 章标题：大字号 + 加粗、顶格（对齐 ReaderKit 的 h1 观感与行数）────────
+      Text(row.text)
+        .fontSize(this.titleFontSizeFp())
+        .fontWeight(TITLE_FONT_WEIGHT)
+        .fontFamily(this.fontName)
+        .fontColor(this.fontColor)
+        .lineHeight(this.titleLineHeightFp())
+        .textAlign(TextAlign.Start)
+        .width('100%')
+        .padding({ top: this.rowPadVp(row) })
+    } else if (this.isHlRow(row)) {
       Text() {
         Span(row.text.substring(0, this.hlRelFrom(row)))
         Span(row.text.substring(this.hlRelFrom(row), this.hlRelTo(row)))
@@ -738,6 +783,7 @@ export struct ReaderScrollView {
       .fontFamily(this.fontName)
       .fontColor(this.fontColor)
       .lineHeight(this.lineHeightFp)
+          .letterSpacing(LETTER_SPACING_FP)
       // ⚠️ **不要 textIndent**：缩进已经由引擎排进行文本的前缀里，
       //    再缩一次会让首行少 2 个字位 ⇒ 与无动画档版式对不上。
       .textAlign(TextAlign.JUSTIFY)
@@ -750,6 +796,7 @@ export struct ReaderScrollView {
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
         .lineHeight(this.lineHeightFp)
+          .letterSpacing(LETTER_SPACING_FP)
         .textAlign(TextAlign.JUSTIFY)
         .width('100%')
         .padding({ top: this.rowPadVp(row) })
