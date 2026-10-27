@@ -62,6 +62,8 @@ export default struct VersionLogPage {
           .padding({ left: 20, right: 20, bottom: this.bottomRectHeight + 20 })
         }
         .layoutWeight(1)
+        // 子内容 < 视口时 Scroll 默认居中（align 默认 Alignment.Center）⇒ 显式 Top 才顶部起排；依据 documentId `FAQ/UI框架/组件使用/如何解决Scroll组件设置高度限制后_无法顶部对齐的问题/faqs-arkui-725`（官方结论：「设置 .align(Alignment.Top) 属性实现Scroll子组件顶部排布」）与 SDK `ets/component/common.d.ts:20280`（align 生效组件列表含 [Scroll]）/`:20310`（align(value: Alignment)）
+        .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
       }

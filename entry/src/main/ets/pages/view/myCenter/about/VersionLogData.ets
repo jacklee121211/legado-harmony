@@ -14,30 +14,20 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V3.0.4'
+export const APP_VERSION_FALLBACK: string = 'V3.0.5'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.4 听书体系重构：锁死无动画 + 长按从此处听 + 定位精度修复',
+    version: 'V3.0.5 新增阅读器交接文档 + 标注废弃方案',
     date: '2026-10-28',
     items: [
-      '听书模式锁死无动画：switchReadMode 拦截切到其它档位并提示「听书模式固定使用无动画，关闭听书后会自动切回」，退出听书时自动还原原档位',
-      'enterListenMode 判据从 selfDrawnModeOn 改为 noAnimModeOn：横滑/仿真/上下开听书一律切到无动画',
-      '修复切档后不自动翻页：applySelfDrawnPos 把「切档」误判成「用户手动翻走」导致 followSuspended=true、autoFollowTts 首行直接 return',
-      '新增 rearmListenFollow 在切档后清除挂起并刷新 lastNavMs',
-      '听书高亮体系统一：删除「沉浸听读」开关（TtsControlPanel），immersiveActive 恒 false —— 听书永远走自绘 Span 高亮，ReaderKit 的栅格色块/沉浸层不再有机会激活',
-      '新增长按「从此处听书」：长按正文任意一行弹出圆角胶囊气泡，点击后 TtsEngine.seekToChapter 从该段开始读。气泡挂在触摸分区层并用落点 y 逐行累加反算命中行（正文 Text 在 Stack 中层，收不到手势）',
-      '修复「从本页开始读跳到上一页」：applySelfDrawnPos 的 startChar 不再写死 0，改由 reportAt 上报页首行 charFrom',
-      'onPos 签名扩展为 (spine,node,endNode,startChar,endChar)',
-      '修复切档后落到上一页：新增 indexOfNode 的 char 参数，按「包含该字符」的页定位而非「该段起始页」',
-      'switchReadMode 交接时传递 scrollInitChar',
-      '修复点击书签后一路播放翻页动画：书签 char 恒为 0，与「页首是续段（startChar>0）」冲突时 rangeCovers 判为未落位 ⇒ 触发 beginSearch 逐页逼近（上限 60 页）。新增 locateHit：char<=0 时只按段号判定',
-      '书签弹窗入口补 noFallback',
-      '迷你条字幕改为「正在朗读的章节名」：ArkUI 原生 marqueeOptions（@since 18），放得下静态、放不下缓慢循环滚动，替代原先按字符比例滚动的跑马灯',
-      '悬浮条「从此页开始」改为「回当前进度」并修正行为：原实现是 playFromCurrentPage（从当前页开始读），改为解除挂起 + requestLocate 跳回朗读位置',
-      '设置页：QQ群 / 登录 / QQ群号整块从列表底部移到第一个 ListItem',
-      '删除后门里的「打开标定模式」（标尺/几何校准）开关及其 switch 分支、calibDevWrite、CalibMode import',
+      '新增 docs/阅读器翻页自研-交接文档-2026-10-28.md：换会话时让 agent 首读，含当前双引擎架构、版式对齐五参数、已否决方案、9 个实测坑、新方向（drawPixelMapMesh 真 mesh warp）、残留问题清单、验证命令、用户偏好',
+      'docs/最终方案-横滑仿真移植.md 顶部标注【已废弃】：移植基座 readerLibrary 方案经真机实测否决（逐列 drawImage 拼条带 → 接缝/断裂/无透视',
+      '横滑无阻尼无惯性），且基座 readerLibrary 本身是无路由的废弃模块',
+      'AGENTS.md 新增第 7 节「阅读器：先读交接文档」并重编号（原 7/8 → 8/9），把「动阅读器前必读交接文档」升为硬门槛',
+      '技术结论记录：官方 drawPixelMapMesh（@since 12，colors @since 20）是仿真卷曲的正确底层，可一次绘制整张变形图、无接缝',
+      'drawVertices 是 @since 23 超出兼容线不可用',
     ]
   },
 ]

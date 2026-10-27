@@ -257,6 +257,15 @@ export default struct MySetPage{
   }
 
   aboutToAppear(): void {
+    // ── VIP 状态回填（2026-10-28）────────────────────────────────────────────
+    // 把 Preferences 的事实源灌进 AppStorage 广播键 `vipUnlocked`（写法照
+    // `MyCenter.ets:64`：`AppStorage.setOrCreate('vipUnlocked', VipManager.isVip())`）。
+    // ⚠️ 为什么必须在这里灌：`@StorageLink` 声明的默认值 `false` **只在键不存在时**生效，
+    //    而 AppStorage 是内存态、冷启动为空 ⇒ 若只靠 IAP/登录广播写入，冷启动直接进设置页的
+    //    已购用户会看到「开通VIP」空心皇冠（与事实相反）。
+    // ⚠️ 位置：必须在 build 之前（aboutToAppear 天然早于首帧），且与下面 offlineOn / 行表回填
+    //    互不依赖，所以放最前面，避免以后被人插到 `rebuildOtherList()` 之后。
+    AppStorage.setOrCreate(VipManager.STORAGE_KEY, VipManager.isVip())
     // 冷启动回填：AppStorage 的 setHaptics 初值与 Preferences 对齐
     this.setHaptics = Haptics.isEnabled()
     this.hapticStrength = Haptics.getStrength()
@@ -743,6 +752,28 @@ export default struct MySetPage{
   @State qqScale: number = 1
 
   /**
+   * 「开通VIP」按钮的 Q 弹缩放值（2026-10-28 新增）。
+   * 与上面的 `qqScale` **同一套配方**（`docs/标准-弹窗与按钮统一规范.md` §1.2 手写三件套：
+   * SymbolGlyph + `Haptics.tap()` + `runJellyClick` 自驱 `.scale()`，再配 `.clickEffect(UiMotion.CLICK)`）。
+   * 每键独立状态 —— 规范 §1 明写「每个键独立弹跳状态」，不要用数组下标共享。
+   */
+  @State vipScale: number = 1
+
+  /**
+   * VIP 是否已开通（2026-10-28 新增）—— 驱动皇冠「空心/实心」与文案「开通VIP/VIP」。
+   *
+   * ── 为什么是 `@StorageLink` 而不是 `@State` ──────────────────────────────────
+   * VIP 的事实源在 Preferences（`VipManager.isVip()`，`VipManager.ets:46-48`），而**广播键**
+   * 是 `VipManager.STORAGE_KEY = 'vipUnlocked'`（`VipManager.ets:21-22`，那里明写
+   * 「@StorageLink 的键要求编译期字面量」）。IAP 购买成功时 `IapManager` 会调
+   * `VipManager.setVip(true)`（`IapManager.ets:53/69/80`），后者内部
+   * `AppStorage.setOrCreate(STORAGE_KEY, v)`（`VipManager.ets:51-54`）⇒ 订阅同一个键的这里
+   * **立刻**重绘：买完关窗那一刻按钮就变实心皇冠 + 「VIP」，不需要退出再进设置页。
+   * 同类先例：本文件 `:186` 的 `@StorageLink(VipManager.LOGIN_STORAGE_KEY) loginType`。
+   */
+  @StorageLink(VipManager.STORAGE_KEY) vipOn: boolean = false
+
+  /**
    * 加入喵阅官方 QQ 群（2026-10-21 新增；2026-10-24 改走 `forward/url`）。
    *
    * 三级链路（前一级失败才走下一级）：
@@ -905,6 +936,67 @@ export default struct MySetPage{
           ListItem() {
             Column({ space: 10 }) {
               Row({ space: 12 }) {
+                // ── 开通VIP（2026-10-28 新增，用户要求放在「加入QQ群」**左侧**）────────
+                // 用户原话：「在设置页，加入qq群左侧增设开通vip按钮，图标找一个皇冠的图标，
+                //   未开通的时候显示空心皇冠和开通VIP字样，开通后实心皇冠+VIP字样，
+                //   然后皇冠用symbol图标哦。按钮风格和加入qq群按钮对齐」
+                // 行内顺序：VIP ｜ 加入QQ群 ｜ 登录（整行仍 `justifyContent(FlexAlign.Center)`、space 12）。
+                //
+                // ⚠️ 皇冠符号**已取证存在**（不是猜的、也不是照抄技能快照）：
+                //   SDK 真源 `…\ets\build-tools\ets-loader\sysResource.js`（317 KB 全表，symbol 段）
+                //     :4510  `crown: 125832356`      ⇒ `$r('sys.symbol.crown')`      空心皇冠
+                //     :7346  `crown_fill: 125836672` ⇒ `$r('sys.symbol.crown_fill')` 实心皇冠
+                //   ⚠️ 不要拿 `sdk\default\hms\ets\sysResource.js`（只有 11 KB，是索引不是全表）核对。
+                //
+                // ── 视觉**逐字对齐**紧邻的「加入QQ群」胶囊（本文件 :994-1019）─────────────
+                //   Row space 6 / 图标 18×18 / 文字 `FontConstants.VALUE`(13) + `W_TITLE` /
+                //   padding 20,20,12,12 / borderRadius 22 / backgroundColor `card_bg` /
+                //   shadow radius12 offsetY4 / clickEffect(UiMotion.CLICK) /
+                //   点击 = `Haptics.tap()` + `runJellyClick(vipScale)`。
+                //   唯一差异是**图标载体**：QQ 只能用 `app.media.QQ_blue`（系统符号表里没有企鹅，
+                //   取证见 :995-999），皇冠按用户明确要求走 `SymbolGlyph`。
+                //
+                // ── 颜色：皇冠与文字都走 `app.color.text_primary` ─────────────────────
+                //   base `#191919` / dark `#F2F3F5`（`resources/base|dark/element/color.json` 的
+                //   `text_primary`），与 QQ 按钮文字**同源**。
+                //   为什么**不给**皇冠上主题主色高亮：主题主色是浅色系（默认 `#FF95A8`，
+                //   见 ChipOrderSetting.ets:165-167 的兜底值），压在日间卡底 `#FFFFFF` 上按 WCAG
+                //   相对亮度公式算对比度只有 ≈2.1:1（低于大字门槛 3:1）⇒ 白天这枚图标会发虚。
+                //   `text_primary` 才是设计里对 `card_bg` 有保证的主文字色，日夜两档都清晰。
+                //
+                // 点击语义：已开通 → toast「你已是永久会员」；未开通 → 复用本页既有 `openVip()`。
+                Row({ space: 6 }) {
+                  SymbolGlyph(this.vipOn ? $r('sys.symbol.crown_fill') : $r('sys.symbol.crown'))
+                    .fontSize(18)
+                    .fontColor([$r('app.color.text_primary')])
+                    .scale({ x: this.vipScale, y: this.vipScale })
+                  Text(this.vipOn ? 'VIP' : '开通VIP')
+                    .fontSize(FontConstants.VALUE)
+                    .fontWeight(FontConstants.W_TITLE)
+                    .fontColor($r('app.color.text_primary'))
+                }
+                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                .borderRadius(22)
+                .backgroundColor($r('app.color.card_bg'))
+                .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
+                .clickEffect(UiMotion.CLICK)
+                .onClick(() => {
+                  Haptics.tap()
+                  runJellyClick((v: number): void => { this.vipScale = v })
+                  if (this.vipOn) {
+                    // 已开通：不再弹购买弹窗（弹窗里只有"立即开通"，对已购用户是无意义入口）
+                    // ⚠️ `showToast` 声明了 @throws ⇒ 按本页既有写法包 try/catch
+                    //   （同 `toast()` / `devResetFirstRun()`；etsLint 的 addTryCatch 会报这行）。
+                    try {
+                      this.getUIContext().getPromptAction().showToast({ message: '你已是永久会员' })
+                    } catch (e) {
+                      // 提示失败不影响主流程
+                    }
+                  } else {
+                    this.openVip()
+                  }
+                })
+
                 // ── 加入QQ群 ──────────────────────────────────────────────────
                 // ⚠️ 图标用 `app.media.QQ_blue`（真企鹅 SVG，24×24，fill #188BFF）而不是
                 //    `sys.symbol.*`：**系统符号表里没有 QQ/企鹅**（实测 sysResource.js 的
@@ -1038,7 +1130,9 @@ export default struct MySetPage{
               // `SetList` 只支持"标题 + Toggle/箭头/右文字"，装不下这种交互。
               //
               // 卡片圆角：本组只有一行，所以**四角全圆**（20）。
-              // 标题行与控件放在同一张卡片里（`card_bg`），与「震动强度」滑块行同一套视觉语言。
+              // 标题行与控件放在同一张卡片里（底材见下方 2026-10-28 的说明：已从 `card_bg`
+              // 改为 `ShelfColors.surface()` + `backgroundBlurStyle`，与「震动强度」滑块行/
+              // `SetListView` 各行**同一套**视觉语言）。
               if (group.groupValue === '布局'){
                 // ── 一整张胶囊里装两项（2026-10-23 用户要求合并）────────────────────
                 // 用户原话：「这个调节器在布局中和上面的胶囊紧挨着，稍微给点距离，
@@ -1117,7 +1211,24 @@ export default struct MySetPage{
                     }
                   }
                   .width('100%')
-                  .backgroundColor($r('app.color.card_bg'))
+                  // ── 夜间底材对齐（2026-10-28 用户反馈）──────────────────────────────
+                  // 用户原话：「布局区域的首页三段按钮排序的底部胶囊在夜间模式下和同页其他
+                  //   元素不太一样，查看对比一下，进行对齐」。
+                  //
+                  // 根因（静态取证，两处取值原文）：
+                  //   · 改前这里只有 `$r('app.color.card_bg')` ⇒ 夜间是 **不透明** `#26262A`
+                  //     （`resources/dark/element/color.json:36-37`），且**没有** backgroundBlurStyle；
+                  //   · 同页其它行（`SetListView.ets:115-116`、「震动强度」行 :1322-1323）是
+                  //     `ShelfColors.surface()`（夜间 `rgba(38,38,41,0.92)`，**半透明**，
+                  //     `NightMode.ets:280-282`）+ `backgroundBlurStyle(COMPONENT_REGULAR)`，
+                  //     半透明底压在页面渐变（`#232326`→`#121214`，`NightMode.ets:271/276`）上再叠模糊。
+                  //   ⇒ 同一页出现两种「卡片底」：本卡片是实心块、邻居是透出渐变的玻璃，
+                  //     夜间尤其显形（用户说的"不太一样"就是这条）。
+                  //
+                  // 修法：与邻居**逐字同一套**（参数抄 `SetListView.ets:115-116`），
+                  //   `borderRadius 20` 与左右 padding 20 均不变，字号/交互不动。
+                  .backgroundColor(ShelfColors.surface())
+                  .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
                   .borderRadius(20)
                 }.padding({left:20,right:20})
               }
@@ -1493,6 +1604,13 @@ export default struct MySetPage{
         onClose: (): void => {
           this.vipDialog?.close()
           this.vipDialog = null
+          // 2026-10-28：「开通VIP」胶囊要「买完关窗立刻变实心皇冠 + VIP」。
+          //   IAP 成功路径本身已经在 `IapManager` 里调过 `VipManager.setVip(true)`
+          //   （`IapManager.ets:53/69/80`），后者会把值写进 AppStorage 广播键
+          //   （`VipManager.ets:51-54`）⇒ 订阅该键的 `vipOn` 正常会自动刷新。
+          //   这里再对账一次是**幂等兜底**：① 覆盖"收银台已扣款但广播没走到"的边沿；
+          //   ② 覆盖 test 账号 / 邀请码等其它授予路径；③ 保证关窗即定态，不依赖时序。
+          AppStorage.setOrCreate(VipManager.STORAGE_KEY, VipManager.isVip())
           // VipDialog 没有"成功回调"语义 ⇒ 关窗后查一次事实源（IAP 写缓存位），
           // 买成了就把用户刚才点的那一层补开（用户 2026-10-08 第 4 点要求）。
           this.applyPendingAntiPeep()

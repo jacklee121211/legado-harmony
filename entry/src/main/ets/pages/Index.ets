@@ -98,6 +98,16 @@ import FirstRunModeDialog from '../componets/common/FirstRunModeDialog'
 import { FirstRunMode } from '../common/utils/FirstRunMode'
 import { OfflineMode } from '../common/utils/OfflineMode'
 
+// ── 阅读里程碑主动推广（2026-10-28 新增，用户需求）──────────────────────────
+// 「累计阅读 >1h 弹评分软引导 / >10h 弹 VIP」的**判定与记账**全在 `ReadPromo`；
+// 本页只做一件事：**拥有 controller 并弹出实体弹窗**（CustomDialogController 必须由
+// 页面持有，理由见 `docs/标准-弹窗与按钮统一规范.md` §2.1 + §4.4「参数不支持动态更新」）。
+import { ReadPromo, PromoKind } from '../common/utils/ReadPromo'
+import RatingPromptDialog from './view/myCenter/about/RatingPromptDialog'
+import AppGalleryUtil, { CommentResult } from '../common/utils/AppGalleryUtil'
+import { VipDialog } from '../componets/myCenter/VipDialog'
+import { VipManager } from '../common/utils/VipManager'
+
 @Entry
 @Component
 struct Main {
@@ -171,6 +181,69 @@ struct Main {
    * 弹窗与首帧同拍会和孩子布局抢帧。给一点余量让主界面先立住。
    */
   private static readonly FIRST_RUN_DELAY_MS: number = 600
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 阅读里程碑主动推广（2026-10-28 新增，用户需求）—— 本页是**唯一的弹窗宿主**
+  // ══════════════════════════════════════════════════════════════════════════
+  // 需求 ③④ 全文与判定表写在 `common/utils/ReadPromo.ets` 文件头（单一真源，不在这里重复）。
+  // 本页只承担三件事：① 冷启动/退书时触发判定；② new 两个 CustomDialogController；
+  // ③ 在弹窗的**每一条关闭路径**上给 `ReadPromo` 记账。
+  //
+  // ── 为什么要一个 @StorageProp 广播 ────────────────────────────────────────
+  // 阅读页（`ReaderPage3`）与 `Index` 之间没有直接引用（它是 NavDestination 子树），
+  // 而"刚退出一本书"这个时刻只有阅读页知道（`ReadTimeRecorder.detach()`）。
+  // 沿本工程既有做法用 AppStorage 公共信号（规范 §5：「所有数据变更必须广播 AppStorage
+  // 公共信号，谁改数据谁广播」），写端 `ReadTimeRecorder.detach()` 末尾自增 `readPromoTick`。
+  // SDK 依据：`StorageProp` 是 `(value: string) => PropertyDecorator`（@since 7，见
+  // SDK `ets/component/common.d.ts:952` 原文 `declare const StorageProp: (value: string) => PropertyDecorator;`；
+  // `Watch` 同文件 `declare const Watch: (value: string) => PropertyDecorator;`）
+  // ⇒ 写端只写 AppStorage、本页用 `@StorageProp` 单向下行 + `@Watch` 接通知即可
+  // （同款既有写法：`@StorageProp(KEY_OUTER_MINIMAL) @Watch(...)`，本文件 :431）。
+  @StorageProp('readPromoTick') @Watch('onReadPromoTick') readPromoTick: number = 0
+
+  /**
+   * 评分软引导弹窗 controller（null = 未弹 / 已关）。
+   * ⚠️ 参数不支持动态更新（SDK `custom_dialog_controller.d.ts:754-760` NOTE 原文
+   * 「Custom dialog box parameters do not support dynamic updates」）⇒ 每次弹出 **new 新实例**。
+   */
+  private promoRatingDialog: CustomDialogController | null = null
+  /** VIP 购买弹窗 controller（同上，每次 new） */
+  private promoVipDialog: CustomDialogController | null = null
+  /** 同一时刻只允许一个推广弹窗（防冷启动与退书信号叠弹） */
+  private readPromoBusy: boolean = false
+  /**
+   * 本次 VIP 弹窗是否已经记过账。
+   * 为什么会重复：`VipDialog` 自己的「关闭 / 买成」走 `onClose`（`VipDialog.ets:35,75,96`），
+   * 而点遮罩 / 返回键走 options 的 `cancel`（SDK `custom_dialog_controller.d.ts:70-79`
+   * 原文「Callback invoked when the dialog box is closed after the Back button or mask is
+   * touched or the Esc key is pressed.」）⇒ 两条路径都要记账，且必须幂等。
+   */
+  private promoVipCounted: boolean = false
+  /**
+   * 冷启动判定延时。为什么 1200ms：冷启动首帧要跑 `initAppData()` + 建表 + 一镜到底初始化，
+   * 首启弹窗用的是 600ms（`FIRST_RUN_DELAY_MS`，本文件 :173）；本弹窗的判定还要等
+   * `readDaily` 表就绪（`ReadPromo.isReady()`），给更宽余量让主界面先立住。
+   */
+  private static readonly READ_PROMO_COLD_DELAY_MS: number = 1200
+  /**
+   * 退书后判定延时。600ms 等返回转场收尾 —— 阅读页的 `setReaderActive(false)` 推迟到
+   * 本页阅读分支的 `onWillDisappear`（`restoreReaderColorMode()`，本文件 :2396-2397），
+   * 早于转场结束就判定会被 `maybeShowReadPromo()` 里那道 `readerActive` 闸拦掉。
+   */
+  private static readonly READ_PROMO_TICK_DELAY_MS: number = 600
+  /** 历史时长还没入账（DB 未就绪）时的重试间隔 */
+  private static readonly READ_PROMO_RETRY_MS: number = 800
+  /**
+   * 最多重试几次：**13** × 800ms ≈ 10.4s（+ 冷启动的 1200ms ≈ 11.6s）。
+   *
+   * ⚠️ 2026-10-28 Lead 复核把 6 改成 13（原值 6 ⇒ 1.2s + 4.8s ≈ 6s 就放弃）：
+   *   `ReadPromo` 自己的 DB 看门狗是 **8000ms**（`ReadPromo.ets:158 DB_WAIT_WATCHDOG_MS`），
+   *   即"DB 链路真挂了"时它要 8s 才放行 `isReady()`；重试窗口若只有 6s，**看门狗永远等不到**
+   *   ⇒ 老用户「装了新版本一进就弹」在 DB 慢/挂的那次冷启动里必然落空。
+   *   现在窗口 ≥ 10.4s > 8s ⇒ 看门狗放行后至少还有 1~2 次重试去判定（这正是两个常量必须配套的原因）。
+   * 仍没就绪就放弃本次冷启动判定，等下一个触发点（退书）——**不排队、不空转**。
+   */
+  private static readonly READ_PROMO_MAX_RETRY: number = 13
 
   // ══════════════════════════════════════════════════════════════════════════
   // 一镜到底（书架 → 阅读器）运行态 —— 2026-09-23
@@ -1040,6 +1113,18 @@ struct Main {
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
     // ★ 首次安装模式选择（2026-10-13）：流程正常启动，主界面立住后再弹引导。
     this.maybeShowFirstRunDialog()
+    // ★ 阅读里程碑主动推广（2026-10-28）：先灌历史时长，再在首帧稳定后判定一次。
+    //   ① `init()` 幂等：只在首次调用时启动 `readDaily` 历史秒数的一次性入账
+    //      （老用户"装了新版本一进就弹"的唯一依据，见 `ReadPromo.ets` 头注释）；
+    //   ② 冷启动判定**必须延迟**且**必须等入账跑完**：`readDaily` 的建表在
+    //      `EntryAbility.onWindowStageCreate` 的 `DbUtil.initDB().then(...)` 链里
+    //      （`EntryAbility.ets:468`），本页 `aboutToAppear` 时可能还没跑完 ⇒
+    //      用 `ReadPromo.isReady()` 做闸、未就绪就短间隔重试
+    //      （最多 `READ_PROMO_MAX_RETRY` 次，之后放弃等下一个触发点，绝不空转）。
+    ReadPromo.init(this.hostAbilityContext())
+    setTimeout((): void => {
+      this.maybeShowReadPromo('coldStart', 0)
+    }, Main.READ_PROMO_COLD_DELAY_MS)
     // ★ PuraX 外屏（2026-10-24）：冷启动时 `outerMinimal` 在**本页挂载前**就已经是 true
     //   （`EntryAbility` 在 loadContent 之前就写好了）⇒ `@Watch` 一次都不会触发
     //   （`@StorageProp` 只在值**变化**时回调）。所以这里必须主动补一次。
@@ -1098,6 +1183,302 @@ struct Main {
       })
       this.firstRunDialog.open()
     }, Main.FIRST_RUN_DELAY_MS)
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 阅读里程碑主动推广（2026-10-28 新增）—— 触发、判定、controller、记账
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 取 UIAbilityContext（与 `AboutPage.ets:205-207` 同款；系统评分/商店都要 UIAbilityContext） */
+  private hostAbilityContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext
+  }
+
+  /** 推广弹窗的提示（失败不能影响主流程） */
+  private promoToast(message: string): void {
+    try {
+      showMessage(message)
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `promoToast failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 紧接着系统评分弹窗之后的提示**必须延时**。
+   * 依据（真机日志，`AboutPage.ets:218-238` 原文）：`showCommentDialog()` 的 Promise
+   * 在系统 UIExtension 销毁**之前**就返回，此时 ArkUI 拒收 Toast 节点 ——
+   *   `Current Node(id: 1) is prohibited add child(tag Toast, ...)`
+   *   `Current modalUiextension count is : 1`
+   * ⇒ 不延时 = 用户什么都看不到。300ms 是该处取的保守值。
+   */
+  private promoToastAfterComment(delayMs: number, message: string): void {
+    setTimeout((): void => {
+      this.promoToast(message)
+    }, delayMs)
+  }
+
+  /**
+   * 「刚退出一本书」广播的处理（`ReadTimeRecorder.detach()` 末尾自增，见那边埋点②注释）。
+   * 延时 `READ_PROMO_TICK_DELAY_MS` 再判定：等 NavDestination 的返回转场收尾
+   * （`readerActive` 在转场开始前才被本页 `restoreReaderColorMode()` 置 false）。
+   */
+  onReadPromoTick(): void {
+    setTimeout((): void => {
+      this.maybeShowReadPromo('readerExit', 0)
+    }, Main.READ_PROMO_TICK_DELAY_MS)
+  }
+
+  /**
+   * 判定并弹出推广弹窗（**本页唯一的推广入口**）。
+   *
+   * 不排队的取舍（刻意）：命中任一闸门就直接 return，不缓存"待弹"状态。
+   * 理由：所有闸门都是**瞬时**条件（阅读器在栈顶 / 另一个推广弹窗开着 / 首启弹窗开着），
+   * 缓存一个待弹队列反而可能在用户已经进下一本书时突然弹出来。丢掉的这次机会由
+   * **下一个触发点**补上 —— 冷启动 + 每次退书都会判定（退书 ≥ 每小时至少一次）。
+   *
+   * @param source 触发来源（只用于日志定位：'coldStart' / 'readerExit'）
+   * @param attempt 已经重试过的次数（历史时长入账未完成时用）
+   */
+  private maybeShowReadPromo(source: string, attempt: number): void {
+    try {
+      if (!ReadPromo.ENABLED) {
+        return
+      }
+      if (this.readPromoBusy) {
+        return
+      }
+      // 首启引导还在（`FirstRunMode.ENABLED` 当前是 false ⇒ 正常情况下这条路不会走，
+      // 但一旦将来翻 true，两个弹窗会在冷启动时叠弹）⇒ 让位给首启引导。
+      if (this.firstRunDialog !== null) {
+        return
+      }
+      // 阅读器在栈顶 ⇒ 绝不弹（弹窗会盖在阅读页上；退书流程里此时转场还没结束）
+      if (AppStorage.get<boolean>(NightMode.READER_KEY) === true) {
+        return
+      }
+      // 历史秒数还没从 `readDaily` 并入（DB 未就绪）⇒ 此刻判定会把老用户判成新用户（漏弹）
+      if (!ReadPromo.isReady()) {
+        if (attempt < Main.READ_PROMO_MAX_RETRY) {
+          setTimeout((): void => {
+            this.maybeShowReadPromo(source, attempt + 1)
+          }, Main.READ_PROMO_RETRY_MS)
+        } else {
+          hilog.warn(0x0000, 'ReadPromo', `promo check skipped (not ready) source=${source}`)
+        }
+        return
+      }
+      const kind: PromoKind = ReadPromo.check(this.hostAbilityContext())
+      hilog.info(0x0000, 'ReadPromo',
+        `check source=${source}, kind=${kind}, totalSec=${ReadPromo.totalSeconds()}`)
+      if (kind === PromoKind.RATING) {
+        this.openPromoRatingDialog()
+      } else if (kind === PromoKind.VIP) {
+        this.openPromoVipDialog()
+      }
+    } catch (e) {
+      // 任何异常都不许影响主流程（推广是增值功能，绝不能挡住书架/退书）
+      hilog.warn(0x0000, 'ReadPromo', `maybeShowReadPromo failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 弹出「喜欢喵阅吗？」评分软引导。
+   *
+   * options 配方逐条对齐 `docs/标准-弹窗与按钮统一规范.md`：
+   *  · §2.2 `customStyle: false` + `cornerRadius: 20` + `systemMaterial` + SPRING_FAST 开关动画；
+   *  · §2.4 本弹窗是**内容自适应的短弹窗** ⇒ **不给 height**；
+   *  · §4.1 关闭权在调用方（`RatingPromptDialog.ets:20-24` 明确「本弹窗不自己关」）。
+   * SDK 依据：`systemMaterial?: SystemUiMaterial`（`custom_dialog_controller.d.ts:681`，@since 26.0.0）；
+   * `customStyle: true` 时「The rounded corner radius is 0, and the background color is
+   * transparent」（同文件 :130-134）⇒ 材质无处附着，所以必须 false。
+   */
+  private openPromoRatingDialog(): void {
+    this.readPromoBusy = true
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: RatingPromptDialog({
+          theme: this.theme,
+          onGoRating: (): void => {
+            this.onPromoGoRating()
+          },
+          onLater: (): void => {
+            this.onPromoRatingLater()
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: '80%',
+        cornerRadius: 20,
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        cancel: (): void => {
+          // 点遮罩 / 返回键 = 用户把软引导关掉了（SDK :70-79 原文）⇒ 与「以后再说」同样记一次
+          this.promoRatingDialog = null
+          this.readPromoBusy = false
+          ReadPromo.markRatingShown()
+        }
+      })
+      this.promoRatingDialog = dialog
+      dialog.open()
+    } catch (e) {
+      this.promoRatingDialog = null
+      this.readPromoBusy = false
+      hilog.warn(0x0000, 'ReadPromo', `openPromoRatingDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /** 软引导点「去评分」：先关窗（关闭权在宿主），再拉起系统评分 */
+  private onPromoGoRating(): void {
+    const dialog: CustomDialogController | null = this.promoRatingDialog
+    this.promoRatingDialog = null
+    this.readPromoBusy = false
+    try {
+      dialog?.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `close rating dialog failed: ${JSON.stringify(e)}`)
+    }
+    // 先落「已完成」：系统评分弹窗可能停留很久，期间若又退一本书，
+    // 没有这一笔就会被再问一次（用户明确要求"直到评分"而不是"没完没了地问"）。
+    // 若下面结果是"没登录"，再按 `NOT_LOGGED_IN` 分支复位成"弹过了"。
+    ReadPromo.markRatingDone()
+    this.runSystemComment().catch((e: Error): void => {
+      hilog.warn(0x0000, 'ReadPromo', `runSystemComment failed: ${e.message}`)
+    })
+  }
+
+  /**
+   * 拉起系统评分弹窗并按业务结局分支（结局语义见 `AppGalleryUtil.ets:99-112` 的 CommentResult）。
+   *
+   * 为什么**不能**在 0007/0009/0008 之后跳商店：用户明明已经评价过，却被丢进应用市场，
+   * 是体验事故（`AppGalleryUtil.ets:48-58` 的真机修正原文）。
+   */
+  private async runSystemComment(): Promise<void> {
+    let result: CommentResult = CommentResult.UNAVAILABLE
+    try {
+      result = await AppGalleryUtil.showCommentDialog(this.hostAbilityContext())
+    } catch (e) {
+      // `showCommentDialog` 自述"永不抛异常"（AppGalleryUtil.ets:137），这里只作双保险
+      hilog.warn(0x0000, 'ReadPromo', `showCommentDialog threw: ${JSON.stringify(e)}`)
+      return
+    }
+    if (result === CommentResult.SHOWN) {
+      // 系统弹窗已接管，什么都不做（用户后续是否真的提交由系统决定，本模块无法确知）
+      return
+    }
+    if (result === CommentResult.ALREADY_REVIEWED_CURRENT ||
+      result === CommentResult.REVIEWED_WITHIN_YEAR) {
+      // 保持 markRatingDone 的终态：系统明确说"评过"，以后不必再问
+      this.promoToastAfterComment(300, '感谢你之前的评价')
+      return
+    }
+    if (result === CommentResult.LIMIT_REACHED) {
+      this.promoToastAfterComment(300, '感谢支持')
+      return
+    }
+    if (result === CommentResult.NOT_LOGGED_IN) {
+      // 用户**想评但没评上**（未登录华为账号）⇒ 不能算完成，否则永远不再问，
+      // 与「30 天一次，直到评分」冲突 ⇒ 复位成「弹过了」，30 天后按重试周期再来。
+      ReadPromo.markRatingShown()
+      this.promoToastAfterComment(300, '请先登录华为账号再评价')
+      return
+    }
+    // UNAVAILABLE（0001/0002/0003/0005/未知）：真不可用 ⇒ 保持终态，不再骚扰
+    this.promoToastAfterComment(300, '请前往应用市场评价')
+  }
+
+  /** 软引导点「以后再说」：先关窗，再记「这次弹过了，30 天后再来」 */
+  private onPromoRatingLater(): void {
+    const dialog: CustomDialogController | null = this.promoRatingDialog
+    this.promoRatingDialog = null
+    this.readPromoBusy = false
+    try {
+      dialog?.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `close rating dialog failed: ${JSON.stringify(e)}`)
+    }
+    ReadPromo.markRatingShown()
+  }
+
+  /**
+   * 弹出 VIP 开通弹窗。
+   *
+   * controller 写法照抄本工程既有标准实现 `MySetPage.ets:1488-1514`（`openVip()`）：
+   * 全字段一致（`width: '88%'` 是 VIP 窗的既定值），`onClose` 里"先 close + 置 null"，
+   * `cancel` 里"置 null" —— 因为 `VipDialog` 内部的 `this.controller?.close()` **无效**，
+   * 关闭权同样在宿主（同 `VipDialog.ets:34-35` 注释）。
+   */
+  private openPromoVipDialog(): void {
+    this.readPromoBusy = true
+    this.promoVipCounted = false
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: VipDialog({
+          dark: NightMode.isDarkSurface(),
+          vipOwned: VipManager.isVip(),
+          onClose: (): void => {
+            this.onPromoVipClosed()
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: '88%',
+        cornerRadius: 20,
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        cancel: (): void => {
+          // 点遮罩 / 返回键 = 用户把它关掉了 ⇒ 同样要记一次
+          // （否则 90 天后不会有第二次，与需求「关掉后 90 天再弹第二次」冲突）
+          this.promoVipDialog = null
+          this.accountPromoVipClose()
+        }
+      })
+      this.promoVipDialog = dialog
+      dialog.open()
+    } catch (e) {
+      this.promoVipDialog = null
+      this.readPromoBusy = false
+      hilog.warn(0x0000, 'ReadPromo', `openPromoVipDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /** VIP 窗自己的关闭回调（「关闭」按钮 / 买成后 `VipDialog.buy()` 主动调，:73-76） */
+  private onPromoVipClosed(): void {
+    const dialog: CustomDialogController | null = this.promoVipDialog
+    this.promoVipDialog = null
+    try {
+      dialog?.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `close vip dialog failed: ${JSON.stringify(e)}`)
+    }
+    this.accountPromoVipClose()
+  }
+
+  /**
+   * VIP 弹窗关闭的**唯一记账点**（`onClose` 与 `cancel` 都会走到这里）。
+   *
+   * 记账规则（对应 `ReadPromo.ets` 的状态机）：
+   *  · 关窗那一刻已是 VIP（在窗里买成 / 本来就是）⇒ `markVipBought()` 永久停推；
+   *  · 否则 ⇒ `markVipShown()` 次数 +1，第 2 次之后 `check()` 恒 NONE。
+   */
+  private accountPromoVipClose(): void {
+    this.readPromoBusy = false
+    if (this.promoVipCounted) {
+      return
+    }
+    this.promoVipCounted = true
+    try {
+      if (VipManager.isVip()) {
+        ReadPromo.markVipBought()
+      } else {
+        ReadPromo.markVipShown()
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `accountPromoVipClose failed: ${JSON.stringify(e)}`)
+    }
   }
 
   /**

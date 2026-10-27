@@ -32,7 +32,7 @@
  */
 import { Haptics } from '../../common/utils/Haptics'
 import UiMotion, { runJellyClick } from '../../common/utils/UiMotion'
-import { NightMode } from '../../common/utils/NightMode'
+import { NightMode, ShelfColors } from '../../common/utils/NightMode'
 import ShelfPrefs from '../../common/utils/ShelfPrefs'
 
 /** 三种按钮的**语义下标**（与 `GroupType.CHIP_NAMES` 严格一致） */
@@ -176,9 +176,23 @@ export struct ChipOrderSetting {
       .layoutWeight(1)
       .height(32)
       .borderRadius(16)
-      .backgroundColor(NightMode.isDarkSurface()
-        ? 'rgba(255,255,255,0.10)'
-        : 'rgba(0,0,0,0.05)')
+      // ── 胶囊底（2026-10-28 改为全工程同源 `ShelfColors.chip()`）─────────────────
+      // 背景：外层卡片底从 `$r('app.color.card_bg')`（夜间不透明 `#26262A`）换成了
+      //   `ShelfColors.surface()` + `backgroundBlurStyle(COMPONENT_REGULAR)`
+      //   （见 `MySetPage.ets` 的「布局」组卡片，参数抄 `SetListView.ets:115-116`）
+      //   ⇒ 这里的三枚胶囊必须跟着复核对比度，否则会出现"卡片换了、胶囊没换"的错位。
+      //
+      // 复核结论（按 sRGB 相对亮度公式逐档算出来的，**不是**真机采样 —— 真机复核点见任务报告）：
+      //   · 夜间：原来写死 `rgba(255,255,255,0.10)`，与 `ShelfColors.chip()` 的夜间值
+      //     **逐个字符相同**（`NightMode.ets:325-327`）⇒ 合成色完全不变；
+      //   · 日间：原来是 `rgba(0,0,0,0.05)`，`chip()` 是 `rgba(0,0,0,0.04)`
+      //     ⇒ 压在白底（surface 日间 = `rgba(255,255,255,0.92)`，`NightMode.ets:280-282`）上
+      //     合成值从 ≈`#F2F2F2` 变到 ≈`#F5F5F5`，差 2~3 个色阶，肉眼不可辨；
+      //     而换来的好处是**底材来源唯一**（以后调 chip 不会漏掉这里）。
+      //   · 胶囊 vs 卡片底的对比度：夜间合成 ≈`#3A3A3B` / 底 ≈`#242426` ⇒ ≈1.37:1；
+      //     改前（胶囊 ≈`#3C3C3E` / 底 `#26262A`）也是 ≈1.37:1 ⇒ **对比度不变**，
+      //     三枚胶囊仍然一眼可辨，不需要额外加 alpha。
+      .backgroundColor(ShelfColors.chip())
       .scale({
         x: this.scales.length > index ? this.scales[index] : 1,
         y: this.scales.length > index ? this.scales[index] : 1

@@ -33,8 +33,24 @@
  * 把 `ENABLED` 改成 `false` ⇒ 不建表以外的一切动作都不发生：
  * `attach()` 直接返回、不装定时器、不写一行数据；
  * UI 侧读到空数据走空态，其余功能零影响。
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ * 2026-10-28 新增：两处**阅读里程碑推广**埋点（不改变计时口径）
+ * ══════════════════════════════════════════════════════════════════════════
+ * 「阅读 >1h 弹评分软引导 / >10h 弹 VIP」的调度层是 `common/utils/ReadPromo.ets`；
+ * 它需要本类提供两个信号，这就是本文件为它改的全部内容（只加 2 处，口径零改动）：
+ *   ① `commitSegment()`：每次把 `sec` 写进 `readDaily` 之后，**同步**再交给
+ *      `ReadPromo.addSeconds(sec)` ⇒ 推广层拿到"累计阅读秒数"（跨会话单调递增，
+ *      落 Preferences，所以杀进程也不丢）。放在心跳里而不是只在 `detach()` 里，
+ *      是因为长时间停留很容易被系统杀（本文件 :22-23 同一个理由）。
+ *   ② `detach()` 末尾：`AppStorage('readPromoTick')` 自增 ⇒ 这是「刚退出一本书」的广播，
+ *      宿主 `pages/Index.ets` 用 `@StorageProp('readPromoTick') @Watch` 接住，
+ *      在退书**转场结束之后**才判定要不要弹窗（弹窗不能盖在阅读页/转场动画上）。
+ * 回退：把 `ReadPromo.ENABLED` 改 `false` 即可（本类这两处调用保持无条件、不做判断，
+ *      这样回退只需改一个常量，不必回来改本文件）。
  */
 import ReadDailyDao, { dayKeyOf } from '../../database/dao/ReadDailyDao'
+import { ReadPromo } from './ReadPromo'
 
 export class ReadTimeRecorder {
   /** **总开关（一键回退点）**：false ⇒ 完全不记时长（也不装定时器） */
@@ -117,6 +133,21 @@ export class ReadTimeRecorder {
     this.stopTimer()
     this.attached = false
     this.bookId = 0
+    // ── 埋点②（2026-10-28）：「刚退出一本书」广播 ─────────────────────────────
+    // 宿主 `pages/Index.ets` 用 `@StorageProp('readPromoTick') @Watch` 接住它，
+    // 再延时判定要不要弹「评分引导 / VIP」推广弹窗（见 `ReadPromo.ets` 文件头）。
+    // 为什么用 AppStorage 自增而不是回调：阅读页与 `Index` 之间没有直接引用
+    // （ReaderPage3 是 NavDestination 子树），AppStorage 是本工程既有的跨层广播通道
+    // （同款用法：`BOOK_IS_BOOK_REFRESHING`，规范性依据见
+    //  `docs/标准-弹窗与按钮统一规范.md` §5「所有数据变更必须广播 AppStorage 公共信号」）。
+    // 放在**末尾**：此时计时已停、秒数已落库，宿主读到的时长一定是最新的。
+    try {
+      AppStorage.setOrCreate<number>('readPromoTick',
+        (AppStorage.get<number>('readPromoTick') ?? 0) + 1)
+    } catch (e) {
+      // 广播失败不影响退书流程（最多这一轮推广判定不触发，下次冷启动仍会判定）
+      console.error('ReadTimeRecorder.detach tick, Error, ' + JSON.stringify(e))
+    }
   }
 
   /** 前后台切换（阅读页 `onAppForegroundChanged()` 调用） */
@@ -205,6 +236,12 @@ export class ReadTimeRecorder {
       .catch((e: Error): void => {
         console.error('ReadTimeRecorder.addSeconds, Error, ' + e.message)
       })
+    // ── 埋点①（2026-10-28）：把同一段秒数交给阅读里程碑推广层累加 ───────────────
+    // 与上面的 `addSeconds` 用**同一个 `sec`**（口径完全一致：心跳 + 结算都走本方法，
+    // 见 `commitSegment()` 头注释），因此 `ReadPromo` 的"累计阅读秒数"与
+    // 阅读时长统计页的数字同源，不会出现"统计页 1h、推广层说没到"的分叉。
+    // 内部全 try/catch：写盘失败绝不影响阅读（`ReadPromo.ets addSeconds` 头注释）。
+    ReadPromo.addSeconds(sec)
     // 达到上限后停表（下一拍不再累加）
     if (cap > 0 && this.sessionSec >= cap) {
       this.counting = false

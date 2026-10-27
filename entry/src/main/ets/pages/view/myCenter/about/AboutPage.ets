@@ -77,8 +77,24 @@ export default struct AboutPage {
   build() {
     NavDestination() {
       Column() {
-        // 顶部避让（与 MyCenter 同款：顶部安全区高度由窗口监听下发）
-        Blank(this.topRectHeight)
+        // ── 顶部避让写法统一（2026-10-28；**只是可读性/一致性改动，不是"整页居中"的修复**）──
+        // 旧写法是 `Blank(this.topRectHeight)`。Blank 确实是弹性节点：
+        //   SDK `ets/component/blank.d.ts:39-49`："When the **Blank** component is used within a Row,
+        //     Column, or Flex container, it will automatically stretch or shrink along the main axis if it
+        //     does not have a main axis size specified."
+        //   官方文档 documentId `API参考/ArkUI_方舟UI框架/ArkTS组件/空白与分隔/Blank/ts-basic-components-blank`：
+        //   「从API version 10开始：Blank在父容器Row、Column、Flex主轴方向上未设置大小时会自动拉伸、压缩，
+        //     设置了大小或容器自适应子节点大小时不会自动拉伸、压缩。」
+        // ⚠️ 但**本页真机 bounds 证明它当时并没有被拉伸**（Lead 提供的 V3.0.4 原包，1320×2848，暗色）：
+        //   状态栏 132px + 页头 padding-top 12vp × 3.25 ≈ 39px ⇒ 标题 Text top 应 = 171px，
+        //   实测正是 [51, 171, 1107, 234] ⇒ Blank 当时只占 min 那点高度；若它去抢剩余空间，页头会被推到屏幕中部。
+        // ⇒ **「整页居中」与 Blank 无关**（此前那版注释的归因是错的，已按实测更正）。删除 Blank 的收益只有两个：
+        //   ① 与同页签的 `MySetPage.ets:1412` 用同一种写法（`.padding({ top: this.topRectHeight })`），
+        //      属于可读性/一致性改动；② 竖直方向少一个"理论上可伸缩"的节点，避免后人误判。
+        //   因 Blank 未被拉伸时占用就是 min，所以把避让改成固定 padding **几何等价**（见本组件末尾），
+        //   页头位置仍是 topRectHeight（状态栏高度，窗口监听下发），剩余高度照旧全归 Scroll（layoutWeight 1）。
+        // 「整页居中」的真因与修法见下面 Scroll 上的 `.align(Alignment.Top)`（官方 documentId faqs-arkui-725）。
+        // 同时核对过：本页只有这一处顶部避让，不存在 Blank + padding 重复避让（旧版没有 padding）。
         SetHead({ titleName: '关于我们' })
 
         Scroll() {
@@ -128,6 +144,25 @@ export default struct AboutPage {
           .padding({ left: 20, right: 20 })
         }
         .layoutWeight(1)
+        // ── 「整页居中」的**真因**修复（2026-10-28）────────────────────────────────
+        // Scroll 被 layoutWeight(1) 限高后，子内容比视口矮时**默认居中排布**。官方原文
+        // （documentId `FAQ/UI框架/组件使用/如何解决Scroll组件设置高度限制后_无法顶部对齐的问题/faqs-arkui-725`）：
+        //   「Scroll组件：……同时，若子组件的布局尺寸小于Scroll组件的尺寸时，则Scroll组件不可滚动，
+        //     且**默认居中排布**。」
+        //   「Scroll设置layoutWeight时：此时相当于给了Scroll组件的高度限制……Scroll子组件的布局尺寸
+        //     小于Scroll组件的尺寸时，其子组件默认居中排布」
+        //   「**分析结论**：……当设置Scroll组件高度后，可以通过设置 `.align(Alignment.Top)` 属性实现
+        //     Scroll子组件顶部排布效果。」
+        //   「**方案一**：Scroll组件设置高度限制，同时增加 .align(Alignment.Top) 属性。」
+        // SDK 依据 `ets/component/common.d.ts:20261-20310`（通用属性 align）：
+        //   `align(value: Alignment): T;` —— "Sets the alignment mode for child elements within the
+        //   container's drawing area."；生效组件列表**含 [Scroll]**（同文件 :20280）；
+        //   "Default value: **Alignment.Center**"（:20297）⇒ 默认就是居中，与本页现象一一对应。
+        //   `Alignment.Top` 存在且语义为"顶部、水平居中"（`ets/component/enums.d.ts:1537/1550/1559`）。
+        // 本页实测（Lead 真机 bounds）：Scroll 视口 ≈ 2200px，子 Column 布局高 1029px ⇒ 内容被居中，
+        // 用户看到的「整页居中」即此。加 `.align(Alignment.Top)` 后内容从 Scroll 顶部起排，
+        // 页头之下紧跟卡片；内容超过视口时仍可正常滚动（align 只影响"放不下时"的排布）。
+        .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
 
@@ -149,6 +184,18 @@ export default struct AboutPage {
       }
       .width('100%')
       .height('100%')
+      // 顶部避让：固定 padding（替代原 `Blank(this.topRectHeight)`，等价改动，原因见 build 开头注释）。
+      // 实测原 Blank 当时并未被拉伸（标题 y=171 = 状态栏 132 + 12vp×3.25），Blank 占的就是 min，
+      // ⇒ 换成同样的固定值，页头位置与改前完全一致；写法和 `MySetPage.ets:1412` 统一。
+      // **注意：这里不负责"整页居中"**，那个是 Scroll 子内容默认居中造成的，修在 Scroll 的 `.align(Alignment.Top)`。
+      // 渐变仍然画在**同一个**根 Column 上（尺寸没变），所以顶部色带观感与改前一致。
+      .padding({ top: this.topRectHeight })
+      // 显式钉住主轴对齐为"起点"。Column 默认值本来就是 Start
+      // （证据：SDK `ets/component/column.d.ts:181-193` justifyContent:
+      //   "Alignment mode of the child components in the vertical direction. Default value: **FlexAlign.Start**"），
+      // 写出来只是让"整页顶部对齐"成为显式契约（防止后人给根 Column 加 Center 把页头推到中部）。
+      // 本页「整页居中」的真因不在 Column，而在 Scroll（见上）。
+      .justifyContent(FlexAlign.Start)
       // 2026-10-12 适配全局主题渐变（此前是本页唯一的纯色 `ShelfColors.pageBg()`
       // ⇒ 从书架/我的点进来会"突然换底色"）。配色对与书架、我的**同源**
       // （`ShelfColors.pageGradient`），stop 同为 0.0 → 0.2。
