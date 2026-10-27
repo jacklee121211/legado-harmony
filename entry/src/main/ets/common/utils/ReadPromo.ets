@@ -108,8 +108,18 @@ export class ReadPromo {
   /** 评分软引导门槛：累计阅读 1 小时（用户原话「超过 1 小时」） */
   static readonly RATING_THRESHOLD_SEC: number = 60 * 60
 
-  /** 评分被拒后的重试间隔：30 天（用户原话「30 天后再次弹出…每 30 天一次，直到评分」） */
+  /** 评分被拒后的重试间隔：30 天（用户原话「30 天后再次弹出…每 30 天一次」） */
   static readonly RATING_RETRY_MS: number = 30 * 24 * 60 * 60 * 1000
+
+  /**
+   * 评分软引导的**累计推送次数上限**：3（2026-10-28 用户拍板「累计三次」）。
+   *
+   * 语义：`markRatingShown()` 每推一次 `count+1`（夹在 `[0, RATING_MAX_SHOWS]`）；
+   * 到 3 次后 `check()` 的评分分支恒不命中 ⇒ 不再打扰。
+   * 与「已评分判断」的关系：`AppGalleryUtil.shouldSkipPrompt()` 命中（系统 0007/0009/0008）
+   * 会**更早**把 `RATING_DONE` 钉成终态 —— 两者谁先到都算结束（"先到先停"）。
+   */
+  static readonly RATING_MAX_SHOWS: number = 3
 
   /** VIP 弹窗门槛：累计阅读 10 小时（用户原话「超过十小时」） */
   static readonly VIP_THRESHOLD_SEC: number = 10 * 60 * 60
@@ -132,6 +142,8 @@ export class ReadPromo {
   private static readonly KEY_RATING_SHOWN_AT: string = 'readPromoRatingShownAt'
   /** 是否已达「不用再问」的终态（true = 永久不再弹评分引导） */
   private static readonly KEY_RATING_DONE: string = 'readPromoRatingDone'
+  /** 评分软引导**已累计推送次数**（0~3；2026-10-28 用户要求「累计三次」封顶） */
+  private static readonly KEY_RATING_COUNT: string = 'readPromoRatingCount'
   /** VIP 弹窗已自动弹出的次数（0 / 1 / 2） */
   private static readonly KEY_VIP_COUNT: string = 'readPromoVipCount'
   /** 上次 VIP 弹窗的时间戳（ms；0 = 从没弹过） */
@@ -241,7 +253,8 @@ export class ReadPromo {
    * | 条件 | 结果 |
    * |---|---|
    * | 总闸关 / 阅读器在栈顶 | NONE |
-   * | **未评分** && ≥1h && 系统支持应用内评分 && (没弹过 ‖ 距上次推送 ≥30 天) && 系统没说过"一年内已评/达上限" | **RATING** |
+   * | **未评分** && ≥1h && 系统支持应用内评分 && 累计推送 **<3 次** && (没弹过 ‖ 距上次推送 ≥30 天) && 系统没说过"一年内已评/达上限" | **RATING** |
+   * | 累计推送已达 3 次（`RATING_MAX_SHOWS`） | 永久不再推（2026-10-28 用户拍板「累计三次」） |
    * | 系统不支持应用内评分（`canComment()` false） | 跳过 RATING（继续看 VIP）—— 弹了只会跳商店，属骚扰 |
    * | 系统说"一年内已评/达上限"（`shouldSkipPrompt()` true） | 顺手钉成永久完成，继续看 VIP |
    * | 已是 VIP | NONE（**已开通绝不推**，用户原话） |
@@ -269,7 +282,13 @@ export class ReadPromo {
 
       // ── ① 评分软引导（优先级最高，理由见文件头）────────────────────────────
       if (!ReadPromo.readBool(ReadPromo.KEY_RATING_DONE, false) && total >= ReadPromo.RATING_THRESHOLD_SEC) {
-        if (!AppGalleryUtil.canComment()) {
+        // 累计推送次数封顶（2026-10-28 用户拍板「累计三次」）：
+        //   到了 3 次就不再问，即使系统没回过"已评价"（换账号/换机等场景）。
+        const ratingCount: number = Math.floor(ReadPromo.readNumber(ReadPromo.KEY_RATING_COUNT, 0))
+        if (ratingCount >= ReadPromo.RATING_MAX_SHOWS) {
+          hilog.info(0x0000, TAG,
+            `check: rating shown ${ratingCount} times (>= ${ReadPromo.RATING_MAX_SHOWS}), stop asking`)
+        } else if (!AppGalleryUtil.canComment()) {
           // 设备/版本不支持应用内评分（`AppGalleryUtil.ets:124`：syscap + API≥20 + 总开关）
           // ⇒ 不弹。弹了只能降级去跳商店，而"自动弹窗 + 突然跳应用市场"是骚扰。
           hilog.info(0x0000, TAG, 'check: comment capability unavailable, skip rating')
@@ -327,8 +346,13 @@ export class ReadPromo {
    */
   static markRatingShown(): void {
     try {
+      // 2026-10-28 用户拍板「累计三次」⇒ 每推一次计数 +1（夹在 [0, RATING_MAX_SHOWS]）
+      const count: number = Math.floor(ReadPromo.readNumber(ReadPromo.KEY_RATING_COUNT, 0))
+      const next: number = Math.min(ReadPromo.RATING_MAX_SHOWS, count + 1)
+      ReadPromo.writeNumber(ReadPromo.KEY_RATING_COUNT, next)
       ReadPromo.writeNumber(ReadPromo.KEY_RATING_SHOWN_AT, Date.now())
       ReadPromo.writeBool(ReadPromo.KEY_RATING_DONE, false)
+      hilog.info(0x0000, TAG, `markRatingShown: count=${next}/${ReadPromo.RATING_MAX_SHOWS}`)
     } catch (e) {
       hilog.warn(0x0000, TAG, 'markRatingShown failed: ' + JSON.stringify(e))
     }
@@ -387,6 +411,7 @@ export class ReadPromo {
       PreferencesUtil.deleteSync(ReadPromo.KEY_TOTAL_SEC)
       PreferencesUtil.deleteSync(ReadPromo.KEY_RATING_SHOWN_AT)
       PreferencesUtil.deleteSync(ReadPromo.KEY_RATING_DONE)
+      PreferencesUtil.deleteSync(ReadPromo.KEY_RATING_COUNT)
       PreferencesUtil.deleteSync(ReadPromo.KEY_VIP_COUNT)
       PreferencesUtil.deleteSync(ReadPromo.KEY_VIP_LAST_AT)
       hilog.info(0x0000, TAG, 'debugReset done, all readPromo* keys removed')
