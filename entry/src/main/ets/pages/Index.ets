@@ -1329,7 +1329,18 @@ struct Main {
     }
   }
 
-  /** 软引导点「去评分」：先关窗（关闭权在宿主），再拉起系统评分 */
+  /**
+   * 软引导点「去评分」：先关窗（关闭权在宿主），再拉起系统评分。
+   *
+   * ══ 2026-10-28 用户口径修正（重要）═══════════════════════════════════════════════
+   * 用户原话：「引导评分这个，**无需知道用户是否真的评价了**…三十天的话我记得我们有
+   *   **已评分判断**，足够了，只要是判断**未评分且上次推送评分超过三十天**，则推第二次」。
+   * ⇒ 本方法**不再**写 `markRatingDone()`（旧实现点一下就永久静音，与"未评分就继续每 30 天问"冲突），
+   *   只写 `markRatingShown()`（= 本次已推送，下一次最早 30 天后）。
+   *   是否"已评分"完全交给既有判断 `AppGalleryUtil.shouldSkipPrompt()`（本地记的
+   *   `RATING_REVIEWED_AT` / `RATING_LIMIT_AT`，来源是系统错误码 1021500007/0009/0008）
+   *   —— `ReadPromo.check()` 里一旦它为真就把 `RATING_DONE` 钉成终态（见 `ReadPromo.ets:270-274`）。
+   */
   private onPromoGoRating(): void {
     const dialog: CustomDialogController | null = this.promoRatingDialog
     this.promoRatingDialog = null
@@ -1339,10 +1350,9 @@ struct Main {
     } catch (e) {
       hilog.warn(0x0000, 'ReadPromo', `close rating dialog failed: ${JSON.stringify(e)}`)
     }
-    // 先落「已完成」：系统评分弹窗可能停留很久，期间若又退一本书，
-    // 没有这一笔就会被再问一次（用户明确要求"直到评分"而不是"没完没了地问"）。
-    // 若下面结果是"没登录"，再按 `NOT_LOGGED_IN` 分支复位成"弹过了"。
-    ReadPromo.markRatingDone()
+    // 只记「推送过一次」：30 天计时从这里起算；**不**判定用户是否真的评价了。
+    ReadPromo.markRatingShown()
+    hilog.info(0x0000, 'ReadPromo', 'rating prompt confirmed, next eligible in 30d')
     this.runSystemComment().catch((e: Error): void => {
       hilog.warn(0x0000, 'ReadPromo', `runSystemComment failed: ${e.message}`)
     })
@@ -1353,6 +1363,12 @@ struct Main {
    *
    * 为什么**不能**在 0007/0009/0008 之后跳商店：用户明明已经评价过，却被丢进应用市场，
    * 是体验事故（`AppGalleryUtil.ets:48-58` 的真机修正原文）。
+   *
+   * ⚠️ 2026-10-28：本方法**不再**写 `markRatingDone()`。
+   *   · 0007/0009/0008 时 `AppGalleryUtil` 自己会写 `RATING_REVIEWED_AT`/`RATING_LIMIT_AT`
+   *     （`AppGalleryUtil.ets:210-219`），下次判定由 `shouldSkipPrompt()` 命中并钉终态
+   *     ⇒ 这里重复记一笔没有意义，反而会让"点过一次就永不再问"。
+   *   · 0006（未登录）/ 真不可用 ⇒ 30 天后照常再问（用户口径：「未评分且超过 30 天就推第二次」）。
    */
   private async runSystemComment(): Promise<void> {
     let result: CommentResult = CommentResult.UNAVAILABLE
@@ -1363,28 +1379,29 @@ struct Main {
       hilog.warn(0x0000, 'ReadPromo', `showCommentDialog threw: ${JSON.stringify(e)}`)
       return
     }
+    hilog.info(0x0000, 'ReadPromo', `system comment result=${result}`)
     if (result === CommentResult.SHOWN) {
-      // 系统弹窗已接管，什么都不做（用户后续是否真的提交由系统决定，本模块无法确知）
+      // 系统弹窗已接管；用户是否真的提交不由我们判定（用户口径：无需知道）
       return
     }
     if (result === CommentResult.ALREADY_REVIEWED_CURRENT ||
       result === CommentResult.REVIEWED_WITHIN_YEAR) {
-      // 保持 markRatingDone 的终态：系统明确说"评过"，以后不必再问
+      // 系统明确说"评过" ⇒ AppGalleryUtil 已落 `RATING_REVIEWED_AT`
+      //   ⇒ 下次 `ReadPromo.check()` 里 `shouldSkipPrompt()` 为真，自动钉终态
       this.promoToastAfterComment(300, '感谢你之前的评价')
       return
     }
     if (result === CommentResult.LIMIT_REACHED) {
+      // 达上限 ⇒ 已落 `RATING_LIMIT_AT`，同上
       this.promoToastAfterComment(300, '感谢支持')
       return
     }
     if (result === CommentResult.NOT_LOGGED_IN) {
-      // 用户**想评但没评上**（未登录华为账号）⇒ 不能算完成，否则永远不再问，
-      // 与「30 天一次，直到评分」冲突 ⇒ 复位成「弹过了」，30 天后按重试周期再来。
-      ReadPromo.markRatingShown()
+      // 用户**想评但没评上**（未登录华为账号）⇒ 不算评分，30 天后照常再来
       this.promoToastAfterComment(300, '请先登录华为账号再评价')
       return
     }
-    // UNAVAILABLE（0001/0002/0003/0005/未知）：真不可用 ⇒ 保持终态，不再骚扰
+    // UNAVAILABLE（0001/0002/0003/0005/未知）⇒ 本次没评成，30 天后照常再来
     this.promoToastAfterComment(300, '请前往应用市场评价')
   }
 

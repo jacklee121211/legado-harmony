@@ -241,13 +241,19 @@ export class ReadPromo {
    * | 条件 | 结果 |
    * |---|---|
    * | 总闸关 / 阅读器在栈顶 | NONE |
-   * | 未完成评分 && ≥1h && 系统支持应用内评分 && (没弹过 || 距上次 ≥30 天) && 系统没说过"一年内已评" | **RATING** |
+   * | **未评分** && ≥1h && 系统支持应用内评分 && (没弹过 ‖ 距上次推送 ≥30 天) && 系统没说过"一年内已评/达上限" | **RATING** |
    * | 系统不支持应用内评分（`canComment()` false） | 跳过 RATING（继续看 VIP）—— 弹了只会跳商店，属骚扰 |
    * | 系统说"一年内已评/达上限"（`shouldSkipPrompt()` true） | 顺手钉成永久完成，继续看 VIP |
    * | 已是 VIP | NONE（**已开通绝不推**，用户原话） |
    * | <10h / 已弹满 2 次 | NONE |
    * | VIP 弹过 0 次 && ≥10h | **VIP** |
    * | VIP 弹过 1 次 && 距上次 ≥90 天 && ≥10h | **VIP**（第二次，也是最后一次） |
+   *
+   * ⚠️ 2026-10-28 用户口径（评分那两行）：
+   *   「无需知道用户是否真的评价了…只要是判断**未评分**且**上次推送评分超过三十天**，则推第二次」。
+   *   ⇒ 「已评分」的唯一判据是既有 `AppGalleryUtil.shouldSkipPrompt()`（系统错误码 0007/0009/0008
+   *      落到本地 `RATING_REVIEWED_AT`/`RATING_LIMIT_AT`，`AppGalleryUtil.ets:196-219`）；
+   *      点过「去评分」**不算**评分，只把 30 天计时清零（`markRatingShown`）。
    */
   static check(ctx: common.UIAbilityContext): PromoKind {
     if (!ReadPromo.ENABLED) {
@@ -311,10 +317,13 @@ export class ReadPromo {
   // ── 记账（宿主在弹窗的每条关闭路径上调用）──────────────────────────────────
 
   /**
-   * 「这次弹过了，但没评成」⇒ 30 天后再来。
-   * 同时把完成位复位成 false —— 调用方可能是「点了去评分但华为账号没登录」
-   * （见 `Index.ets` 的 `NOT_LOGGED_IN` 分支），那种情况下用户**想评却没评上**，
-   * 记成完成位会让他永远不再被问，与「直到评分」的需求冲突。
+   * 「这次推送过了」⇒ 30 天计时从此刻起算（**不代表评没评**）。
+   *
+   * 2026-10-28 用户口径：「无需知道用户是否真的评价了…只要是判断**未评分**且
+   * **上次推送评分超过三十天**，则推第二次」。
+   * ⇒ 三条关闭路径（「以后再说」/ 点遮罩 / 点「去评分」）都只走这里，把 30 天计时清零；
+   *   「已评分」只由 `AppGalleryUtil.shouldSkipPrompt()`（系统错误码落盘）判定，
+   *   命中时 `check()` 会调 `markRatingDone()` 钉终态。
    */
   static markRatingShown(): void {
     try {
@@ -325,7 +334,11 @@ export class ReadPromo {
     }
   }
 
-  /** 「已经评过 / 不必再问」⇒ 永久静默（不再弹软引导） */
+  /**
+   * 「已经评过 / 不必再问」⇒ 永久静默（不再弹软引导）。
+   * ⚠️ 只由 `check()` 在 `AppGalleryUtil.shouldSkipPrompt()` 为真时调用（系统 0007/0009/0008
+   * 已经落盘），**不要**在"用户点了去评分"时调用（那样等于点一次就永不再问）。
+   */
   static markRatingDone(): void {
     try {
       ReadPromo.writeBool(ReadPromo.KEY_RATING_DONE, true)

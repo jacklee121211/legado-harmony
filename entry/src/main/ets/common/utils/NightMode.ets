@@ -1,5 +1,6 @@
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { PreferencesUtil } from '@pura/harmony-utils';
 import { WindowAbility } from '../../entryability/WindowAbility';
 
 /**
@@ -85,11 +86,41 @@ export class NightMode {
   /**
    * 冷启动初始化（在 `EntryAbility.onWindowStageCreate()` 的 `loadContent` **之前**调用）。
    * 这里**只建状态**，`setColorMode` 一律等页面加载后由各页面调 `sync()`。
+   *
+   * ══════════════════════════════════════════════════════════════════════════
+   * ⚠️ 2026-10-28 修「亮色/暗色选择重启后被还原成自动」（用户实测报告）
+   * ══════════════════════════════════════════════════════════════════════════
+   * 旧实现用 `PersistentStorage.persistProp<string>(MODE_KEY, AUTO)` 落盘。**它在冷启动必然失败**，
+   * 官方文档原文（documentId `FAQ/本地数据和文件/本地数据库管理/如何解决PersistentStorage在EntryAbility中获取持久化数据失败的问题/faqs-local-database-management-60`）：
+   *   「PersistentStorage 和 UI 实例相关联，持久化操作需要在 **UI 实例初始化成功后**
+   *     （即 `loadContent` 传入的**回调被调用时**）才可以被调用，**早于该时机调用会导致持久化失败**。」
+   *   问题定位段还写明：文件 `…/files/persistent_storage` 里确实有值，但在 EntryAbility 里读到的是空。
+   * 本类 `init()` 恰恰在 `loadContent` **之前**（`EntryAbility.ets:664`），也正是本文件旧注释
+   * 「必须在 loadContent 之前建好」与官方时机约束**直接冲突**的地方 —— 结论：那条取舍是错的，
+   * 结果就是**写不进、读不回**，每次冷启动都是默认"自动"。
+   *
+   * ⇒ 现在改用**显式 Preferences**（与 `FirstRunMode.ets` / `ReadPromo.ets` / `VipManager.ets`
+   *   同一个落盘通道 `PreferencesUtil.getSync/putSync`）：它不依赖 UI 实例，在 Ability 阶段
+   *   完全可用（`AppUtil.init(this.context)` 已在 `EntryAbility.onCreate:266` 完成）。
+   *   AppStorage 仍保留 `MODE_KEY` 作为**运行期广播键**（页面订阅它即时重绘），只是不再由
+   *   PersistentStorage 承担持久化。
    */
   static init(): void {
     // 三档模式要**跨启动保留**（用户选了暗色，第二天打开还该是暗色）。
-    // 旧的 'appNightMode' 布尔持久值不再读取 = 作废（规则④），默认"自动"。
-    PersistentStorage.persistProp<string>(NightMode.MODE_KEY, NightMode.MODE_AUTO);
+    // 旧键 'appNightMode' 布尔持久值不再读取 = 作废（规则④）；真值只认 Preferences 的 MODE_KEY。
+    let saved: string = NightMode.MODE_AUTO;
+    try {
+      const raw: string = PreferencesUtil.getSync(NightMode.MODE_KEY, NightMode.MODE_AUTO) as string;
+      if (raw === NightMode.MODE_LIGHT || raw === NightMode.MODE_DARK) {
+        saved = raw;
+      }
+    } catch (e) {
+      // 读盘失败 ⇒ 按"自动"跑，绝不因为存储异常把用户卡在某个配色里
+      hilog.warn(0x0000, 'testTag', 'nightMode: read persisted mode failed: %{public}s',
+        e instanceof Error ? e.message : String(e));
+    }
+    AppStorage.setOrCreate<string>(NightMode.MODE_KEY, saved);
+    hilog.info(0x0000, 'testTag', 'nightMode: init mode=%{public}s', saved);
     AppStorage.setOrCreate<number>(NightMode.SYS_KEY, ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
     AppStorage.setOrCreate<boolean>(NightMode.READER_KEY, false);
     AppStorage.setOrCreate<boolean>(NightMode.READER_NIGHT_KEY, false);
@@ -105,9 +136,26 @@ export class NightMode {
     return (m === NightMode.MODE_LIGHT || m === NightMode.MODE_DARK) ? m : NightMode.MODE_AUTO;
   }
 
-  /** 用户在三档开关上选择（「我的-主题」页调用）；ctx 用于立刻下发 */
+  /**
+   * 用户在三档开关上选择（「我的-主题」页调用）；ctx 用于立刻下发。
+   *
+   * ⚠️ 落盘顺序：**先写 Preferences，再写 AppStorage、最后 sync**。
+   *  · 先落盘：`sync()` 内部会 `ctx.setColorMode()`，该调用在真机上**同步重入**
+   *    `onConfigurationUpdate`（见本文件 `sync()` 的重入防线注释）⇒ 那期间若进程被回收，
+   *    内存态与磁盘态必须已经一致，否则下次冷启动又是旧值；
+   *  · 写失败只记日志，不影响本次会话的即时生效（本次已经按 mode 渲染了）。
+   */
   static setMode(mode: string, ctx: common.UIAbilityContext | undefined): void {
-    AppStorage.setOrCreate<string>(NightMode.MODE_KEY, mode);
+    const next: string = (mode === NightMode.MODE_LIGHT || mode === NightMode.MODE_DARK)
+      ? mode : NightMode.MODE_AUTO;
+    try {
+      PreferencesUtil.putSync(NightMode.MODE_KEY, next);
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'nightMode: persist mode(%{public}s) failed: %{public}s',
+        next, e instanceof Error ? e.message : String(e));
+    }
+    AppStorage.setOrCreate<string>(NightMode.MODE_KEY, next);
+    hilog.info(0x0000, 'testTag', 'nightMode: setMode=%{public}s (persisted)', next);
     NightMode.sync(ctx);
   }
 

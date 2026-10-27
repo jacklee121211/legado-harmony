@@ -944,11 +944,20 @@ export default struct MySetPage{
           ListItem() {
             Column({ space: 10 }) {
               Row({ space: 12 }) {
+                // ── 三胶囊等宽规则（2026-10-28 用户第二次要求）──────────────────────────
+                // 用户原话：「vip，q群，登录三个胶囊宽度要统一，居中对齐，加入QQ群变成加入Q群这样协调一点」。
+                // 做法：行内三枚胶囊各 `.layoutWeight(1)`（父 Row 主轴剩余空间**三等分**）
+                //   ⇒ 宽度恒等且随屏幕自适应（不必写死 vp，也不会在窄屏挤出右边缘）；
+                //   每枚内部 `justifyContent(FlexAlign.Center)` ⇒ 图标+文字在胶囊内居中。
+                // 横向 padding 从 20 收到 8：等宽后宽度由父容器分配，胶囊自己再加 20 会把
+                //   内容区压到 61vp（391vp 屏）/ 约 55vp（360vp 屏），"开通VIP"这类 4 字标签会被挤。
+                // 文案统一 13 号（`FontConstants.VALUE`）+ 600：旧「登录」是 14 号（`ITEM`），
+                //   三枚并排时字号不一致会显得"高矮不齐"。
+                // 行左右各留 16：等宽铺满后不留白会贴到屏幕边（与下面各卡片 20 的留白也不协调）。
+                //
                 // ── 开通VIP（2026-10-28 新增，用户要求放在「加入QQ群」**左侧**）────────
-                // 用户原话：「在设置页，加入qq群左侧增设开通vip按钮，图标找一个皇冠的图标，
-                //   未开通的时候显示空心皇冠和开通VIP字样，开通后实心皇冠+VIP字样，
-                //   然后皇冠用symbol图标哦。按钮风格和加入qq群按钮对齐」
-                // 行内顺序：VIP ｜ 加入QQ群 ｜ 登录（整行仍 `justifyContent(FlexAlign.Center)`、space 12）。
+                // 未开通 = 空心皇冠 `sys.symbol.crown` +「开通VIP」；已开通 = 实心皇冠
+                // `sys.symbol.crown_fill` +「VIP」（用户原话见任务记录）。
                 //
                 // ⚠️ 皇冠符号**已取证存在**（不是猜的、也不是照抄技能快照）：
                 //   SDK 真源 `…\ets\build-tools\ets-loader\sysResource.js`（317 KB 全表，symbol 段）
@@ -956,13 +965,13 @@ export default struct MySetPage{
                 //     :7346  `crown_fill: 125836672` ⇒ `$r('sys.symbol.crown_fill')` 实心皇冠
                 //   ⚠️ 不要拿 `sdk\default\hms\ets\sysResource.js`（只有 11 KB，是索引不是全表）核对。
                 //
-                // ── 视觉**逐字对齐**紧邻的「加入QQ群」胶囊（本文件 :994-1019）─────────────
+                // ── 视觉与「加入Q群」胶囊同一套 ────────────────────────────────────────
                 //   Row space 6 / 图标 18×18 / 文字 `FontConstants.VALUE`(13) + `W_TITLE` /
-                //   padding 20,20,12,12 / borderRadius 22 / backgroundColor `card_bg` /
+                //   padding 8,8,12,12 / borderRadius 22 / backgroundColor `card_bg` /
                 //   shadow radius12 offsetY4 / clickEffect(UiMotion.CLICK) /
                 //   点击 = `Haptics.tap()` + `runJellyClick(vipScale)`。
                 //   唯一差异是**图标载体**：QQ 只能用 `app.media.QQ_blue`（系统符号表里没有企鹅，
-                //   取证见 :995-999），皇冠按用户明确要求走 `SymbolGlyph`。
+                //   取证见 :1009 附近），皇冠按用户明确要求走 `SymbolGlyph`。
                 //
                 // ── 颜色：皇冠与文字都走 `app.color.text_primary` ─────────────────────
                 //   base `#191919` / dark `#F2F3F5`（`resources/base|dark/element/color.json` 的
@@ -982,8 +991,11 @@ export default struct MySetPage{
                     .fontSize(FontConstants.VALUE)
                     .fontWeight(FontConstants.W_TITLE)
                     .fontColor($r('app.color.text_primary'))
+                    .maxLines(1)
                 }
-                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                .layoutWeight(1)
+                .justifyContent(FlexAlign.Center)
+                .padding({ left: 8, right: 8, top: 12, bottom: 12 })
                 .borderRadius(22)
                 .backgroundColor($r('app.color.card_bg'))
                 .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
@@ -1005,7 +1017,8 @@ export default struct MySetPage{
                   }
                 })
 
-                // ── 加入QQ群 ──────────────────────────────────────────────────
+                // ── 加入Q群 ────────────────────────────────────────────────────
+                // 2026-10-28 用户口径：文案由「加入QQ群」改为「加入Q群」（三枚胶囊等宽后更协调）。
                 // ⚠️ 图标用 `app.media.QQ_blue`（真企鹅 SVG，24×24，fill #188BFF）而不是
                 //    `sys.symbol.*`：**系统符号表里没有 QQ/企鹅**（实测 sysResource.js 的
                 //    `symbol` 段共 4043 个符号名，按 `qq|penguin|tencent` 检索 0 命中；
@@ -1016,12 +1029,15 @@ export default struct MySetPage{
                     .width(18)
                     .height(18)
                     .scale({ x: this.qqScale, y: this.qqScale })
-                  Text('加入QQ群')
+                  Text('加入Q群')
                     .fontSize(FontConstants.VALUE)
                     .fontWeight(FontConstants.W_TITLE)
                     .fontColor($r('app.color.text_primary'))
+                    .maxLines(1)
                 }
-                .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                .layoutWeight(1)
+                .justifyContent(FlexAlign.Center)
+                .padding({ left: 8, right: 8, top: 12, bottom: 12 })
                 .borderRadius(22)
                 .backgroundColor($r('app.color.card_bg'))
                 .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
@@ -1039,11 +1055,14 @@ export default struct MySetPage{
                       .fontSize(18)
                       .fontColor([this.theme.mainColor])
                     Text('登录')
-                      .fontSize(FontConstants.ITEM)
+                      .fontSize(FontConstants.VALUE)
                       .fontWeight(FontConstants.W_TITLE)
                       .fontColor($r('app.color.text_primary'))
+                      .maxLines(1)
                   }
-                  .padding({ left: 28, right: 28, top: 12, bottom: 12 })
+                  .layoutWeight(1)
+                  .justifyContent(FlexAlign.Center)
+                  .padding({ left: 8, right: 8, top: 12, bottom: 12 })
                   .borderRadius(22)
                   .backgroundColor($r('app.color.card_bg'))
                   .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.06)', offsetX: 0, offsetY: 4 })
@@ -1055,7 +1074,7 @@ export default struct MySetPage{
                 }
               }
               .width('100%')
-              .justifyContent(FlexAlign.Center)
+              .padding({ left: 16, right: 16 })
 
               // ── QQ群号（2026-10-21 用户要求）────────────────────────────────
               // 兜底：跳转失败（没装 QQ / 无网 / 链接过期）时，用户至少能手动搜索加群。

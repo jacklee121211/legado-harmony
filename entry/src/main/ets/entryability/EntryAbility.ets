@@ -657,10 +657,17 @@ export default class EntryAbility extends UIAbility {
 
     // ── App 级夜间模式开关：**必须在 loadContent 之前**建好 ────────────────────
     // 为什么不能放进下面的 loadContent 回调：`pages/Index` 的 `@StorageLink(NightMode.KEY)`
-    // 会在首帧就**创建**这个 AppStorage 键（默认 false），而
-    // `PersistentStorage.persistProp(key, default)` 的语义是「AppStorage 已有该键 ⇒
-    // 以 AppStorage 为准」⇒ 持久化的 `true` 会被那个默认 false 顶掉，夜间开关重启即失效。
-    // 放在这里（页面一个都还没建）才能让持久化值先落地。
+    // 会在首帧就**创建**这个 AppStorage 键（默认 false）⇒ 页面先按"非深色"渲染一帧。
+    // 放在这里（页面一个都还没建）才能让**持久化的模式**先落地。
+    //
+    // ⚠️ 2026-10-28 修正：旧实现这里用 `PersistentStorage.persistProp` 落盘，而官方文档
+    // （documentId `FAQ/本地数据和文件/本地数据库管理/如何解决PersistentStorage在EntryAbility中获取持久化数据失败的问题/faqs-local-database-management-60`）
+    // 原文：「PersistentStorage 和 UI 实例相关联，持久化操作需要在 **UI 实例初始化成功后**
+    //        （即 `loadContent` 传入的回调被调用时）才可以被调用，**早于该时机调用会导致持久化失败**。」
+    // ⇒ "在 loadContent 之前"与"用 PersistentStorage 落盘"**互相冲突**，用户实测就是
+    //   「选亮色/暗色，重启都回到自动」。
+    // ⇒ 现在 `NightMode.init()` 只从 **Preferences**（不依赖 UI 实例）读回模式并写 AppStorage，
+    //   落盘在 `NightMode.setMode()` 里显式 `putSync`（见 `NightMode.ets` 的类注释与证据）。
     NightMode.init()
     // 把系统当前的深浅色喂给 NightMode（"自动"档的初始真相）——
     // 若等 onConfigurationUpdate 才知道，冷启动在系统暗色下会先亮一帧再翻深。
