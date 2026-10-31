@@ -5517,7 +5517,28 @@ oAnimInitNode 配套） */
    *   ② 声明"阅读器在栈顶"。真正下发什么配色由 `NightMode.desiredDark()` 统一算。
    */
 
+  /**
+   * 亮暗色取证（2026-11-01）：把"阅读器日/夜间 vs 系统深浅色 vs 材质实际生效色"打出来。
+   * 用于定位「系统深色 + 阅读页亮色 ⇒ 进度条/设置弹窗黑底黑字」这个偶发 bug。
+   */
+  private logThemeProbe(when: string): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const sysDark: boolean = ctx.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      const readerDark: boolean = this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      const storageDark: boolean = (AppStorage.get<boolean>(NightMode.KEY) ?? false) as boolean;
+      hilog.info(0x0000, 'testTag',
+        'THEMEPROBE[%{public}s] readerDark=%{public}s sysDark=%{public}s appStorageDark=%{public}s desiredDark=%{public}s isDarkSurface=%{public}s readerActive=%{public}s readerNight=%{public}s',
+        when, readerDark ? 'Y' : 'N', sysDark ? 'Y' : 'N', storageDark ? 'Y' : 'N',
+        NightMode.desiredDark() ? 'Y' : 'N', NightMode.isDarkSurface() ? 'Y' : 'N',
+        (AppStorage.get<boolean>('readerActive') ?? false) ? 'Y' : 'N',
+        (AppStorage.get<boolean>('readerNight') ?? false) ? 'Y' : 'N');
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'THEMEPROBE failed');
+    }
+  }
   private syncAbilityColorMode(): void {
+    this.logThemeProbe('before-sync');
     // 亮暗色重构（2026-09-23）：阅读器日/夜间**只**声明到 NightMode 的阅读器分支，
     // 不再写 App 级夜间开关（旧的 `NightMode.set()` 已删除）——书架跟不跟，由三档裁决。
     NightMode.setReaderNight(this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
@@ -5525,6 +5546,7 @@ oAnimInitNode 配套） */
     // 显示系统状态栏时（2026-10-19）：状态栏图标色必须跟着阅读器日/夜间走，
     // 否则「浅色纸 + 白色图标」会看不见。`NightMode.sync()` 只管内容色，
     // 状态栏底色（透明）由这里一并复设，避免只改一半。
+    this.logThemeProbe('after-sync');
     if (this.readerStatusBarOn) {
       WindowAbility.getInstance().setStatusBarTransparent(
         this.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
@@ -10694,6 +10716,7 @@ oAnimInitNode 配套） */
       this.applyReaderSystemBar()
     } else {
       this.isShowContentSetting = true
+      this.logThemeProbe('open-setting');
       this.settingDialog?.open()
     }
   }
@@ -11514,7 +11537,7 @@ oAnimInitNode 配套） */
    * ⚠️ 字重改变字形宽度 ⇒ 自绘重排后每行字数可能变；
    *    若发现与引擎错字加剧，把这个值调回 0。
    */
-  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 200;
+  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 300;
 
   /** 自绘层实际使用的字重（设置值 + 补偿，夹在 100~900） */
   private selfDrawnFontWeight(): number {
