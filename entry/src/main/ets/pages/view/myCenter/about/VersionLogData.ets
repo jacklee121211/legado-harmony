@@ -19,9 +19,10 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 自绘档字重向阅读引擎对齐',
+    version: 'V3.0.11 自绘字重再补一档',
     date: '2026-11-01',
     items: [
+      '上下滚动与无动画的字重再加重一档，进一步贴近仿真/横滑的观感',
       '上下滚动与无动画的字重加粗一档，减少与仿真/横滑的粗细差异',
       '该调整只作用于自绘两档，仿真/横滑不受影响',
       '修复上下滚动与无动画在宽折叠、平板上首行偏低约 20vp 的问题',
