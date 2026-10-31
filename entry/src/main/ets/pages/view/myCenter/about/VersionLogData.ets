@@ -19,9 +19,10 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 自绘档字重下调一档',
+    version: 'V3.0.11 自绘档字重改为 450',
     date: '2026-11-01',
     items: [
+      '上下滚动与无动画的字重再减轻一档',
       '上下滚动与无动画的字重减轻，与系统字体观感更接近',
       '四档阅读方式的底部图标行外观统一，不再依赖玻璃材质',
       '仿真/横滑档底部不再缺失底板',

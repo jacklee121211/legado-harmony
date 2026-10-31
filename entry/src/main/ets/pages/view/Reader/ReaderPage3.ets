@@ -11567,7 +11567,7 @@ oAnimInitNode 配套） */
    * ⚠️ 字重改变字形宽度 ⇒ 自绘重排后每行字数可能变；
    *    若发现与引擎错字加剧，把这个值调回 0。
    */
-  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 150;
+  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 50;
 
   /** 自绘层实际使用的字重（设置值 + 补偿，夹在 100~900） */
   private selfDrawnFontWeight(): number {
