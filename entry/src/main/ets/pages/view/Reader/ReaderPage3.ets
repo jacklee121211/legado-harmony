@@ -1515,6 +1515,7 @@ oAnimInitNode 配套） */
       // 外屏：强制不显示系统状态栏（与 aboutToAppear 读取处的短路同源）
       this.readerStatusBarOn = false;
       this.applyReaderSystemBar();
+    this.armDockReady();
       // 收起可能残留的听书面板
       if (this.isShowListen) {
         this.isShowListen = false;
@@ -1530,6 +1531,7 @@ oAnimInitNode 配套） */
       this.readerStatusBarOn =
         PreferencesUtil.getSync(MySetConstants.SET_READER_STATUS_BAR, false) as boolean;
       this.applyReaderSystemBar();
+    this.armDockReady();
     }
   }
 
@@ -1562,6 +1564,8 @@ oAnimInitNode 配套） */
   /** 信息窗「全书页码」（2026-10-31，纯估算方案 A）：`当前页 / 全书页数` */
   @State infoWinPageNoShow: boolean = true
   /** 信息窗位置（2026-10-31 用户拍板）：0 = 顶部（默认）/ 1 = 底部 */
+  /** ★ 2026-11-01：dock 延迟创建闸门（材质面就绪后再建 Tabs，四档统一出 HDS 胶囊） */
+  @State dockReady: boolean = false
   @State infoWinPos: number = 0
   /** 信息窗与正文间距（vp，0–40，默认 15；顶部/底部共用） */
   @State infoWinGapVp: number = -4
@@ -4650,6 +4654,7 @@ oAnimInitNode 配套） */
       //    `onOuterMinimalChanged()` 要用**同一套**动作把状态栏关掉，
       //    两处必须同源，否则会出现"折叠后状态栏颜色/显隐与进场时不同"。
       this.applyReaderSystemBar();
+    this.armDockReady();
       this.syncAbilityColorMode();
     }, UiMotion.LT_ENTER_DUR + 60);
   }
@@ -8990,7 +8995,7 @@ oAnimInitNode 配套） */
       }
 
       Column() {
-        if (this.isShowSetting) { // 阅读器-上方弹框
+        if (this.isShowSetting && this.dockReady) { // 阅读器-上方弹框
           // ── 顶部栏（2026-10-24 PuraX 外屏：**整条取消**）────────────────────
           // 用户原话（逐条对应）：「顶部栏模块」取消。
           // 为什么外屏可以不要它：
@@ -10957,6 +10962,7 @@ oAnimInitNode 配套） */
     //   `applyReaderSystemBar()` 是幂等的（只发 `setWindowSystemBarEnable`，
     //   不碰避让冻结与 Ability 配色），重复调用无副作用。
     this.applyReaderSystemBar();
+    this.armDockReady();
 
     const prevSelf: boolean = prev === READ_MODE_SCROLL || prev === READ_MODE_NONE;
     const nextSelf: boolean = next === READ_MODE_SCROLL || next === READ_MODE_NONE;
@@ -11094,6 +11100,25 @@ oAnimInitNode 配套） */
   }
 
   /** 自绘层首屏已上屏 ⇒ 撤掉「正在排版…」占位（滚动 / 无动画共用） */
+  /**
+   * dock **延迟创建**闸门（2026-11-01）。
+   *
+   * 取证：DOCKGLASS apply 在四档都成功、参数一致（arBottomMargin=42.94 / barSideMargin=16），
+   * 但只有「上下」档能看到胶囊 ⇒ 不是样式没挂，而是**材质面（material surface）还没建立**
+   * 时 bar 就被组合了。上下档进页时滚动层初始化慢、dock 建得晚，正好躲过这个时机。
+   *
+   * ⇒ 统一推迟：先把 dock 拆掉（dockReady=false），下次布局后再建（dockReady=true），
+   *   让 Tabs 在材质面就绪后创建，四档都按同一条时序走。
+   * 代价：dock 展开状态下切档，会有约 160ms 的重建间隙（闪烁一次）。
+   */
+  private armDockReady(): void {
+    this.dockReady = false;
+    setTimeout(() => {
+      if (!this.disposed) {
+        this.dockReady = true;
+      }
+    }, 160);
+  }
   private onSelfDrawnReady(): void {
     if (!this.firstPageReady) {
       this.firstPageReady = true;
