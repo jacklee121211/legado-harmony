@@ -10,6 +10,9 @@ import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { ClickUtil, PreferencesUtil } from '@pura/harmony-utils';
 import { Books } from '../../../database/entities/Books';
 import { WindowAbility } from '../../../entryability/WindowAbility';
+import { HdsTabs, HdsTabsAttribute, HdsTabsController, HdsTabsFloatingStyle, hdsMaterial } from '@kit.UIDesignKit';
+import HdsCompat, { HdsFloatingStyleModifier } from '../../../common/utils/HdsCompat';
+
 import { SleepTimerDialog } from './SleepTimerDialog'
 // 目录 / 书签弹窗（2026-09-23 从 `bindSheet` 迁出成 @CustomDialog，理由见该文件头注释）
 import { ReaderCatalogDialog } from './ReaderCatalogDialog'
@@ -6020,6 +6023,8 @@ oAnimInitNode 配套） */
    * （见 `WindowAbility.offWindowSizeChange()` 的注释：不注销会导致陈旧回调堆积）。
    */
   private windowSizeCb: (() => void) | null = null;
+  /** 阅读器底部 dock 的 HDS 控制器（2026-11-01 换 HdsTabs 后需要） */
+  private dockHdsController: HdsTabsController = new HdsTabsController();
   /**
    * 系统避让区变化回调（2026-11-01 新增，对齐官方最佳实践
    * `最佳实践/多设备功能开发/多设备适配屏幕差异/bpta-multi-device-screen-diff`）。
@@ -9411,63 +9416,7 @@ oAnimInitNode 配套） */
           //      两套编号现在数值相同，但语义仍不同 —— 别合并成一个参数。
           //   ⚠️ 动作由每个图标自己的 `onClick` 派发，**不要**改回 `Tabs.onTabBarClick()`
           //      （真机实测：一次点击派发多次且第一个 index 恒为 0 ⇒ 点听书/设置都弹目录）。
-          Tabs({ barPosition: BarPosition.End }) {
-            // ── 页签序列由数组驱动（2026-10-24 PuraX 外屏）────────────────────
-            // 正常：0=目录 1=书签 2=听书 3=日夜 4=设置（5 格，与改动前完全一致）
-            // 外屏：0=目录 1=书签 3=日夜（3 格；去掉听书与设置）
-            // ★ 关键：`action` 保持**原 id**，只让 `pos`（页签位置）重新从 0 排
-            //   ⇒ `dispatchBarAction(action)` 与 `readerBarLabel(action)` **一行都不用改**，
-            //     也绕开了工程历史上的坑（"按下标分发导致点听书弹目录"）。
-            //   `barScale` 数组长度仍是 5，外屏只用 pos 0..2，无需调整。
-            // ⚠️ 为什么用 `ForEach` 而不是 `if` 包 `TabContent`：
-            //   ① 折叠时 TabContent 数量会变，数组驱动不会让 Tabs 的页签缓存/索引错位；
-            //   ② 这个写法在 `pages/Index.ets` 的 `HdsTabs` 上已真机验证
-            //      （`ForEach(this.nav, (item: NavItem) => { TabContent(){…}.tabBar(…) })`）。
-            ForEach(this.barActions(), (a: number, i: number) => {
-              TabContent() {
-                Column()
-              }.tabBar(this.ReaderBarItem(a, i))
-            }, (a: number) => `readerbar-${a}`)
-          }
-          // ⚠️ 这里**故意不挂 `.onTabBarClick()`** —— 动作由每个图标自己的 `onClick` 派发
-          //   （见 `ReaderBarItem()`）：真机实测一次点击 `onTabBarClick` 会派发多次、
-          //   且**第一个 index 恒为 0** ⇒ 点"听书/设置"弹出来的都是目录。
-          .scrollable(false)
-          .edgeEffect(EdgeEffect.None)
-          .barHeight(READER_BAR_HEIGHT)
-          // 沉浸光感三条件：barPosition = End（构造参数）✓ / barOverlap(true) ✓ / vertical 默认 false ✓
-          .barOverlap(ImmersiveMaterialUtil.floatingTabBarAvailable())
-          // 悬浮几何（左右 + 底部留白）由 `FloatingTabBarStyle` 给：
-          //   · `barSideMargin`（util 里是 16，原自绘胶囊是 margin 12）
-          //   · `barBottomMargin` = 系统底部安全区 + `READER_BAR_BOTTOM_GAP`（原自绘胶囊 margin.bottom = 10）
-          // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.barFloatingStyle(...)`**。
-          //   原生 `Tabs` 的这个属性是 **API 26.0.0** 才有（SDK
-          //   `…\openharmony\ets\component\tabs.d.ts:1683` `@since 26.0.0`，
-          //   配套接口 `FloatingTabBarStyle` 同文件 `:824` 也是 26.0.0），
-          //   声明式语法会编译成裸调用 `Tabs.barFloatingStyle(...)`
-          //   ⇒ 鸿蒙6 上 `undefined is not callable` ⇒ **点进阅读页即闪退**
-          //   （真机日志 `docs/日志.md:4148-4149 / 4174-4176`，栈顶正是本行 7649:12）。
-          //   ⇒ 改走 `AttributeModifier` 回调通道；API<26 自动挂空实现（退回贴底实心条）。
-          .attributeModifier(ImmersiveMaterialUtil.tabsFloatingModifier(this.bottomRectHeight + READER_BAR_BOTTOM_GAP))
-          // ⚠️⚠️ 2026-10-24 修「平板上下滚动模式 dock 无底板、正文穿到图标下」⚠️⚠️
-          //
-          // 根因（用户截图 + 代码定案）：
-          //   · 悬浮胶囊来自 `tabsFloatingModifier()`，但它要求 **API≥26 且沉浸光感可用**；
-          //     平板是鸿蒙6（API 20）⇒ 返回**空实现** ⇒ dock **完全没有背景**。
-          //   · 分页模式下引擎视口不含 dock 区 ⇒ 背后是页面底色 ⇒ 看不出问题；
-          //   · **上下滚动模式**正文一路滚到窗口底 ⇒ 文字直接穿到图标下面 ⇒
-          //     看起来像"dock 一半透明"。
-          // 修法：悬浮不可用时给 dock 铺**页面底色**当实心底板（原注释里说的"贴底实心条"，
-          //   之前一直没实现）。悬浮可用时保持 `Color.Transparent`，**手机完全不受影响**
-          //   （手机走悬浮胶囊分支，透明 = 与改动前一致）。
-          .backgroundColor(ImmersiveMaterialUtil.floatingTabBarAvailable()
-            ? Color.Transparent
-            : this.readerSetting.themeColor)
-          .width('100%')
-          // 容器高度 = 条高 + 底部留白 + 安全区：悬浮条被 `barBottomMargin` 顶起来，容器必须给够高度
-          .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
-          // 与上面那条"设置胶囊"同款入场动效（整条菜单一起从底部滑入，弹簧令牌统一）
-          .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
+          this.readerDockBar()
         }
       }.width("100%").height("100%").enabled(this.isShowSetting).padding({
         // ⚠️ 2026-10-19：改用 `readerTopInset()` —— 显示系统状态栏时状态栏是可见的，
@@ -11094,6 +11043,83 @@ oAnimInitNode 配套） */
   }
 
   /** 自绘层首屏已上屏 ⇒ 撤掉「正在排版…」占位（滚动 / 无动画共用） */
+  /**
+   * 阅读器底部 dock（2026-11-01 换 HDS）。
+   *
+   * 依据（官方文档原文）：
+   *  · 开发指南/UI_Design_Kit_UI设计套件/沉浸光感/ui-design-hds-component-material：
+   *    「**HDS 底部页签**：通过设置 HdsTabsFloatingStyle 的 systemMaterialEffect 参数，
+   *      可为底部页签设置沉浸光感视效。」
+   *  · …/组件适配沉浸光感/arkts-immersive-light-sense-component-adaptation：
+   *    「悬浮样式仅在 barOverlap 为 true、vertical 为 false、barPosition 为 BarPosition.End
+   *      时生效」——本实现三项全满足。
+   *  · 原生 Tabs 的悬浮材质**只在有滚动内容时才渲染**（实测：只有上下档出胶囊）
+   *    ⇒ 换 HDS 的底部页签组件，四档统一。
+   *
+   * 一键回退：HdsCompat.supportsFloatingBar() 返回 false（API<23）即走 else 分支的
+   * 旧原生 Tabs（与改造前完全一致）。
+   */
+  @Builder
+  readerDockBar() {
+    if (HdsCompat.supportsFloatingBar()) {
+      HdsTabs({ barPosition: BarPosition.End, controller: this.dockHdsController }) {
+        ForEach(this.barActions(), (a: number, i: number) => {
+          TabContent() {
+            Column()
+          }.tabBar(this.ReaderBarItem(a, i))
+        }, (a: number) => 
+'readerbar-hds-' + a)
+      }
+      .scrollable(false)
+      // HdsTabsAttribute 没有 edgeEffect（SDK 声明），HDS 分支不设该属性
+      .barHeight(READER_BAR_HEIGHT)
+      .barOverlap(true)
+      .attributeModifier(this.dockHdsStyleModifier())
+      .backgroundColor(Color.Transparent)
+      .width('100%')
+      .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
+      .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
+    } else {
+      Tabs({ barPosition: BarPosition.End }) {
+        ForEach(this.barActions(), (a: number, i: number) => {
+          TabContent() {
+            Column()
+          }.tabBar(this.ReaderBarItem(a, i))
+        }, (a: number) => 
+'readerbar-' + a)
+      }
+      .scrollable(false)
+      .edgeEffect(EdgeEffect.None)
+      .barHeight(READER_BAR_HEIGHT)
+      .barOverlap(ImmersiveMaterialUtil.floatingTabBarAvailable())
+      .attributeModifier(ImmersiveMaterialUtil.tabsFloatingModifier(
+        this.bottomRectHeight + READER_BAR_BOTTOM_GAP))
+      .backgroundColor(ImmersiveMaterialUtil.floatingTabBarAvailable()
+        ? Color.Transparent
+        : this.readerSetting.themeColor)
+      .width('100%')
+      .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
+      .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
+    }
+  }
+
+  /** dock 的 HDS 悬浮样式（含沉浸光感材质）；低版本/材质关闭时挂空实现 */
+  private dockHdsStyleModifier(): AttributeModifier<HdsTabsAttribute> {
+    if (!HdsCompat.supportsFloatingBar()) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    const st: HdsTabsFloatingStyle = {
+      barSideMargin: 16,
+      barBottomMargin: this.bottomRectHeight + READER_BAR_BOTTOM_GAP
+    };
+    if (ImmersiveMaterialUtil.isOn()) {
+      st.systemMaterialEffect = {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      };
+    }
+    return new HdsFloatingStyleModifier(st);
+  }
   private onSelfDrawnReady(): void {
     if (!this.firstPageReady) {
       this.firstPageReady = true;

@@ -19,9 +19,11 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 底部 dock 延迟创建，四档统一显示材质胶囊"',
+    version: 'V3.0.11 阅读器底部 dock 改用 HDS 底部页签',
     date: '2026-11-01',
     items: [
+      '四档阅读方式的底部图标行统一使用 HDS 页签与沉浸光感胶囊',
+      '低版本设备自动退回原样式，不影响使用',
       'This reverts commit dd8cee312682dfba6361e3616af3bb450afd980c.',
       '进阅读器与切换阅读方式后，底部图标行改为稍后再创建，四档都能正常显示胶囊底板',
       '修复无动画/仿真/横滑档底部胶囊不显示、正文压到图标后',
