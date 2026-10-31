@@ -19,9 +19,10 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 底部 dock 延迟创建，四档统一显示材质胶囊',
+    version: 'V3.0.11 底部 dock 延迟创建，四档统一显示材质胶囊"',
     date: '2026-11-01',
     items: [
+      'This reverts commit dd8cee312682dfba6361e3616af3bb450afd980c.',
       '进阅读器与切换阅读方式后，底部图标行改为稍后再创建，四档都能正常显示胶囊底板',
       '修复无动画/仿真/横滑档底部胶囊不显示、正文压到图标后',
       '新增 dock 悬浮样式下发日志，用于定位四档胶囊显示差异',
