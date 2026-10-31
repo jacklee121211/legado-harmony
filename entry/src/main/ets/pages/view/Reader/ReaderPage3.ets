@@ -11466,7 +11466,7 @@ oAnimInitNode 配套） */
    * 只作用顶部态：顶 inset −N、底 inset +N ⇒ **高度仍是 685vp 不变**，只是整块往上挪。
    * 底部信息窗那态不受影响（仍 698vp）。
    */
-  private readonly SELF_DRAWN_TOP_MODE_UP_VP: number = 22;
+  private readonly SELF_DRAWN_TOP_MODE_UP_VP: number = 20;
 
   /** 自绘矩形底 inset 的"基础留白"（含位置差异）：顶部态 +13vp，底部态不变。 */
   private selfDrawnBottomPadVp(): number {
