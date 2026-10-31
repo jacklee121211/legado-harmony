@@ -9418,7 +9418,11 @@ oAnimInitNode 配套） */
           //      （真机实测：一次点击派发多次且第一个 index 恒为 0 ⇒ 点听书/设置都弹目录）。
           this.readerDockBar()
         }
-      }.width("100%").height("100%").enabled(this.isShowSetting).padding({
+      }.width("100%").height("100%").enabled(this.isShowSetting)
+      // ★ 2026-11-01 层级实验：把整块菜单/dock 提到 ReaderKit 的 XComponent 之上，
+      //   避免 surface 与材质/底板重叠（官方材质采不到 surface 内容）。
+      .zIndex(9)
+      .padding({
         // ⚠️ 2026-10-19：改用 `readerTopInset()` —— 显示系统状态栏时状态栏是可见的，
         //    沉浸期 `topRectHeight` 被冻结成 0，顶部菜单会压到状态栏下面。
         top: this.readerTopInset(),
