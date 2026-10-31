@@ -228,6 +228,14 @@ export default class ImmersiveMaterialUtil {
   }
 
   /** 空 modifier 单例（懒建，避免静态初始化期引用后置类） */
+  /**
+   * 强制使用**空** Tabs modifier（2026-11-01）。
+   * 用途：调用方要自己画底板时，必须把 HDS 悬浮胶囊彻底摘掉，否则会出现
+   * "官方胶囊 + 自绘底板"双层描边，四档观感又不一致。
+   */
+  static tabsDisabledModifier(): AttributeModifier<TabsAttribute> {
+    return ImmersiveMaterialUtil.noopTabsModifier();
+  }
   private static noopTabsModifier(): AttributeModifier<TabsAttribute> {
     if (ImmersiveMaterialUtil.noopTabs === null) {
       ImmersiveMaterialUtil.noopTabs = new NoopTabsModifier();

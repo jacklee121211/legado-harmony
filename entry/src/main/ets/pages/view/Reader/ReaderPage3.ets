@@ -9448,7 +9448,9 @@ oAnimInitNode 配套） */
           //   ⇒ 鸿蒙6 上 `undefined is not callable` ⇒ **点进阅读页即闪退**
           //   （真机日志 `docs/日志.md:4148-4149 / 4174-4176`，栈顶正是本行 7649:12）。
           //   ⇒ 改走 `AttributeModifier` 回调通道；API<26 自动挂空实现（退回贴底实心条）。
-          .attributeModifier(ImmersiveMaterialUtil.tabsFloatingModifier(this.bottomRectHeight + READER_BAR_BOTTOM_GAP))
+          .attributeModifier(this.readerDockOwnGlass()
+            ? ImmersiveMaterialUtil.tabsDisabledModifier()
+            : ImmersiveMaterialUtil.tabsFloatingModifier(this.bottomRectHeight + READER_BAR_BOTTOM_GAP))
           // ⚠️⚠️ 2026-10-24 修「平板上下滚动模式 dock 无底板、正文穿到图标下」⚠️⚠️
           //
           // 根因（用户截图 + 代码定案）：
