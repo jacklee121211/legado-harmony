@@ -9460,9 +9460,19 @@ oAnimInitNode 配套） */
           // 修法：悬浮不可用时给 dock 铺**页面底色**当实心底板（原注释里说的"贴底实心条"，
           //   之前一直没实现）。悬浮可用时保持 `Color.Transparent`，**手机完全不受影响**
           //   （手机走悬浮胶囊分支，透明 = 与改动前一致）。
-          .backgroundColor(ImmersiveMaterialUtil.floatingTabBarAvailable()
-            ? Color.Transparent
-            : this.readerSetting.themeColor)
+          // ★ 2026-11-01 修「无动画档 dock 没有玻璃、文字压到图标后面」：
+          //   实测（full dump + 你的复现）：HDS 悬浮胶囊只在**上下档**生效，
+          //   无动画档 Tabs 树里存在但 arFloatingStyle 没落到 bar 上（#63 Tabs b=0,1858）。
+          //   ⇒ 不再指望 HDS 材质：无动画档**自己画**一层半透明+模糊的底板，
+          //     与上下档观感对齐；上下档仍走 HDS 胶囊（保持不变）。
+          .backgroundColor(this.readerDockOwnGlass()
+            ? '#E6FFFFFF'
+            : (ImmersiveMaterialUtil.floatingTabBarAvailable()
+              ? Color.Transparent
+              : this.readerSetting.themeColor))
+          .backgroundBlurStyle(this.readerDockOwnGlass() ? BlurStyle.Thin : BlurStyle.NONE)
+          .borderRadius(READER_BAR_HEIGHT / 2)
+          .clip(true)
           .width('100%')
           // 容器高度 = 条高 + 底部留白 + 安全区：悬浮条被 `barBottomMargin` 顶起来，容器必须给够高度
           .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
@@ -11094,6 +11104,10 @@ oAnimInitNode 配套） */
   }
 
   /** 自绘层首屏已上屏 ⇒ 撤掉「正在排版…」占位（滚动 / 无动画共用） */
+  /** 无动画档的 dock 是否要自绘玻璃底板（见 build() 里 Tabs 的注释） */
+  private readerDockOwnGlass(): boolean {
+    return this.readMode === READ_MODE_NONE;
+  }
   private onSelfDrawnReady(): void {
     if (!this.firstPageReady) {
       this.firstPageReady = true;
@@ -11537,7 +11551,7 @@ oAnimInitNode 配套） */
    * ⚠️ 字重改变字形宽度 ⇒ 自绘重排后每行字数可能变；
    *    若发现与引擎错字加剧，把这个值调回 0。
    */
-  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 300;
+  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 180;
 
   /** 自绘层实际使用的字重（设置值 + 补偿，夹在 100~900） */
   private selfDrawnFontWeight(): number {
