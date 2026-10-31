@@ -11062,8 +11062,7 @@ oAnimInitNode 配套） */
   @Builder
   readerDockBar() {
     if (HdsCompat.supportsFloatingBar()) {
-      Stack() {
-        HdsTabs({ barPosition: BarPosition.End, controller: this.dockHdsController }) {
+      HdsTabs({ barPosition: BarPosition.End, controller: this.dockHdsController }) {
         ForEach(this.barActions(), (a: number, i: number) => {
           TabContent() {
             Column()
@@ -11080,12 +11079,7 @@ oAnimInitNode 配套） */
       //   沉浸光感材质**采样不到 surface 内容** ⇒ 那两档胶囊画不出来（实测）。
       //   这里给 ReaderKit 两档补一层半透明白当底板（形状与材质胶囊一致），
       //   自绘两档仍保持 Transparent、由真实材质呈现。
-      .width('100%')
-      .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
-      }
       .backgroundColor(this.readerKitDockBackdrop())
-      .borderRadius(30)
-      .clip(true)
       .width('100%')
       .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
       .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
