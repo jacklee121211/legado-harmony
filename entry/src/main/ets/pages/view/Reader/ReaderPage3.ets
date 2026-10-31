@@ -8562,7 +8562,7 @@ oAnimInitNode 配套） */
         ReaderScrollView({
           fontName: this.scrollFontFamily(),
           fontSize: this.readerSetting.fontSize,
-          fontWeight: this.readerSetting.fontWeight,
+          fontWeight: this.selfDrawnFontWeight(),
           fontColor: this.readerSetting.fontColor,
           lineHeightFp: this.scrollLineHeightFp(),
           indentFp: this.scrollIndentFp(),
@@ -8631,7 +8631,7 @@ oAnimInitNode 配套） */
           // ⚠️ 引擎排行与渲染都要这个路径；不传的话自定义字体在自绘层会用默认字体
           fontPath: this.scrollFontPath(),
           fontSize: this.readerSetting.fontSize,
-          fontWeight: this.readerSetting.fontWeight,
+          fontWeight: this.selfDrawnFontWeight(),
           fontColor: this.readerSetting.fontColor,
           lineHeightFp: this.scrollLineHeightFp(),
           indentFp: this.scrollIndentFp(),
@@ -11501,6 +11501,27 @@ oAnimInitNode 配套） */
    * 前面的解析不到就用后面的 ⇒ 即使某个自定义字体在 ArkUI 侧注册失败，
    * 也会落到 `HarmonyOS Sans SC`（全字库），而不是掉进只有拉丁字形的默认族。
    */
+  /**
+   * 自绘两档的**字重补偿**（2026-11-01 实测加入）。
+   *
+   * 实测（两边同字体 `/system/fonts/HarmonyOS_Sans_SC.ttf`、同 weight=400；
+   * 同区域像素采样、亮度 <90 计为墨）：
+   *   · m80  ：仿真 10.32% vs 自绘 8.23%（自绘轻 20%）
+   *   · PuraX：仿真  9.71% vs 自绘 6.36%（自绘轻 34%，肉眼可见）
+   * ⇒ 不是参数传错，是**两个渲染栈**（ReaderKit 内部 Chromium 文本栈 vs ArkGraphics）
+   *   的光栅/合成差异，只能调数值逼近。
+   * 0 = 与设置页字重完全一致（旧行为）；100 = 加粗一档（400→500）。
+   * ⚠️ 字重改变字形宽度 ⇒ 自绘重排后每行字数可能变；
+   *    若发现与引擎错字加剧，把这个值调回 0。
+   */
+  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 100;
+
+  /** 自绘层实际使用的字重（设置值 + 补偿，夹在 100~900） */
+  private selfDrawnFontWeight(): number {
+    const w: number = this.readerSetting.fontWeight + this.SELF_DRAWN_WEIGHT_BOOST;
+    return Math.max(100, Math.min(900, w));
+  }
+
   private scrollFontFamily(): string {
     const primary: string = this.arkFontName();
     if (primary === ARK_FONT_SYS_CJK) {
