@@ -19,9 +19,10 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 修复无动画档底部 dock 无底板、正文压到图标后"',
+    version: 'V3.0.11 底部 dock 材质下发探针',
     date: '2026-11-01',
     items: [
+      '新增 dock 悬浮样式下发日志，用于定位四档胶囊显示差异',
       'This reverts commit c8a539679819a0db59e61cbc81d27ea77c07627e.',
       'This reverts commit b6978d085a3cdcac3203d5cb262743274fdba2f9.',
       '仿真/横滑/上下/无动画四档的底部图标行外观统一',

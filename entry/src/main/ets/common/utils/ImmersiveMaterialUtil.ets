@@ -863,6 +863,12 @@ export class TabsFloatingStyleModifier implements AttributeModifier<TabsAttribut
   }
 
   applyNormalAttribute(instance: TabsAttribute): void {
+    // 2026-11-01 取证：确认 barFloatingStyle 到底有没有被下发（四档对比用）
+    try {
+      hilog.info(0x0000, 'testTag', 'DOCKGLASS apply barBottomMargin=%{public}s barSideMargin=%{public}s',
+        String(this.style.barBottomMargin), String(this.style.barSideMargin));
+    } catch (e) {
+    }
     instance.barFloatingStyle(this.style);
   }
 }
