@@ -270,9 +270,9 @@ export struct ReaderScrollView {
   /** 文本区左边距（vp）—— 左右各一份 ⇒ 中间正好是文本宽度 */
   @Prop sideInsetVp: number = 20;
   /** 顶部避让（vp）：状态栏 / 顶栏 */
-  @Prop topInsetVp: number = 0;
+  @Prop @Watch('onInsetChanged') topInsetVp: number = 0;
   /** 底部避让（vp）：底部页签条 */
-  @Prop bottomInsetVp: number = 0;
+  @Prop @Watch('onInsetChanged') bottomInsetVp: number = 0;
 
   // ── 初始位置：`initSerial` 变化 = 重新载入窗口（进书 / 从分页切过来）──────
   @Prop initSpine: number = 0;
@@ -631,6 +631,32 @@ export struct ReaderScrollView {
     if (start <= 2 && this.loadedFirst > 0) {
       this.prependPrev();
     }
+  }
+
+  /**
+   * 上下档的「阅读焦点不偏移」（2026-11-01 新增）。
+   *
+   * 依据：官方最佳实践 `最佳实践/多设备功能开发/多设备适配屏幕差异/bpta-multi-device-screen-diff`
+   * 原文：「可滑动组件的阅读焦点不偏移……由于折叠状态切换前后，组件内部高度可能发生变化，
+   * 即便滑动相同的偏移量，也难以达成阅读焦点不偏移的目标……利用 Scroller 控制器提供的
+   * `scrollToIndex()` 方法，使列表滑动到指定索引值的位置，从而保证阅读焦点不偏移」。
+   *
+   * 触发源 = 我们的 `topInsetVp` / `bottomInsetVp` 变化（窗口尺寸、避让区、δ 任一变化）。
+   * 做法：记住当前头部行索引，等新 padding 生效后的下一帧 `scrollToIndex(START)` 把它滚回顶部。
+   */
+  private onInsetChanged(): void {
+    if (this.lastStart < 0) {
+      return;
+    }
+    const target: number = this.lastStart;
+    setTimeout(() => {
+      try {
+        this.scroller.scrollToIndex(target, false, ScrollAlign.START);
+      } catch (e) {
+        hilog.warn(DOMAIN, TAG, 'onInsetChanged scrollToIndex failed: %{public}s',
+          JSON.stringify(e));
+      }
+    }, 0);
   }
 
   private reportPos(): void {

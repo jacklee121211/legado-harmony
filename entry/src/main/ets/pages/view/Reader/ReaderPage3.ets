@@ -5991,6 +5991,16 @@ oAnimInitNode 配套） */
    * （见 `WindowAbility.offWindowSizeChange()` 的注释：不注销会导致陈旧回调堆积）。
    */
   private windowSizeCb: (() => void) | null = null;
+  /**
+   * 系统避让区变化回调（2026-11-01 新增，对齐官方最佳实践
+   * `最佳实践/多设备功能开发/多设备适配屏幕差异/bpta-multi-device-screen-diff`）。
+   *
+   * 官方原文：「系统避让区可能会发生变化，例如窗口从全屏模式切换至悬浮窗模式，
+   * 需要使用 `on('avoidAreaChange')` 监听系统避让区的尺寸变化，避让区尺寸变化时，
+   * 应依据适配规则重新计算内容区域的尺寸」。
+   * 存字段同样是为了用同一引用精确注销。
+   */
+  private avoidAreaCb: ((data: window.AvoidAreaOptions) => void) | null = null;
 
   /**
    * 手动切换横竖屏（2026-10-23 用户设计：防窥左侧的 symbol 按钮，**仅平板**）。
@@ -6140,6 +6150,60 @@ oAnimInitNode 配套） */
       }
     };
     WindowAbility.getInstance().onWindowSizeChange(this.windowSizeCb);
+
+    // ── 避让区监听（官方最佳实践 `bpta-multi-device-screen-diff` 要求）──────────
+    //   官方原文：「系统避让区可能会发生变化，例如窗口从全屏模式切换至悬浮窗模式，
+    //   需要使用 `on('avoidAreaChange')` 监听……避让区尺寸变化时，应依据适配规则
+    //   重新计算内容区域的尺寸」。
+    //   这里只做"视口自检"：窗口 px 尺寸与 readerSetting.viewPort* 不一致就立即重排，
+    //   避免历史问题「窗口已变、排版还是旧尺寸」（`startPlay: viewPort=1840x2800,
+    //   window=2800x1840`）。
+    this.avoidAreaCb = (data: window.AvoidAreaOptions): void => {
+      hilog.info(0x0000, 'testTag',
+        'avoidAreaChange type=%{public}d -> viewport self-check', data.type);
+      setTimeout(() => {
+        this.viewportSelfCheck();
+      }, 0);
+    };
+    const cb: (data: window.AvoidAreaOptions) => void = this.avoidAreaCb;
+    window.getLastWindow(getContext(this) as common.UIAbilityContext)
+      .then((win: window.Window) => {
+        try {
+          win.on('avoidAreaChange', cb);
+        } catch (e) {
+          hilog.warn(0x0000, 'testTag',
+            'on(avoidAreaChange) failed: %{public}s', JSON.stringify(e));
+        }
+      })
+      .catch((e: BusinessError) => {
+        hilog.warn(0x0000, 'testTag', 'getLastWindow failed: %{public}s', e.message);
+      });
+  }
+
+  /**
+   * 视口自检（2026-11-01）：窗口像素尺寸 ≠ `readerSetting.viewPort*` ⇒ 立即重排。
+   * 触发点：`avoidAreaChange`。窗口尺寸变化本身由 `windowSizeCb` 覆盖。
+   */
+  private async viewportSelfCheck(): Promise<void> {
+    try {
+      const win: window.Window = await window.getLastWindow(
+        getContext(this) as common.UIAbilityContext);
+      const rect: window.Rect = win.getWindowProperties().windowRect;
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+      if (Math.abs(rect.width - this.readerSetting.viewPortWidth) > 1 ||
+        Math.abs(rect.height - this.readerSetting.viewPortHeight) > 1) {
+        hilog.info(0x0000, 'testTag',
+          'viewport self-check: %{public}dx%{public}d -> %{public}dx%{public}d',
+          this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight,
+          rect.width, rect.height);
+        this.applyViewportNow('selfcheck');
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag',
+        'viewportSelfCheck failed: %{public}s', JSON.stringify(e));
+    }
   }
 
   /**
@@ -6339,6 +6403,23 @@ oAnimInitNode 配套） */
     if (this.windowSizeCb !== null) {
       WindowAbility.getInstance().offWindowSizeChange(this.windowSizeCb);
       this.windowSizeCb = null;
+    }
+    // ★ 2026-11-01：注销避让区监听（与 registerListener 里的 `win.on` 配对）。
+    //   不注销同样会堆积陈旧回调（对着已释放的页面调 applyViewportNow）。
+    if (this.avoidAreaCb !== null) {
+      const cb: (data: window.AvoidAreaOptions) => void = this.avoidAreaCb;
+      window.getLastWindow(getContext(this) as common.UIAbilityContext)
+        .then((win: window.Window) => {
+          try {
+            win.off('avoidAreaChange', cb);
+          } catch (e) {
+            hilog.warn(0x0000, 'testTag',
+              'off(avoidAreaChange) failed: %{public}s', JSON.stringify(e));
+          }
+        })
+        .catch(() => {
+        });
+      this.avoidAreaCb = null;
     }
     // ★ 仅**平板**：退出阅读页恢复**自由旋转**（2026-10-23；2026-10-24 收窄为仅平板）。
     //   进入阅读页时锁了方向（见 `aboutToAppear`），这里必须还原，
@@ -11450,6 +11531,31 @@ oAnimInitNode 配套） */
 
   /**
    * ══════════════════════════════════════════════════════════════════════════
+   * 基准模型（2026-11-01 换轨，取代下方"三个旋钮"那一套）
+   * ══════════════════════════════════════════════════════════════════════════
+   * 自绘矩形 = 引擎矩形 + **一个 δ**：
+   *
+   *   marginVp = calibTopPx / density   （标定值；无标定时用下面的 58vp 兜底）
+   *   顶 inset = marginVp + δ
+   *   底 inset = marginVp − δ
+   *   ⇒ 高度 = 屏高 − 2·marginVp，**与信息条位置无关**
+   *
+   * 依据（真机实测 + 官方原文）：
+   *   1. 探针 MEASURE：行距 17.6~18.2vp、顶留白 55~62vp（手机/Pura X/平板三台一致）；
+   *   2. 官方 FAQ `faqs-reader-3`：`ReadPageComponent` 顶部和底部预留了页眉页脚
+   *      ⇒ 上下留白对称、不可配；`ReaderSetting` 13 个字段里没有 margin/inset。
+   *
+   * 为什么不再按信息条分支：信息条本来就落在引擎页脚留白里（底 776vp 之后），
+   * 旧实现"下态整页上移"会把顶边一起推上去 ⇒ PuraX 上露底。现在两态等高、零位移。
+   *
+   * δ 是**唯一旋钮**（vp）：正 = 正文整体下移，负 = 上移；自绘与 ReaderKit 同步跟随。
+   * ══════════════════════════════════════════════════════════════════════════
+   */
+  private readonly SELF_DRAWN_MARGIN_FALLBACK_VP: number = 58;
+  private readonly SELF_DRAWN_DELTA_VP: number = 0;
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
    * 自绘两档（上下 / 无动画）显示区矩形：**只有下面三个旋钮**，别再绕圈
    * ══════════════════════════════════════════════════════════════════════════
    *
@@ -11523,26 +11629,38 @@ oAnimInitNode 配套） */
     return { bottom: this.bottomRectHeight + 8, left: 20, right: 20 }
   }
 
-  private scrollTopInsetVp(): number {
+  /**
+   * 引擎正文上留白（vp）—— **基准模型唯一的地基**。
+   *
+   * 取值优先级：`calibTopPx / density`（标定过的真实引擎首行位置）
+   *            → 兜底 `SELF_DRAWN_MARGIN_FALLBACK_VP`（58vp，三台实测 55~62 的中值）。
+   * 依据：探针 MEASURE 实测 topMargin = 55 / 62 / 56 vp
+   *      （手机 3.375 / 宽折叠 2.55 / 平板 2.25）；
+   *      官方 FAQ `faqs-reader-3` 原文：「ReadPageComponent 顶部和底部预留了页眉页脚，
+   *      呈现效果为顶部和底部有空白」⇒ 上下留白对称，且 `ReaderSetting` 13 个字段里
+   *      没有 margin/inset（SDK `@hms.core.readerservice.readerComponent.d.ets`）。
+   */
+  private engineMarginVp(): number {
     const d: number = this.densityVp();
-    const t: number = this.calibTopPx / (d > 0 ? d : 1);
-    const base: number = t > 0 ? t : 68;
-    // 自绘矩形的顶边：base − TRIM（已验证 TRIM=-5 ⇒ 73vp），再加 DOWN 的整体下移。
-    // 不变量：top + bottom = 屏高 − areaH，两态 areaH 必须相等（方案 A）。
-    const topNormal: number = Math.max(0, base - this.SELF_DRAWN_TOP_TRIM_VP);
-    if (this.infoWinPos === 0) {
-      // 顶部信息窗：先按 DOWN 下移，再按用户实测整体上移 UP（底 inset 同步 +UP 保持 685vp）
-      return topNormal + this.SELF_DRAWN_DOWN_VP - this.SELF_DRAWN_TOP_MODE_UP_VP;
+    if (d > 0) {
+      const t: number = this.calibTopPx / d;
+      if (t > 0) {
+        return t;
+      }
     }
-    // 方案 A（2026-10-31 用户拍板）：底部信息窗时**高度不变、整块上移**。
-    // 上移量 = 顶部态的底 inset − 底部态的底 inset，保证 areaH 两态完全相等；
-    // 否则会出现「上态 717vp / 下态 665vp」两态高度不一致。
-    const screenVp: number = d > 0 ? this.readerSetting.viewPortHeight / d : 0;
-    const bottomNormal: number = this.bottomRectHeight + 8 + this.selfDrawnBottomPadVp();
-    const infoTopVp: number = screenVp - (this.bottomRectHeight + 8 + this.infoWinHeightVp());
-    const targetVp: number = Math.max(0, infoTopVp - this.INFO_WIN_GAP_DEFAULT_VP);
-    const bottomShifted: number = Math.max(0, screenVp - targetVp / READER_ZOOM);
-    return Math.max(0, topNormal + bottomNormal - bottomShifted) + this.SELF_DRAWN_DOWN_VP;
+    return this.SELF_DRAWN_MARGIN_FALLBACK_VP;
+  }
+
+  /**
+   * 自绘文本区**顶边**（vp）= 引擎上留白 + δ。
+   *
+   * 基准模型（2026-11-01 换轨）：自绘矩形 = 引擎矩形 + 一个 δ。
+   *   · 不再按信息条位置分支：官方 FAQ 说上下留白是内建页眉页脚，
+   *     信息条本来就落在页脚留白里 ⇒ **信息条不再驱动正文位移**；
+   *   · 两态高度恒等（= 屏高 − 2·margin），切换信息条位置时正文不动。
+   */
+  private scrollTopInsetVp(): number {
+    return Math.max(0, this.engineMarginVp() + this.SELF_DRAWN_DELTA_VP);
   }
 
   /**
@@ -11553,45 +11671,32 @@ oAnimInitNode 配套） */
    *   读起来比正常模式少一行），只留手势条本身的高度 + 8vp 余量，
    *   于是整块正文区域是"整体下移"的观感，而不是"上下各切一刀"。
    */
+  /**
+   * 自绘文本区**底边**（vp）= 引擎下留白 − δ。
+   *
+   * 基准模型：引擎上下留白对称（官方 FAQ：顶部和底部预留了页眉页脚），
+   * 所以底边 = margin − δ，与顶边 = margin + δ 配对 ⇒ 高度恒为 `屏高 − 2·margin`，
+   * **两态（信息条在上/在下）完全一致**，切换时不重排、不跳行。
+   */
   private scrollBottomInsetVp(): number {
-    // 与 scrollTopInsetVp() 成对使用：
-    //   · 上态  = bottomRect+8+PAD − DOWN（PAD 决定高度）
-    //   · 下态  = bottomShifted − DOWN（bottomShifted 已按 1.05 换算到“信息条顶 − 15”）
-    //   ⇒ 两态 top+bottom 相同 ⇒ areaH 相同；DOWN 在此减去，保证只平移不改高。
-    if (this.infoWinPos === 1) {
-      const d: number = this.densityVp();
-      const screenVp: number = d > 0 ? this.readerSetting.viewPortHeight / d : 0;
-      const infoTopVp: number = screenVp - (this.bottomRectHeight + 8 + this.infoWinHeightVp());
-      const targetVp: number = Math.max(0, infoTopVp - this.INFO_WIN_GAP_DEFAULT_VP);
-      return Math.max(0, screenVp - targetVp / READER_ZOOM - this.SELF_DRAWN_DOWN_VP);
-    }
-    return this.bottomRectHeight + 8 + this.selfDrawnBottomPadVp()
-      - this.SELF_DRAWN_DOWN_VP + this.SELF_DRAWN_TOP_MODE_UP_VP;
+    return Math.max(0, this.engineMarginVp() - this.SELF_DRAWN_DELTA_VP);
   }
 
   /**
-   * ReaderKit 信息窗让位（2026-10-31 用户拍板）：
-   *  · 顶部信息窗：只跟间距滑块微调（默认 15vp = 0）；
-   *  · 底部信息窗：整页上移，让正文底边停在信息窗上方 + 间距；
-   *    顶部不越过原信息窗顶（`readerTopInset()+12`），到顶即停（前置摄像头/状态栏安全）。
-   *  · 页高/分页行数不变（用户拍板接受），只移动整页。
+   * ReaderKit 整页位移（px）—— 基准模型下**只剩 δ**。
+   *
+   * 2026-11-01 换轨：官方 FAQ `faqs-reader-3` 原文
+   * 「ReadPageComponent 顶部和底部预留了页眉页脚，呈现效果为顶部和底部有空白」
+   * ⇒ 信息条本来就落在引擎预留的页脚/页眉空白里，**不再需要让位平移**。
+   * 旧实现（上态 −7vp、下态按信息条高度上移再 +6vp）已删除；
+   * 若某机型仍需微调，只改 `SELF_DRAWN_DELTA_VP` 一个数（自绘与引擎同时跟随）。
    */
   private readerKitInfoWinShiftY(): number {
     if (this.isPdfBook) {
       return 0
     }
     const d: number = this.densityVp();
-    if (this.infoWinPos === 0) {
-      // 信息条在上：固定上移 7vp（用户实测）
-      return -7 * d
-    }
-    // 信息条在下：底部让位 + 固定下移 6vp（用户实测）
-    const safe: number = this.bottomRectHeight + 8
-    const wantUp: number = (safe + this.infoWinHeightVp() + this.INFO_WIN_GAP_DEFAULT_VP) * d
-    const capPx: number = (this.readerTopInset() + 12) * d
-    const pageTopPx: number = this.calibTopPx > 0 ? this.calibTopPx : 230 * d
-    const maxUp: number = Math.max(0, pageTopPx - capPx)
-    return -Math.min(wantUp, maxUp) + 6 * d
+    return this.SELF_DRAWN_DELTA_VP * d
   }
 
   /**
