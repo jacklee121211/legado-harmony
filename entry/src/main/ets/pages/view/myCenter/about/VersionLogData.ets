@@ -19,7 +19,7 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11',
+    version: 'V3.0.11 忽略本地 ReaderKit 探针目录（tools/readerprobe）',
     date: '2026-10-31',
     items: [
       '平板/2in1 横屏时，TXT 阅读方式精简为 横滑/上下/无动画（去掉仿真）',

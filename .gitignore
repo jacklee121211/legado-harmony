@@ -24,3 +24,5 @@ __pycache__/
 /.cache/
 /verify/
 /fonts/
+# ReaderKit 探针（本地调试，不进仓库）
+tools/readerprobe/
