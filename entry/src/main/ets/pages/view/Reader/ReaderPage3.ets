@@ -11694,17 +11694,32 @@ oAnimInitNode 配套） */
    *      官方 FAQ `faqs-reader-3` 原文：「ReadPageComponent 顶部和底部预留了页眉页脚，
    *      呈现效果为顶部和底部有空白」⇒ 上下留白对称，且 `ReaderSetting` 13 个字段里
    *      没有 margin/inset（SDK `@hms.core.readerservice.readerComponent.d.ets`）。
+   *
+   * ── 2026-11-01 第二次修正：**改为 vp 常量，不再除以 density** ────────────────
+   * 旧实现 `margin = calibTopPx / density` 会让不同密度设备得到完全不同的 vp 留白：
+   *   · m80  (3.375) ⇒ 230/3.375 = 68.2vp
+   *   · PuraX(2.55)  ⇒ 230/2.55  = 90.2vp
+   *   · 平板 (2.25)  ⇒ 230/2.25  = 102.2vp
+   * ⇒ 用户实测「平板/PuraX 上自绘比 ReaderKit **上下都矮**」——正是这两个大留白挤掉的。
+   * 引擎的页眉页脚是**按 vp 布局**的（三台探针实测行距 17.6~18.2vp 几乎恒定），
+   * 所以这里改为**固定 vp**，按 m80 上"ReaderKit 实际墨迹位置"反推：
+   *   · 上留白 88vp（RK 首行墨迹 100.1vp − 行内墨迹偏移 ≈12vp）
+   *   · 下留白 62vp（把自绘末行推到 RK 的 766vp）
+   * ⚠️ `calibTopPx` 仍保留给 **TTS 高亮**（`TtsHlCalibV3`），不参与这里。
    */
   private engineMarginVp(): number {
-    const d: number = this.densityVp();
-    if (d > 0) {
-      const t: number = this.calibTopPx / d;
-      if (t > 0) {
-        return t;
-      }
-    }
-    return this.SELF_DRAWN_MARGIN_FALLBACK_VP;
+    return this.ENGINE_TOP_MARGIN_VP;
   }
+
+  /** 引擎正文**上**留白（vp，m80 实测反推；三台共用） */
+  private readonly ENGINE_TOP_MARGIN_VP: number = 88;
+  /**
+   * 引擎正文**下**留白（vp，m80 实测反推）。
+   * ReaderKit 墨迹末行 2586px=766.2vp；自绘在此留白下墨迹末行 ≈ 766vp ⇒ 对齐。
+   * ⚠️ 与上留白**不相等**（88 vs 62）：说明引擎的页眉/页脚并非等宽，
+   *    「上下对称」的假设在 m80 上不成立，所以这里用两个独立常量。
+   */
+  private readonly ENGINE_BOTTOM_MARGIN_VP: number = 62;
 
   /**
    * 自绘文本区**顶边**（vp）= 引擎上留白 + δ。
@@ -11715,7 +11730,7 @@ oAnimInitNode 配套） */
    *   · 两态高度恒等（= 屏高 − 2·margin），切换信息条位置时正文不动。
    */
   private scrollTopInsetVp(): number {
-    return Math.max(0, this.engineMarginVp() + this.SELF_DRAWN_DELTA_VP
+    return Math.max(0, this.ENGINE_TOP_MARGIN_VP + this.SELF_DRAWN_DELTA_VP
       + this.SELF_DRAWN_ONLY_OFFSET_VP + this.SELF_DRAWN_TOP_ADJUST_VP);
   }
 
@@ -11735,7 +11750,7 @@ oAnimInitNode 配套） */
    * **两态（信息条在上/在下）完全一致**，切换时不重排、不跳行。
    */
   private scrollBottomInsetVp(): number {
-    return Math.max(0, this.engineMarginVp() - this.SELF_DRAWN_DELTA_VP
+    return Math.max(0, this.ENGINE_BOTTOM_MARGIN_VP - this.SELF_DRAWN_DELTA_VP
       - this.SELF_DRAWN_ONLY_OFFSET_VP - this.SELF_DRAWN_BOTTOM_ADJUST_VP);
   }
 
