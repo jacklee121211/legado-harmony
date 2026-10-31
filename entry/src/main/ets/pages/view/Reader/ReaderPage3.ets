@@ -11076,6 +11076,35 @@ oAnimInitNode 配套） */
       this.firstPageReady = true;
       hilog.info(0x0000, 'testTag', 'selfDrawn: 首屏已上屏，撤掉排版占位');
     }
+    // ★ 2026-11-01 版式探针（真机取证）：把自绘矩形的全部输入打出来，
+    //   用于解释"同一套 vp 常量在 PuraX / 平板上首行仍偏低"这类跨设备差异。
+    try {
+      const dv: number = this.densityVp();
+      hilog.info(0x0000, 'testTag',
+        'LAYOUTPROBE mode=%{public}d vp=%{public}sx%{public}s density=%{public}s topInset=%{public}s bottomInset=%{public}s topRect=%{public}s bottomRect=%{public}s infoPos=%{public}d calibTopPx=%{public}s',
+        this.readMode,
+        (dv > 0 ? this.readerSetting.viewPortWidth / dv : 0).toFixed(2),
+        (dv > 0 ? this.readerSetting.viewPortHeight / dv : 0).toFixed(2),
+        dv.toFixed(3),
+        this.scrollTopInsetVp().toFixed(2),
+        this.scrollBottomInsetVp().toFixed(2),
+        this.topRectHeight.toFixed(2),
+        this.bottomRectHeight.toFixed(2),
+        this.infoWinPos,
+        this.calibTopPx.toFixed(1));
+      hilog.info(0x0000, 'testTag',
+        'FONTPROBE rk: name=%{public}s path=%{public}s weight=%{public}d size=%{public}s lh=%{public}s | sd: family=%{public}s path=%{public}s lhFp=%{public}s',
+        this.readerSetting.fontName,
+        this.readerSetting.fontPath,
+        this.readerSetting.fontWeight,
+        this.readerSetting.fontSize.toFixed(2),
+        this.readerSetting.lineHeight.toFixed(3),
+        this.scrollFontFamily(),
+        this.scrollFontPath(),
+        this.scrollLineHeightFp().toFixed(2));
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'LAYOUTPROBE failed');
+    }
   }
 
   /**
@@ -11598,7 +11627,7 @@ oAnimInitNode 配套） */
    *
    * ⚠️ 不直接改 `calibTopPx`：那个值还被 TTS 高亮（`TtsHlCalibV3`）使用，改了会连带移动高亮框。
    */
-  private readonly SELF_DRAWN_TOP_ADJUST_VP: number = 20;
+  private readonly SELF_DRAWN_TOP_ADJUST_VP: number = 0;   // 2026-11-01：已并入 ENGINE_TOP_MARGIN_VP，勿重复加
 
   /**
    * 自绘**底边**相对引擎的修正（vp，正值 = 底 inset 收小 = 正文更往下）—— 同批实测。
@@ -11607,7 +11636,7 @@ oAnimInitNode 配套） */
    *      自绘正文墨迹末行 = 2564px = **759.7vp** ⇒ 自绘比引擎**高 6.5vp**。
    * 行距两档一致（≈115px = 34vp）⇒ 不是字号问题，只需把自绘的下沿再放低 ~6.5vp。
    */
-  private readonly SELF_DRAWN_BOTTOM_ADJUST_VP: number = 6;
+  private readonly SELF_DRAWN_BOTTOM_ADJUST_VP: number = 0;   // 2026-11-01：已并入 ENGINE_BOTTOM_MARGIN_VP，勿重复加
 
   /**
    * ══════════════════════════════════════════════════════════════════════════
