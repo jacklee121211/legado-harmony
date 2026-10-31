@@ -11075,7 +11075,11 @@ oAnimInitNode 配套） */
       .barHeight(READER_BAR_HEIGHT)
       .barOverlap(true)
       .attributeModifier(this.dockHdsStyleModifier())
-      .backgroundColor(Color.Transparent)
+      // ★ 2026-11-01：仿真/横滑画面是 ReadPageComponent 的 **XComponent 独立图层(surface)**，
+      //   沉浸光感材质**采样不到 surface 内容** ⇒ 那两档胶囊画不出来（实测）。
+      //   这里给 ReaderKit 两档补一层半透明白当底板（形状与材质胶囊一致），
+      //   自绘两档仍保持 Transparent、由真实材质呈现。
+      .backgroundColor(this.readerKitDockBackdrop())
       .width('100%')
       .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
       .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
@@ -11119,6 +11123,13 @@ oAnimInitNode 配套） */
       };
     }
     return new HdsFloatingStyleModifier(st);
+  }
+  /** 仿真/横滑档的 dock 底板（XComponent 表面无法被材质采样，见 build 里 Tabs 的注释） */
+  private readerKitDockBackdrop(): ResourceColor {
+    if (this.readMode === READ_MODE_FLIP_CURL || this.readMode === READ_MODE_FLIP_SLIDE) {
+      return '#D9FFFFFF';
+    }
+    return Color.Transparent;
   }
   private onSelfDrawnReady(): void {
     if (!this.firstPageReady) {

@@ -19,9 +19,10 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 阅读器底部 dock 改用 HDS 底部页签',
+    version: 'V3.0.11 仿真/横滑档底部 dock 补底板',
     date: '2026-11-01',
     items: [
+      '仿真与横滑档的底部图标行补上底板，四档外观接近一致',
       '四档阅读方式的底部图标行统一使用 HDS 页签与沉浸光感胶囊',
       '低版本设备自动退回原样式，不影响使用',
       'This reverts commit dd8cee312682dfba6361e3616af3bb450afd980c.',
