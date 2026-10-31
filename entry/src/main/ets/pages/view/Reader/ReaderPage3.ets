@@ -5817,6 +5817,8 @@ oAnimInitNode 配套） */
     this.viewportSyncTimer = setTimeout(() => {
       this.viewportSyncTimer = -1;
       this.applyViewportNow('watch');
+      // 横竖/折叠态变化后，当前档位可能已不可用（平板横屏没有仿真档）⇒ 退到横滑
+      this.ensureReadModeAvailable();
     }, 0);
   }
 
@@ -10754,12 +10756,38 @@ oAnimInitNode 配套） */
     return extOf(this.bookData.bookUrl ?? '') === '.txt';
   }
 
-  /** 设置面板「阅读方式」选项：非 TXT 只显示 横滑/仿真（顺序与 `READ_MODE_OPTIONS` 一致） */
+  /**
+   * 手机以外的设备是否处于横屏（平板 / 2in1 / 折叠屏展开）。
+   * 用 AppStorage 的窗口 px 宽高比较（两者同一时刻写入），窗口未就绪时回退 viewPort。
+   */
+  private isNonPhoneLandscape(): boolean {
+    if (deviceInfo.deviceType === 'phone') {
+      return false;
+    }
+    const w: number = this.windowWidth > 0 ? this.windowWidth : this.readerSetting.viewPortWidth;
+    const h: number = this.windowHeight > 0 ? this.windowHeight : this.readerSetting.viewPortHeight;
+    return w > 0 && h > 0 && w > h;
+  }
+
+  /**
+   * 设置面板「阅读方式」选项：非 TXT 只显示 横滑/仿真（顺序与 `READ_MODE_OPTIONS` 一致）。
+   * 2026-10-31 用户拍板：**手机以外 + 横屏** 时 TXT 去掉「仿真」，只留 横滑 / 上下 / 无动画。
+   */
   private readModeOptions(): number[] {
     if (this.selfDrawnFormatAllowed()) {
+      if (this.isNonPhoneLandscape()) {
+        return [READ_MODE_FLIP_SLIDE, READ_MODE_SCROLL, READ_MODE_NONE];
+      }
       return READ_MODE_OPTIONS;
     }
     return [READ_MODE_FLIP_SLIDE, READ_MODE_FLIP_CURL];
+  }
+
+  /** 当前档位若已不在可选列表里（例如平板横屏去掉了仿真），退到横滑。 */
+  private ensureReadModeAvailable(): void {
+    if (!this.readModeOptions().includes(this.readMode)) {
+      this.switchReadMode(READ_MODE_FLIP_SLIDE);
+    }
   }
 
   /**
