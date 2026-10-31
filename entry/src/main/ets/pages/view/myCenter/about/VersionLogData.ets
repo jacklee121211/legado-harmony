@@ -19,9 +19,11 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 阅读器菜单与底部 dock 提升层级',
+    version: 'V3.0.11 阅读器底部 dock 四档统一为 HDS 普通样式',
     date: '2026-11-01',
     items: [
+      '四档阅读方式的底部图标行外观统一，不再依赖玻璃材质',
+      '仿真/横滑档底部不再缺失底板',
       '把阅读器菜单层提到阅读画面之上，避免底部底板被阅读画面盖住',
       'This reverts commit b7471449011147f7f41d6e2427f24b350f38dae3.',
       'This reverts commit e2077857c1cd1fcc8f402ddf6517468f16eb1d93.',

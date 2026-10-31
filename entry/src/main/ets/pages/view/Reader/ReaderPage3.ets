@@ -11115,12 +11115,12 @@ oAnimInitNode 配套） */
     const st: HdsTabsFloatingStyle = {
       barSideMargin: 16,
       barBottomMargin: this.bottomRectHeight + READER_BAR_BOTTOM_GAP
-    };
-    if (ImmersiveMaterialUtil.isOn()) {
-      st.systemMaterialEffect = {
-        materialType: hdsMaterial.MaterialType.ADAPTIVE,
-        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-      };
+    // ★ 2026-11-01 用户拍板：**不要沉浸光感材质**，四档统一成 HDS 普通 bar。
+    //   原因：仿真/横滑画面是 ReadPageComponent 的 XComponent surface，材质采不到 surface 内容
+    //   ⇒ 那两档永远出不来胶囊（实测 3 轮，含 zIndex 提层）。统一去掉材质后四档由 HdsTabs 画同一条 bar。
+    //   一键恢复玻璃：把 if (ImmersiveMaterialUtil.isOn()) { st.systemMaterialEffect = {…} } 那一段恢复即可。
+
+
     }
     return new HdsFloatingStyleModifier(st);
   }
