@@ -19,9 +19,10 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 四档阅读器底部 dock 统一为同一胶囊底板',
+    version: 'V3.0.11 四档阅读器底部 dock 统一为同一胶囊底板"',
     date: '2026-11-01',
     items: [
+      'This reverts commit b6978d085a3cdcac3203d5cb262743274fdba2f9.',
       '仿真/横滑/上下/无动画四档的底部图标行外观统一',
       '正文不再穿到图标下面，底部始终有底板',
       '无动画档底部图标行补上玻璃底板，正文不再穿到图标下面',
