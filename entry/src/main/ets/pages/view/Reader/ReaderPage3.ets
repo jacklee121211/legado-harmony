@@ -10689,6 +10689,9 @@ oAnimInitNode 配套） */
     if (this.isShowContentSetting) {
       this.isShowContentSetting = false
       this.settingDialog?.close()
+      // ★ 2026-11-01：面板关闭后再重申一次系统栏状态（切档就在这个面板里操作，
+      //   见 `switchReadMode` 里的同一段注释）。幂等，不碰避让/配色。
+      this.applyReaderSystemBar()
     } else {
       this.isShowContentSetting = true
       this.settingDialog?.open()
@@ -10923,6 +10926,14 @@ oAnimInitNode 配套） */
     // 切档后立刻刷新"是否要吞掉系统侧滑返回"的标志（见 `publishReadModeFlag` 注释）
     this.publishReadModeFlag();
     hilog.info(0x0000, 'testTag', 'switchReadMode %{public}d → %{public}d', prev, next);
+    // ★ 2026-11-01 修「切换动画档后状态栏冒出来且不消失」：
+    //   系统栏显隐原先**只在进页那一刻**下发一次（`aboutToAppear` 的延迟块）与
+    //   内外屏切换时下发（`onOuterMinimalChanged`）。切档会重建 ReaderKit/自绘层，
+    //   期间系统栏被重置回“显示”后**没有任何代码再藏回去** ⇒ 开关是关的也照样露出来。
+    //   这里重申一次不变量：**阅读页在栈顶 ⇒ 系统栏按开关隐藏**。
+    //   `applyReaderSystemBar()` 是幂等的（只发 `setWindowSystemBarEnable`，
+    //   不碰避让冻结与 Ability 配色），重复调用无副作用。
+    this.applyReaderSystemBar();
 
     const prevSelf: boolean = prev === READ_MODE_SCROLL || prev === READ_MODE_NONE;
     const nextSelf: boolean = next === READ_MODE_SCROLL || next === READ_MODE_NONE;
@@ -11560,6 +11571,43 @@ oAnimInitNode 配套） */
    */
   private readonly SELF_DRAWN_MARGIN_FALLBACK_VP: number = 58;
   private readonly SELF_DRAWN_DELTA_VP: number = 0;
+  /**
+   * **只动自绘**的校正量（vp）：正 = 自绘整块下移，负 = 上移；高度不变。
+   *
+   * ── 为什么需要它（2026-11-01 真机实测）────────────────────────────────────
+   * 代码能精确知道**自绘**的首行位置（`scrollTopInsetVp()`），但**无法计算**
+   * ReaderKit 的首行位置 —— SDK 里 `PageDataInfo` 只有 header/footer/pageOffset，
+   * `ReaderSetting` 13 个字段没有 margin（`@hms.core.readerservice.readerComponent.d.ets`）。
+   * 现在自绘用的 `margin = calibTopPx/density` 来自 **TTS 高亮框顶**（`TtsHlCalibV3.topPx`），
+   * 与引擎「行框顶」并不等价 ⇒ 实测 Mate 80 上自绘比 ReaderKit 高约 **1 行**。
+   *
+   * δ（`SELF_DRAWN_DELTA_VP`）两边一起动，修不了这种**相对**偏差；
+   * 所以单独给自绘一个偏移：顶 +k、底 −k（高度不变）。
+   */
+  private readonly SELF_DRAWN_ONLY_OFFSET_VP: number = 0;
+
+  /**
+   * 自绘**顶边**相对引擎的修正（vp）—— **由 m80 截图实测反推**（2026-11-01）。
+   *
+   * 实测（1320×2848，density 3.375，系统状态栏关，信息窗上/下各一组）：
+   *   · ReaderKit 正文墨迹首行 = **338px = 100.1vp**（信息窗在上/在下都相同，已验证不随信息条移动）
+   *   · 自绘   正文墨迹首行 = **270px = 80.0vp**
+   *   · 行内墨迹偏移（行框顶→墨迹顶）≈ 40px = 11.9vp（两档同字体，可视为相同）
+   *   ⇒ ReaderKit 行框顶 ≈ 338−40 = 298px = **88.3vp**；自绘行框顶 = calibTopPx 230px = 68.2vp
+   *   ⇒ **顶部差 +20.1vp**
+   *
+   * ⚠️ 不直接改 `calibTopPx`：那个值还被 TTS 高亮（`TtsHlCalibV3`）使用，改了会连带移动高亮框。
+   */
+  private readonly SELF_DRAWN_TOP_ADJUST_VP: number = 20;
+
+  /**
+   * 自绘**底边**相对引擎的修正（vp，正值 = 底 inset 收小 = 正文更往下）—— 同批实测。
+   *
+   * 实测：ReaderKit 正文墨迹末行 = 2586px = **766.2vp**（信息窗上）、2584px（信息窗下）；
+   *      自绘正文墨迹末行 = 2564px = **759.7vp** ⇒ 自绘比引擎**高 6.5vp**。
+   * 行距两档一致（≈115px = 34vp）⇒ 不是字号问题，只需把自绘的下沿再放低 ~6.5vp。
+   */
+  private readonly SELF_DRAWN_BOTTOM_ADJUST_VP: number = 6;
 
   /**
    * ══════════════════════════════════════════════════════════════════════════
@@ -11667,7 +11715,8 @@ oAnimInitNode 配套） */
    *   · 两态高度恒等（= 屏高 − 2·margin），切换信息条位置时正文不动。
    */
   private scrollTopInsetVp(): number {
-    return Math.max(0, this.engineMarginVp() + this.SELF_DRAWN_DELTA_VP);
+    return Math.max(0, this.engineMarginVp() + this.SELF_DRAWN_DELTA_VP
+      + this.SELF_DRAWN_ONLY_OFFSET_VP + this.SELF_DRAWN_TOP_ADJUST_VP);
   }
 
   /**
@@ -11686,7 +11735,8 @@ oAnimInitNode 配套） */
    * **两态（信息条在上/在下）完全一致**，切换时不重排、不跳行。
    */
   private scrollBottomInsetVp(): number {
-    return Math.max(0, this.engineMarginVp() - this.SELF_DRAWN_DELTA_VP);
+    return Math.max(0, this.engineMarginVp() - this.SELF_DRAWN_DELTA_VP
+      - this.SELF_DRAWN_ONLY_OFFSET_VP - this.SELF_DRAWN_BOTTOM_ADJUST_VP);
   }
 
   /**
