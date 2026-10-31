@@ -67,6 +67,12 @@ import { scrollFontWeight } from './ReaderScrollView';
 const TAG: string = 'NoAnimReader';
 const DOMAIN: number = 0x0000;
 
+/** 自绘层章节内容缓存条目（父页 ReaderPage3 持有，跨组件重挂保留） */
+export interface ChapterCacheEntry {
+  nodes: string[];
+  isTitle: boolean[];
+}
+
 /**
  * 横滑判定的位移阈值（vp）。
  *
@@ -190,6 +196,18 @@ export struct ReaderPageNoAnim {
   // ── 回调（构造时绑定，之后不变）──────────────────────────────────────────
   /** 取解析器（父页的 BookHandler；用闭包读，避免构造时还是 null） */
   handlerProvider: () => bookParser.BookParserHandler | null = () => null;
+  /** 探针（2026-10-31）：上一次 loadChapter 用的 handler（已停用，保留注释供复查） */
+  // private lastHandler: bookParser.BookParserHandler | null = null;
+  /** 章节内容缓存（父页持有，跨组件重挂保留；键 = spine） */
+  chapterCacheGet: (spine: number) => ChapterCacheEntry | null = () => null;
+  chapterCachePut: (spine: number, nodes: string[], isTitle: boolean[]) => void = () => {};
+  /** 章标题：按 spine→目录映射取（父页提供；不要直接用 catalog[spine]） */
+  chapterTitleProvider: (spine: number) => string = () => '';
+  /** 重排串行化（2026-10-31）：有在飞的 rebuild 时只记最新目标，跑完再跑最新一次 */
+  private rebuildBusy: boolean = false;
+  private pendingRebuildSpine: number = -1;
+  private pendingRebuildNode: number = -1;
+  private pendingRebuildFirst: boolean = false;
   /** 正文总章数（spine 数） */
   spineCountProvider: () => number = () => 0;
   /** 当前位置变化（首段 spine / 首段 node / 末段 node）⇒ 父页写进度 */
@@ -317,15 +335,29 @@ export struct ReaderPageNoAnim {
       return 0;
     }
     try {
-      const content: string = await handler.getSpineItemContent(spine);
-      // 说明：txt 没有标签，标题靠目录名反推 —— 把本章 catalogName 传进去，由 ChapterNodes 比对章首段。
-      const cn = buildChapterNodes(content, this.chapterTitleOf(handler, spine));
-      // （已用探针验证：getSpineItemContent 对 txt 返回纯文本，hasTag=NO）
-      const nodes: string[] = cn.nodes;
+      // ★ 2026-10-31 修「同一 spine 内容串台」：章节内容按 spine 缓存（父页持有，
+      //   跨组件重挂保留）；只有缓存未命中才调 `getSpineItemContent`。
+      //   根因见探针：并发 rebuild 时同一个 handler 的 getSpineItemContent 会返回
+      //   不同章节（178 章/卷名/第 1 章/楔子来回串），缓存后不再反复踩它。
+      const chapterTitle: string = this.chapterTitleProvider(spine);
+      const cached: ChapterCacheEntry | null = this.chapterCacheGet(spine);
+      let nodes: string[] = [];
+      let isTitle: boolean[] = [];
+      if (cached !== null) {
+        nodes = cached.nodes;
+        isTitle = cached.isTitle;
+      } else {
+        const content: string = await handler.getSpineItemContent(spine);
+        // 说明：txt 没有标签，标题靠目录名反推 —— 把本章 catalogName 传进去，由 ChapterNodes 比对章首段。
+        const cn = buildChapterNodes(content, chapterTitle);
+        nodes = cn.nodes;
+        isTitle = cn.isTitle;
+        this.chapterCachePut(spine, nodes, isTitle);
+      }
       // ⚠️ **引擎排行**（唯一权威）：`cpl/maxLines` 的算术估算已废弃，见 `EngineLines.ets`
       const style: LineStyle = this.buildLineStyle();
       const t0: number = Date.now();
-      const lines: EngineLine[] = buildEngineLines(nodes, style, cn.isTitle);
+      const lines: EngineLine[] = buildEngineLines(nodes, style, isTitle);
       const pageSlices: PageSlice[] = paginateLines(lines, style.pageHeightPx, style.lineHeightPx);
       // 块节点号 → 起始页（保持旧 `indexOfNode` 语义）
       const pageOfNode: number[] = [];
@@ -369,30 +401,8 @@ export struct ReaderPageNoAnim {
     return this.getUIContext().vp2px(v);
   }
 
-  /**
-   * 取「本章在目录里的名字」—— 用于识别 **TXT 的章标题段**。
-   *
-   * ⚠️ 为什么需要它：`getSpineItemContent()` 对 txt 返回的是**纯文本**
-   *    （真机探针实证 `hasTag=NO`），首行就是「第十章 澹台仙子」，与正文毫无区别
-   *    ⇒ 无法靠标签判断标题。而 ReaderKit 自己的目录（`getCatalogList()`）
-   *    已经把章节名识别出来了 ⇒ 直接拿它反查"章首段是不是标题"，
-   *    与 ReaderKit 的判断依据同源。
-   *
-   * ⚠️ `catalog[spine]` 不保证一一对应（某些 spine 无目录项）：越界或空名一律返回空串，
-   *    此时不标记标题（退化为旧行为）—— 宁可没有标题样式，也不误判正文。
-   */
-  private chapterTitleOf(handler: bookParser.BookParserHandler, spine: number): string {
-    try {
-      const list: bookParser.CatalogItem[] = handler.getCatalogList();
-      if (list === null || list === undefined || spine < 0 || spine >= list.length) {
-        return '';
-      }
-      const name: string = list[spine].catalogName;
-      return name !== undefined && name !== null ? name : '';
-    } catch (e) {
-      return '';
-    }
-  }
+  // 章标题改由父页 `chapterTitleProvider` 提供（spine→目录映射，2026-10-31）：
+  // 不再用 `catalog[spine]` 直接下标（庆余年 catalog 747 / spine 748 会取到下一章）。
 
   /** 组出引擎排行参数（**全 px**） */
   private buildLineStyle(): LineStyle {
@@ -440,6 +450,53 @@ export struct ReaderPageNoAnim {
 
   /** 重建窗口：以 `spine` 为中心装 [spine-1 .. spine+1]，并定位到包含 `node` 的页 */
   private async rebuildWindow(spine: number, node: number, first: boolean): Promise<void> {
+    // ★ 2026-10-31 几何守卫：切档重挂后 `onAreaChange` 之前 areaW/areaH 还是 0，
+    //   此时 `buildLineStyle` 得到 width/pageHeight=0 ⇒ `paginateLines` 会切出
+    //   "每行 1 页"（真机日志：lines=6935 pages=6935 宽0 页高0），把 flat/pageIdx 写坏
+    //   ⇒ 位置被上报成错误节点，切档就漂。没几何就只记目标，等 syncTextArea 再重建。
+    if (this.areaW <= 0 || this.areaH <= 0) {
+      this.pendingRebuildSpine = spine;
+      this.pendingRebuildNode = node;
+      this.pendingRebuildFirst = this.pendingRebuildFirst || first;
+      return;
+    }
+    // ★ 2026-10-31 串行化：并发 rebuild 会让同一个 BookParserHandler 的
+    //   getSpineItemContent 相互踩状态（探针实测同一 spine 返回 178 章/卷名/第 1 章/楔子）。
+    //   有在飞的就只记「最新目标」，当前跑完再跑最新一次；8 连发合并成 1 次。
+    if (this.rebuildBusy) {
+      this.pendingRebuildSpine = spine;
+      this.pendingRebuildNode = node;
+      this.pendingRebuildFirst = this.pendingRebuildFirst || first;
+      return;
+    }
+    // 新的有效调用 = 最新目标，清掉几何未就绪时留下的旧 pending，避免多跑一次旧位置
+    this.pendingRebuildSpine = -1;
+    this.pendingRebuildNode = -1;
+    this.pendingRebuildFirst = false;
+    this.rebuildBusy = true;
+    try {
+      await this.doRebuildWindow(spine, node, first);
+    } finally {
+      this.rebuildBusy = false;
+    }
+    while (this.pendingRebuildSpine >= 0 && this.areaW > 0 && this.areaH > 0) {
+      const ps: number = this.pendingRebuildSpine;
+      const pn: number = this.pendingRebuildNode;
+      const pf: boolean = this.pendingRebuildFirst;
+      this.pendingRebuildSpine = -1;
+      this.pendingRebuildNode = -1;
+      this.pendingRebuildFirst = false;
+      this.rebuildBusy = true;
+      try {
+        await this.doRebuildWindow(ps, pn, pf);
+      } finally {
+        this.rebuildBusy = false;
+      }
+    }
+  }
+
+  /** `rebuildWindow` 的实际重建体（只在串行化后调用） */
+  private async doRebuildWindow(spine: number, node: number, first: boolean): Promise<void> {
     // 首次进入：把切档交接来的字符偏移灌进 pending，indexOfNode 才能落到"包含它"的那一页
     if (first) {
       this.pendingSeekChar = Math.max(0, this.initChar);

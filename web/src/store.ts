@@ -7,6 +7,7 @@
  * 页号/滚动像素都是它的**派生显示**。
  */
 import type { Mode } from './reader.types.ts'
+import type { MarkRow } from './protocol.types.ts'
 
 export type Theme = 'day' | 'sepia' | 'night'
 
@@ -110,5 +111,33 @@ export class Store {
 
   setSeenPhoneSeq(seq: number): void {
     if (Number.isFinite(seq) && seq > 0) this.set('seenSeq_' + this.webId(), String(Math.floor(seq)))
+  }
+
+  /** 本机书签（2026-10-31：只存浏览器 localStorage，不再写手机 bookmarks 表） */
+  marks(): MarkRow[] {
+    try {
+      const raw = this.get('marks', '[]')
+      const arr = JSON.parse(raw)
+      return Array.isArray(arr) ? arr as MarkRow[] : []
+    } catch {
+      return []
+    }
+  }
+
+  saveMarks(arr: MarkRow[]): void {
+    try {
+      this.set('marks', JSON.stringify(arr))
+    } catch {
+      /* 配额满：静默 */
+    }
+  }
+
+  /** 一次性只读迁移标记（2026-10-31：从手机 /marks 导入本机书签，只做一次） */
+  marksMigrated(): boolean {
+    return this.get('marksMigrated', '0') === '1'
+  }
+
+  setMarksMigrated(): void {
+    this.set('marksMigrated', '1')
   }
 }

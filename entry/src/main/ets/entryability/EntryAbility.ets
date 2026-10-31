@@ -263,6 +263,9 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam) {
     webview.WebviewController.initializeWebEngine() //初始化web控件
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
+    // ★ 构建标记（2026-10-31，安装验证用）：装完必须看到这条时间戳变化，
+    //   否则说明 hdc 的 "install bundle successfully" 是假成功（版本降级/被拒）。
+    hilog.info(0x0000, 'testTag', '===== BUILD V2026-10-31T15:54 (EntryAbility) =====');
     AppUtil.init(this.context);
     WindowAbility.getInstance().initContext(this.context)
     this.captureQuickAction(want);

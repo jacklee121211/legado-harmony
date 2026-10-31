@@ -920,22 +920,28 @@ export class WifiBookServer {
                 await WifiBookServer.handleTocGet(client, WifiBookServer.queryId(req.target));
             }
             else if (req.method === 'GET' && req.path.startsWith('/marks')) {
-                // 书签双向同步（2026-10-01）：web 书签直接读写手机 bookmarks 表
+                // 书签：**只读**（2026-10-31 起电脑书签本地化，不再读写手机 bookmarks 表）
                 await WifiBookServer.handleMarksGet(client, WifiBookServer.queryId(req.target));
             }
             else if (req.method === 'POST' && req.path === '/marksadd') {
-                await WifiBookServer.handleMarksAdd(client, req);
+                // 2026-10-31 物理隔离：电脑书签只存浏览器本地，**禁止写入手机**
+                WifiBookServer.respond(client, 403, 'application/json; charset=utf-8',
+                    WifiBookServer.textBytes('{"ok":false,"msg":"PC bookmarks are local-only now"}'));
             }
             else if (req.method === 'POST' && req.path === '/marksdel') {
-                await WifiBookServer.handleMarksDel(client, req);
+                // 2026-10-31 物理隔离：电脑书签只存浏览器本地，**禁止写入手机**
+                WifiBookServer.respond(client, 403, 'application/json; charset=utf-8',
+                    WifiBookServer.textBytes('{"ok":false,"msg":"PC bookmarks are local-only now"}'));
             }
             else if (req.method === 'GET' && req.path.startsWith('/sync')) {
                 // 进度同步 v1（章节级，2026-10-01 专项）：web 打开时取手机端阅读位置
                 await WifiBookServer.handleSyncGet(client, WifiBookServer.queryId(req.target));
             }
             else if (req.method === 'POST' && req.path === '/sync') {
-                // web 阅读位置写回（手机端打开书时据此提示跳转）
-                WifiBookServer.handleSyncPost(client, req);
+                // 2026-10-31 物理隔离：电脑进度只存浏览器本地，**禁止回写手机**
+                // （手机只读：电脑仍可用 GET /sync 读手机进度；手机不再接受电脑写入）
+                WifiBookServer.respond(client, 403, 'application/json; charset=utf-8',
+                    WifiBookServer.textBytes('{"ok":false,"msg":"PC progress is local-only now"}'));
             }
             else if (req.method === 'POST' && req.path === '/upload') {
                 await WifiBookServer.handleUpload(client, req);

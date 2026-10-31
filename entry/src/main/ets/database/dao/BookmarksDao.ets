@@ -153,6 +153,20 @@ class BookmarksDao {
     }
   }
 
+  /** 按书 + 章取书签（区间判定用，避免每次翻页都 list() 全表） */
+  async listByChapter(bookName: string, chapterIndex: number): Promise<BookmarkRow[]> {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME)
+      const p = DbUtil.getPredicates(this.TABLE_NAME)
+      p.equalTo('bookName', bookName)
+      p.equalTo('chapterIndex', Math.floor(chapterIndex))
+      return await DbUtil.queryForList<BookmarkRow>(p, column)
+    } catch (e) {
+      console.log('bookmarks listByChapter, Error, ', JSON.stringify(e))
+      return []
+    }
+  }
+
   /** 按位置删除书签（切换用） */
   async removeAt(bookName: string, chapterIndex: number, chapterPos: number): Promise<boolean> {
     try {

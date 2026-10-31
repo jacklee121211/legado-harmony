@@ -108,6 +108,30 @@ export default class MySetConstants {
   static readonly SET_INFO_WIN_BOOKMARK: string = 'setReaderInfoWinBookmark';
   static readonly SET_INFO_WIN_ANTIPEEP: string = 'setReaderInfoWinAntiPeep';
   static readonly SET_INFO_WIN_TIMER: string = 'setReaderInfoWinTimer';
+  /**
+   * 信息窗「全书页码」子开关（2026-10-31，纯估算方案 A）：显示 `当前页 / 全书页数`。
+   * ⚠️ 只做字数→页数估算（`fileSize/wordCount ÷ 每页字数`），**不扫全书、不做逐字排版**。
+   */
+  static readonly SET_INFO_WIN_PAGENO: string = 'setReaderInfoWinPageNo';
+
+  /**
+   * 信息窗位置（2026-10-31 用户拍板）：0 = 顶部（默认） / 1 = 底部。
+   *
+   * 与 `SET_INFO_WIN` **同级**（不是 "- " 子项）：设置页新增一行「信息窗位置」，
+   * 放在主开关下面、`- 时间显示` 上面，左对齐与「阅读器信息窗」一致。
+   * 阅读页进场读一次，按此摆放信息窗，并把正文显示区域整体上移/下移
+   * （自绘两档改 top/bottom inset，ReaderKit 用组件 translate；页高/分页不变）。
+   */
+  static readonly SET_INFO_WIN_POS: string = 'setReaderInfoWinPos';
+  /**
+   * 阅读区上下偏移（vp，−50–50，默认 −4，用户实测完美值）——2026-10-31 用户拍板。
+   *
+   * 正 = 整块正文上移，负 = 下移；四档统一（ReaderKit translate，自绘 top−K/bottom+K）。
+   * 信息窗间距固定 15，不再由这个滑条控制。设置页里是「滑条 + 防误触锁」。
+   */
+  static readonly SET_INFO_WIN_GAP: string = 'setReaderInfoWinGap';
+  /** 间距滑条的防误触锁（默认锁住；开锁后才能拖动滑条） */
+  static readonly SET_INFO_WIN_GAP_LOCK: string = 'setReaderInfoWinGapLock';
 
   /**
    * 书架顶栏「三段开关 + 三图标胶囊」是否融合成一条（2026-10-21 新增）。

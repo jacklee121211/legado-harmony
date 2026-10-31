@@ -1,3 +1,5 @@
+import { common } from '@kit.AbilityKit'
+import { UnsupportedDoc } from '../../../../common/utils/UnsupportedDoc'
 import { resolveBookCover, coverCorners, stripBookExt } from "../../../../common/utils/CoverSource"
 
 import { Haptics } from '../../../../common/utils/Haptics'
@@ -270,6 +272,11 @@ export default struct BookInfos {
       }
     }.onClick(() => {
       Haptics.tap();
+      // 2026-10-31：DOC/DOCX 已取消支持（老书可能还在书架）⇒ 明确弹窗，给导出/删除出口
+      if (UnsupportedDoc.isUnsupported(this.book.bookUrl ?? '')) {
+        UnsupportedDoc.show(this.book, getContext(this) as common.UIAbilityContext, this.getUIContext());
+        return;
+      }
       // ── PDF：走**官方 PdfView 组件**页（2026-10-20 用户拍板：以官方为基础，推翻重做）──
       // 旧方案（页图→epub→ReaderKit）真机实测 234 页 84.6 秒 / 278 页 65.2 秒，全程主线程串行；
       // 新方案打开即首屏，没有"转换"这一步。开关 `FMT_PDF_USE_PDFVIEW` 置 false 即回退旧路径。

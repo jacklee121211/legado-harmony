@@ -74,7 +74,7 @@ V2.0.2 封面圆角对齐 + 进场更顺
 - `.githooks/post-commit` 钩子会把它**同步**到两处并并入**同一笔提交**
   （生成 → `git add` → `git commit --amend --no-verify --no-edit`；提交信息与内容不变，
   只有 hash 与产物变化，命令输出会打印 `旧hash -> 新hash`；rebase/merge 期间不动）：
-  `AppScope/app.json5`（versionName / versionCode = major*100+minor*10+patch）
+  `AppScope/app.json5`（versionName / versionCode = 1000+major*100+minor*10+patch）
   与 `entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets`（更新日志数据，
   **只含当前版本一条**）；
   ⚠️ 为什么不是 `commit-msg`：隔离实验实测「`commit-msg`/`prepare-commit-msg` 里 `git add`

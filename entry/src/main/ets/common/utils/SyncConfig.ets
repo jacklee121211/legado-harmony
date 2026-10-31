@@ -322,46 +322,13 @@ class SyncConfig {
    * @param ownPosRatio 本端章内位置比例
    */
   pendingWebPos(bookName: string, ownChTitle: string, ownPosRatio: number): WebPending | null {
-    const slots: Record<string, SyncPos> = this.readWebSlots(bookName)
-    const marks: Record<string, number> = this.readWatermarks(bookName)
-    // R1：中继站说"最新是手机自己" ⇒ 不提示
-    const latest: SyncPos | null = this.readLatest(bookName)
-    if (latest !== null && latest.writer === 'phone') {
-      return null
-    }
-    let best: SyncPos | null = null
-    let bestId: string = ''
-    for (const id of Object.keys(slots)) {
-      const p: SyncPos = slots[id]
-      const seen: number = marks[id] ?? 0
-      if (p.seq <= seen) {
-        continue
-      }
-      // 时钟畸变保护（seq 排序不依赖时钟，这里只拦"未来时间"的坏数据，避免显示错乱）
-      if (p.ts - Date.now() > MAX_TS_SKEW_MS) {
-        continue
-      }
-      const emptyAnchor: boolean = p.topEx === '' && p.botEx === '' && p.chTitle === ''
-      if (emptyAnchor) {
-        continue
-      }
-      if (best === null || p.seq > best.seq) {
-        best = p
-        bestId = id
-      }
-    }
-    if (best === null) {
-      return null
-    }
-    // R3：同章且差得不多 ⇒ 视为同一处，只推进水位不打扰
-    const sameChapter: boolean = best.chTitle !== '' && ownChTitle !== '' && best.chTitle === ownChTitle
-    const near: boolean = sameChapter && best.posRatio >= 0
-      && Math.abs(best.posRatio - ownPosRatio) < SAME_CHAPTER_RATIO_EPS
-    if (near) {
-      this.setWatermark(bookName, bestId, best.seq)
-      return null
-    }
-    return { id: bestId, pos: best }
+    // ── 2026-10-31 物理隔离（用户拍板）─────────────────────────────────────
+    // 电脑 → 手机 的单向同步**彻底切断**：手机不再读取/提示电脑进度。
+    // 保留：
+    //   · `writePhonePos`（手机把自己的进度写进手机槽）→ 电脑 GET /sync 可读；
+    //   · 电脑端进度/书签改存浏览器本地（web/src/store.ts）。
+    // 这样手机只写自己的槽、不读别人的槽，电脑同步逻辑再出问题也碰不到手机。
+    return null
   }
 
   // 文本规整 / 摘录键：见文件末尾的模块级导出函数 `normEx` / `excerptKey`

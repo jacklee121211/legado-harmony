@@ -14,7 +14,8 @@
     · 找不到版本号的提交**不进更新日志**（如内部检查点），只在控制台提示；
     · 同一版本号只保留**最新**一条提交，条目做并集 ⇒ 历史里 V2.0.0 的十几次重复
       提交不会把日志刷屏；
-    · `versionCode = major*100 + minor*10 + patch`（2.0.0→200，与既有 200 衔接）；
+    · `versionCode = 1000 + major*100 + minor*10 + patch`（3.0.11→1311；千位前缀保证
+      新版 V3.x 仍高于旧分支遗留在设备上的 1003，避免降级拒装）；
     · **更新日志只展示「当前版本」一条，不保留历史**（2026-10-05 用户定：
       "在更新日志中，不保留历史日志，只展示当前版本日志"）⇒ `-MaxVersions` 默认 **1**；
       同一版本号的多次提交**合并条目**，所以一个版本内的多条改动不会丢。
@@ -193,7 +194,7 @@ foreach ($ver in $byVersion.Keys) {
 $verNums = [regex]::Match($newest, '\d+\.\d+\.\d+').Value
 if ($verNums -ne '') {
   $p = $verNums.Split('.')
-  $code = [int]$p[0] * 100 + [int]$p[1] * 10 + [int]$p[2]
+  $code = 1000 + [int]$p[0] * 100 + [int]$p[1] * 10 + [int]$p[2]
   $json = [System.IO.File]::ReadAllText($appJson)
   $json = [regex]::Replace($json, '("versionCode"\s*:\s*)\d+', "`${1}$code")
   $json = [regex]::Replace($json, '("versionName"\s*:\s*")[^"]*(")', "`${1}$verNums`${2}")

@@ -32,6 +32,7 @@ import syncConfig, { SyncPos, SYNC_V2_ENABLED, ratioToIndex, normEx, excerptKey 
 import { BookSourceResolver } from '../../../common/format/BookSourceResolver';
 import { FMT_MASTER_ENABLED, FMT_ZOOM_ENABLED, FMT_PDF_ENABLED, FMT_PDF_PAGES_PER_CHAPTER, FMT_PDF_FIT_SCALE,
   isPdfPath, extOf } from '../../../common/format/FormatFlags';
+import { UnsupportedDoc } from '../../../common/utils/UnsupportedDoc';
 import { PdfImporter } from '../../../common/format/PdfImporter';
 import { filePreview } from '@kit.PreviewKit';
 import CommonConstants from '../../../common/constants/CommonConstants';
@@ -73,10 +74,13 @@ import { ReaderBgPalette } from './ReaderBgPalette';
 // ReaderKit 只有仿真/横滑两档（`flipMode` '0'/'1'，SDK 全文无滚动字段），
 // 这一档由我们自己用 ArkUI 铺段落实现，见 `ReaderScrollView.ets` 文件头。
 import { ReaderScrollView, SCROLL_PARA_GAP_EM } from './ReaderScrollView';
+import { LineStyle, LETTER_SPACING_FP } from './EngineLines';
+import { buildChapterNodes } from '../../../tts/ChapterNodes';
+// BookPageIndex 已删除：页码改为纯估算（方案 A，不扫全书）
 // ── 无动画阅读（2026-10-26 新增：阅读方式第四档）────────────────────────────
 // 与上下滚动是"一母同胞"：同一套自绘排版，只是把"连续行流"按页容量切开。
 // 分页算法与沉浸听读层共用 `ReaderPager.paginateNodes()`（唯一实现，防漂移）。
-import { ReaderPageNoAnim } from './ReaderPageNoAnim';
+import { ReaderPageNoAnim, ChapterCacheEntry } from './ReaderPageNoAnim';
 import { paginateNodes, PaginateResult } from './ReaderPager';
 import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
@@ -416,6 +420,17 @@ const READ_MODE_NONE: number = 3;
  */
 const READ_MODE_OPTIONS: number[] =
   [READ_MODE_FLIP_SLIDE, READ_MODE_FLIP_CURL, READ_MODE_SCROLL, READ_MODE_NONE];
+/**
+ * 阅读器内容**统一外部等比放大**（2026-10-31 用户拍板，ReaderKit + 自绘两档）。
+ *
+ * 背景：ReaderKit 的页边距/显示比例是引擎内部的，App 侧改不了；用户接受"左右宽一点"，
+ * 所以从外部把 ReaderKit 和上下/无动画**一起**等比放大：页面内容/文字一起变大，底边随之下移。
+ *   · 1.0 = 完全不动；
+ *   · 调大 ⇒ 文字更大、显示区域更宽/更高、末行更低；
+ *   · 缩放**以顶部中点为基准**（`centerY: 0`）⇒ 首行不上移、不钻信息窗，只向下/左右扩展。
+ * ⚠️ PDF 不走这里：PDF 仍走它自己的 `pdfScale()`（满宽/双指缩放）。
+ */
+const READER_ZOOM: number = 1.05;
 /** 按书保存阅读方式的 Preferences 键前缀 */
 const READ_MODE_KEY_PREFIX: string = 'ReaderMode_';
 /** 滚动模式下写进度的最小间隔（ms）——滚动回调很密，落盘必须节流 */
@@ -824,43 +839,81 @@ export default struct ReaderPage3 {
    *  但当前阅读页只保证 `pageRange.startNode`（页首块节点号）稳定可比。
    *  自用场景下取"节点号"即可满足"同页判定 + 列表定位"，
    *  且比拿一个不随翻页更新的 `durChapterPos` 正确得多。 */
-  private bmPos(): number {
-    const r = this.pageRange
-    return r === null ? 0 : r.startNode
+  /**
+   * 当前页范围内是否已有书签（**区间包含**，不要求页首节点精确相等）。
+   *
+   * 为什么不能用 `isBookmarked(name, idx, startNode)` 精确匹配：
+   *   书签存的是"保存那一页的页首节点"，而 `startPlay` 落页只保证目标节点在页内，
+   *   经常落在页尾（真机日志：书签 node=62，落页 [59..62]）⇒ 页首 59 ≠ 62
+   *   ⇒ 图标不亮、用户再点一次 ⇒ 同章多叠书签。跨档（ReaderKit 页首 vs 自绘页首）同理。
+   *   换成「书签节点 ∈ 当前页 [startNode, endNode]」后，落页到尾/换档/换排版都能点亮。
+   */
+  private async hasBookmarkInRange(idx: number, startNode: number, endNode: number): Promise<boolean> {
+    const name: string = this.bookData.bookName
+    if (name === undefined || name === null || name.length === 0) {
+      return false
+    }
+    // ⚠️ 2026-10-31 回退 listByChapter：真机出现"书签图标上来就掉"，
+    //    疑似 RdbPredicates 的 equalTo 链在该表上不可靠；先回到已验证的 list()+JS 过滤，
+    //    书签量级很小（几十~几百），不是卡顿主因。
+    const rows: BookmarkRow[] = await BookmarksDao.list()
+    const hits: BookmarkRow[] = rows.filter((b: BookmarkRow): boolean =>
+      b.bookName === name && b.chapterIndex === idx
+      && b.chapterPos >= startNode && b.chapterPos <= endNode)
+    return hits.length > 0
   }
 
-  /** 同步书签图标状态（仅在位置变化时查库，避免每次翻页都查） */
+  /** 同步书签图标状态（只在"页范围"变化时查库，避免每次翻页都查） */
   private async syncBookmarkState(): Promise<void> {
-    const idx = this.bookData.durChapterIndex ?? 0
-    const pos = this.bmPos()
-    const key = `${this.bookData.bookName}|${idx}|${pos}`
+    const r = this.pageRange
+    // ★ 2026-10-31 坐标同源：目录号必须由**页的 spine** 反推。
+    //   书签存的是「目录号 + 页的 spine 节点」；切档瞬间 `durChapterIndex` 可能还没跟上，
+    //   直接用它会出现"页在 588、书签按 587 查"的错位（日志 bmProbe idx 与 range 不同章）。
+    const pageCatalog: number = r !== null ? this.catalogIndexForSpine(r.spine) : -1
+    const idx: number = pageCatalog >= 0 ? pageCatalog : (this.bookData.durChapterIndex ?? 0)
+    const s: number = r === null ? -1 : r.startNode
+    const e: number = r === null ? -1 : r.endNode
+    const key = `${this.bookData.bookName}|${idx}|${s}..${e}`
     if (key === this.bmProbeKey) {
       return
     }
     this.bmProbeKey = key
-    this.isBookmarked = await BookmarksDao.isBookmarked(this.bookData.bookName, idx, pos)
+    if (r === null) {
+      this.isBookmarked = false
+      return
+    }
+    this.isBookmarked = await this.hasBookmarkInRange(idx, s, e)
   }
 
-  /** 顶部栏书签图标点击：有则删、无则存 */
+  /** 顶部栏书签图标点击：当前页范围内有则全删、无则存（区间模型，跨档同源） */
   private async toggleBookmark(): Promise<void> {
-    const idx = this.bookData.durChapterIndex ?? 0
-    const pos = this.bmPos()
     const name = this.bookData.bookName
-    if (this.isBookmarked) {
-      await BookmarksDao.removeAt(name, idx, pos)
+    const r = this.pageRange
+    if (r === null || name === undefined || name === null || name.length === 0) {
+      return
+    }
+    // ★ 与 `syncBookmarkState` 同源：目录号由页的 spine 反推，保证存/查/比同一坐标系
+    const pageCatalog: number = this.catalogIndexForSpine(r.spine)
+    const idx: number = pageCatalog >= 0 ? pageCatalog : (this.bookData.durChapterIndex ?? 0)
+    const rows: BookmarkRow[] = await BookmarksDao.list()
+    const inRange: BookmarkRow[] = rows.filter((b: BookmarkRow): boolean =>
+      b.bookName === name && b.chapterIndex === idx
+      && b.chapterPos >= r.startNode && b.chapterPos <= r.endNode)
+    if (inRange.length > 0) {
+      // 同页可能有多条（历史遗留的"多叠"）⇒ 一次清干净
+      for (const b of inRange) {
+        await BookmarksDao.remove(b.time)
+      }
       this.isBookmarked = false
       this.getUIContext().getPromptAction().showToast({ message: '已移除书签' })
     } else {
       const chapterName = this.CatalogList.getData(idx)?.catalogName ?? ''
-      // 第 7 个参数 `true` = **同位置去重**（2026-10-05）：`isBookmarked` 是内存缓存
-      // （`bmProbeKey` 未变时直接返回、不查库，见 `syncBookmarkState`），缓存过期时
-      // 旧实现会重复插行；DAO 层兜底后同一页只会有一条书签。
-      const ok = await BookmarksDao.add(name, this.bookData.author ?? '', idx, pos, chapterName,
-        await this.currentPageFirstLine(), true)
+      const ok = await BookmarksDao.add(name, this.bookData.author ?? '', idx, r.startNode, chapterName,
+        await this.currentPageFirstLine(), false)
       this.isBookmarked = ok
       this.getUIContext().getPromptAction().showToast({ message: ok ? '已添加书签' : '添加失败' })
     }
-    this.bmProbeKey = `${name}|${idx}|${pos}`  // 状态已知，避免立刻重复查库
+    this.bmProbeKey = `${name}|${idx}|${r.startNode}..${r.endNode}`  // 状态已知，避免立刻重复查库
   }
 
   // 2026-09-21 精简：`isShowDownload` / `isShowMoreLayout` / `ParagraphSpacing` /
@@ -1054,6 +1107,15 @@ export default struct ReaderPage3 {
   private miniScroller: Scroller = new Scroller()
   /** 最近一次"由我们发起"的跳转时刻：用来区分程序翻页 vs 用户手动翻页 */
   private lastNavMs: number = 0
+  /**
+   * 阅读锚点（2026-10-31 用户方案）：点书签跳转成功后钉住 (spine,node,char)，
+   * 在用户主动翻页/滚动之前，切模式一律以它为准 —— 不让自绘层页首（42）把书签节点（44）
+   * 顶掉，避免"切一次退一页"的棘轮。
+   */
+  private anchorSpine: number = -1
+  private anchorNode: number = -1
+  private anchorChar: number = 0
+  private anchorValid: boolean = false
 
   /** 当前显示的沉浸页号（-1 = 未定） */
   @State immPageIdx: number = -1
@@ -1490,6 +1552,14 @@ oAnimInitNode 配套） */
   @State infoWinBookmarkShow: boolean = true
   @State infoWinAntiPeepShow: boolean = true
   @State infoWinTimerShow: boolean = true
+  /** 信息窗「全书页码」（2026-10-31，纯估算方案 A）：`当前页 / 全书页数` */
+  @State infoWinPageNoShow: boolean = true
+  /** 信息窗位置（2026-10-31 用户拍板）：0 = 顶部（默认）/ 1 = 底部 */
+  @State infoWinPos: number = 0
+  /** 信息窗与正文间距（vp，0–40，默认 15；顶部/底部共用） */
+  @State infoWinGapVp: number = -4
+  @State bookPageCur: number = 0
+  @State bookPageTotal: number = 0
   /**
    * 弹窗控制器。**每次打开时新建** —— 因为 SDK 明确
    * 「Custom dialog box parameters **do not support dynamic updates**」
@@ -1948,6 +2018,14 @@ oAnimInitNode 配套） */
   };
   private screenDensityCallBack: Callback<number> | null = null;
   private BookHandler: bookParser.BookParserHandler | null = null;
+  /**
+   * 自绘层章节内容缓存（2026-10-31）：键 = spine。
+   *
+   * 为什么放在父页而不是 `ReaderPageNoAnim` 里：切档时自绘组件会**重挂**（探针里
+   * `hChanged=1` 每次切档后都出现一次，`lastHandler` 被重置），组件内的缓存会丢；
+   * 父页跨档存活，且 `BookHandler` 归它所有。换解析器（换书）时清空。
+   */
+  private chapterCache: Map<number, ChapterCacheEntry> = new Map();
   private scrollerForList: ListScroller = new ListScroller();
   @State themeList: themeItem[] = [
     { fontColor: '#000000', themeColor: '#FFFFFF', themeBgImg: '', saved: false },
@@ -3348,6 +3426,13 @@ oAnimInitNode 配套） */
     this.markFontOverride()
     this.readerSetting.fontSize = Math.round(v)
     this.readerComponentController.setPageConfig(this.readerSetting)
+    // 自绘层重排：上下档 LazyForEach 的行键是 `${key}-f${fontSerial}`
+    // （ReaderScrollView.ets:748-753）；不 ++ 就不会重建 ⇒ 字号看着"死的"。
+    // 无动画档同时靠 fontSize 的 @Watch 重排。
+    this.fontSerial++
+    this.schedulePersistReaderSetting()
+    // 页码估算随排版变（纯算术，零扫描）
+    this.refreshBookPageNo()
     this.updateHighlight()
   }
 
@@ -3355,7 +3440,155 @@ oAnimInitNode 配套） */
     this.markFontOverride()
     this.readerSetting.lineHeight = Math.round(v * 10) / 10
     this.readerComponentController.setPageConfig(this.readerSetting)
+    this.fontSerial++
+    this.schedulePersistReaderSetting()
+    // 页码估算随排版变（纯算术，零扫描）
+    this.refreshBookPageNo()
     this.updateHighlight()
+  }
+
+  /**
+   * 排版设置落盘（300ms 防抖）。
+   *
+   * 为什么必须补：`ReaderSetting_<书名>` 原来只在 `migrateReaderSetting` / `pageShow` /
+   * `switchReadMode` 三处落盘；自绘两档（上下/无动画）不产生 `pageShow`
+   * ⇒ 在自绘档改字号/行距，退出重进读回旧值（真机复现）。
+   * 滑条是连续回调，不能每帧写盘 ⇒ 防抖。
+   */
+  private settingPersistTimer: number = -1
+
+  private schedulePersistReaderSetting(): void {
+    if (this.settingPersistTimer >= 0) {
+      clearTimeout(this.settingPersistTimer)
+    }
+    this.settingPersistTimer = setTimeout((): void => {
+      this.settingPersistTimer = -1
+      this.persistReaderSettingNow()
+    }, 300)
+  }
+
+  private persistReaderSettingNow(): void {
+    const nm: string = this.bookData.bookName
+    if (nm === undefined || nm === null || nm.length === 0) {
+      return
+    }
+    PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting)
+  }
+
+  // ── 全书页码（2026-10-31）：信息窗「xx / xx」的数据源 ─────────────────────
+  // 口径 = 纯估算（方案 A，2026-10-31）：全书字数 ÷ 每页字数 + 本章字符偏移，
+  // 不做逐字排版、不扫全书；字号/行距变化只改两个除数。
+  private bookPageStyle(): LineStyle {
+    const s: LineStyle = new LineStyle();
+    const ctx = this.getUIContext();
+    s.fontSizePx = ctx.fp2px(this.readerSetting.fontSize);
+    s.lineHeightPx = ctx.fp2px(this.scrollLineHeightFp());
+    s.letterSpacingPx = ctx.fp2px(LETTER_SPACING_FP);
+    s.gapPx = ctx.fp2px(this.readerSetting.fontSize) * SCROLL_PARA_GAP_EM;
+    s.widthPx = ctx.vp2px(this.textAreaWidthVp());
+    s.pageHeightPx = Math.max(1, this.readerSetting.viewPortHeight
+      - ctx.vp2px(this.scrollTopInsetVp() + this.scrollBottomInsetVp()));
+    s.fontFamily = this.scrollFontFamily();
+    s.fontWeight = this.readerSetting.fontWeight + this.scrollWeightOffset();
+    s.fontPath = this.scrollFontPath();
+    return s;
+  }
+
+  // ── 全书页码（纯估算，2026-10-31 方案 A）──────────────────────────────────
+  // 口径：总页数 = 全书字数 ÷ 每页字数；当前页 = 前面章节估算页数 + 本章字符偏移 ÷ 每页字数。
+  // 全书字数来自 Books.fileSize/wordCount（O(1)），当前章只读一次（~7KB，换章才读），
+  // 字号/行距变化只改两个除数 —— 零扫描、零排版、不进开书路径。
+  private estSpine: number = -1
+  private estChapterChars: number = 0
+  private estNodeStart: number[] = []
+
+  /** 清空估算章缓存（换书时调用） */
+  private resetPageEstimate(): void {
+    this.estSpine = -1
+    this.estChapterChars = 0
+    this.estNodeStart = []
+    this.bookPageCur = 0
+    this.bookPageTotal = 0
+  }
+
+  /** 位置/排版变化后刷新「全书 xx / xx」——纯估算，不扫全书 */
+  private async refreshBookPageNo(): Promise<void> {
+    if (!this.infoWinPageNoShow) {
+      return
+    }
+    const r = this.pageRange
+    if (r === null || this.BookHandler === null) {
+      return
+    }
+    await this.refreshBookPageEstimate(r)
+  }
+
+  /** 当前章只读一次（换章才读），算本章字符偏移；翻页/调字号只做算术 */
+  private async ensureEstimateChapter(spine: number): Promise<void> {
+    if (this.estSpine === spine) {
+      return
+    }
+    this.estSpine = spine
+    this.estChapterChars = 0
+    this.estNodeStart = []
+    const h = this.BookHandler
+    if (h === null || spine < 0) {
+      return
+    }
+    try {
+      const content: string = await h.getSpineItemContent(spine)
+      const catalog = h.getCatalogList() ?? []
+      const title = spine < catalog.length ? (catalog[spine].catalogName ?? '') : ''
+      const cn = buildChapterNodes(content, title)
+      this.estChapterChars = Math.max(1, cn.plain.length)
+      this.estNodeStart = cn.nodeStart
+    } catch (e) {
+      this.estChapterChars = 0
+      this.estNodeStart = []
+    }
+  }
+
+  private async refreshBookPageEstimate(r: PageRange): Promise<void> {
+    await this.ensureEstimateChapter(r.spine)
+    const style: LineStyle = this.bookPageStyle()
+    const ch: number = style.fontSizePx > 0
+      ? Math.max(1, Math.floor(style.widthPx / Math.max(1, style.fontSizePx + style.letterSpacingPx)))
+      : 1
+    const lines: number = style.lineHeightPx > 0
+      ? Math.max(1, Math.floor(style.pageHeightPx / style.lineHeightPx))
+      : 1
+    const perPage: number = Math.max(1, ch * lines)
+    let chars: number = 0
+    const wc: string = this.bookData.wordCount ?? ''
+    const m = wc.match(/\d+(\.\d+)?/)
+    if (m !== null) {
+      chars = Number(m[0])
+      if (wc.indexOf('万') >= 0) {
+        chars *= 10000
+      }
+    }
+    if (chars <= 0 && (this.bookData.fileSize ?? 0) > 0) {
+      chars = (this.bookData.fileSize ?? 0) / 2.7
+    }
+    if (chars <= 0) {
+      return
+    }
+    const total: number = Math.max(1, Math.round(chars / perPage))
+    const spines: number = this.BookHandler?.getSpineList().length ?? 0
+    // 前面章节按章比例估；本章内按字符偏移估（换章才读当前章）
+    let before: number = 0
+    if (spines > 0) {
+      before = total * Math.min(0.999, Math.max(0, r.spine / spines))
+    }
+    let inChapter: number = 0
+    if (this.estChapterChars > 0 && spines > 0) {
+      const start: number = (r.startNode >= 0 && r.startNode < this.estNodeStart.length)
+        ? this.estNodeStart[r.startNode] : 0
+      const off: number = Math.min(this.estChapterChars, Math.max(0, start + Math.max(0, r.startChar)))
+      inChapter = (total / spines) * (off / this.estChapterChars)
+    }
+    this.bookPageCur = Math.max(1, Math.min(total, Math.round(before + inChapter) || 1))
+    this.bookPageTotal = total
   }
 
   /**
@@ -4085,6 +4318,12 @@ oAnimInitNode 配套） */
     const temp: ReaderRouteParam = this.initParam
     this.bookData = temp.bookData
     this.bookData = PreferencesUtil.getSync(`BookCurrentData_${this.bookData.bookName}`, this.bookData) as Books
+    // 2026-10-31：DOC/DOCX 已取消支持（老书可能在书架里）——兜底：提示并停在原地。
+    // 书架点击的正常入口已由 `UnsupportedDoc.show` 拦截；这里防"接续/快捷方式/外部入口"绕过。
+    if (UnsupportedDoc.isUnsupported(this.bookData.bookUrl ?? '')) {
+      this.getUIContext().getPromptAction().showToast({ message: 'DOC/DOCX 格式已不再支持，请回书架导出或删除' });
+      return;
+    }
     // ── 仅预览格式（.doc）门禁（2026-10-19，用户拍板）──────────────────────────
     // ⚠️ 位置很关键：**必须放在 `this.bookData = temp.bookData` 之后**。
     //    本页的 `bookData` 字段初值是 `new Books()`（全空），真正赋值在上面两行；
@@ -4302,6 +4541,10 @@ oAnimInitNode 配套） */
     this.infoWinBookmarkShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_BOOKMARK, true) as boolean;
     this.infoWinAntiPeepShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_ANTIPEEP, true) as boolean;
     this.infoWinTimerShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIMER, true) as boolean;
+    this.infoWinPageNoShow = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_PAGENO, true) as boolean;
+    // 信息窗位置/间距（2026-10-31 用户拍板）：设置页改，阅读页进场读一次
+    this.infoWinPos = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_POS, 0) as number;
+    this.infoWinGapVp = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_GAP, -4) as number;
     this.syncInfoTicker();
     // ── 信息窗电量（2026-10-19 新增）：订阅电池变化公共事件 ──────────────────
     // 与 `syncInfoTicker()` 的秒级刷新分工：时间/倒计时走 1s 定时器，电量走系统事件
@@ -4368,6 +4611,9 @@ oAnimInitNode 配套） */
     }, 250);
     hilog.info(0x0000, 'testTag', 'reader: aboutToAppear tail, nightMode=%{public}s',
       String(this.readerSetting.nightMode));
+    // ★ 构建标记（2026-10-31，安装验证用）：装完必须看到这条时间戳变化，
+    //   否则说明 hdc 的 "install bundle successfully" 是假成功（版本降级/被拒）。
+    hilog.info(0x0000, 'testTag', '===== BUILD V2026-10-31T16:22 =====');
     this.colorMode = this.readerSetting.nightMode ? 0 : 1
     // ★ 顺序不能反：先把"阅读器在栈顶"立起来，再写夜间开关 ——
     //   `NightMode.desiredDark()` 用 `readerActive` 判断"该走阅读器分支"，
@@ -4402,6 +4648,10 @@ oAnimInitNode 配套） */
   }
 
   private async startPlay(path: string, resourceIndex: number, domPos: string) {
+    // 换书/换解析器 ⇒ 书签锚点作废（新书的进度不沿用上一本）
+    this.anchorValid = false;
+    // 换书 ⇒ 页码估算缓存作废（方案 A：只清本章缓存，不扫全书）
+    this.resetPageEstimate();
     try {
       let context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       // ★★ 2026-10-09「转译版」接线（用户拍板）★★
@@ -4520,7 +4770,12 @@ oAnimInitNode 配套） */
           'startPlay: 组件已销毁（快速退出），跳过 registerBookParser/startPlay，避免损坏 ReaderKit 状态');
         return;
       }
+      const prevHandler = this.BookHandler;
       this.BookHandler = result[0];
+      // 换解析器（换书）⇒ 章节内容缓存作废，避免把上一本的章节带到新书
+      if (prevHandler !== null && prevHandler !== result[0]) {
+        this.chapterCache.clear();
+      }
       // 解析器就绪 ⇒ 允许挂载滚动视图（见 `bookHandlerReady` 字段注释）。
       // ⚠️ 必须放在这里（而不是 startPlay 开头）：此时 `getSpineItemContent()` 才可用。
       this.bookHandlerReady = true;
@@ -5401,6 +5656,13 @@ oAnimInitNode 配套） */
         endChar: endAfter ? e[1] : s[1]
       };
       this.pageRange = range;
+      // 书签锚点：用户主动翻页（非程序定位）且新页不再覆盖锚点 ⇒ 释放锚点
+      if (this.anchorValid && Date.now() - this.lastNavMs > 500
+        && !this.rangeCovers(range, this.anchorNode, this.anchorChar)) {
+        this.anchorValid = false;
+      }
+      // 全书页码（纯估算方案 A）：位置变了就刷新，只做算术，不扫全书
+      this.refreshBookPageNo();
       // ── PDF：把 spine + domPos 反推成"第几页"（2026-10-19）─────────────────
       // 我们的 PDF epub 是「一章 = FMT_PDF_PAGES_PER_CHAPTER 张页图」，每张图是一个顶层节点，
       // 且 ReaderKit 的 domPos 节点号是 **2×图片下标**（真机探测日志：第 1 张 `0#0;@;0`、
@@ -6036,6 +6298,12 @@ oAnimInitNode 配套） */
   }
 
   aboutToDisappear(): void {
+    // 退出前把还没落盘的排版设置写掉（300ms 防抖计时器可能还在跑）
+    if (this.settingPersistTimer >= 0) {
+      clearTimeout(this.settingPersistTimer)
+      this.settingPersistTimer = -1
+    }
+    this.persistReaderSettingNow()
     // ★ 应用接续（2026-10-24）：离开阅读页 ⇒ 声明"不可接续"。
     //   ⚠️ 只关开关、**不删阅读态** —— 键回落场景：用户读到某处 → 退回书架 →
     //      立刻发起接续。旧实现在这里 `clear()` 会让那条路直接 REJECT，
@@ -6702,6 +6970,13 @@ oAnimInitNode 配套） */
   private catalogIndexForSpine(spineIndex: number): number {
     this.ensureSpineMaps()
     return this.spineToCatalog?.get(spineIndex) ?? -1
+  }
+
+  /** 章标题：spine → 目录号映射后取 catalogName（2026-10-31；不要直接用 catalog[spine]） */
+  private chapterTitleForSpine(spineIndex: number): string {
+    const idx: number = this.catalogIndexForSpine(spineIndex)
+    const list = this.BookHandler?.getCatalogList() ?? []
+    return idx >= 0 && idx < list.length ? (list[idx].catalogName ?? '') : ''
   }
 
   /**
@@ -8010,8 +8285,15 @@ oAnimInitNode 配套） */
         })
           .width(this.compWidth())
           .height(this.compHeight())
-          .scale({ x: this.pdfScale(), y: this.pdfScale() })
-          .translate({ x: this.pdfOffX, y: this.pdfOffY })
+          // 2026-10-31：非 PDF 走外部等比放大（READERKIT_ZOOM），顶部中点为基准；
+          //   PDF 保持原来的满宽/双指缩放（中心缩放）。
+          .scale({
+            x: this.readerKitScale(),
+            y: this.readerKitScale(),
+            centerX: '50%',
+            centerY: this.isPdfBook ? '50%' : 0
+          })
+          .translate({ x: this.pdfOffX, y: this.pdfOffY + this.readerKitInfoWinShiftY() })
       } else {
         this.PreviewOnlyPanel()
       }
@@ -8224,6 +8506,8 @@ oAnimInitNode 配套） */
           // 解析器用闭包读：`BookHandler` 是异步赋值的普通字段，
           // 直接按值传会永远拿到构造那一刻的 null。
           handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
+          // 章标题按 spine→目录映射取（修庆余年 747/748 偏移；上下档与无动画档同源）
+          chapterTitleProvider: (spine: number): string => this.chapterTitleForSpine(spine),
           spineCountProvider: (): number => {
             const spines: bookParser.SpineItem[] = this.BookHandler?.getSpineList() ?? [];
             return spines.length;
@@ -8240,6 +8524,9 @@ oAnimInitNode 配套） */
         })
           .width('100%')
           .height('100%')
+          // 2026-10-31：自绘两档与 ReaderKit 同一放大系数/同一基准（顶部中点）
+          // —— 保证四档显示区域比例一致；段距/字号/分页布局不变，只是视觉等比放大。
+          .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
       }
 
       // ── 无动画阅读层（2026-10-26 新增：阅读方式第四档）──────────────────────
@@ -8266,6 +8553,15 @@ oAnimInitNode 配套） */
           topInsetVp: this.scrollTopInsetVp(),
           bottomInsetVp: this.scrollBottomInsetVp(),
           initSpine: this.noAnimInitSpine,
+          // ★ 章节内容缓存（2026-10-31）：父页持有，跨组件重挂保留；只有缓存未命中
+          //   才让自绘层去调 `getSpineItemContent`（见 ReaderPageNoAnim.loadChapter 注释）。
+          chapterCacheGet: (spine: number): ChapterCacheEntry | null => {
+            const c = this.chapterCache.get(spine);
+            return c === undefined ? null : c;
+          },
+          chapterCachePut: (spine: number, nodes: string[], isTitle: boolean[]): void => {
+            this.chapterCache.set(spine, { nodes: nodes, isTitle: isTitle });
+          },
           initNode: this.noAnimInitNode,
           initChar: this.scrollInitChar,
           initSerial: this.noAnimInitSerial,
@@ -8286,6 +8582,8 @@ oAnimInitNode 配套） */
           // 的横向拖动（与本页下拉书签手势 `fingers: 9` 同一套做法，见该处注释）。
           gestureEnabled: !this.isShowSetting && !this.isPdfZoomed(),
           handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
+          // 章标题按 spine→目录映射取（修庆余年 747/748 偏移；上下档与无动画档同源）
+          chapterTitleProvider: (spine: number): string => this.chapterTitleForSpine(spine),
           spineCountProvider: (): number => {
             const spines: bookParser.SpineItem[] = this.BookHandler?.getSpineList() ?? [];
             return spines.length;
@@ -8302,12 +8600,15 @@ oAnimInitNode 配套） */
             this.isShowSetting = true;
           },
           onTapNext: (): void => {
+            // 用户主动翻页 ⇒ 书签锚点失效（之后切档按当前位置走）
+            this.anchorValid = false;
             // 右 1/3 点击 = 下一页（组件内部已 `Haptics.tap()`）——
             // 复用"翻一页"同一条请求通道，避免出现第二种翻页入口
             this.scrollPageDir = 1;
             this.scrollPageReq++;
           },
           onTapPrev: (): void => {
+            this.anchorValid = false;
             this.scrollPageDir = -1;
             this.scrollPageReq++;
           },
@@ -8317,6 +8618,8 @@ oAnimInitNode 配套） */
         })
           .width('100%')
           .height('100%')
+          // 2026-10-31：与 ReaderKit / 上下同一放大系数、同一顶部中点基准
+          .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
       }
 
       // ── 转换进度 / 转换失败（2026-10-19，PDF/DOCX 首次打开）──────────────────
@@ -8544,6 +8847,14 @@ oAnimInitNode 配套） */
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
+            // 全书页码（2026-10-31，纯估算方案 A）：放在防窥后面，`当前页 / 全书页数`
+            if (this.infoWinPageNoShow && this.bookPageTotal > 0) {
+              Text(`${this.bookPageCur} / ${this.bookPageTotal}`)
+                .fontSize(INFO_TEXT_SIZE)
+                .fontColor(this.readerSetting.fontColor)
+                .opacity(0.9)
+                .hitTestBehavior(HitTestMode.None)
+            }
           }
           .justifyContent(FlexAlign.End)
           .layoutWeight(1)
@@ -8551,10 +8862,10 @@ oAnimInitNode 配套） */
         }
         // ⚠️ 必须显式撑满高度 + 顶部对齐：Stack 子元素默认垂直居中（2026-10-07 真机实测：
         //   信息窗曾跑到屏幕右侧正中），撑满后内容钉在顶部。
-        .alignItems(VerticalAlign.Top)
+        .alignItems(this.infoWinPos === 0 ? VerticalAlign.Top : VerticalAlign.Bottom)
         .width('100%')
         .height('100%')
-        .padding({ top: this.readerTopInset() + 12, left: 20, right: 20 })
+        .padding(this.infoWinRowPadding())
         .hitTestBehavior(HitTestMode.None)
       }
 
@@ -9221,15 +9532,55 @@ oAnimInitNode 配套） */
         Toggle({ type: ToggleType.Switch, isOn: $$this.isLuminanceFollowSystem })
           .onChange((value) => {
             Haptics.tap();
-            this.isLuminanceFollowSystem = value
-            BrightnessUtil.setBrightness('reader', value ? -1 : 0.3)
+            // 2026-10-31：防误触 —— 先弹确认，确定才生效；取消回退开关
+            const prev: boolean = !value;
+            AlertDialog.show({
+              title: '亮度跟随系统',
+              message: value ? '开启后，阅读亮度跟随系统设置。' : '关闭后，阅读亮度使用固定值。',
+              primaryButton: {
+                value: '确定',
+                action: () => {
+                  this.isLuminanceFollowSystem = value;
+                  BrightnessUtil.setBrightness('reader', value ? -1 : 0.3);
+                }
+              },
+              secondaryButton: {
+                value: '取消',
+                action: () => {
+                  this.isLuminanceFollowSystem = prev;
+                }
+              },
+              cancel: () => {
+                this.isLuminanceFollowSystem = prev;
+              }
+            });
           })
         Text('常亮')
         Toggle({ type: ToggleType.Switch, isOn: $$this.isScreenState })
           .onChange((value) => {
             Haptics.tap();
-            this.isScreenState = value
-            BrightnessUtil.setScreenState(value)
+            // 2026-10-31：防误触 —— 先弹确认，确定才生效；取消回退开关
+            const prev: boolean = !value;
+            AlertDialog.show({
+              title: '屏幕常亮',
+              message: value ? '开启后，阅读时屏幕保持常亮。' : '关闭后，屏幕按系统设置息屏。',
+              primaryButton: {
+                value: '确定',
+                action: () => {
+                  this.isScreenState = value;
+                  BrightnessUtil.setScreenState(value);
+                }
+              },
+              secondaryButton: {
+                value: '取消',
+                action: () => {
+                  this.isScreenState = prev;
+                }
+              },
+              cancel: () => {
+                this.isScreenState = prev;
+              }
+            });
           })
       }
 
@@ -9858,7 +10209,7 @@ oAnimInitNode 配套） */
         .width(52)
         .maxLines(1)
         .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)')
-      ForEach(READ_MODE_OPTIONS, (m: number) => {
+      ForEach(this.readModeOptions(), (m: number) => {
         Button(this.readModeOptionLabel(m))
           .fontSize(13)
           .fontColor(this.readMode === m
@@ -9878,6 +10229,10 @@ oAnimInitNode 配套） */
               return;
             }
             this.switchReadMode(m);
+            // 2026-10-31：选完动画档直接关设置弹窗，避免误触/停留
+            this.settingDialog?.close();
+            // 同步把底栏「设置」图标收回空心态，否则下次要点两次才能再开
+            this.isShowContentSetting = false;
             this.getUIContext().getPromptAction().showToast({ message: this.readModeOptionLabel(m) });
           })
       }, (m: number): string => 'rm-' + m)
@@ -10361,6 +10716,12 @@ oAnimInitNode 配套） */
       hilog.info(0x0000, 'testTag', 'readMode: PDF 不支持自绘阅读（%{public}d），回落到横滑', m);
       m = READ_MODE_FLIP_SLIDE;
     }
+    // 2026-10-31：EPUB/MOBI/AZW3 等只保留原生两档（仿真/横滑）；老书存过 2/3 ⇒ 回落到横滑。
+    // 听书内部仍可程序化进无动画（`switchReadMode(READ_MODE_NONE)` 不经过这里）。
+    if (!this.selfDrawnFormatAllowed() && (m === READ_MODE_SCROLL || m === READ_MODE_NONE)) {
+      hilog.info(0x0000, 'testTag', 'readMode: 非TXT不支持自绘阅读（%{public}d），回落到横滑', m);
+      m = READ_MODE_FLIP_SLIDE;
+    }
     this.readMode = m;
     // 分页两档要和引擎的 `flipMode` 对齐（滚动/无动画档不改它，保留上次的分页偏好）
     if (m === READ_MODE_FLIP_CURL || m === READ_MODE_FLIP_SLIDE) {
@@ -10383,6 +10744,22 @@ oAnimInitNode 配套） */
     } catch (e) {
       hilog.warn(0x0000, 'testTag', 'saveReadMode failed');
     }
+  }
+
+  /**
+   * 2026-10-31：只有 TXT 提供「上下 / 无动画」；EPUB/MOBI/AZW/AZW3 只保留原生仿真/横滑。
+   * 听书不受影响：`enterListenMode()` 内部仍程序化切 `READ_MODE_NONE`（用户看不到/调不了）。
+   */
+  private selfDrawnFormatAllowed(): boolean {
+    return extOf(this.bookData.bookUrl ?? '') === '.txt';
+  }
+
+  /** 设置面板「阅读方式」选项：非 TXT 只显示 横滑/仿真（顺序与 `READ_MODE_OPTIONS` 一致） */
+  private readModeOptions(): number[] {
+    if (this.selfDrawnFormatAllowed()) {
+      return READ_MODE_OPTIONS;
+    }
+    return [READ_MODE_FLIP_SLIDE, READ_MODE_FLIP_CURL];
   }
 
   /**
@@ -10433,12 +10810,19 @@ oAnimInitNode 配套） */
 
     const prevSelf: boolean = prev === READ_MODE_SCROLL || prev === READ_MODE_NONE;
     const nextSelf: boolean = next === READ_MODE_SCROLL || next === READ_MODE_NONE;
+    // ★ 书签锚点（2026-10-31）：用户没主动翻页前，切档一律回到书签进度。
+    const useAnchor: boolean = this.anchorValid && this.anchorSpine >= 0;
+    if (useAnchor) {
+      hilog.info(0x0000, 'testTag',
+        'switchReadMode: use bookmark anchor spine=%{public}d node=%{public}d',
+        this.anchorSpine, this.anchorNode);
+    }
 
     if (nextSelf && !prevSelf) {
       // ── 分页 → 自绘层（滚动 / 无动画）：以"当前页首"为起点 ──────────────────
       // 两档共用同一段算法：坐标同源，只是交给不同的自绘层当初始位置。
       const r = this.pageRange;
-      const spine: number = r !== null ? r.spine
+      let spine: number = r !== null ? r.spine
         : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
       let node: number = r !== null ? r.startNode
         : this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
@@ -10453,14 +10837,22 @@ oAnimInitNode 配套） */
       }
       this.pagedRestoreSpine = -1;
       this.pagedRestoreNode = -1;
+      // ★ 锚点优先于"当前页首"：书签在 [44..46] 页首，切到无动画时不能被 42 页首顶掉
+      if (useAnchor) {
+        spine = this.anchorSpine;
+        node = this.anchorNode;
+      }
       // ⚠️ 2026-10-27 同时交接**字符偏移**：
       //   只给段号时，新档会落到「该段**起始**的那一页」；而分页档的页首常常是
       //   「上一页延续下来的半段」⇒ 切到无动画后显示的是上一页（用户反馈的观感）。
       //   带上 `r.startChar` 才能落到「包含页首那个字」的同一页。
-      this.scrollInitChar = Math.max(0, r !== null ? r.startChar : 0);
+      this.scrollInitChar = useAnchor ? Math.max(0, this.anchorChar)
+        : Math.max(0, r !== null ? r.startChar : 0);
       // 两档共用 `scrollSpine/scrollNode` 这对"自绘层当前位置"字段
       this.scrollSpine = spine;
       this.scrollNode = node;
+      // 交接本身是程序行为：给锚点一个 500ms 宽限，首次位置上报不会被误判成"用户滚动"
+      this.lastNavMs = Date.now();
       if (next === READ_MODE_SCROLL) {
         this.scrollInitSpine = spine;
         this.scrollInitNode = node;
@@ -10495,21 +10887,31 @@ oAnimInitNode 配套） */
       // 自绘层 → 分页：让引擎定位到自绘位置。
       // ⚠️ 先把 `pageRange` 清空：`requestLocate()` 会先判"目标是否已在当前页内"，
       //    而此刻的 pageRange 还是**自绘层的可视范围**，不清就会误判"已可见"而跳过翻页。
-      const spine: number = this.scrollSpine;
-      const node: number = this.scrollNode;
+      let spine: number = this.scrollSpine;
+      let node: number = this.scrollNode;
+      // ★ 锚点优先：自绘层页首（42）不能把书签节点（44）顶掉
+      if (useAnchor) {
+        spine = this.anchorSpine;
+        node = this.anchorNode;
+      }
       // 记住这次请求落位的那一段：切回自绘层时优先用它，避免"每往返一次退一页"
       // （实测与机理见 `pagedRestoreSpine` 字段注释）
       this.pagedRestoreSpine = spine;
       this.pagedRestoreNode = node;
       this.pageRange = null;
-      this.requestLocate(spine, node, 0, true, true);
+      this.requestLocate(spine, node, useAnchor ? this.anchorChar : 0, true, true);
     } else if (nextSelf && prevSelf) {
       // ── 自绘层 ↔ 自绘层（滚动 ⇄ 无动画）──────────────────────────────────
       // 同一套坐标、同一份版式 ⇒ 直接把现有位置交给目标层即可，**不碰引擎**。
       // 这正是用户要的"天然自然过渡"：两边版式参数由同一批方法算出，页边界由同一个
       // `paginateNodes()` 切，所以落在同一段上，不跳。
-      const spine: number = this.scrollSpine;
-      const node: number = this.scrollNode;
+      let spine: number = this.scrollSpine;
+      let node: number = this.scrollNode;
+      if (useAnchor) {
+        spine = this.anchorSpine;
+        node = this.anchorNode;
+        this.scrollInitChar = Math.max(0, this.anchorChar);
+      }
       if (next === READ_MODE_SCROLL) {
         this.scrollInitSpine = spine;
         this.scrollInitNode = node;
@@ -10521,6 +10923,8 @@ oAnimInitNode 配套） */
       }
       hilog.info(0x0000, 'testTag',
         'switchReadMode: self-drawn handover spine=%{public}d node=%{public}d', spine, node);
+      // 交接本身是程序行为：给锚点一个 500ms 宽限
+      this.lastNavMs = Date.now();
     } else {
       // ── 分页 → 分页（0↔1）：只改引擎 flipMode ─────────────────────────────
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
@@ -10617,6 +11021,13 @@ oAnimInitNode 配套） */
       endChar: endChar > 0 ? endChar : Number.MAX_SAFE_INTEGER
     };
     this.pageRange = range;
+    // 书签锚点：用户主动滚动/翻页后新页不再覆盖锚点 ⇒ 释放（程序定位后的 1.5s 内不释放）
+    if (this.anchorValid && Date.now() - this.lastNavMs > 500
+      && !this.rangeCovers(range, this.anchorNode, this.anchorChar)) {
+      this.anchorValid = false;
+    }
+    // 全书页码（纯估算方案 A）：自绘层位置变了也刷新，只做算术
+    this.refreshBookPageNo();
     // 目录号跟随（滚动跨章时标题/滑杆跟着走）
     this.syncCatalogIndex(spine);
     this.bookData.durChapterTitle =
@@ -10996,30 +11407,114 @@ oAnimInitNode 配套） */
    *
    * ⚠️ 2026-10-27 真机 10 张截图（同一章连续 5 页 × 两种模式）逐带实测定案：
    *    同一章首，章标题顶部 **ReaderKit 384px / 我们 419px** ⇒ 我们低了约 35px。
-   *    35px ÷ 3.375 ≈ 10.4vp ⇒ 这里减 10vp。
+   *    35px ÷ 3.375 ≈ 10.4vp ⇒ 当时减 10vp（把自绘整体上移）。
+   *
+   * ⚠️ 2026-10-31 用户再反馈 + 六张截图逐行实测（信息窗 y176..220）：
+   *    无动画首行墨迹顶 222（离信息窗底仅 2px，紧贴）；上下首行直接和 176..220 重叠；
+   *    ReaderKit 同页（段中）首行约 272、段首 329 ⇒ 我们比 ReaderKit 高了约 50px。
+   *    50px ÷ 3.375 ≈ 15vp ⇒ **trim 10 → -5**（顶部 inset 58 → 73vp），把自绘页顶下推到
+   *    与 ReaderKit 正文首行同一线；1.05 缩放下 ReaderKit 272×1.05≈286，自绘 73vp×1.05
+   *    + 行内偏移≈286，仍然对齐。
    *
    * 调大 ⇒ 正文整体上移；调小 ⇒ 下移。改这一个值即可整体校准。
    */
-  private readonly SELF_DRAWN_TOP_TRIM_VP: number = 10;
+  private readonly SELF_DRAWN_TOP_TRIM_VP: number = -5;
 
   /**
-   * 自绘档（上下 / 无动画）的【底部 inset 微调】，单位 vp。
+   * ══════════════════════════════════════════════════════════════════════════
+   * 自绘两档（上下 / 无动画）显示区矩形：**只有下面三个旋钮**，别再绕圈
+   * ══════════════════════════════════════════════════════════════════════════
    *
-   * ⚠️ 2026-10-27 同上实测：**第 3 页是分叉点** —— ReaderKit 末行停在 2311、
-   *    下一行（本该 2505）它放不下；我们却放到了 2560 ⇒ 我们的可用页底深了约 55~150px。
-   *    结果是我们每页多装 1 行，翻到第 3 页就整页错位。
-   *    100px ÷ 3.375 ≈ 30vp ⇒ 这里加 30vp（把手势条让出的位置收回一部分）。
+   * 【矩形是什么】自绘组的 `topInsetVp` / `bottomInsetVp`（见下方
+   * `scrollTopInsetVp()` / `scrollBottomInsetVp()`），最终落成固定视口的上下
+   * padding，`ReaderPageNoAnim.syncTextArea()` 里 `areaH = 组件高 − top − bottom`
+   * 就是每页正文区。**矩形 = 这两个 inset，跟 scale / translate 完全无关。**
    *
-   * 调大 ⇒ 正文区变矮（每页少装行）；调小 ⇒ 变高。
+   * 【唯一入口】
+   *   · SELF_DRAWN_TOP_TRIM_VP → 顶边基线（base = calibTopPx/density ≈ 68vp）
+   *   · SELF_DRAWN_BOTTOM_PAD_VP → 底边留白 ⇒ **决定显示区高度**
+   *   · SELF_DRAWN_DOWN_VP → 整块上下移动（顶 +N / 底 −N，**高度不变**）
+   *
+   * 【高度公式（这份屏 1320×2848 ⇒ 屏高 844vp，Z=1.05）】
+   *   areaH = 屏高 − (base − TRIM) − (bottomRect+8) − PAD − 顶部额外收（仅信息条在顶部时）
+   *         = 844 − 73 − 36 − 37 − (顶部 ? 13 : 0)
+   *   ⇒ **底部信息窗 areaH = 698vp；顶部信息窗 areaH = 685vp**
+   *   （换设备要按该屏屏高/base 重算，公式不变）
+   *
+   * 【两态隔离（2026-10-31 用户拍板，取代此前的“两态等高”）】
+   *   · 顶边（首行）两态对齐 —— 都用 topNormal + DOWN；
+   *   · 信息条在**底部**：areaH 698（底边让到信息条上方 15vp）；
+   *   · 信息条在**顶部**：底边再多收 13vp ⇒ areaH **685**（顶部对齐、底部减高）。
+   *   ⇒ 两态行数允许不同；切信息条位置时**顶边不动**，只动底边。
+   *
+   * 【⛔ 别再试这些（都试过、都无效）】
+   *   1) 用 `.scale()` / `.translate()` 去挪自绘矩形 —— 只放大/移动内容，矩形不动；
+   *   2) 把 ReaderKit 的 ±7/−6 平移塞进自绘的 inset —— 那是「整组件平移」，不是矩形；
+   *   3) 用 ÷1.05 去"补偿"底边 —— 底部 inset 已含 1.05 换算（见 bottomShifted）；
+   *   4) 只改上 inset 想"下移" —— 那会改高度；要下移只用 DOWN。
+   * ══════════════════════════════════════════════════════════════════════════
    */
-  private readonly SELF_DRAWN_BOTTOM_PAD_VP: number = 30;
+  private readonly SELF_DRAWN_BOTTOM_PAD_VP: number = 37;
+  /**
+   * 信息条在**顶部**时，底边额外多收的 vp（2026-10-31 用户拍板）。
+   * 目的：顶部信息窗那态底部少 13vp（698 → 685），顶边不动（顶部对齐、底部减高）。
+   * 底部信息窗那态不加这个值，保持 698。
+   */
+  private readonly SELF_DRAWN_TOP_MODE_EXTRA_PAD_VP: number = 13;
+  /**
+   * 信息条在**顶部**时，自绘矩形整体**上移**的 vp（2026-10-31 用户实测）。
+   * 只作用顶部态：顶 inset −N、底 inset +N ⇒ **高度仍是 685vp 不变**，只是整块往上挪。
+   * 底部信息窗那态不受影响（仍 698vp）。
+   */
+  private readonly SELF_DRAWN_TOP_MODE_UP_VP: number = 22;
+
+  /** 自绘矩形底 inset 的"基础留白"（含位置差异）：顶部态 +13vp，底部态不变。 */
+  private selfDrawnBottomPadVp(): number {
+    const extra: number = this.infoWinPos === 0 ? this.SELF_DRAWN_TOP_MODE_EXTRA_PAD_VP : 0;
+    return this.SELF_DRAWN_BOTTOM_PAD_VP + extra;
+  }
+  /**
+   * 自绘矩形整体下移量（vp）：顶 inset +N、底 inset −N ⇒ **高度不变**，只整体下移。
+   * 2026-10-31 用户实测 15vp；调它不会改变显示区高度，也不会影响底部信息窗让位。
+   */
+  private readonly SELF_DRAWN_DOWN_VP: number = 15;
+
+  /** 顶部信息窗的默认间距（vp）：实测约 15vp，滑条默认 15 = 不改现状（2026-10-31） */
+  private readonly INFO_WIN_GAP_DEFAULT_VP: number = 15;
+
+  /** 信息窗行高度（vp）：图标/文字行高，底部信息窗让位用（2026-10-31） */
+  private infoWinHeightVp(): number {
+    return 18
+  }
+
+  /** 信息窗行的内边距：顶部贴状态栏，底部贴手势条上方 + 8vp（2026-10-31 用户拍板） */
+  private infoWinRowPadding(): Padding {
+    if (this.infoWinPos === 0) {
+      return { top: this.readerTopInset() + 12, left: 20, right: 20 }
+    }
+    return { bottom: this.bottomRectHeight + 8, left: 20, right: 20 }
+  }
 
   private scrollTopInsetVp(): number {
     const d: number = this.densityVp();
     const t: number = this.calibTopPx / (d > 0 ? d : 1);
     const base: number = t > 0 ? t : 68;
-    // ⚠️ 减掉微调量：让正文首行与 ReaderKit 落在同一像素线（见常量注释）
-    return Math.max(0, base - this.SELF_DRAWN_TOP_TRIM_VP);
+    // 自绘矩形的顶边：base − TRIM（已验证 TRIM=-5 ⇒ 73vp），再加 DOWN 的整体下移。
+    // 不变量：top + bottom = 屏高 − areaH，两态 areaH 必须相等（方案 A）。
+    const topNormal: number = Math.max(0, base - this.SELF_DRAWN_TOP_TRIM_VP);
+    if (this.infoWinPos === 0) {
+      // 顶部信息窗：先按 DOWN 下移，再按用户实测整体上移 UP（底 inset 同步 +UP 保持 685vp）
+      return topNormal + this.SELF_DRAWN_DOWN_VP - this.SELF_DRAWN_TOP_MODE_UP_VP;
+    }
+    // 方案 A（2026-10-31 用户拍板）：底部信息窗时**高度不变、整块上移**。
+    // 上移量 = 顶部态的底 inset − 底部态的底 inset，保证 areaH 两态完全相等；
+    // 否则会出现「上态 717vp / 下态 665vp」两态高度不一致。
+    const screenVp: number = d > 0 ? this.readerSetting.viewPortHeight / d : 0;
+    const bottomNormal: number = this.bottomRectHeight + 8 + this.selfDrawnBottomPadVp();
+    const infoTopVp: number = screenVp - (this.bottomRectHeight + 8 + this.infoWinHeightVp());
+    const targetVp: number = Math.max(0, infoTopVp - this.INFO_WIN_GAP_DEFAULT_VP);
+    const bottomShifted: number = Math.max(0, screenVp - targetVp / READER_ZOOM);
+    return Math.max(0, topNormal + bottomNormal - bottomShifted) + this.SELF_DRAWN_DOWN_VP;
   }
 
   /**
@@ -11031,7 +11526,44 @@ oAnimInitNode 配套） */
    *   于是整块正文区域是"整体下移"的观感，而不是"上下各切一刀"。
    */
   private scrollBottomInsetVp(): number {
-    return this.bottomRectHeight + 8 + this.SELF_DRAWN_BOTTOM_PAD_VP;
+    // 与 scrollTopInsetVp() 成对使用：
+    //   · 上态  = bottomRect+8+PAD − DOWN（PAD 决定高度）
+    //   · 下态  = bottomShifted − DOWN（bottomShifted 已按 1.05 换算到“信息条顶 − 15”）
+    //   ⇒ 两态 top+bottom 相同 ⇒ areaH 相同；DOWN 在此减去，保证只平移不改高。
+    if (this.infoWinPos === 1) {
+      const d: number = this.densityVp();
+      const screenVp: number = d > 0 ? this.readerSetting.viewPortHeight / d : 0;
+      const infoTopVp: number = screenVp - (this.bottomRectHeight + 8 + this.infoWinHeightVp());
+      const targetVp: number = Math.max(0, infoTopVp - this.INFO_WIN_GAP_DEFAULT_VP);
+      return Math.max(0, screenVp - targetVp / READER_ZOOM - this.SELF_DRAWN_DOWN_VP);
+    }
+    return this.bottomRectHeight + 8 + this.selfDrawnBottomPadVp()
+      - this.SELF_DRAWN_DOWN_VP + this.SELF_DRAWN_TOP_MODE_UP_VP;
+  }
+
+  /**
+   * ReaderKit 信息窗让位（2026-10-31 用户拍板）：
+   *  · 顶部信息窗：只跟间距滑块微调（默认 15vp = 0）；
+   *  · 底部信息窗：整页上移，让正文底边停在信息窗上方 + 间距；
+   *    顶部不越过原信息窗顶（`readerTopInset()+12`），到顶即停（前置摄像头/状态栏安全）。
+   *  · 页高/分页行数不变（用户拍板接受），只移动整页。
+   */
+  private readerKitInfoWinShiftY(): number {
+    if (this.isPdfBook) {
+      return 0
+    }
+    const d: number = this.densityVp();
+    if (this.infoWinPos === 0) {
+      // 信息条在上：固定上移 7vp（用户实测）
+      return -7 * d
+    }
+    // 信息条在下：底部让位 + 固定下移 6vp（用户实测）
+    const safe: number = this.bottomRectHeight + 8
+    const wantUp: number = (safe + this.infoWinHeightVp() + this.INFO_WIN_GAP_DEFAULT_VP) * d
+    const capPx: number = (this.readerTopInset() + 12) * d
+    const pageTopPx: number = this.calibTopPx > 0 ? this.calibTopPx : 230 * d
+    const maxUp: number = Math.max(0, pageTopPx - capPx)
+    return -Math.min(wantUp, maxUp) + 6 * d
   }
 
   /**
@@ -11749,6 +12281,11 @@ oAnimInitNode 配套） */
     // ⚠️ 必须 noFallback：书签的 char 是 0，落位判定一旦不中就会触发逐页翻页逼近
     //    （用户实测：点远处书签，屏幕一路播放翻页动画翻过去，最长 60 页）。
     this.requestLocate(spine, pos, 0, false, true)
+    // ★ 钉住书签锚点（用户方案）：切档时优先用它，避免自绘层页首把书签节点顶掉。
+    this.anchorSpine = spine
+    this.anchorNode = pos
+    this.anchorChar = 0
+    this.anchorValid = true
   }
 
   /** 当前实际缩放倍率 = 档位 × PDF 满宽基准（见 `FMT_PDF_FIT_SCALE` 的实测推导）。 */
@@ -11761,6 +12298,18 @@ oAnimInitNode 配套） */
       return 1
     }
     return (this.pdfZoomPct / 100) * FMT_PDF_FIT_SCALE
+  }
+
+  /**
+   * ReaderKit 组件的实际缩放（2026-10-31）。
+   *  · PDF：保持原来的满宽/双指缩放（`pdfScale()`，中心缩放不变）；
+   *  · 非 PDF：`READERKIT_ZOOM`（外部等比放大显示区域），顶部中点为基准。
+   */
+  private readerKitScale(): number {
+    if (this.isPdfBook) {
+      return this.pdfScale()
+    }
+    return READER_ZOOM
   }
 
   /** 是否处于"PDF 放大态"（>100%）。许多手势都要据此让位，统一走这里判。 */

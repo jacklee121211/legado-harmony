@@ -154,6 +154,15 @@ export default struct MySetPage{
   @State infoWinBookmarkShow: boolean = true
   @State infoWinAntiPeepShow: boolean = true
   @State infoWinTimerShow: boolean = true
+  /** 信息窗「全书页码」（2026-10-31，纯估算方案 A）：`当前页 / 全书页数` */
+  @State infoWinPageNoShow: boolean = true
+
+/** 信息窗位置（2026-10-31）：0 = 顶部（默认）/ 1 = 底部 */
+@State infoWinPos: number = 0
+/** 阅读区上下偏移（vp，−50–50，默认 −4，用户实测完美值）；正 = 上移，负 = 下移 */
+@State infoWinGap: number = -4
+/** 间距滑条防误触锁（默认锁住） */
+@State infoWinGapLock: boolean = false
   // （2026-10-21 删除 `headerMergedOn`：融合开关已按用户要求移除，顶栏固定分离式）
   /** 阅读器信息窗（2026-10-07）：全屏阅读时的系统时间 + 防窥/定时实时信息；Preferences 持久化，默认开 */
   // ⚠️ 2026-10-19 默认值对齐（用户口径：新装默认开）：初值给 `true`，
@@ -203,6 +212,8 @@ export default struct MySetPage{
   @State hapticStrength: number = Haptics.STRENGTH_DEFAULT
   /** 震感模式滑块值 0-500（每 50 一档 → 10 种官方预置效果拼配，见 Haptics.MODE_TABLE） */
   @State hapticMode: number = Haptics.MODE_DEFAULT
+  /** 2026-10-31：震动强度/震感模式两个拖动条的防误触锁（默认锁住，打开才可拖） */
+  @State hapticLock: boolean = false
   /** 记录上次滑块所在档位（用于"跨档才震动一次"） */
   private lastStrengthStep: number = Haptics.STRENGTH_DEFAULT / Haptics.STRENGTH_STEP
   /** 记录上次模式滑块所在档位 */
@@ -332,6 +343,15 @@ export default struct MySetPage{
       PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_ANTIPEEP, true) as boolean
     this.infoWinTimerShow =
       PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_TIMER, true) as boolean
+    this.infoWinPageNoShow =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_PAGENO, true) as boolean
+    // 信息窗位置 / 间距 / 防误触锁（2026-10-31 用户拍板）
+    this.infoWinPos =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_POS, 0) as number
+    this.infoWinGap =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_GAP, -4) as number
+    this.infoWinGapLock =
+      PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_GAP_LOCK, false) as boolean
     this.syncInfoWinChildRows()
     // （2026-10-21 删除顶栏融合的回填：开关已移除）
     // 离线模式（2026-10-19 移入「关于」组第一行；findSetRow 会同时查两张表）
@@ -481,6 +501,10 @@ export default struct MySetPage{
     //    传 true 会渲染成箭头 `>` ⇒ 整行变成可点击跳转样式（2026-10-13 用户实测发现）。
     new SetList(false,'阅读器信息窗',this.setInfoWin,'','开启后，全屏阅读时左侧显示当前系统时间，右侧显示书签、定时与防窥的实时信息',MySetConstants.SET_INFO_WIN),
     // ③ 元素子项（主开关打开时才出现）
+    // 信息窗位置（2026-10-31 用户拍板）：顶层行、无 "- "、与「阅读器信息窗」同左对齐；
+    // 默认顶部，点击在顶部/底部之间切换。它不是子分类，主开关关掉时也仍可见。
+    new SetList(false,'信息窗位置',false,this.infoWinPos === 0 ? '顶部' : '底部','',
+      MySetConstants.SET_INFO_WIN_POS, false, true),
     new SetList(false,'- 时间显示',false,infoTimeLabel(this.infoWinTimeMode),'',
       MySetConstants.SET_INFO_WIN_TIME, true, true),
     new SetList(false,'- 电量显示',false,infoBatteryLabel(this.infoWinBatteryMode),'',
@@ -488,6 +512,8 @@ export default struct MySetPage{
     new SetList(false,'- 书签显示',this.infoWinBookmarkShow,'','',MySetConstants.SET_INFO_WIN_BOOKMARK, true),
     new SetList(false,'- 防窥显示',this.infoWinAntiPeepShow,'','',MySetConstants.SET_INFO_WIN_ANTIPEEP, true),
     new SetList(false,'- 定时显示',this.infoWinTimerShow,'','',MySetConstants.SET_INFO_WIN_TIMER, true),
+    // 全书页码（2026-10-31，纯估算）：显示 `当前页 / 全书页数`，不扫全书
+    new SetList(false,'- 页码显示',this.infoWinPageNoShow,'','',MySetConstants.SET_INFO_WIN_PAGENO, true),
     // ── 2026-10-21：曾加过「书架顶栏融合」开关，后按用户口径**删除** ──────────
     // 用户原话：「点击书架顶栏融合开关没用，而且看来也融合不了，索性去掉开关，不融合了。」
     // ⇒ 开关行、`SET_HEADER_MERGED` 常量、`headerMergedOn` 状态、switch 分支全部移除；
@@ -545,6 +571,11 @@ export default struct MySetPage{
     if (apRow !== null) { apRow.toggleStatus = this.infoWinAntiPeepShow }
     const tmRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_TIMER)
     if (tmRow !== null) { tmRow.toggleStatus = this.infoWinTimerShow }
+    const pnRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_PAGENO)
+    if (pnRow !== null) { pnRow.toggleStatus = this.infoWinPageNoShow }
+    // 信息窗位置（2026-10-31）：顶层行，只刷新右侧「顶部/底部」
+    const posRow: SetList | null = this.findSetRow(MySetConstants.SET_INFO_WIN_POS)
+    if (posRow !== null) { posRow.rightText = this.infoWinPos === 0 ? '顶部' : '底部' }
   }
 
   /**
@@ -588,6 +619,7 @@ export default struct MySetPage{
       || name === MySetConstants.SET_INFO_WIN_BOOKMARK
       || name === MySetConstants.SET_INFO_WIN_ANTIPEEP
       || name === MySetConstants.SET_INFO_WIN_TIMER
+      || name === MySetConstants.SET_INFO_WIN_PAGENO
   }
 
   /**
@@ -1126,7 +1158,8 @@ export default struct MySetPage{
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
                       .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
 
-                  }else if (this.visibleRowsOf(group).indexOf(item) == this.visibleRowsOf(group).length - 1){
+                  }else if (this.visibleRowsOf(group).indexOf(item) == this.visibleRowsOf(group).length - 1
+                    && !(group.groupValue === '信息' && this.setInfoWin)){
                     SetListView({setList:item,bottomLeft:20,bottomRight:20})
                       .onClick(()=>{Haptics.tap(); this.itemOnclick(item.storageName)})
                       .gesture(LongPressGesture().onAction(()=>{ this.itemOnLongPress(item.storageName) }))
@@ -1268,6 +1301,16 @@ export default struct MySetPage{
               if (group.groupValue === '震动反馈'){
                 ListItem(){
                   Column({ space: 4 }){
+                    // 2026-10-31：防误触锁定开关 —— 在两个拖动条上方；打开才能拖
+                    Row(){
+                      Text('防误触锁定开关').fontSize(FontConstants.ITEM)
+                      Blank()
+                      Toggle({ type: ToggleType.Switch, isOn: $$this.hapticLock })
+                        .onChange((value: boolean) => {
+                          Haptics.tap()
+                          this.hapticLock = value
+                        })
+                    }.width('100%')
                     Row(){
                       // ⚠️ 2026-10-06 字号统一：本行标题曾写 16，比上面 SetListView 的行标题（14）
                       //   大一号，与「震动反馈」上下相邻 ⇒ 明显不和谐（用户实测反馈）。
@@ -1286,8 +1329,8 @@ export default struct MySetPage{
                       style: SliderStyle.InSet
                     })
                       .width('100%')
-                      .enabled(this.setHaptics)
-                      .opacity(this.setHaptics ? 1 : 0.4)
+                      .enabled(this.setHaptics && this.hapticLock)
+                      .opacity((this.setHaptics && this.hapticLock) ? 1 : 0.4)
                       // 滑动时每**跨一档**（50）震一次（Haptics 内部还有 80ms 节流兜底）；
                       // 落盘只在松手（End）/点击（Click）时做，避免拖动过程频繁 flush。
                       //
@@ -1331,8 +1374,8 @@ export default struct MySetPage{
                       style: SliderStyle.InSet
                     })
                       .width('100%')
-                      .enabled(this.setHaptics)
-                      .opacity(this.setHaptics ? 1 : 0.4)
+                      .enabled(this.setHaptics && this.hapticLock)
+                      .opacity((this.setHaptics && this.hapticLock) ? 1 : 0.4)
                       // 滑动跨档即以**新模式**试震一次（即时对比手感）；落盘只在松手/点击时
                       // ⚠️ 2026-10-25：同「震动强度」—— 先 `setPreview` 再 `tick`，
                       //   否则试震用的还是落盘里的旧档位（听起来完全一样）。
@@ -1351,7 +1394,9 @@ export default struct MySetPage{
                       })
                   }
                   .width('100%')
-                  .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                  // 2026-10-31：左右内边距 16 ⇒ 与 SetListView 各行标题/控件同起始线；
+                  // 上间距 4、下 12（与信息窗间距卡片一致）。
+                  .padding({ left: 16, right: 16, top: 4, bottom: 12 })
                   .backgroundColor(ShelfColors.surface())
                   .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR, { colorMode: ThemeColorMode.SYSTEM })
                   .borderRadius({ bottomLeft: 20, bottomRight: 20 })
@@ -1529,6 +1574,19 @@ export default struct MySetPage{
       case MySetConstants.SET_INFO_WIN_TIMER:
         this.infoWinTimerShow = !this.infoWinTimerShow
         PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_TIMER, this.infoWinTimerShow)
+        this.syncInfoWinChildRows()
+        break;
+      // ⚠️ 2026-10-31 删除「页码显示」开关：全书页码精确扫描太贵，用户拍板移除
+      case MySetConstants.SET_INFO_WIN_PAGENO:
+        // 页码改为纯估算（不扫全书）：只落盘 + 刷新行状态
+        this.infoWinPageNoShow = !this.infoWinPageNoShow
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_PAGENO, this.infoWinPageNoShow)
+        this.syncInfoWinChildRows()
+        break;
+      // 信息窗位置（2026-10-31 用户拍板）：顶部 ⇄ 底部；阅读页进场时读
+      case MySetConstants.SET_INFO_WIN_POS:
+        this.infoWinPos = this.infoWinPos === 0 ? 1 : 0
+        PreferencesUtil.putSync(MySetConstants.SET_INFO_WIN_POS, this.infoWinPos)
         this.syncInfoWinChildRows()
         break;
       // （2026-10-21 删除 `SET_HEADER_MERGED` 分支：融合开关已移除）

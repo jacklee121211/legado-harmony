@@ -16,11 +16,14 @@ export const FMT_MASTER_ENABLED: boolean = true;
 /** PDF：页图 → epub（真机 POC 已通过，见 docs/PDF支持方案决策-2026-10-19.md §11） */
 export const FMT_PDF_ENABLED: boolean = true;
 
-/** DOCX：解压 + 解析 OOXML → 含图含表的 epub（纯自研，无第三方库） */
-export const FMT_DOCX_ENABLED: boolean = true;
+/**
+ * DOCX：**2026-10-31 用户拍板取消支持**（下面的实现保留，随时可改回 true 恢复）。
+ * 导入白名单不再含 .docx；老书点击时由 `UnsupportedDoc` 提示导出/删除。
+ */
+export const FMT_DOCX_ENABLED: boolean = false;
 
-/** DOC（Word 97-2003 二进制）：只做系统预览（PreviewKit），阅读器里禁用其它功能 */
-export const FMT_DOC_PREVIEW_ONLY: boolean = true;
+/** DOC（Word 97-2003 二进制）：**2026-10-31 一并取消**（只做系统预览的功能也不再用） */
+export const FMT_DOC_PREVIEW_ONLY: boolean = false;
 
 /** 每章放多少页（目录条数 = ceil(页数/该值)）；10 与上游 legado 的 PAGE_SIZE 一致 */
 export const FMT_PDF_PAGES_PER_CHAPTER: number = 10;

@@ -72,6 +72,11 @@ export function buildChapterNodes(content: string, chapterTitle?: string): Chapt
       split.isTitle[0] = true;
     }
   }
+  // 兜底（2026-10-31）：目录缺失/对不上时（如"江山美色" catalog 35 / spine 275），
+  // 只要首段本身像章名，也按标题排 —— 避免"文字对了但标题不加粗"。
+  if (nodes.length > 0 && !split.isTitle[0] && looksLikeChapterHeading(nodes[0])) {
+    split.isTitle[0] = true;
+  }
   const model: ChapterNodes = {
     nodes: nodes,
     nodeStart: nodeStart,
@@ -101,6 +106,22 @@ function matchChapterTitle(node: string, title: string): boolean {
     return false;
   }
   return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
+/**
+ * 首段是否"像章名"（目录缺失时的兜底，2026-10-31）。
+ * 只认很保守的形态：第X章/节/回/卷/集/部/篇，或楔子/序章/前言/尾声/后记。
+ * 不猜 ReaderKit 的完整正则；命中只是把首段按标题字号排，不改文本。
+ */
+function looksLikeChapterHeading(node: string): boolean {
+  const t: string = node.replace(/\s+/g, ' ').trim();
+  if (t.length < 2) {
+    return false;
+  }
+  if (/^第[0-9零一二三四五六七八九十百千万两]+[章节回卷集部篇]/.test(t)) {
+    return true;
+  }
+  return /^(楔子|序章|序言|前言|尾声|后记)(\s|$)/.test(t);
 }
 
 /** 内部：切分结果（段文本 + 是否标题） */

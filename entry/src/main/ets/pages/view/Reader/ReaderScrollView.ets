@@ -320,6 +320,8 @@ export struct ReaderScrollView {
   // ── 回调（构造时绑定，之后不变）──────────────────────────────────────────
   /** 取解析器（父页的 BookHandler；用闭包读，避免构造时还是 null） */
   handlerProvider: () => bookParser.BookParserHandler | null = () => null;
+  /** 章标题：按 spine→目录映射取（父页提供；不要直接用 catalog[spine]） */
+  chapterTitleProvider: (spine: number) => string = () => '';
   /** 正文总章数（spine 数） */
   spineCountProvider: () => number = () => 0;
   /** 可视区首段/末段变化 ⇒ 父页写进度（节流由父页做）；含字符偏移供「从本页开始读」精确定位 */
@@ -393,7 +395,7 @@ export struct ReaderScrollView {
     try {
       const content: string = await handler.getSpineItemContent(spine);
       // ⚠️ txt 没有标签，标题靠目录名反推（与无动画档同一策略）
-      const cn = buildChapterNodes(content, this.chapterTitleOf(handler, spine));
+      const cn = buildChapterNodes(content, this.chapterTitleProvider(spine));
       const nodes: string[] = cn.nodes;
       // ⚠️ **引擎排行**：与「无动画」档共用 `EngineLines`（同一份行数据）⇒ 两档互切逐字一致。
       //    原来这里是把"段"直接当行交给 ArkUI 自己换行，与无动画档的切页结果对不上。
@@ -434,23 +436,8 @@ export struct ReaderScrollView {
     return this.getUIContext().vp2px(v);
   }
 
-  /**
-   * 取「本章在目录里的名字」—— 用于识别 **TXT 的章标题段**。
-   * 与 `ReaderPageNoAnim.chapterTitleOf()` 同一策略：txt 返回纯文本、无标签，
-   * 只能借 ReaderKit 已经识别好的目录名反查章首段。
-   */
-  private chapterTitleOf(handler: bookParser.BookParserHandler, spine: number): string {
-    try {
-      const list: bookParser.CatalogItem[] = handler.getCatalogList();
-      if (list === null || list === undefined || spine < 0 || spine >= list.length) {
-        return '';
-      }
-      const name: string = list[spine].catalogName;
-      return name !== undefined && name !== null ? name : '';
-    } catch (e) {
-      return '';
-    }
-  }
+  // 章标题改由父页 `chapterTitleProvider` 提供（spine→目录映射，2026-10-31）；
+  // 不再用 `catalog[spine]` 直接下标（庆余年 747/748 会取到下一章）。
 
   /** 组出引擎排行参数（**全 px**；与 `ReaderPageNoAnim.buildLineStyle()` 同口径） */
   private buildLineStyle(): LineStyle {
@@ -834,33 +821,44 @@ export struct ReaderScrollView {
         .height('100%')
         .justifyContent(FlexAlign.Center)
       } else if (this.ready) {
-        List({ scroller: this.scroller, initialIndex: this.initialIndex }) {
-          LazyForEach(this.ds, (row: ScrollRow): void => {
-            ListItem() {
-              this.RowView(row)
-            }
-          }, (row: ScrollRow): string => this.rowKey(row))
+        // 2026-10-31 对齐修复（真机 6 张截图实测）：
+        //   旧实现把 top/bottom inset 写成 `List.padding` —— List 滚到锚点时顶部 padding
+        //   会被**滚出视口**，首行直接钻到信息窗下面；底部同理把末行顶高。
+        //   现在把 inset 挪到**固定视口**（List 外层的 Column），List 在视口内滚动：
+        //   首行永远从信息窗下开始，末行永远落在页底（与无动画同一条页边界）。
+        Column() {
+          List({ scroller: this.scroller, initialIndex: this.initialIndex }) {
+            LazyForEach(this.ds, (row: ScrollRow): void => {
+              ListItem() {
+                this.RowView(row)
+              }
+            }, (row: ScrollRow): string => this.rowKey(row))
+          }
+          .width('100%')
+          .layoutWeight(1)
+          // 文本区左右留白：左右各一份 ⇒ 中间正好是 ReaderKit 的文本宽度
+          .padding({
+            left: this.sideInsetVp,
+            right: this.sideInsetVp
+          })
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .cachedCount(3)
+          .onScrollIndex((start: number, end: number): void => {
+            this.onScrollIndexChange(start, end);
+          })
+          .onReachEnd((): void => {
+            this.appendNext();
+          })
+          .onScrollStop((): void => {
+            this.reportPos();
+          })
         }
         .width('100%')
         .height('100%')
-        // 文本区左右留白：左右各一份 ⇒ 中间正好是 ReaderKit 的文本宽度
         .padding({
-          left: this.sideInsetVp,
-          right: this.sideInsetVp,
           top: this.topInsetVp,
           bottom: this.bottomInsetVp
-        })
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .cachedCount(3)
-        .onScrollIndex((start: number, end: number): void => {
-          this.onScrollIndexChange(start, end);
-        })
-        .onReachEnd((): void => {
-          this.appendNext();
-        })
-        .onScrollStop((): void => {
-          this.reportPos();
         })
       } else {
         Column({ space: 12 }) {

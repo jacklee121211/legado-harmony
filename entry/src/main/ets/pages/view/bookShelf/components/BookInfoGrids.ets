@@ -1,3 +1,5 @@
+import { common } from '@kit.AbilityKit'
+import { UnsupportedDoc } from '../../../../common/utils/UnsupportedDoc'
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
@@ -240,6 +242,11 @@ export default struct BookInfoGrids{
     .padding({ left:8,right:8,bottom:5,top:5 })
     .onClick(()=>{
       Haptics.tap();
+      // 2026-10-31：DOC/DOCX 已取消支持（老书可能还在书架）⇒ 明确弹窗，给导出/删除出口
+      if (UnsupportedDoc.isUnsupported(this.book.bookUrl ?? '')) {
+        UnsupportedDoc.show(this.book, getContext(this) as common.UIAbilityContext, this.getUIContext());
+        return;
+      }
       // PDF ⇒ 官方 PdfView 组件页（2026-10-20，与列表模式 `BookInfos` 同款；理由见其注释）
       if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_PDFVIEW
         && isPdfPath(this.book.bookUrl ?? '')) {

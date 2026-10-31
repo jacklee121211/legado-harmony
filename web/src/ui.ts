@@ -12,7 +12,7 @@ import { Store, LINE_HEIGHTS, FONT_MIN, FONT_MAX } from './store.ts'
 import { excerptKey, pickPending } from './protocol.ts'
 import type { SyncPos, MarkRow } from './protocol.types.ts'
 import type { Mode } from './reader.types.ts'
-import { fetchMarks, addMark, delMark, fetchPhoneSync, pushWebPos } from './api.ts'
+import { fetchMarks, fetchPhoneSync } from './api.ts'
 
 function $(sel: string): HTMLElement {
   const e = document.querySelector(sel)
@@ -139,10 +139,11 @@ export class Ui {
     $('#btnJumpBot').addEventListener('click', () => this.jumpPending('bot'))
     $('#btnIgnore').addEventListener('click', () => this.ignorePending())
 
-    // 发位置给手机（引擎只回调，不直接依赖网络）
-    this.r.onPush = (pos: SyncPos): void => {
-      void pushWebPos(this.r.id, this.r.webId, pos)
-    }
+    // 2026-10-31：电脑进度只存本机（`saveNow` → Store.offset），不再发给手机
+    this.r.onPush = (_pos: SyncPos): void => {};
+
+    // 2026-10-31：书签本地化后的一次性只读迁移（读手机 /marks，写本机，不改手机）
+    void this.migratePhoneMarks();
 
     // 位置定期落盘（唯一位置 = charOffset）
     this.saveTimer = window.setInterval(() => this.saveNow(), 3000)
@@ -264,7 +265,8 @@ export class Ui {
   }
 
   private async reloadMarks(): Promise<void> {
-    this.marks = await fetchMarks(this.r.id)
+    // 2026-10-31：书签只读本机 localStorage（不再读手机 bookmarks 表）
+    this.marks = this.store.marks()
     const list = $('#bookmarkList')
     if (this.marks.length === 0) {
       list.innerHTML = '<div class="ch">（还没有书签）</div>'
@@ -294,8 +296,9 @@ export class Ui {
       btn.addEventListener('click', (e) => {
         e.stopPropagation()
         const t = Number(btn.dataset['del'] ?? '0')
-        // 服务端要求声明"书签属于哪本书"才允许删（旧实现按 time 裸删，任意书都能删）
-        void delMark(this.r.id, t).then(() => this.reloadMarks())
+        // 2026-10-31：书签本地删除（不再写手机）
+        this.store.saveMarks(this.store.marks().filter((m) => m.time !== t))
+        void this.reloadMarks()
       })
     })
   }
@@ -334,20 +337,54 @@ export class Ui {
     const pos = this.r.currentPos()
     const paraIdx = this.r.paragraphAtOffset()
     const webKey = pos.chTitle + '#' + paraIdx + '#' + (pos.topEx.slice(0, 10))
-    const res = await addMark({
-      id: this.r.id,
-      webKey,
+    // 2026-10-31：书签只存本机 localStorage（不再 POST /marksadd）
+    const arr = this.store.marks()
+    if (arr.some((m) => m.content === webKey)) {
+      this.tip('该位置已有书签')
+      return
+    }
+    const mark: MarkRow = {
+      time: Date.now(),
+      chapterIndex: -1,
       chapterName: pos.chTitle,
       bookText: pos.topEx.slice(0, 10),
-      chTitle: pos.chTitle,
-      posRatio: pos.posRatio
-    })
-    this.tip(res.msg === 'exists' ? '该位置已有书签' : res.ok ? '书签已添加（手机同步）' : '添加失败')
+      content: webKey
+    }
+    arr.push(mark)
+    this.store.saveMarks(arr)
+    this.tip('书签已添加（本机）')
     if (this.tocOpen()) void this.reloadMarks()
   }
 
   private tocOpen(): boolean {
     return $('#toc').classList.contains('open')
+  }
+
+  /**
+   * 2026-10-31：一次性只读迁移手机书签 → 本机 localStorage。
+   *  · 只 GET 手机 `/marks`（只读），不写手机；
+   *  · 按 (time, content) 去重，不覆盖本机已有书签；
+   *  · 迁移成功后写 `marksMigrated` 标记，之后不再拉取。
+   */
+  private async migratePhoneMarks(): Promise<void> {
+    if (this.store.marksMigrated()) return
+    try {
+      const rows = await fetchMarks(this.r.id)
+      const local = this.store.marks()
+      let added = 0
+      for (const m of rows) {
+        if (!local.some((x) => x.time === m.time && x.content === m.content)) {
+          local.push(m)
+          added++
+        }
+      }
+      this.store.saveMarks(local)
+      this.store.setMarksMigrated()
+      if (added > 0) this.tip(`已从手机只读导入 ${added} 条书签`)
+      if (this.tocOpen()) void this.reloadMarks()
+    } catch {
+      // 迁移失败不阻断阅读；下次打开再试
+    }
   }
 
   // ── 同步提示条 ──────────────────────────────────────────────────────────
