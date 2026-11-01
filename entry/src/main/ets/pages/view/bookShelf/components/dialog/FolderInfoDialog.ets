@@ -13,6 +13,7 @@ import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import { GroupTree } from '../../../../../common/group/GroupTree'
+import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
 // 2026-10-25：`AddToBookListDialog`（加入书单弹窗）已随书单功能删除
 import coverInfoDialog from './coverInfoDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
@@ -252,10 +253,8 @@ export default struct FolderInfoDialog{
         this.openChildDialog(this.hideDisbandDelDialog);
         break;
       case 7 :
-        this.dialogTitle = this.dialogDisbandTitle;
-        this.dialogContent = this.dialogDisbandContent;
-        this.openChildDialog(this.hideDisbandDelDialog);
-        break;
+        // 2026-11-01：含子分组时让用户选「一起解散 / 子组保留（上提一级）」；否则沿用旧确认框
+        this.prepareDisbandThenOpen(); break;
       case 8 :
         // 2026-11-01：删除 = **真删**（递归子文件夹 + 书文件），先算数量再弹确认
         this.prepareDeleteThenOpen(); break;
@@ -400,6 +399,12 @@ export default struct FolderInfoDialog{
    * 回退：把 `folderInfo` 的 `case 8` 改回 `this.openChildDialog(this.groupDelDialog)`、
    *   并恢复旧的 `deleteGroup()`（只删组行、书落未分组）即回到 2026-10-31 行为。
    */
+  /**
+   * 「删除」三选一（2026-11-01 用户拍板）：
+   *   ① 全部删除 = 递归删子文件夹 + 真删书（不可恢复）；
+   *   ② 保留有书的子文件夹 = 删掉本组自己的书与空子文件夹，**有书的子文件夹上提一级**；
+   *   ③ 取消。
+   */
   private async prepareDeleteThenOpen(): Promise<void> {
     const gid: number = this.itemData.groupId ?? -1
     if (gid <= 0) {
@@ -415,19 +420,183 @@ export default struct FolderInfoDialog{
         bookCount += bookIds.length
       }
       const subCount: number = ids.length - 1
-      let t: string = `删除「${this.itemData.groupName ?? ''}」`
-      if (subCount > 0) {
-        t += `及 ${subCount} 个子文件夹`
-      }
-      if (bookCount > 0) {
-        t += `、${bookCount} 本书`
-      }
-      this.delTitle = t
+      this.openGroupActionDialog(
+        `删除「${this.itemData.groupName ?? ''}」`,
+        `全部删除：${subCount} 个子文件夹、${bookCount} 本书一并删除（不可恢复）`,
+        '保留有书的子文件夹：空文件夹删除，有书的子文件夹上提一级',
+        '全部删除',
+        '保留有书的子文件夹',
+        (): void => { this.deleteGroup() },
+        (): void => { this.deleteGroupKeepChildFolders() }
+      )
     } catch (e) {
-      this.delTitle = `删除「${this.itemData.groupName ?? ''}」`
+      showMessage('删除失败')
       console.error('prepareDeleteThenOpen failed: ' + JSON.stringify(e))
     }
-    this.openChildDialog(this.groupDelDialog)
+  }
+
+  /** 通用三选一弹窗（删除 / 解散两处共用；关闭权在回调里） */
+  groupActionDialog: CustomDialogController | null = null
+
+  private openGroupActionDialog(title: string, hintPrimary: string, hintSecondary: string,
+    primaryText: string, secondaryText: string,
+    onPrimary: () => void, onSecondary: () => void): void {
+    this.groupActionDialog = new CustomDialogController({
+      builder: ThreeActionDialog({
+        title: title,
+        rawTitle: true,
+        primaryText: primaryText,
+        secondaryText: secondaryText,
+        hintPrimary: hintPrimary,
+        hintSecondary: hintSecondary,
+        onPrimary: (): void => {
+          this.groupActionDialog?.close()
+          onPrimary()
+        },
+        onSecondary: (): void => {
+          this.groupActionDialog?.close()
+          onSecondary()
+        },
+        onCancel: (): void => {
+          this.groupActionDialog?.close()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      cancel: (): void => {
+        this.groupActionDialog?.close()
+      }
+    })
+    this.groupActionDialog?.open()
+  }
+
+  /** 解散入口：含子分组时让用户选「一起解散 / 子组保留」；没有子分组则沿用旧确认框 */
+  private async prepareDisbandThenOpen(): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const kids: BookGroups[] = tree.childrenOf(gid)
+      if (kids.length === 0) {
+        this.dialogTitle = this.dialogDisbandTitle
+        this.dialogContent = this.dialogDisbandContent
+        this.openChildDialog(this.hideDisbandDelDialog)
+        return
+      }
+      this.openGroupActionDialog(
+        `解散「${this.itemData.groupName ?? ''}」`,
+        `一起解散：连同 ${kids.length} 个子文件夹全部解散`,
+        '子组保留：子文件夹上提一级，书籍不受影响',
+        '一起解散',
+        '子组保留',
+        (): void => { this.dissolveGroup(false) },
+        (): void => { this.dissolveGroup(true) }
+      )
+    } catch (e) {
+      showMessage('解散失败')
+      console.error('prepareDisbandThenOpen failed: ' + JSON.stringify(e))
+    }
+  }
+
+  /**
+   * 解散（不删书）：
+   * · `keepChildren = true` → 只解散本组：子分组上提一级，本组书移到父组（根级则未分组）；
+   * · `keepChildren = false` → 整棵子树一起解散：子树内书全部移到父组（根级则未分组）。
+   */
+  private async dissolveGroup(keepChildren: boolean): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
+      const parentId: number = me?.parentId ?? 0
+      const bookTarget: number = parentId > 0 ? parentId : 3
+      if (keepChildren) {
+        for (const c of tree.childrenOf(gid)) {
+          c.parentId = parentId
+          c.updateTime = Date.now()
+          await BookGroupsDao.updatePartialGroup(c)
+        }
+        for (const b of await booksDao.queryBooksByGroupId([gid])) {
+          await booksDao.updateBookGroup(b, bookTarget)
+        }
+        await bookGroupUtil.delGroupById(gid)
+      } else {
+        const ids: number[] = tree.subtreeIds(gid)
+        for (const id of ids) {
+          for (const b of await booksDao.queryBooksByGroupId([id])) {
+            await booksDao.updateBookGroup(b, bookTarget)
+          }
+        }
+        await bookGroupUtil.delGroupById(ids)
+      }
+      showMessage(`已解散「${this.itemData.groupName ?? ''}」`)
+    } catch (e) {
+      showMessage('解散失败')
+      console.error('dissolveGroup failed: ' + JSON.stringify(e))
+    } finally {
+      this.cancel()
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.isBookRefreshing++
+    }
+  }
+
+  /** 删除但保留有书的子文件夹：本组自己的书删掉；有书的子组上提，空子树删除 */
+  private async deleteGroupKeepChildFolders(): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
+      const parentId: number = me?.parentId ?? 0
+      // ① 本组自己的书：真删
+      const own: number[] = await booksDao.queryBooksByGroupId([gid])
+      if (own.length > 0) {
+        await booksUtil.delBooksById(own)
+      }
+      // ② 子分组：有书的上提一级；没书的整棵删
+      for (const c of tree.childrenOf(gid)) {
+        const cid: number = c.groupId ?? -1
+        if (cid <= 0) {
+          continue
+        }
+        let hasBooks: boolean = false
+        for (const id of tree.subtreeIds(cid)) {
+          if ((await booksDao.queryBooksByGroupId([id])).length > 0) {
+            hasBooks = true
+            break
+          }
+        }
+        if (hasBooks) {
+          c.parentId = parentId
+          c.updateTime = Date.now()
+          await BookGroupsDao.updatePartialGroup(c)
+        } else {
+          await bookGroupUtil.delGroupById(cid)
+        }
+      }
+      await bookGroupUtil.delGroupById(gid)
+      showMessage(`已删除「${this.itemData.groupName ?? ''}」`)
+    } catch (e) {
+      showMessage('删除失败')
+      console.error('deleteGroupKeepChildFolders failed: ' + JSON.stringify(e))
+    } finally {
+      this.cancel()
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.isBookRefreshing++
+    }
   }
 
   /** 真删：子树内每个分组的书先逐本删（清书签/进度/封面），再删分组行 */
