@@ -204,13 +204,25 @@ export default struct BookSelectGroupDialog{
   private rebuildRows(): void {
     const tree: GroupTree = GroupTree.build(this.groupList)
     const out: GroupRow[] = []
+    // 2026-11-01：孤儿行过滤 —— 父分组不在本次列表里（被隐藏/已删）时，
+    //   GroupTree 会把它当根级返回，导致"移动至"里凭空多出一个同名根分组（真机 212 现象）。
+    const known: number[] = []
+    for (const g of this.groupList) {
+      if (g.groupId !== undefined) {
+        known.push(g.groupId)
+      }
+    }
     const walk = (parentId: number, depth: number): void => {
       for (const g of tree.childrenOf(parentId)) {
         if (g.isSystem) {
           continue
         }
-        // 管理模式下连隐藏分组也显示（否则隐藏组永远删不掉）；移动模式只看显示中的
         if (!this.isManageMode && !g.show) {
+          continue
+        }
+        // 父级缺失 ⇒ 跳过（避免以"根级"身份重复出现）
+        const pid: number = g.parentId ?? 0
+        if (pid !== 0 && known.indexOf(pid) < 0) {
           continue
         }
         const kids: BookGroups[] = tree.childrenOf(g.groupId ?? -1)
