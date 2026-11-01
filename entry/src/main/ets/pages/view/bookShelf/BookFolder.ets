@@ -647,6 +647,17 @@ export default struct BookFolder {
         .maxLines(2)
         .hitTestBehavior(HitTestMode.None)
       // 「共N本」= 直属书（口径与点进去的列表同源）；有多级子文件夹时补一段数量
+      // 2026-11-02：被隐藏的分组在根层也显示「眼睛关闭 + 已隐藏」（与子层同源，只标父级）
+      if (!item.show || item.isSystem) {
+        if (!item.show) {
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.eye_slash')).fontSize(12).fontColor(['rgb(174,174,174)'])
+            Text('已隐藏').fontSize(11).fontColor('rgb(174,174,174)')
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+        }
+      }
       Text(this.countLabel(item))
         .fontSize(12)
         .fontColor('rgb(174,174,174)')
