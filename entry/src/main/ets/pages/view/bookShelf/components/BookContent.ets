@@ -29,6 +29,32 @@ export default struct BookContent {
   /** 2026-11-01：列表请求序号 —— 一次导航只允许最后一轮结果落地（日志显示一次点击触发 2-3 次查询） */
   private loadToken: number = 0
 
+  /** 2026-11-01：按 id 复用未变化的 Books 对象，保持节点身份（避免 Image 重建导致二次加载） */
+  private mergeObjects(next: Books[]): Books[] {
+    if (this.bookList.length === 0) {
+      return next
+    }
+    const old: Map<number, Books> = new Map<number, Books>()
+    for (const b of this.bookList) {
+      if (b.id !== undefined) {
+        old.set(b.id, b)
+      }
+    }
+    const out: Books[] = []
+    for (const nb of next) {
+      const prev: Books | undefined = nb.id !== undefined ? old.get(nb.id) : undefined
+      if (prev !== undefined
+        && (prev.customCoverUrl ?? '') === (nb.customCoverUrl ?? '')
+        && (prev.builtinCoverUrl ?? '') === (nb.builtinCoverUrl ?? '')
+        && (prev.coverUrl ?? '') === (nb.coverUrl ?? '')) {
+        out.push(prev)
+      } else {
+        out.push(nb)
+      }
+    }
+    return out
+  }
+
   private listCacheKey(): number {
     return this.onRecentChip ? -1 : this.bookTypeNumber
   }
@@ -330,7 +356,7 @@ export default struct BookContent {
         // 2026-11-01：已经有更新的一轮请求 ⇒ 丢弃本次结果，避免列表被替换两次
         return
       }
-      this.bookList = list
+      this.bookList = this.mergeObjects(list)
       // ── 开一波「渐次入场」（2026-09-24）──────────────────────────────────────
       // ★ 位置很关键：必须在**数据就绪的这一刻**才 begin()。
       //   `EntranceWave.delayFor()` 以 `Date.now()` 起算；若在发起查询之前就 begin()，
