@@ -1136,7 +1136,9 @@ export default struct BookManagePage {
         this.delDialog?.open(); break;
       case 7 :
         // 2026-11-02：批量解散（书保留、归还上级；有后代分组时先问模式）
-        this.manageDissolve(); break;
+        this.manageDissolve().catch((e: Error): void => {
+          console.error('manageDissolve failed: ' + e.message)
+        }); break;
       case 6 :
         this.manageShare(); break;
     }
@@ -1555,12 +1557,16 @@ export default struct BookManagePage {
    * 规则（用户拍板）：所选分组里**任意一个有后代分组** ⇒ 先问「一起解散 / 子组保留」；
    * 全都无后代 ⇒ 直接按"保留子目录"（等价于只删本行、书升父级）。
    */
-  private manageDissolve(): void {
+  private async manageDissolve(): Promise<void> {
     const gids: number[] = []
     let hasDescendant: boolean = false
-    const tree: GroupTree = GroupTree.build(this.bookGroups)
+    // 2026-11-02 真机 bug：根目录批量页的 `bookGroups` **只含顶层分组**（无子节点），
+    //   用它算 `subtreeIds` 恒为 1 ⇒ 一律走"子组保留"，三级窗永远不出现。
+    //   ⇒ 判定必须查**全量分组**（与弹窗内口径一致）。
+    const all: BookGroups[] = await BookGroupsDao.search()
+    const tree: GroupTree = GroupTree.build(all)
     for (const id of this.checkListNumber) {
-      for (const g of this.bookGroups) {
+      for (const g of all) {
         if ((g.groupId ?? -1) === id) {
           gids.push(id)
           if (tree.subtreeIds(id).length > 1) {
