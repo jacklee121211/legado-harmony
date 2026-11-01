@@ -6023,6 +6023,10 @@ oAnimInitNode 配套） */
    * （见 `WindowAbility.offWindowSizeChange()` 的注释：不注销会导致陈旧回调堆积）。
    */
   private windowSizeCb: (() => void) | null = null;
+  /** 折叠态监听句柄 + 悬停标记 + 切换保护截止时间（2026-11-01） */
+  private foldStatusCb: ((s: display.FoldStatus) => void) | null = null;
+  private foldHover: boolean = false;
+  private foldGuardUntil: number = 0;
   /** 阅读器底部 dock 的 HDS 控制器（2026-11-01 换 HdsTabs 后需要） */
   private dockHdsController: HdsTabsController = new HdsTabsController();
   /**
@@ -6159,6 +6163,15 @@ oAnimInitNode 配套） */
     //   真机日志实证：退出阅读页后 1.2s 仍出现 `syncReaderViewSize`（见
     //   `WindowAbility.offWindowSizeChange()` 的注释）。
     this.windowSizeCb = (): void => {
+      // 折叠过渡保护：500ms 内只延后，不立即重排（见 registerFoldWatch 注释）
+      if (Date.now() < this.foldGuardUntil) {
+        setTimeout((): void => {
+          if (this.windowSizeCb !== null) {
+            this.windowSizeCb();
+          }
+        }, 520);
+        return;
+      }
       // ⚠️ 2026-10-23 修「竖屏偶尔整页被挤压」：**必须读 AppStorage 里的最新值**，
       //   不能用 `this.windowWidth` —— 它是 `@StorageLink`，其本地字段的同步更新
       //   与监听器回调之间存在时序差，旋转瞬间可能读到**旋转前的旧值**
@@ -6184,6 +6197,12 @@ oAnimInitNode 配套） */
       }
     };
     WindowAbility.getInstance().onWindowSizeChange(this.windowSizeCb);
+    // ★ 2026-11-01：折叠形态识别 + 切换保护（官方 `bpta-multi-device-screen-diff`）：
+    //   官方原文：「适配折叠设备屏幕…还需关注两个特殊点：**开合连续**和**悬停态**」；
+    //   并明确「display 提供的折叠状态监听接口…建议使用在某些应用功能的适配上，
+    //   比如适配设备悬停态…但**不能用于页面布局**的开合连续适配」。
+    //   ⇒ 这里只做**识别 + 抑制重排风暴**，布局仍由 `windowSizeChange` 驱动。
+    this.registerFoldWatch();
 
     // ── 避让区监听（官方最佳实践 `bpta-multi-device-screen-diff` 要求）──────────
     //   官方原文：「系统避让区可能会发生变化，例如窗口从全屏模式切换至悬浮窗模式，
@@ -11123,6 +11142,35 @@ oAnimInitNode 配套） */
 
     }
     return new HdsFloatingStyleModifier(st);
+  }
+  /**
+   * 折叠形态识别 + 切换保护（2026-11-01，官方 pta-multi-device-screen-diff）。
+   *
+   * · 识别：display.getFoldStatus() 初值 + display.on('foldStatusChange') 持续更新；
+   *   只用来说明“当前是否悬停态”（官方：折叠监听只用于功能适配，**不用于布局**）。
+   * · 保护：形态切换瞬间窗口会连续抖动（foldStatusChange → foldDisplayModeChange →
+   *   windowSizeChange），期间**推迟一次重排**，避免多次 setPageConfig/重章造成卡顿或
+   *   “切到一半”的中间态。保护窗口 500ms，之后由 windowSizeCb 正常补一次。
+   */
+  private registerFoldWatch(): void {
+    try {
+      this.foldHover = display.getFoldStatus() === display.FoldStatus.FOLD_STATUS_HALF_FOLDED;
+    } catch (e) {
+    }
+    this.foldStatusCb = (s: display.FoldStatus): void => {
+      this.foldHover = s === display.FoldStatus.FOLD_STATUS_HALF_FOLDED;
+      this.foldGuardUntil = Date.now() + 500;
+      hilog.info(0x0000, 'testTag',
+        'foldStatusChange status=%{public}d hover=%{public}s guard=500ms',
+        s as number, this.foldHover ? 'Y' : 'N');
+    };
+    try {
+      display.on('foldStatusChange', this.foldStatusCb);
+      hilog.info(0x0000, 'testTag', 'foldStatusChange subscribed, hover=%{public}s',
+        this.foldHover ? 'Y' : 'N');
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'foldStatusChange subscribe failed');
+    }
   }
   private onSelfDrawnReady(): void {
     if (!this.firstPageReady) {
