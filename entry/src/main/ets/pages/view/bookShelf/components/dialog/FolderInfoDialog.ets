@@ -791,26 +791,16 @@ export default struct FolderInfoDialog{
       if (own.length > 0) {
         await booksUtil.delBooksById(own)
       }
-      // ② 子分组：有书的上提一级；没书的整棵删
+      // ② 子分组：**一律上提一级**（2026-11-01 用户拍板：空目录也保留，不再自动删空子树，
+      //    否则会与「空目录一律保留」规则冲突，也会把用户刚建的空文件夹静默吃掉）
       for (const c of tree.childrenOf(gid)) {
         const cid: number = c.groupId ?? -1
         if (cid <= 0) {
           continue
         }
-        let hasBooks: boolean = false
-        for (const id of tree.subtreeIds(cid)) {
-          if ((await booksDao.queryBooksByGroupId([id])).length > 0) {
-            hasBooks = true
-            break
-          }
-        }
-        if (hasBooks) {
-          c.parentId = parentId
-          c.updateTime = Date.now()
-          await BookGroupsDao.updatePartialGroup(c)
-        } else {
-          await bookGroupUtil.delGroupById(cid)
-        }
+        c.parentId = parentId
+        c.updateTime = Date.now()
+        await BookGroupsDao.updatePartialGroup(c)
       }
       await bookGroupUtil.delGroupById(gid)
       showMessage(`已删除「${this.itemData.groupName ?? ''}」`)
