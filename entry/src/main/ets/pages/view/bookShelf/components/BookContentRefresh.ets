@@ -297,11 +297,12 @@ export default struct BookContentRefresh {
           chips.push({ id: g.groupId, name: g.groupName })
         }
       }
-      this.pathChips = chips
-      this.childGroups = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
-      // 2026-11-01：子文件夹卡片也要画 2×2 预览 ⇒ 预取每个子分组的书封面（每组最多 2 本）
+      // 2026-11-01：先算好、最后一次性赋值 —— 原来 `childGroups` 先赋、`childPreviews`
+      //   等查询回来再赋，中间会出现一帧"有子分组但没有封面"的行高，把下面的书籍
+      //   网格整体推一下（用户：进入子分组时书"上移一下才消失"）。
+      const childGroups: BookGroups[] = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
       const childIds: number[] = []
-      for (const g of this.childGroups) {
+      for (const g of childGroups) {
         if (g.groupId !== undefined) {
           childIds.push(g.groupId)
         }
@@ -311,6 +312,8 @@ export default struct BookContentRefresh {
       if (token !== this.folderToken) {
         return
       }
+      this.pathChips = chips
+      this.childGroups = childGroups
       this.childPreviews = previews
       // 兼容既有字段（「返回分组列表」胶囊已被路径条取代，但该键仍被其它地方读写）
       AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME',
