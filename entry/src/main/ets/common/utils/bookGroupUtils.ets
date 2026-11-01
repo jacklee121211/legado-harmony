@@ -8,6 +8,7 @@ import BooksDao from '../../database/dao/BooksDao'
 import { BookGroups } from '../../database/entities/BookGroups'
 import { Books } from '../../database/entities/Books'
 import { GroupTree } from '../group/GroupTree'
+import { HiddenGroups } from '../group/HiddenGroups'
 import toolsUtils from './ToolsUtils'
 
 /** 2026-11-01：空分组是否自动解散（用户要求保留空目录 ⇒ 默认 false，可一键恢复） */
@@ -86,6 +87,7 @@ class bookGroupUtils{
       await BooksDao.queryBookByGroup(alive, 3)
       //删除分组
       await BookGroupsDao.deleteBook(alive)
+      await this.refreshHiddenGroupIds()
     } catch (e) {
       console.error(`[GRP-ROLLBACK] delGroupById 失败 ids=${alive.join(',')}：${JSON.stringify(e)}`)
       let restored: number = 0
@@ -152,6 +154,7 @@ class bookGroupUtils{
         const ids: number[] = tree.subtreeIds(id)
         await BooksDao.queryBookByGroup(ids, target)
         await BookGroupsDao.deleteBook(ids)
+      await this.refreshHiddenGroupIds()
         return
       }
       // ① 直属书归还父级
@@ -341,6 +344,18 @@ class bookGroupUtils{
     for (const id of ids) {
       await BookGroupsDao.updateGroupShow(id,isShow)
     }
+    // 2026-11-02：可见性变了 ⇒ 立刻刷新全局隐藏集合（所有书籍查询共用）
+    await this.refreshHiddenGroupIds()
+  }
+
+  /**
+   * 2026-11-02：**刷新全局隐藏分组集合**（`HiddenGroups.ids`）。
+   * 分组结构/可见性变化后必须调用，否则搜索页等调用方会漏过滤。
+   */
+  async refreshHiddenGroupIds(): Promise<number[]> {
+    const ids: number[] = await this.hiddenSubtreeIds()
+    HiddenGroups.set(ids)
+    return ids
   }
 
   //更新分组的bookIds

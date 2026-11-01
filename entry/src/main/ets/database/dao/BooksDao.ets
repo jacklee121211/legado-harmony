@@ -10,6 +10,7 @@ import { PreferencesUtil } from '@pura/harmony-utils';
 import fs from '@ohos.file.fs';
 // 诊断打点（2026-10-12）：`getLastReadBook()` 的书名键/命中行
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { HiddenGroups } from '../../common/group/HiddenGroups';
 
 /**
  * 「分类页签合并」迁移的一次性标志（Preferences 键）。
@@ -45,12 +46,9 @@ const COUNT_COLUMN: ColumnInfo[] = [
 ]
 
 class BooksDao {
-  /** 2026-11-02：被隐藏分组（含其子树）的 id 列表 —— 查询时排除这些分组里的书 */
-  hiddenGroupIds: number[] = []
-
-  /** 设置需要排除的隐藏分组 id（传空数组即取消过滤） */
+  /** 兼容旧调用点：写入**全局**隐藏集合（真相在 `HiddenGroups.ids`，所有查询共用） */
   setHiddenGroupIds(ids: number[]): void {
-    this.hiddenGroupIds = ids
+    HiddenGroups.set(ids)
   }
 
   TABLE_NAME: string = 'books'
@@ -258,8 +256,8 @@ class BooksDao {
         predicates.equalTo('bookGroup', bookGroup)
       }
       // 2026-11-02：计数与列表同口径 —— 隐藏分组（含子树）的书不计入
-      if (this.hiddenGroupIds.length > 0) {
-        predicates.notIn('bookGroup', this.hiddenGroupIds)
+      if (HiddenGroups.ids.length > 0) {
+        predicates.notIn('bookGroup', HiddenGroups.ids)
       }
       const count = await DbUtil.queryForCount(predicates, column)
       return count
@@ -290,8 +288,8 @@ class BooksDao {
 
     // 2026-11-02：**隐藏分组里的书一律不出现在列表/计数里**（用户：隐藏组的书与计数全部排除）。
     //   由调用方在查询前用 `BooksDao.setHiddenGroupIds(子树id)` 设置；空数组＝不过滤。
-    if (this.hiddenGroupIds.length > 0) {
-      whereClause.push(`bookGroup NOT IN (${this.hiddenGroupIds.join(',')})`);
+    if (HiddenGroups.ids.length > 0) {
+      whereClause.push(`bookGroup NOT IN (${HiddenGroups.ids.join(',')})`);
     }
 
     if (type !== undefined) {

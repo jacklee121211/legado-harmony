@@ -751,6 +751,7 @@ export default struct FolderInfoDialog{
     }
     const snapBookId: number[] = []
     const snapBookGroup: number[] = []
+    const pendingDelete: number[] = []
     for (const b of moving) {
       if (b.id !== undefined) {
         snapBookId.push(b.id)
@@ -770,7 +771,9 @@ export default struct FolderInfoDialog{
           continue
         }
         if (choice === 0 && idx >= 0) {
-          await booksUtil.delBooksById([conflicts[idx].oldId])
+          // 2026-11-02：**删旧推迟到最后**（两阶段）—— 真删文件不可恢复，
+          //   若后续移书/删组失败会留下"旧书已删"的数据级残留；这里只登记，成功后再删。
+          pendingDelete.push(conflicts[idx].oldId)
         }
         if (choice === 1) {
           b.bookName = `${b.bookName} (2)`
@@ -792,6 +795,14 @@ export default struct FolderInfoDialog{
         }
       }
       await bookGroupUtil.delGroupById(ids)
+      // 2026-11-02：分组结构已安全变更，最后才真正删除被覆盖的旧书文件
+      for (const oldId of pendingDelete) {
+        try {
+          await booksUtil.delBooksById([oldId])
+        } catch (e4) {
+          console.error(`[DISSOLVE-CLEANUP] 删除旧书失败 id=${oldId}: ${JSON.stringify(e4)}`)
+        }
+      }
       showMessage(`已解散「${this.itemData.groupName ?? ''}」`)
     } catch (e) {
       // ── 2026-11-02 失败回滚：书回原分组、子分组回原父级 ──────────────────────
