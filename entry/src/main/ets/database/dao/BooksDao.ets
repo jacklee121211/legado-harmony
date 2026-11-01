@@ -354,6 +354,9 @@ class BooksDao {
         let gid: number = b.bookGroup ?? 0
         if (gid === 4 && ids.indexOf(4) < 0 && ids.indexOf(3) >= 0) {
           gid = 3
+          // 2026-11-01：把老本地书归到「未分组」后，对象本体的 bookGroup 也要同步，
+          // 否则调用方按 groupId 分组（如 `booksOfGroup`）仍匹配不到 ⇒ 预览空白
+          b.bookGroup = gid
         }
         const n: number = perGroup.get(gid) ?? 0
         if (n < limitPerGroup) {
