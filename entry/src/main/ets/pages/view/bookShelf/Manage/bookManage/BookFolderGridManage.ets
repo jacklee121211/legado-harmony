@@ -176,9 +176,12 @@ export default struct BookFolderGridManage {
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .constraintSize({ maxWidth: 64 })
+                // 2026-11-01：所有来源标签都用深色底 + 白字——分组封面多为浅色图，
+                //   深色模式下用白色半透明底几乎看不见（用户："只有本分组优化了"）。
+                //   本分组用珊瑚红强调，其余用 0.60 黑色底（亮/暗都压得住浅色封面）。
                 .backgroundColor(this.originLabel === '本分组'
-                  ? (NightMode.isDarkSurface() ? 'rgba(229,115,115,0.85)' : 'rgba(0, 0, 0, 0.55)')
-                  : (NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.32)' : 'rgba(0, 0, 0, 0.40)'))
+                  ? (NightMode.isDarkSurface() ? 'rgba(229,115,115,0.92)' : 'rgba(0, 0, 0, 0.55)')
+                  : (NightMode.isDarkSurface() ? 'rgba(0, 0, 0, 0.62)' : 'rgba(0, 0, 0, 0.45)'))
                 .position({ x: 4, y: 4 })
                 .zIndex(3)
             }
