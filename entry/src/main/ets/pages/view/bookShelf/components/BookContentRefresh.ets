@@ -21,6 +21,7 @@ import addBookTypeDialog, { AddGroupChannel } from '../../../../componets/common
 import { BookGroups } from '../../../../database/entities/BookGroups'
 import { Books } from '../../../../database/entities/Books'
 import BooksDao from '../../../../database/dao/BooksDao'
+import FolderInfoDialog from './dialog/FolderInfoDialog'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupTree } from '../../../../common/group/GroupTree'
@@ -78,6 +79,34 @@ export default struct BookContentRefresh {
   @State childGroups: BookGroups[] = []
   /** 子分组卡片 2×2 预览用的书（每组最多 2 本） */
   @State childPreviews: Books[] = []
+  // ── 2026-11-01：长按任意层级的子文件夹 → 与主栏同款分组弹窗 ──────────────────
+  @State dialogGroupData: BookGroups = new BookGroups()
+  groupInfoDialog: CustomDialogController | null = null
+
+  private openChildGroupDialog(g: BookGroups): void {
+    this.dialogGroupData = g
+    this.groupInfoDialog = new CustomDialogController({
+      builder: FolderInfoDialog({
+        itemData: this.dialogGroupData,
+        cancel: (): void => {
+          this.groupInfoDialog?.close()
+        },
+        reopen: (): void => {
+          this.onFolderChanged()
+        }
+      }),
+      autoCancel: true,
+      width: '100%',
+      alignment: DialogAlignment.Bottom,
+      offset: { dx: 0, dy: -10 },
+      customStyle: false,
+      cornerRadius: 20,
+      cancel: (): void => {
+        this.groupInfoDialog?.close()
+      }
+    })
+    this.groupInfoDialog?.open()
+  }
   /** 新建分组时的父级（0 = 根级；分组内新建 = 当前分组 id） */
   private newGroupParentId: number = 0
   @State checkGroup:Record<number, boolean> = {}
@@ -361,6 +390,12 @@ export default struct BookContentRefresh {
         .width('100%')
     }
     .padding({ left: 6, right: 6, top: 4, bottom: 8 })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          Haptics.tap()
+          this.openChildGroupDialog(g)
+        }))
     .onClick(() => {
       if (g.groupId !== undefined) {
         this.jumpToFolder(g.groupId)
@@ -516,6 +551,7 @@ export default struct BookContentRefresh {
               .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
           }
           .padding({ left: 10, right: 12, top: 8, bottom: 8 })
+          .height(38)
           .borderRadius(18)
           .backgroundColor(this.theme.mainColor)
           .scale({ x: this.addScale, y: this.addScale })
@@ -539,6 +575,7 @@ export default struct BookContentRefresh {
           }
           .constraintSize({ maxWidth: '70%' })
           .padding({ left: 12, right: 14, top: 8, bottom: 8 })
+          .height(38)
           .borderRadius(18)
           .backgroundColor(this.theme.mainColor)
           .clickEffect(UiMotion.CLICK)
