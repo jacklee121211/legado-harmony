@@ -334,7 +334,7 @@ export default struct BookSelectGroupDialog{
     .onClick(() => {
       const id: number = row.group.groupId ?? -1
       // [PROBE-ROW 2026-11-01] 临时探针：看被哪个分支挡下
-      console.log(`[PROBE-ROW] id=${id} oldGroupId=${this.oldGroupId} show=${row.group.show} disabled=${JSON.stringify(this.disabledIds)} isManage=${this.isManageMode} moveNode=${this.isMoveGroupNode}`)
+      console.log(`[PROBE-ROW] id=${id} oldGroupId=${this.oldGroupId} show=${row.group.show} disabled=${JSON.stringify(this.disabledIds)} isManage=${this.isManageMode} moveNode=${this.isMoveGroupNode} moveStatus=${this.isMoveStatus} ids=${JSON.stringify(this.Ids)}`)
       if (id <= 0 || this.oldGroupId === id) {
         return
       }
@@ -354,6 +354,8 @@ export default struct BookSelectGroupDialog{
       Haptics.tap()
       this.moveGroupId = id
       this.moveTitle = row.group.groupName
+      // [PROBE-OPEN 2026-11-01] 记录即将打开确认框时的目标与书籍参数
+      console.log(`[PROBE-OPEN] target=${id} name=${row.group.groupName} ids=${JSON.stringify(this.Ids)} moveStatus=${this.isMoveStatus}`)
       this.clickBookTypeDialog?.open()
     })
     .margin({ bottom: PaddingConstants.PADDING_16 })
