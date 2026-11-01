@@ -123,8 +123,11 @@ class bookGroupUtils{
     const all: BookGroups[] = await BookGroupsDao.search()
     const tree: GroupTree = GroupTree.build(all)
     const out: number[] = []
+    // ⚠️ 2026-11-02 真机取证：RDB 读出来的 `show` 是 **number（0/1）**，不是 boolean
+    //   （日志原文 `5:1:show=0(number)`），所以这里必须用 `!g.show` 而不是 `g.show === false`，
+    //   否则隐藏分组永远进不了排除集合（曾导致"隐藏后书还在全部列表"）。
     for (const g of all) {
-      if (g.show === false && g.groupId !== undefined) {
+      if (!g.show && g.groupId !== undefined) {
         for (const id of tree.subtreeIds(g.groupId)) {
           if (out.indexOf(id) < 0) {
             out.push(id)
