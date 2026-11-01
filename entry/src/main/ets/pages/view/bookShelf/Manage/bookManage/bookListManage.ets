@@ -7,6 +7,7 @@ import ShelfPrefs from '../../../../../common/utils/ShelfPrefs'
 // 手势划选（2026-10-25 新增）：几何命中 + 会话状态机，见该文件头注释
 import ManageBrush, { BrushRect, bumpSelectionVersion } from './ManageBrush'
 import { Haptics } from '../../../../../common/utils/Haptics'
+import { bKey } from '../../../../../common/manage/SelectionKeys'
 
 @Component
 export default struct bookListManage{
@@ -92,7 +93,8 @@ export default struct bookListManage{
 
   /** 落盘：只写数据，视觉由版本号广播统一刷新（见 `ManageBrush.ets` 末尾说明） */
   private writeChecked(id: number, checked: boolean): void {
-    this.checkGroup[id] = checked
+    // 2026-11-01：书籍键为负数（见 common/manage/SelectionKeys）
+    this.checkGroup[bKey(id)] = checked
   }
 
   private brushBegin(ev: GestureEvent): void {
@@ -105,7 +107,7 @@ export default struct bookListManage{
       return
     }
     const started: boolean = this.brush.begin(x, y,
-      (id: number): boolean => this.checkGroup[id] ?? false,
+      (id: number): boolean => (this.checkGroup[bKey(id)] ?? false) || (this.checkGroup[id] ?? false),
       (id: number, checked: boolean): void => {
         this.writeChecked(id, checked)
       })

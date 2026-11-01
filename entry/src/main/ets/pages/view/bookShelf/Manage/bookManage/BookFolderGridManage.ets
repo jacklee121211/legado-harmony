@@ -3,6 +3,7 @@ import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { Books } from '../../../../../database/entities/Books'
+import { bKey } from '../../../../../common/manage/SelectionKeys'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
@@ -83,7 +84,7 @@ export default struct BookFolderGridManage {
     for (const b of this.allBooks) {
       const bg: number = b.bookGroup ?? 0
       if (ids.indexOf(bg) >= 0 && b.id !== undefined) {
-        this.checkGroup[b.id] = val
+        this.checkGroup[bKey(b.id)] = val
       }
     }
     // 子全选 ⇒ 父选中；否则父取消（祖先链逐级重算）

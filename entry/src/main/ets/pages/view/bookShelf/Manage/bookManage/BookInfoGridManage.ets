@@ -7,6 +7,7 @@ import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import { resolveBookCover, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
+import { bKey } from '../../../../../common/manage/SelectionKeys'
 
 @Component
 /**
@@ -56,7 +57,9 @@ export default struct BookInfoGridManage{
   /** 从 `checkGroup` 回读本格勾选态 */
   private resyncChecked(): void {
     const id: number | undefined = this.bookData.id
-    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+    this.checked = id !== undefined && id !== null
+      ? ((this.checkGroup[bKey(id)] ?? false) || (this.checkGroup[id] ?? false))
+      : false
   }
 
   /** 整卡点击：切换勾选（用户要求"点整本书都能选/取消"） */
@@ -68,7 +71,7 @@ export default struct BookInfoGridManage{
     this.checked = !this.checked
     const id: number | undefined = this.bookData.id
     if (id !== undefined && id !== null) {
-      this.checkGroup[id] = this.checked
+      this.checkGroup[bKey(id)] = this.checked
     }
     this.onSelect()
   }

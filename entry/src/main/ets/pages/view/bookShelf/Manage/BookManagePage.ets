@@ -1,6 +1,7 @@
 import bookListManage from './bookManage/bookListManage';
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
+import { gKey, bKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import {showMessage} from '../../../../componets/common/promptShow'
@@ -932,12 +933,12 @@ export default struct BookManagePage {
     //   自定义分组内（≥5）是「子树分组 + 本书」混合 ⇒ 两类都要勾上（用户反馈：书全选、分组没选）
     if (this.bookGroups.length > 0) {
       this.bookGroups.forEach((item)=>{
-        item.groupId && !item.isSystem && item.show ? next[item.groupId] = value:''
+        item.groupId && !item.isSystem && item.show ? next[gKey(item.groupId)] = value:''
       })
     }
     if (this.bookList.length > 0) {
       this.bookList.forEach((item)=>{
-        item.id?next[item.id] = value:''
+        item.id?next[bKey(item.id)] = value:''
       })
     }
     this.checkLists = next;
@@ -1501,7 +1502,12 @@ export default struct BookManagePage {
     const keys = Object.keys(this.checkLists)
       .filter(key => this.checkLists[Number(key)])
       .map(key => Number(key));
-    this.checkListNumber = keys
+    // 2026-11-01：键空间已分段（分组正 / 书籍负），解码成纯 id 供既有操作复用
+    const ids: number[] = []
+    for (const k of keys) {
+      ids.push(k < 0 ? -k : k)
+    }
+    this.checkListNumber = ids
     // 2026-11-01：清掉值为 false 的键（对 UI/分享无意义，长会话里只会越积越多）。
     //   ArkTS 禁止 `delete`（`arkts-no-delete`）⇒ 重建一个新对象。
     const pruned: Record<number, boolean> = {}
@@ -1514,6 +1520,16 @@ export default struct BookManagePage {
     this.syncShareSelection()
   }
   //判断checkLists变化值当key的值为false移除当前值
+  /** 2026-11-01：分组是否勾选（正数键） */
+  private groupOn(gid: number): boolean {
+    return this.checkLists[gKey(gid)] ?? false
+  }
+
+  /** 2026-11-01：书籍是否勾选（负数键；兼容旧的裸 id 写法） */
+  private bookOn(bid: number): boolean {
+    return (this.checkLists[bKey(bid)] ?? false) || (this.checkLists[bid] ?? false)
+  }
+
   /** 分组层级（沿 parentId 上溯，1 = 顶层） */
   private depthOfGroup(g: BookGroups): number {
     let d: number = 1
@@ -1554,7 +1570,7 @@ export default struct BookManagePage {
       for (const c of this.bookGroups) {
         if ((c.parentId ?? 0) === gid && c.groupId !== undefined) {
           hasChild = true
-          if (!(this.checkLists[c.groupId] ?? false)) {
+          if (!this.groupOn(c.groupId)) {
             allOn = false
             break
           }
@@ -1564,7 +1580,7 @@ export default struct BookManagePage {
         for (const b of this.bookList) {
           if ((b.bookGroup ?? 0) === gid) {
             hasChild = true
-            if (!(this.checkLists[b.id ?? -1] ?? false)) {
+            if (!this.bookOn(b.id ?? -1)) {
               allOn = false
               break
             }
@@ -1572,7 +1588,7 @@ export default struct BookManagePage {
         }
       }
       if (hasChild) {
-        this.checkLists[gid] = allOn
+        this.checkLists[gKey(gid)] = allOn
       }
     }
   }
@@ -1581,7 +1597,7 @@ export default struct BookManagePage {
   private selectedBookCount(): number {
     let n: number = 0
     for (const b of this.bookList) {
-      if (this.checkLists[b.id ?? -1] ?? false) {
+      if (this.bookOn(b.id ?? -1)) {
         n++
       }
     }
@@ -1593,7 +1609,7 @@ export default struct BookManagePage {
     let n: number = 0
     for (const g of this.bookGroups) {
       const gid: number = g.groupId ?? -1
-      if (gid > 0 && !g.isSystem && (this.checkLists[gid] ?? false)) {
+      if (gid > 0 && !g.isSystem && this.groupOn(gid)) {
         n++
       }
     }
@@ -1606,14 +1622,14 @@ export default struct BookManagePage {
     for (const g of this.bookGroups) {
       if (g.groupId !== undefined && !g.isSystem && g.groupId > 0) {
         any = true
-        if (!(this.checkLists[g.groupId] ?? false)) {
+        if (!this.groupOn(g.groupId)) {
           return false
         }
       }
     }
     for (const b of this.bookList) {
       any = true
-      if (!(this.checkLists[b.id ?? -1] ?? false)) {
+      if (!this.bookOn(b.id ?? -1)) {
         return false
       }
     }

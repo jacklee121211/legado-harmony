@@ -6,6 +6,7 @@ import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import { resolveBookCover, coverCorners, stripBookExt } from '../../../../../common/utils/CoverSource'
 import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
+import { bKey } from '../../../../../common/manage/SelectionKeys'
 
 @Component
 
@@ -36,7 +37,9 @@ export default struct BookInfoManage{
 
   private resyncChecked(): void {
     const id: number | undefined = this.bookData.id
-    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+    this.checked = id !== undefined && id !== null
+      ? ((this.checkGroup[bKey(id)] ?? false) || (this.checkGroup[id] ?? false))
+      : false
   }
 
   private toggle(): void {
@@ -47,7 +50,7 @@ export default struct BookInfoManage{
     this.checked = !this.checked
     const id: number | undefined = this.bookData.id
     if (id !== undefined && id !== null) {
-      this.checkGroup[id] = this.checked
+      this.checkGroup[bKey(id)] = this.checked
     }
     this.onSelect()
   }
