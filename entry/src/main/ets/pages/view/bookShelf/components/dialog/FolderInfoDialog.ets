@@ -732,6 +732,33 @@ export default struct FolderInfoDialog{
   /** 按用户选择执行：覆盖=删旧、重命名=书名加 (2)、跳过=落未分组；然后删分组行 */
   private async applyDissolve(gid: number, ids: number[], keepChildren: boolean, parentId: number,
     moving: Books[], target: number, conflicts: MergeConflictInfo[], choices: number[]): Promise<void> {
+    // ── 2026-11-02 预检 + 回滚快照 ────────────────────────────────────────────
+    //  真机实证：本方法自己移书、重挂子组，最后才调 delGroupById（那边回滚管不到前两步），
+    //  所以必须在这里独立快照，失败时逆序恢复。
+    const gids: number[] = ids.length > 0 ? ids : [gid]
+    const allPreview: BookGroups[] = await BookGroupsDao.search()
+    let found: boolean = false
+    for (const g of allPreview) {
+      if (gids.indexOf(g.groupId ?? -1) >= 0) {
+        found = true
+        break
+      }
+    }
+    if (!found) {
+      console.error(`[GRP-PRECHECK] applyDissolve: 目标分组不存在 gid=${gid} ids=${gids.join(',')}，已跳过`)
+      this.cancel()
+      return
+    }
+    const snapBookId: number[] = []
+    const snapBookGroup: number[] = []
+    for (const b of moving) {
+      if (b.id !== undefined) {
+        snapBookId.push(b.id)
+        snapBookGroup.push(b.bookGroup ?? 3)
+      }
+    }
+    const snapChildId: number[] = []
+    const snapChildParent: number[] = []
     try {
       for (const b of moving) {
         const idx: number = conflicts.findIndex((c: MergeConflictInfo): boolean => c.bookId === (b.id ?? -1))
@@ -757,6 +784,8 @@ export default struct FolderInfoDialog{
         const all: BookGroups[] = await BookGroupsDao.search()
         const tree: GroupTree = GroupTree.build(all)
         for (const c of tree.childrenOf(gid)) {
+          snapChildId.push(c.groupId ?? -1)
+          snapChildParent.push(c.parentId ?? 0)
           c.parentId = parentId
           c.updateTime = Date.now()
           await BookGroupsDao.updatePartialGroup(c)
@@ -765,8 +794,31 @@ export default struct FolderInfoDialog{
       await bookGroupUtil.delGroupById(ids)
       showMessage(`已解散「${this.itemData.groupName ?? ''}」`)
     } catch (e) {
+      // ── 2026-11-02 失败回滚：书回原分组、子分组回原父级 ──────────────────────
+      console.error(`[GRP-ROLLBACK] applyDissolve 失败 gid=${gid}，开始回滚：${JSON.stringify(e)}`)
+      let rb: number = 0
+      for (let i = 0; i < snapBookId.length; i++) {
+        try {
+          await booksDao.updateBookGroup(snapBookId[i], snapBookGroup[i])
+          rb++
+        } catch (e2) {
+          console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${snapBookId[i]}: ${JSON.stringify(e2)}`)
+        }
+      }
+      let rg: number = 0
+      for (let i = 0; i < snapChildId.length; i++) {
+        try {
+          const patch: BookGroups = new BookGroups()
+          patch.groupId = snapChildId[i]
+          patch.parentId = snapChildParent[i]
+          await BookGroupsDao.updatePartialGroup(patch)
+          rg++
+        } catch (e3) {
+          console.error(`[GRP-ROLLBACK] 子分组回滚失败 gid=${snapChildId[i]}: ${JSON.stringify(e3)}`)
+        }
+      }
+      console.error(`[GRP-ROLLBACK] 已回滚 书 ${rb}/${snapBookId.length} 本、分组 ${rg}/${snapChildId.length} 个`)
       showMessage('解散失败')
-      console.error('applyDissolve failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
