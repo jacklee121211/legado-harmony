@@ -211,7 +211,9 @@ export default struct BookFolderManages {
            // 2026-11-01：每个顶层分组一个圆角底板区块（块内 DFS，块间 16 间距）
            Column() {
              GridRow({
-               columns: ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
+               columns: ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint),
+               // 2026-11-01：块内纵横间距（原来纵向默认 0 ⇒ 卡片上下贴在一起）
+               gutter: { x: 8, y: 12 }
              }){
                ForEach(block, (item: BookGroups) => {
                  GridCol(){
@@ -250,7 +252,7 @@ export default struct BookFolderManages {
              )
            }
            .width('100%')
-           .padding(6)
+           .padding({ left: 6, right: 6, top: 8, bottom: 8 })
            .borderRadius(16)
            .backgroundColor(ShelfColors.card())
            .border({ width: 1, color: 'rgba(128,128,128,0.18)' })

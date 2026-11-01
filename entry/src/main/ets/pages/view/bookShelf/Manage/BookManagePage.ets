@@ -406,14 +406,22 @@ export default struct BookManagePage {
                   this.listenCheckList()
                 }
               })
-              bookListManage({
-                checkGroup:this.checkLists,
-                EXHIBIT:this.EXHIBIT,
-                bookList:this.bookList,
-                onSelect:()=>{
-                  this.listenCheckList()
-                }
-              })
+              // 2026-11-01：书籍也放进同款圆角底板区块，避免"书被孤立、间距离谱"
+              Column() {
+                bookListManage({
+                  checkGroup:this.checkLists,
+                  EXHIBIT:this.EXHIBIT,
+                  bookList:this.bookList,
+                  onSelect:()=>{
+                    this.listenCheckList()
+                  }
+                })
+              }
+              .width('100%')
+              .padding({ left: 6, right: 6, top: 8, bottom: 8 })
+              .borderRadius(16)
+              .backgroundColor('rgba(128,128,128,0.06)')
+              .border({ width: 1, color: 'rgba(128,128,128,0.18)' })
             }
             .width('100%')
           } else {
