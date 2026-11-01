@@ -407,35 +407,35 @@ export default struct BookSelectGroupDialog{
       }.padding({right:20,left:20,top:12,bottom:12})
 
       Divider().strokeWidth(0.5)
-      Scroll(){
-        Column({ space: 2 }) {
-          // 固定项：移动书籍 → 「未分组」；移动分组本身 → 「根目录」
-          if (this.isMoveGroupNode) {
+      // 2026-11-01：滚动容器由 `Scroll + Column + ForEach` 改为 **List + ListItem**
+      //   （官方 FAQ faqs-arkui-769 方案二的结构）。原因：弹窗内 Scroll 依赖父级确定高度，
+      //   行数动态增长时新行会被裁掉（真机表现为"点展开看不到子目录"，数据侧探针已证明
+      //   presetLen=10 数据正常）。List 自带滚动与行复用，对动态行数更稳。
+      List({ space: 2 }) {
+        // 固定项：移动书籍 → 「未分组」；移动分组本身 → 「根目录」
+        if (this.isMoveGroupNode) {
+          ListItem() {
             this.rootRow()
-          } else if (this.oldGroupId !== 3) {
+          }
+        } else if (this.oldGroupId !== 3) {
+          ListItem() {
             this.ungroupedRow()
           }
-          ForEach(this.rows, (row: GroupRow) => {
+        }
+        ForEach(this.rows, (row: GroupRow) => {
+          ListItem() {
             this.groupRow(row)
-            // 2026-11-01：key **只用 id**（不要把展开态拼进 key）——
-        //   展开态进 key 会让 ForEach 认为"旧行删除 + 新行新增"，
-        //   真机上表现为"点展开后这一整条从弹窗里消失"。
-        //   箭头方向改为读 `isExpanded()`（@State 依赖），同 key 也会正确重绘。
-      }, (row: GroupRow) => 'r' + (row.group.groupId ?? 0))
+          }
+          // key 只用 id（不要把展开态拼进 key，否则展开瞬间旧行删除+新行新增）
+        }, (row: GroupRow) => 'r' + (row.group.groupId ?? 0))
+        ListItem() {
           this.addRow()
         }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding(PaddingConstants.PADDING_20)
       }
-      .align(Alignment.Top)
-      // 2026-11-01：固定 65% 改为吃满剩余空间（layoutWeight(1)）——
-      //   行数随展开增长时，65% 在部分弹窗高度下会不够，展开出来的子行被挤到视口外。
+      .width('100%')
       .layoutWeight(1)
+      .padding(PaddingConstants.PADDING_20)
       .scrollBar(BarState.Off)
-      // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
-      //   `scroll.d.ts`「Default value: **EdgeEffect.None**」⇒ 本弹窗滚动容器是 `Scroll`，
-      //   不写就没有越界反馈（分组多时滑到底"硬停"）。
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       Divider().strokeWidth(0.5)
       // ══════════════════════════════════════════════════════════════════════
