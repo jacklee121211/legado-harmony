@@ -355,6 +355,8 @@ export default struct BookContentRefresh {
 
   /** 子分组卡片的 2×2 格子：子分组在前（三层叠）、书在后（真实封面），最多 4 格 */
   private cellsOf(g: BookGroups): FolderCell[] {
+    // [PROBE-GRID 2026-11-01] 临时探针：查看四宫格取数与子树书集合
+    console.log(`[PROBE-GRID] gid=${g.groupId ?? -1} name=${g.groupName ?? ''} childPreviews=${this.childPreviews.length} subtreeBooks=${this.subtreeBooksOf(g).length}`)
     const out: FolderCell[] = []
     const gid: number = g.groupId ?? -1
     if (this.tree !== null) {
@@ -371,7 +373,11 @@ export default struct BookContentRefresh {
       if (out.length >= 4) {
         break
       }
-      out.push({ isFolder: false, cover: resolveBookCover(b) })
+      // 2026-11-01：解析不到封面时必须回退**默认书封面** ——
+      //   真机证据：11 的四宫格只显示 1 张（子文件夹默认封面），2 本书是空底色，
+      //   因为 resolveBookCover 返回 '' 而这里没有兜底（根层 cellsOf 有兜底，子层漏了）。
+      const cov: string = resolveBookCover(b)
+      out.push({ isFolder: false, cover: cov.length > 0 ? cov : $r('app.media.icon_book_default_cover_one') })
     }
     return out
   }
