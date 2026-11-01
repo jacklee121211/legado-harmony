@@ -643,9 +643,11 @@ export default struct BookFolder {
     }
     .borderRadius(8)
     .alignItems(HorizontalAlign.Start)
+    // 2026-11-01：左右不再留 8vp（真机 bounds 实测主页卡片比分组内卡片窄：
+    //   GridCol 418 而卡片内容只有 364）；卡片自身已有 6vp 内边距，这里让出全部列宽。
     .padding({
-      left: 8,
-      right: 8,
+      left: 0,
+      right: 0,
       bottom: 5,
       top: 5
     })
