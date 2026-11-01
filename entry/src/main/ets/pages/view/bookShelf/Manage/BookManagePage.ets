@@ -885,15 +885,14 @@ export default struct BookManagePage {
     //   （见 `ManageBrush.ets` 的 MANAGE_SEL_VERSION_KEY 说明与 `BookInfoGridManage`），
     //   若先赋空对象，`@Watch` 会在循环填充**之前**触发 ⇒ 读到空表 ⇒ 全选后一个都不亮。
     const next: Record<number, boolean> = {}
-    if (this.bookTypeNumber === 1){
+    // 2026-11-01：全选要覆盖**当前页所有可选对象** —— 分组页（1）只有分组，
+    //   自定义分组内（≥5）是「子树分组 + 本书」混合 ⇒ 两类都要勾上（用户反馈：书全选、分组没选）
+    if (this.bookGroups.length > 0) {
       this.bookGroups.forEach((item)=>{
         item.groupId && !item.isSystem && item.show ? next[item.groupId] = value:''
       })
-    } else if (this.bookTypeNumber === 1){
-      this.bookGroups.forEach((item)=>{
-        item.groupId && !item.isSystem && item.show ? next[item.groupId] = value:''
-      })
-    } else {
+    }
+    if (this.bookList.length > 0) {
       this.bookList.forEach((item)=>{
         item.id?next[item.id] = value:''
       })

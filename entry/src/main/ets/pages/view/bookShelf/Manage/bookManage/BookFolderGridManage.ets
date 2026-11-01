@@ -228,27 +228,10 @@ export default struct BookFolderGridManage {
     return NightMode.isDarkSurface() ? night[i] : day[i]
   }
 
-  /**
-   * 2026-11-01：路线 A —— 每层深度画一圈 1.5vp 的圆角描边（padding 递减堆叠）。
-   * 最内层才是卡片内容；L1 起就有环，最多 10 环（与 GroupTree.MAX_GROUP_DEPTH 一致）。
-   */
-  @Builder
-  rings(idx: number) {
-    Column() {
-      if (idx > 1) {
-        this.rings(idx - 1)
-      } else {
-        this.cardContent()
-      }
-    }
-    .padding(2)
-    .border({ width: 1.5, color: this.ringColor(idx) })
-    .borderRadius(3 + idx)
-  }
-
   build() {
+    // 2026-11-01：按用户要求**取消颜色环方案**，卡片恢复为简洁版（保留三层叠）
     Column() {
-      this.rings(Math.max(1, Math.min(this.depth, 10)))
+      this.cardContent()
     }
     // 2026-10-25：整张卡片可点（含封面 / 分组名 / 空白处）
     .onClick((): void => {
