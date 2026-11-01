@@ -133,14 +133,14 @@ export default struct BookContentRefresh {
    * 判定条件（三条同时满足）：
    *   ① 不在「最近」态（`onRecentChip === false`）；
    *   ② 不在「分组列表页」本身（`bookTypeNumber !== 1`，1 = 「分组」系统单元）；
-   *   ③ 不是「书单」页（`bookTypeNumber !== 5`，虽已屏蔽入口，防御性判断）；
+   *   ③ 书单功能已下线（2026-11-01 删除 `=== 5` 哨兵：真实分组 id 可能正好是 5）
    *   ④ 能查到分组名（`currentGroupName` 非空 ⇒ 确实在某个具体分组里）。
    */
   private shouldShowBackToGroups(): boolean {
     if (this.onRecentChip) {
       return false
     }
-    if (this.bookTypeNumber === 1 || this.bookTypeNumber === 5) {
+    if (this.bookTypeNumber === 1) {
       return false
     }
     return this.currentGroupName.length > 0
