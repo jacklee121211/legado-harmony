@@ -1502,12 +1502,13 @@ export default struct BookManagePage {
       .filter(key => this.checkLists[Number(key)])
       .map(key => Number(key));
     this.checkListNumber = keys
-    // 2026-11-01：清掉值为 false 的键（对 UI/分享无意义，长会话里只会越积越多）
-    for (const k of Object.keys(this.checkLists)) {
-      if (!this.checkLists[Number(k)]) {
-        delete this.checkLists[Number(k)]
-      }
+    // 2026-11-01：清掉值为 false 的键（对 UI/分享无意义，长会话里只会越积越多）。
+    //   ArkTS 禁止 `delete`（`arkts-no-delete`）⇒ 重建一个新对象。
+    const pruned: Record<number, boolean> = {}
+    for (const k of keys) {
+      pruned[k] = true
     }
+    this.checkLists = pruned
     // ★ 2026-10-25：勾选的**唯一收敛点**（单选/全选/刷新后回填都经过这里）
     //   ⇒ 碰一碰/隔空传送的选定快照在这里同步，三条分享路径选中的书必然一致。
     this.syncShareSelection()
