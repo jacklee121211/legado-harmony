@@ -627,6 +627,7 @@ export default struct BookFolder {
         .fontSize(15)
         .fontWeight(700)
         .textAlign(TextAlign.Center)
+        .width('100%')
         .textOverflow({
           overflow: TextOverflow.Ellipsis
         })
@@ -637,6 +638,8 @@ export default struct BookFolder {
       Text(this.countLabel(item))
         .fontSize(12)
         .fontColor('rgb(174,174,174)')
+        .textAlign(TextAlign.Center)
+        .width('100%')
         .textOverflow({
           overflow: TextOverflow.Ellipsis
         })
