@@ -427,7 +427,8 @@ export default struct BookFolder {
       ForEach(this.groupList, (item: BookGroups, index: number) => {
         // ⚠️ 放行「未分组」系统分组（2026-09-29，审核问题④）：其余系统分组
         // （分组/全部/本地/书单）不是"装书的地方"，维持排除。
-        if (item.show && (!item.isSystem || item.groupName === '未分组')) {
+        if (item.show && (!item.isSystem || item.groupName === '未分组')
+          && (item.parentId ?? 0) === 0) {
           GridCol() {
             Column() {
               if (this.EXHIBIT === '宫格') {

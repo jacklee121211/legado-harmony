@@ -21,6 +21,14 @@ import addBookTypeDialog, { AddGroupChannel } from '../../../../componets/common
 import { BookGroups } from '../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
+import { GroupTree } from '../../../../common/group/GroupTree'
+import { resolveCoverSource } from '../../../../common/utils/CoverSource'
+
+/** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
+interface PathChip {
+  id: number
+  name: string
+}
 
 @Component
 export default struct BookContentRefresh {
@@ -36,7 +44,7 @@ export default struct BookContentRefresh {
   @Link EXHIBIT: string
   @Link GROUP: string
   @Prop searchValue: string
-  @Link bookTypeNumber:number
+  @Link @Watch('onFolderChanged') bookTypeNumber:number
   /**
    * 「最近」chip 状态（2026-10-19 四修新增）。
    *
@@ -60,6 +68,13 @@ export default struct BookContentRefresh {
   @State addScale: number = 1
   /** 新建分组的输入通道（与 `addBookTypeDialog` 共用 AppStorage key） */
   @StorageLink(AddGroupChannel.KEY_TEXT) newGroupName: string = ''
+  // ── 2026-11-01 多级文件夹：路径条 + 子文件夹行 ─────────────────────────────
+  /** 当前路径（首格是虚拟根「分组」id=1，后面是真实分组，根 → 当前） */
+  @State pathChips: PathChip[] = []
+  /** 当前分组的直属子文件夹（进入父组后以横滑卡片行展示） */
+  @State childGroups: BookGroups[] = []
+  /** 新建分组时的父级（0 = 根级；分组内新建 = 当前分组 id） */
+  private newGroupParentId: number = 0
   @State checkGroup:Record<number, boolean> = {}
   /** 主题主色（悬浮按钮实底用） */
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
@@ -135,7 +150,7 @@ export default struct BookContentRefresh {
     .scale({ x: this.addScale, y: this.addScale })
     .clickEffect(UiMotion.CLICK)
     .onClick(() => {
-      this.openAddGroupDialog()
+      this.openAddGroupDialog(0)
     })
   }
 
@@ -159,7 +174,8 @@ export default struct BookContentRefresh {
     closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST)
   })
 
-  private openAddGroupDialog(): void {
+  private openAddGroupDialog(parentId: number = 0): void {
+    this.newGroupParentId = parentId
     Haptics.tap()
     runJellyClick((v: number) => {
       this.addScale = v
@@ -168,16 +184,17 @@ export default struct BookContentRefresh {
     this.addGroupDialog?.open()
   }
 
-  /** 确认新建：空名/同级重名拦截 → 根级分组（parentId=0）→ 广播刷新 */
+  /** 确认新建：空名/同级重名拦截 → `addGroup(parentId)` → 广播刷新 + 重算路径 */
   private async createGroupFromDialog(): Promise<void> {
     const name: string = (this.newGroupName ?? '').trim()
     if (name === '') {
       showMessage('分组名称不能为空')
       return
     }
+    const parentId: number = this.newGroupParentId
     const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
     for (const g of groups) {
-      if (!g.isSystem && (g.parentId ?? 0) === 0 && (g.groupName ?? '').trim() === name) {
+      if (!g.isSystem && (g.parentId ?? 0) === parentId && (g.groupName ?? '').trim() === name) {
         showMessage(`已存${name}分组`)
         return
       }
@@ -185,11 +202,74 @@ export default struct BookContentRefresh {
     const ng: BookGroups = new BookGroups()
     ng.groupName = name
     ng.groupType = this.currentIndex
-    ng.parentId = 0
+    ng.parentId = parentId
     await bookGroupUtils.addGroup(ng)
     this.newGroupName = ''
     this.isGroupRefreshing++
+    await this.onFolderChanged()
     showMessage(`已添加${name}分组`)
+  }
+
+  // ── 2026-11-01 多级文件夹：路径条 / 子文件夹行 ──────────────────────────────
+  aboutToAppear(): void {
+    this.onFolderChanged()
+  }
+
+  /**
+   * 层级变化：重算路径条 + 直属子文件夹。
+   * 触发：① `bookTypeNumber` 变化（@Watch）；② 新建分组后手动调用。
+   * 口径：`bookTypeNumber <= 1`（分组根 / 全部）或「最近」态 ⇒ 清空。
+   */
+  private async onFolderChanged(): Promise<void> {
+    const id: number = this.bookTypeNumber
+    if (id <= 1 || this.onRecentChip) {
+      this.pathChips = []
+      this.childGroups = []
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      const tree: GroupTree = GroupTree.build(all)
+      const path: BookGroups[] = tree.pathOf(id)
+      const chips: PathChip[] = [{ id: 1, name: '分组' }]
+      for (const g of path) {
+        if (g.groupId !== undefined) {
+          chips.push({ id: g.groupId, name: g.groupName })
+        }
+      }
+      this.pathChips = chips
+      this.childGroups = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
+      // 兼容既有字段（「返回分组列表」胶囊已被路径条取代，但该键仍被其它地方读写）
+      AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME',
+        path.length > 0 ? path[path.length - 1].groupName : '')
+    } catch (e) {
+      this.pathChips = []
+      this.childGroups = []
+      console.error('onFolderChanged failed: ' + JSON.stringify(e))
+    }
+  }
+
+  /** 跳到某个分组（路径条 / 子文件夹行共用）；只改 bookTypeNumber，不动 GROUP */
+  private jumpToFolder(id: number): void {
+    if (id <= 0 || id === this.bookTypeNumber) {
+      return
+    }
+    Haptics.tap()
+    this.bookTypeNumber = id
+  }
+
+  /** 路径条某一格：id=1 走既有「回分组根」广播，其余直接跳 */
+  private jumpToPathChip(p: PathChip): void {
+    if (p.id === 1) {
+      this.backToGroupList()
+      return
+    }
+    this.jumpToFolder(p.id)
+  }
+
+  /** 路径条左侧「+」：在当前分组下新建子分组 */
+  private openAddSubGroup(): void {
+    this.openAddGroupDialog(this.bookTypeNumber)
   }
 
   build() {
@@ -220,6 +300,38 @@ export default struct BookContentRefresh {
       // ★ 2026-10-21 二修：按钮改到**右侧**（用户：「显示效果非常好，但是应该放在右侧」）
       //   ⇒ Stack 对齐改成 `BottomEnd`，按钮只给 `right` 外边距。
         Column() {
+          // ── 2026-11-01 多级文件夹：进入父组后先显示直属子文件夹（横滑行）────────
+          if (!this.onRecentChip && this.bookTypeNumber > 1 && this.childGroups.length > 0) {
+            Scroll() {
+              Row({ space: 12 }) {
+                ForEach(this.childGroups, (g: BookGroups) => {
+                  Column({ space: 4 }) {
+                    Image(resolveCoverSource(g.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
+                      .width(56)
+                      .height(76)
+                      .borderRadius(6)
+                      .draggable(false)
+                    Text(g.groupName)
+                      .fontSize(11)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width(56)
+                  }
+                  .onClick(() => {
+                    if (g.groupId !== undefined) {
+                      this.jumpToFolder(g.groupId)
+                    }
+                  })
+                }, (g: BookGroups) => 'cf' + (g.groupId ?? 0))
+              }
+              .padding({ left: 10, right: 10 })
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+            .padding({ top: 8, bottom: 6 })
+          }
+
           if (this.onRecentChip) {
             BookContent({
               currentIndex: this.currentIndex,
@@ -285,48 +397,57 @@ export default struct BookContentRefresh {
         showMessage('刷新成功')
       })
 
-      // ── 「返回分组列表」悬浮按钮（2026-10-21 新增）──────────────────────────
-      // 用户原话：「在分组中点击一个分组进入这个分组，此时我该如何返回上一级呢？…
-      //   底部 minibar 上方多一个按钮，叫做返回分组列表，点击后返回分组列表。
-      //   如何？可以是 symbol+文字的一个显示效果。点击也要有系统统一的 q弹丝滑动效。」
-      //
-      // 位置：**底部 minibar 上方** ⇒ 用 `dockContentEndOffset` 算出 minibar 实际占高，
-      //   按钮就贴在它上面（自适应不同安全区/手势导航，见该方法的注释）。
-      //
-      // ★ 2026-10-21 三修：本按钮现在是 `Refresh` 的**兄弟节点**（同属外层 Stack），
-      //   所以下拉刷新时**不会跟着平移**（用户：「下划刷新，这个按钮也会跟着被下滑」）。
-      if (this.shouldShowBackToGroups()) {
-        Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(16)
-            .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
-          Text(this.currentGroupName)
-            .fontSize(13)
-            .fontWeight(500)
-            .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text('返回分组列表')
-            .fontSize(11)
-            .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.62)' : 'rgba(255,255,255,0.78)')
-            .maxLines(1)
+      // ── 多级路径条（2026-11-01，取代原来的单一「返回分组列表」胶囊）────────────
+      //  · 横向可滚动（Windows 资源管理器地址栏式），点任意一级直接跳；
+      //  · 左侧常驻「+」= 在当前分组下新建子分组；
+      //  · 只在"进入具体分组"时出现（`bookTypeNumber > 1` 且非「最近」）；
+      //  · 当前层级用 `secondColor` 底 + `mainColor` 字高亮。
+      if (this.bookTypeNumber > 1 && !this.onRecentChip) {
+        Row({ space: 8 }) {
+          Row() {
+            SymbolGlyph($r('sys.symbol.plus_circle'))
+              .fontSize(18)
+              .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
+          }
+          .padding({ left: 10, right: 12, top: 8, bottom: 8 })
+          .borderRadius(18)
+          .backgroundColor(this.theme.mainColor)
+          .scale({ x: this.addScale, y: this.addScale })
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            this.openAddSubGroup()
+          })
+
+          Scroll() {
+            Row({ space: 6 }) {
+              ForEach(this.pathChips, (p: PathChip) => {
+                Text(p.name)
+                  .fontSize(13)
+                  .fontWeight(500)
+                  .fontColor(p.id === this.bookTypeNumber
+                    ? this.theme.mainColor
+                    : (NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+                  .borderRadius(18)
+                  .backgroundColor(p.id === this.bookTypeNumber
+                    ? this.theme.secondColor
+                    : this.theme.mainColor)
+                  .clickEffect(UiMotion.CLICK)
+                  .onClick(() => {
+                    this.jumpToPathChip(p)
+                  })
+              }, (p: PathChip) => 'p' + p.id)
+            }
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .layoutWeight(1)
         }
-        .constraintSize({ maxWidth: '70%' })
-        .padding({ left: 12, right: 14, top: 8, bottom: 8 })
-        .borderRadius(18)
-        // 用主题主色实底：悬浮按钮需要足够的对比度（半透明玻璃压在书封上会糊）
-        .backgroundColor(this.theme.mainColor)
-        .scale({ x: this.backScale, y: this.backScale })
-        .clickEffect(UiMotion.CLICK)
-        .onClick(() => {
-          this.backToGroupList()
-        })
-        // 底部让位：minibar 实际覆盖高度 + 8 呼吸位（`dockContentEndOffset` 已含安全区）
-        // ★ 2026-10-21 二修：改**右对齐**（用户：「应该放在右侧」）⇒ 只给 right 外边距
-        .margin({
-          right: 20,
-          bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
-        })
+        .width('100%')
+        .padding({ left: 20, right: 20 })
+        .margin({ bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight) })
       }
       // ── 2026-11-01：分组卡片页左下角常驻「新建分组」─────────────────────────
       //  与外层 Stack 的 `BottomEnd` 对齐协作：整行铺满 + 左对齐 ⇒ 按钮贴左下；
