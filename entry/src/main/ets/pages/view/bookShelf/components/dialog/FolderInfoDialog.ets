@@ -1126,8 +1126,12 @@ export default struct FolderInfoDialog{
     }
     setTimeout(()=>{
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      // 2026-11-02：**必须同时广播书籍刷新** —— 隐藏/恢复会改变"哪些书可见"，
+      //   只刷分组列表的话「全部/最近」还留着该组的书（真机：隐藏 1 后猛龙过江仍在第一位）。
+      this.isBookRefreshing++
       this.cancel()
-      showMessage(this.itemData.show ? '隐藏成功' : '显示成功')
+      // 切换后 show=false 表示刚被隐藏 ⇒ 文案要与结果一致
+      showMessage(this.itemData.show ? '已恢复显示' : '隐藏成功')
     },500)
   }
 
