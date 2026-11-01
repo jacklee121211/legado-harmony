@@ -79,6 +79,13 @@ export default struct BookContentRefresh {
   @State childGroups: BookGroups[] = []
   /** 子分组卡片 2×2 预览用的书（每组最多 2 本） */
   @State childPreviews: Books[] = []
+  // 2026-11-01：分组/书籍刷新广播 → 当前页重算（修「删除/新建子分组后不实时刷新」）
+  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('onShelfRefresh') groupRefreshing: number = 0
+  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('onShelfRefresh') bookRefreshing: number = 0
+
+  private onShelfRefresh(): void {
+    this.onFolderChanged()
+  }
   // ── 2026-11-01：长按任意层级的子文件夹 → 与主栏同款分组弹窗 ──────────────────
   @State dialogGroupData: BookGroups = new BookGroups()
   groupInfoDialog: CustomDialogController | null = null
