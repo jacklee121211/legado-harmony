@@ -162,6 +162,8 @@ export default struct ShareGuideTip {
             .iterations(this.autoHide ? 2 : -1)
             .width(66)
             .height(44)
+            // AGENTS.md §8：HitTestMode.None 只让自身退出命中，子节点照样吃触摸
+            .hitTestBehavior(HitTestMode.None)
           Column({ space: 1 }) {
             Text(this.text1)
               .fontSize(12)
@@ -179,6 +181,7 @@ export default struct ShareGuideTip {
             }
           }
           .alignItems(HorizontalAlign.Start)
+          .hitTestBehavior(HitTestMode.None)
         }
         .padding({ left: 10, right: 14, top: 4, bottom: 4 })
         .backgroundColor('#B3000000')
