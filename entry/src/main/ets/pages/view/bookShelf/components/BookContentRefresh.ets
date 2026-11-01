@@ -402,15 +402,12 @@ export default struct BookContentRefresh {
     .width('100%')
   }
 
-  /** 子分组卡片副标题：直属书数 + 直属子文件夹数（与根层 countLabel 同口径） */
+  /** 子分组卡片副标题：直属书数 + **该分组的直属子文件夹数**（与根层 countLabel 同口径） */
   private childCountLabel(g: BookGroups): string {
     const books: number = g.bookIds?.length ?? 0
-    let kids: number = 0
-    for (const c of this.childGroups) {
-      if ((c.parentId ?? 0) === (g.groupId ?? -1)) {
-        kids++
-      }
-    }
+    // 2026-11-01 修正：不能用 this.childGroups（那只是"当前目录"的子级），
+    //   要用整棵树取该分组自己的子级，否则孙目录不会被计入（真机：11 有子目录 111 却只显示共1本）
+    const kids: number = g.groupId !== undefined ? this.tree.childrenOf(g.groupId).length : 0
     return kids > 0 ? `共${books}本 · ${kids}个文件夹` : `共${books}本`
   }
   private childBooksOf(g: BookGroups): Books[] {
