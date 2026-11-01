@@ -306,7 +306,12 @@ export default struct BookContentRefresh {
       const childIds: number[] = []
       for (const g of childGroups) {
         if (g.groupId !== undefined) {
-          childIds.push(g.groupId)
+          // 2026-11-01：连同**后代分组**一起预取 —— 四宫格要能透视到孙目录里的书
+          for (const sid of tree.subtreeIds(g.groupId)) {
+            if (childIds.indexOf(sid) < 0) {
+              childIds.push(sid)
+            }
+          }
         }
       }
       const previews: Books[] = childIds.length > 0
@@ -362,11 +367,29 @@ export default struct BookContentRefresh {
         out.push({ isFolder: true, cover: c !== null ? c : $rawfile('cover_defaults/c1.svg') })
       }
     }
-    for (const b of this.childBooksOf(g)) {
+    for (const b of this.subtreeBooksOf(g)) {
       if (out.length >= 4) {
         break
       }
       out.push({ isFolder: false, cover: resolveBookCover(b) })
+    }
+    return out
+  }
+
+  /**
+   * 2026-11-01：某分组的**子树**书籍（自身 + 全部后代）。
+   * 四宫格预览要"逐层透视"：11 自己 1 本 + 111 里 1 本 ⇒ 应显示 2 张封面。
+   */
+  private subtreeBooksOf(g: BookGroups): Books[] {
+    const out: Books[] = []
+    if (this.tree === null || g.groupId === undefined) {
+      return out
+    }
+    const ids: number[] = this.tree.subtreeIds(g.groupId)
+    for (const b of this.childPreviews) {
+      if (ids.indexOf(b.bookGroup ?? 0) >= 0) {
+        out.push(b)
+      }
     }
     return out
   }
