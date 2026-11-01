@@ -257,6 +257,10 @@ class BooksDao {
       if (bookGroup !== undefined && bookGroup !== 2) {
         predicates.equalTo('bookGroup', bookGroup)
       }
+      // 2026-11-02：计数与列表同口径 —— 隐藏分组（含子树）的书不计入
+      if (this.hiddenGroupIds.length > 0) {
+        predicates.notIn('bookGroup', this.hiddenGroupIds)
+      }
       const count = await DbUtil.queryForCount(predicates, column)
       return count
     } catch (e){

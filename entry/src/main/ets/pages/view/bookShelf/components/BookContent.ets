@@ -151,6 +151,8 @@ export default struct BookContent {
   async getBookCount(){
     // 与列表**同一份查询口径**（2026-10-19）：否则「最近」模式下
     // 续页门槛用的是分组计数，`onReachEnd` 会算错 ⇒ 翻页提前停止。
+    // 2026-11-02：计数也要排除隐藏分组（与 getBookList 同源设置）
+    booksDao.setHiddenGroupIds(await bookGroupUtils.hiddenSubtreeIds());
     this.bookCount =  await booksDao.getBookCount({
       type:this.currentIndex,
       bookGroup: this.onRecentChip ? 2 : this.bookTypeNumber,
