@@ -165,7 +165,31 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('  items: string[]')
 [void]$sb.AppendLine('}')
 [void]$sb.AppendLine('')
+# ── 版本来源（2026-11-01 复盘）────────────────────────────────────────────────
+# 本脚本以「**最新提交**的版本号」为当前版本（而不是按版本号大小排序）——
+# 因为历史里还留着另一条开发线的 V10.x 提交（如 V10.0.3），按大小排序会把它们
+# 误判成"最新"。防止"旧版本提交把新版本覆盖"由下面的**只升不降护栏**负责。
 $newest = ($byVersion.Keys | Select-Object -First 1)
+
+# ── 护栏（2026-11-01）：版本号「只升不降」──────────────────────────────────
+# 背景：本脚本完全信任提交首行；任何人用旧版本号提交（例如 V3.0.11），
+#   钩子就会把 app.json5 与更新日志整体回退 —— 2026-11-01 真发生过一次
+#   （V3.0.12 的 66 条日志被 V3.0.11 一条覆盖）。
+# 规则：提交首行算出的 versionCode **小于** app.json5 当前值 ⇒ 拒绝写入，只告警。
+# 回退：删掉下面这个 if 块即恢复"完全信任提交首行"的旧行为。
+$guardVer = [regex]::Match([string]$newest, '\d+\.\d+\.\d+').Value
+$guardCode = 0
+if ($guardVer -ne '') {
+  $gp = $guardVer.Split('.')
+  $guardCode = 1000 + [int]$gp[0] * 100 + [int]$gp[1] * 10 + [int]$gp[2]
+}
+$curCode = 0
+$curMatch = [regex]::Match([System.IO.File]::ReadAllText($appJson), '"versionCode"\s*:\s*(\d+)')
+if ($curMatch.Success) { $curCode = [int]$curMatch.Groups[1].Value }
+if ($guardCode -gt 0 -and $curCode -gt 0 -and $guardCode -lt $curCode) {
+  Write-Host "[sync-version] ⚠️ 拒绝降级：提交首行版本 $guardVer（code=$guardCode）< 当前 $curCode ⇒ 不改 app.json5 / 不改更新日志"
+  return
+}
 [void]$sb.AppendLine("/** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */")
 [void]$sb.AppendLine("export const APP_VERSION_FALLBACK: string = 'V$(([regex]::Match($newest, '\d+\.\d+\.\d+')).Value)'")
 [void]$sb.AppendLine('')
