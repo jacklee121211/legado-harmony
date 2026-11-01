@@ -300,7 +300,9 @@ export default struct BookContentRefresh {
       // 2026-11-01：先算好、最后一次性赋值 —— 原来 `childGroups` 先赋、`childPreviews`
       //   等查询回来再赋，中间会出现一帧"有子分组但没有封面"的行高，把下面的书籍
       //   网格整体推一下（用户：进入子分组时书"上移一下才消失"）。
-      const childGroups: BookGroups[] = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
+      const childGroupsRaw: BookGroups[] = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
+      // 2026-11-01：剔除孤儿分组（父级缺失/自环），避免子文件夹行里出现重复同名行
+      const childGroups: BookGroups[] = childGroupsRaw.filter((g: BookGroups): boolean => !tree.isOrphan(g))
       const childIds: number[] = []
       for (const g of childGroups) {
         if (g.groupId !== undefined) {

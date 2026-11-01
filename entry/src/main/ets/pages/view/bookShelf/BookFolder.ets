@@ -178,6 +178,17 @@ export default struct BookFolder {
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
     // ── 2026-11-01 多级文件夹：建树（父子 / 深度）+ 拉 2×2 预览用的书 ──────────
     this.tree = GroupTree.build(val)
+    // 2026-11-01：剔除孤儿分组（父级缺失/自环），否则会被当成根级卡片重复展示
+    const kept: BookGroups[] = []
+    for (const g of val) {
+      if (!this.tree.isOrphan(g)) {
+        kept.push(g)
+      }
+    }
+    val.length = 0
+    for (const g of kept) {
+      val.push(g)
+    }
     const visibleIds: number[] = []
     for (const g of val) {
       if (g.groupId === undefined || !g.show) {
