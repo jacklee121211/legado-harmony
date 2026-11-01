@@ -377,7 +377,8 @@ export default struct BookContentRefresh {
       //   真机证据：11 的四宫格只显示 1 张（子文件夹默认封面），2 本书是空底色，
       //   因为 resolveBookCover 返回 '' 而这里没有兜底（根层 cellsOf 有兜底，子层漏了）。
       const cov: string = resolveBookCover(b)
-      out.push({ isFolder: false, cover: cov.length > 0 ? cov : $r('app.media.icon_book_default_cover_one') })
+      const cellCover: ResourceStr = cov.length > 0 ? cov : $r('app.media.icon_book_default_cover_one')
+      out.push({ isFolder: false, cover: cellCover })
     }
     return out
   }
