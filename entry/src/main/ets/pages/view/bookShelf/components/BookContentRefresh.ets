@@ -376,8 +376,10 @@ export default struct BookContentRefresh {
       // 2026-11-01：解析不到封面时必须回退**默认书封面** ——
       //   真机证据：11 的四宫格只显示 1 张（子文件夹默认封面），2 本书是空底色，
       //   因为 resolveBookCover 返回 '' 而这里没有兜底（根层 cellsOf 有兜底，子层漏了）。
-      const cov: string = resolveBookCover(b)
-      const cellCover: ResourceStr = cov.length > 0 ? cov : $r('app.media.icon_book_default_cover_one')
+      // resolveBookCover 返回 ResourceStr（可能是 $r 资源，也可能是路径字符串）
+      const cov: ResourceStr = resolveBookCover(b)
+      const empty: boolean = typeof cov === 'string' && (cov as string).length === 0
+      const cellCover: ResourceStr = empty ? $r('app.media.icon_book_default_cover_one') : cov
       out.push({ isFolder: false, cover: cellCover })
     }
     return out
