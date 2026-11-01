@@ -4,6 +4,7 @@ import BookOverlay from '../../../componets/bookDetail/BookOverlay'
 import { showMessage } from '../../../componets/common/promptShow'
 import { folderList } from '../../../componets/dataList/folderList'
 import BookGroupsDao from '../../../database/dao/BookGroupsDao'
+import FolderCard, { FolderCell } from './components/FolderCard'
 import bookGroupUtil from '../../../common/utils/bookGroupUtils'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
@@ -271,6 +272,21 @@ export default struct BookFolder {
   }
 
   /** 2×2 预览的一格：子文件夹优先、书在后，空格留半透明底 */
+  /** 统一组件的格子数据：子分组三层叠在前、书真实封面在后，最多 4 格 */
+  private cellsOf(item: BookGroups): FolderCell[] {
+    const out: FolderCell[] = []
+    const gc: number = this.previewGroupCount(item)
+    const bc: number = this.previewBookCount(item)
+    for (let i = 0; i < gc && out.length < 4; i++) {
+      const c: ResourceStr | null = this.groupPreviewCover(item, i)
+      out.push({ isFolder: true, cover: c !== null ? c : $rawfile('cover_defaults/c1.svg') })
+    }
+    for (let i = 0; i < bc && out.length < 4; i++) {
+      out.push({ isFolder: false, cover: this.bookPreviewCover(item, i) })
+    }
+    return out
+  }
+
   @Builder
   previewCell(item: BookGroups, idx: number) {
     Stack() {
@@ -577,7 +593,27 @@ export default struct BookFolder {
       //   旧实现（单封面 + FolderStackDecor + occlusion 叠层 + 底条）保留在文件里
       //   （`FolderStackDecor` / `UiMotion.SHELF_COVER_STACK` / `SHELF_COVER_BASE_BAR`），
       //   需要回退时把下面这行换回旧的三层 Stack 即可。
-      this.folderPreview(item)
+      FolderCard({
+        role: 'card',
+        showTitle: false,
+        cells: this.cellsOf(item),
+        onTap: (): void => {
+          this.openGroup(item)
+        },
+        onLongPress: (): void => {
+          Haptics.tap()
+          if (item.isSystem) {
+            if (item.groupName === '书单') {
+              this.openWorksCoverDialog(item)
+            } else {
+              showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
+            }
+            return
+          }
+          this.dialogGroupData = item
+          this.groupInfoDialog?.open()
+        }
+      })
 
       Text(item.groupName)
         .fontSize(15)

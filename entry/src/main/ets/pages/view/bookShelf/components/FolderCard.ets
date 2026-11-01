@@ -28,6 +28,8 @@ export default struct FolderCard {
   /** 'card' = 一张卡片；'cell' = 父卡里的格子 */
   @Prop role: string = 'card'
   @Prop title: string = ''
+  /** 是否画标题（主栏卡片由外层画「书名 + 共N本」，这里传 false 避免重复） */
+  @Prop showTitle: boolean = true
   /** role='cell' 时自己的封面 */
   @Prop cover: ResourceStr | null = null
   /** role='card' 时的格子（最多 4 个） */
@@ -116,10 +118,12 @@ export default struct FolderCard {
         }
         .width('100%').aspectRatio(0.72).clip(true)
 
-        Text(this.title)
-          .fontSize(15).fontWeight(700).maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+        if (this.showTitle) {
+          Text(this.title)
+            .fontSize(15).fontWeight(700).maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
       }
       .padding({ left: 6, right: 6, top: 4, bottom: 8 })
     }
