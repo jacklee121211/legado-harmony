@@ -1086,7 +1086,7 @@ export default struct BookManagePage {
       showMessage('分组暂不支持分享，请选择书籍');
       return
     }
-    const sel: ShareSelection | null = this.currentSelection()
+    const sel: ShareSelection | null = await this.currentSelection()
     if (sel === null) {
       showMessage('选中书籍没有可分享的文件');
       return
@@ -1118,12 +1118,43 @@ export default struct BookManagePage {
    * 碰一碰/隔空传送都读它 ⇒ 三条路径选中集合必然一致。
    * 分组（`bookTypeNumber===1`）没有可分享文件，直接返回 null。
    */
-  private currentSelection(): ShareSelection | null {
-    if (this.bookTypeNumber === 1) {
-      return null
-    }
+  private async currentSelection(): Promise<ShareSelection | null> {
     const checked = new Set<number>(this.checkListNumber)
-    const books: Books[] = this.bookList.filter((b: Books) => checked.has(b.id ?? -1) && !!b.bookUrl)
+    // 2026-11-01：选中分组 = 选中该分组（含全部子孙分组）里的所有书籍
+    const groupIds: number[] = []
+    if (this.bookGroups.length > 0) {
+      const tree: GroupTree = GroupTree.build(this.bookGroups)
+      for (const g of this.bookGroups) {
+        const id: number = g.groupId ?? -1
+        if (id > 0 && checked.has(id)) {
+          for (const s of tree.subtreeIds(id)) {
+            if (groupIds.indexOf(s) < 0) {
+              groupIds.push(s)
+            }
+          }
+        }
+      }
+    }
+    const books: Books[] = []
+    const seen: number[] = []
+    const pushBook = (b: Books): void => {
+      const bid: number = b.id ?? -1
+      if (bid > 0 && seen.indexOf(bid) < 0 && !!b.bookUrl) {
+        seen.push(bid)
+        books.push(b)
+      }
+    }
+    for (const b of this.bookList) {
+      if (checked.has(b.id ?? -1)) {
+        pushBook(b)
+      }
+    }
+    if (groupIds.length > 0) {
+      const inGroups: Books[] = await booksDao.queryPreviewByGroups(groupIds, 100000)
+      for (const b of inGroups) {
+        pushBook(b)
+      }
+    }
     if (books.length <= 0) {
       return null
     }
@@ -1132,7 +1163,11 @@ export default struct BookManagePage {
 
   /** 把当前勾选同步进 bridge（`dataCheckList()` 末尾统一调用） */
   private syncShareSelection(): void {
-    BookShareBridge.get().setSelection(this.currentSelection())
+    this.currentSelection().then((sel: ShareSelection | null): void => {
+      BookShareBridge.get().setSelection(sel)
+    }).catch((e: Error): void => {
+      console.error('syncShareSelection failed: ' + e.message)
+    })
   }
   //置顶功能
   // ⚠️ 2026-09-29 重写（审核问题②「置顶成功后数据未实时更新」）：
