@@ -6,7 +6,11 @@
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import BooksDao from '../../database/dao/BooksDao'
 import { BookGroups } from '../../database/entities/BookGroups'
+import { GroupTree } from '../group/GroupTree'
 import toolsUtils from './ToolsUtils'
+
+/** 2026-11-01：空分组是否自动解散（用户要求保留空目录 ⇒ 默认 false，可一键恢复） */
+export const EMPTY_AUTO_DISSOLVE: boolean = false
 
 class bookGroupUtils{
   //校验唯一性,同时进行更新
@@ -68,7 +72,7 @@ class bookGroupUtils{
    * ⚠️ 全部 `await`，保证调用方随后广播刷新时写库已提交
    *   （同 `delGroupById` 2026-10-22 的教训）。
    */
-  async dissolveGroup(id: number): Promise<void> {
+  async dissolveGroup(id: number, mode: string = 'keepChildren'): Promise<void> {
     if (id <= 0) {
       return
     }
@@ -81,6 +85,14 @@ class bookGroupUtils{
       }
     }
     const target: number = parentId > 0 ? parentId : 3
+    if (mode === 'collapse') {
+      // 2026-11-01：**全部解散** —— 整棵子树的书全部上提到父级，子树目录行全删
+      const tree: GroupTree = GroupTree.build(groups)
+      const ids: number[] = tree.subtreeIds(id)
+      await BooksDao.queryBookByGroup(ids, target)
+      await BookGroupsDao.deleteBook(ids)
+      return
+    }
     // ① 直属书归还父级
     await BooksDao.queryBookByGroup([id], target)
     // ② 子分组挂到同一父级（保持层级不断链）
@@ -125,6 +137,11 @@ class bookGroupUtils{
    * @returns true = 至少解散了一个分组（调用方应广播分组刷新）
    */
   async dissolveIfEmpty(groupIds: number | number[]): Promise<boolean> {
+    // 2026-11-01（用户拍板）：**空目录一律保留**，不再自动解散。
+    //   改 `EMPTY_AUTO_DISSOLVE = true` 即恢复旧行为（一键回退）。
+    if (!EMPTY_AUTO_DISSOLVE) {
+      return false
+    }
     const ids: number[] = toolsUtils.numberArrays(groupIds)
       .filter((g: number): boolean => g > 0 && g !== 3)  // ③ 跳过「未分组」
     if (ids.length === 0) {
