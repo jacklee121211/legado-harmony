@@ -28,6 +28,8 @@ export default struct BookContent {
   private listCache: Map<number, Books[]> = new Map<number, Books[]>()
   /** 2026-11-01：列表请求序号 —— 一次导航只允许最后一轮结果落地（日志显示一次点击触发 2-3 次查询） */
   private loadToken: number = 0
+  /** 2026-11-01：缓存是否过期（收到刷新广播只标脏，不清空——避免"清空→重查→再闪一次"） */
+  private cacheStale: boolean = false
 
   /** 2026-11-01：按 id 复用未变化的 Books 对象，保持节点身份（避免 Image 重建导致二次加载） */
   private mergeObjects(next: Books[]): Books[] {
@@ -204,8 +206,8 @@ export default struct BookContent {
     // }
     if (this.isBookRefreshing >= 0) {
       this.animateOnNextLoad = false
-      // 2026-11-01：数据真的变了 ⇒ 缓存必须失效（否则会把旧列表当新数据复用）
-      this.listCache.clear()
+      // 2026-11-01：数据真的变了 ⇒ 缓存标脏（不直接清空；命中判断里会看这个标记）
+      this.cacheStale = true
       // ⚠️ bookCount 必须随刷新重取（2026-09-24 导入修复）：它只是 aboutToAppear 时
       // 取过一次的旧值，而 onReachEnd 的续页门槛是 `bookList.length < this.bookCount`
       // ⇒ 导入新书后旧 count 偏小，`loadMoreBooks` 永远不触发，
@@ -244,7 +246,7 @@ export default struct BookContent {
         this.getBookCount()
       }
       // 2026-11-01：命中缓存 ⇒ 直接复用旧列表（不重建 ⇒ 图片不重挂载 ⇒ 封面不闪默认图）
-      if (REUSE_LIST_CACHE) {
+      if (REUSE_LIST_CACHE && !this.cacheStale) {
         const cached: Books[] | undefined = this.listCache.get(this.listCacheKey())
         if (cached !== undefined && cached.length > 0) {
           this.bookList = cached
@@ -378,6 +380,7 @@ export default struct BookContent {
       // 2026-11-01：首屏数据写入缓存，供下次进入同分组直接复用（避免重建导致封面闪默认图）
       if (REUSE_LIST_CACHE && this.currentPage === 1) {
         this.listCache.set(this.listCacheKey(), list)
+        this.cacheStale = false
       }
     } finally {
       // 只有真正"加载完"才放开；同时**取消待显示的 loading**
