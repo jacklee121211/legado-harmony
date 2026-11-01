@@ -22,6 +22,7 @@ import { BookGroups } from '../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupTree } from '../../../../common/group/GroupTree'
+import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource } from '../../../../common/utils/CoverSource'
 
 /** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
@@ -258,6 +259,45 @@ export default struct BookContentRefresh {
     this.bookTypeNumber = id
   }
 
+  /** 子分组宫格列数：与书籍宫格同源（2026-11-01） */
+  @StorageProp('currentBreakpoint') currentBreakpoint: string = 'sm'
+  @StorageProp(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE) userGridColumns: number = 0
+  private folderColumns(): number {
+    return ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
+  }
+
+  /** 子分组卡片：三层叠文件夹观感（区别于单书），左对齐宫格内使用 */
+  @Builder
+  childFolderCard(g: BookGroups) {
+    Column({ space: 6 }) {
+      Stack({ alignContent: Alignment.Center }) {
+        Row()
+          .width(76).height(100).borderRadius(9)
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+          .translate({ x: 10, y: 7 })
+        Row()
+          .width(80).height(104).borderRadius(9)
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)')
+          .translate({ x: 5, y: 3 })
+        Image(resolveCoverSource(g.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
+          .width(84).height(108).borderRadius(9).draggable(false)
+          .border({ width: 1, color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' })
+      }
+      .width(96).height(116)
+
+      Text(g.groupName)
+        .fontSize(13).fontWeight(600).maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+    }
+    .padding({ left: 6, right: 6, top: 4, bottom: 8 })
+    .onClick(() => {
+      if (g.groupId !== undefined) {
+        this.jumpToFolder(g.groupId)
+      }
+    })
+  }
+
   /** 面包屑文案：`分组/父组/子组`（首段是虚拟根「分组」） */
   private pathText(): string {
     const names: string[] = []
@@ -312,36 +352,17 @@ export default struct BookContentRefresh {
       // ★ 2026-10-21 二修：按钮改到**右侧**（用户：「显示效果非常好，但是应该放在右侧」）
       //   ⇒ Stack 对齐改成 `BottomEnd`，按钮只给 `right` 外边距。
         Column() {
-          // ── 2026-11-01 多级文件夹：进入父组后先显示直属子文件夹（横滑行）────────
+          // ── 2026-11-01 多层级排版：子分组宫格在前（左对齐、与书籍同列数），书在后 ──
           if (!this.onRecentChip && this.bookTypeNumber > 1 && this.childGroups.length > 0) {
-            Scroll() {
-              Row({ space: 12 }) {
-                ForEach(this.childGroups, (g: BookGroups) => {
-                  Column({ space: 4 }) {
-                    Image(resolveCoverSource(g.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
-                      .width(56)
-                      .height(76)
-                      .borderRadius(6)
-                      .draggable(false)
-                    Text(g.groupName)
-                      .fontSize(11)
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .width(56)
-                  }
-                  .onClick(() => {
-                    if (g.groupId !== undefined) {
-                      this.jumpToFolder(g.groupId)
-                    }
-                  })
-                }, (g: BookGroups) => 'cf' + (g.groupId ?? 0))
-              }
-              .padding({ left: 10, right: 10 })
+            GridRow({ columns: this.folderColumns() }) {
+              ForEach(this.childGroups, (g: BookGroups) => {
+                GridCol() {
+                  this.childFolderCard(g)
+                }
+              }, (g: BookGroups) => 'cf' + (g.groupId ?? 0))
             }
-            .scrollable(ScrollDirection.Horizontal)
-            .scrollBar(BarState.Off)
             .width('100%')
-            .padding({ top: 8, bottom: 6 })
+            .padding({ left: 10, right: 10, top: 8, bottom: 4 })
           }
 
           if (this.onRecentChip) {
