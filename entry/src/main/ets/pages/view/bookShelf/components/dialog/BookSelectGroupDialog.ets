@@ -166,8 +166,6 @@ export default struct BookSelectGroupDialog{
 
   private toggleExpand(id: number): void {
     Haptics.tap()
-    // [PROBE-TOGGLE 2026-11-01] 临时探针：记录切换前后的展开集合
-    console.log(`[PROBE-TOGGLE] id=${id} before=${JSON.stringify(this.expandedIds)} rowsBefore=${this.rows.length}`)
     const i: number = this.expandedIds.indexOf(id)
     if (i >= 0) {
       this.expandedIds.splice(i, 1)
@@ -211,12 +209,6 @@ export default struct BookSelectGroupDialog{
     }
     walk(0, 0)
     this.rows = out
-    // [PROBE-TREE 2026-11-01] 临时定位「移动至」树形不可用；验证后删除
-    const ids: number[] = []
-    for (const r of out) {
-      ids.push(r.depth * 1000 + (r.group.groupId ?? 0))
-    }
-    console.log(`[PROBE-TREE] mode=${this.isManageMode ? 'manage' : 'move'} preset=${this.presetGroups !== null} groupList=${this.groupList.length} rows=${out.length} ids=${JSON.stringify(ids)} expanded=${JSON.stringify(this.expandedIds)}`)
   }
 
   // ── 2026-11-01 树形行（官方 FAQ 方案二：列表 + 展开/折叠）──────────────────
@@ -325,6 +317,10 @@ export default struct BookSelectGroupDialog{
       if (this.disabledIds.indexOf(row.group.groupId ?? -1) >= 0) {
         Text('不可选').fontSize(11).fontColor('rgb(174,174,174)')
       }
+      // 2026-11-01：标出"当前所在分组"，点它是展开而不是选中
+      if (this.oldGroupId === (row.group.groupId ?? -1)) {
+        Text('当前').fontSize(11).fontColor('rgb(174,174,174)')
+      }
     }
     .width('100%')
     .height(46)
@@ -333,9 +329,17 @@ export default struct BookSelectGroupDialog{
     .backgroundColor(ShelfColors.chip())
     .onClick(() => {
       const id: number = row.group.groupId ?? -1
-      // [PROBE-ROW 2026-11-01] 临时探针：看被哪个分支挡下
-      console.log(`[PROBE-ROW] id=${id} oldGroupId=${this.oldGroupId} show=${row.group.show} disabled=${JSON.stringify(this.disabledIds)} isManage=${this.isManageMode} moveNode=${this.isMoveGroupNode} moveStatus=${this.isMoveStatus} ids=${JSON.stringify(this.Ids)}`)
-      if (id <= 0 || this.oldGroupId === id) {
+      if (id <= 0) {
+        return
+      }
+      // 2026-11-01：点到"书/分组当前所在分组"时不再静默返回 ——
+      //   它是文件夹 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
+      if (this.oldGroupId === id) {
+        if (row.hasChildren) {
+          this.toggleExpand(id)
+        } else {
+          showMessage(this.isMoveGroupNode ? '目标就是当前分组' : '书已经在这个分组里')
+        }
         return
       }
       if (this.disabledIds.indexOf(id) >= 0) {
@@ -354,8 +358,6 @@ export default struct BookSelectGroupDialog{
       Haptics.tap()
       this.moveGroupId = id
       this.moveTitle = row.group.groupName
-      // [PROBE-OPEN 2026-11-01] 记录即将打开确认框时的目标与书籍参数
-      console.log(`[PROBE-OPEN] target=${id} name=${row.group.groupName} ids=${JSON.stringify(this.Ids)} moveStatus=${this.isMoveStatus}`)
       this.clickBookTypeDialog?.open()
     })
     .margin({ bottom: PaddingConstants.PADDING_16 })
