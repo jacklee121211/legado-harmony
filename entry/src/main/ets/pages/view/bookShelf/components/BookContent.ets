@@ -199,7 +199,8 @@ export default struct BookContent {
 
   changeBookType(){
     this.currentPage = 1
-    if (this.bookTypeNumber !== 1 && this.bookTypeNumber !== 5) {
+    // 2026-11-01：去掉 `!== 5` 哨兵（书单功能已删；真实分组 id 可能正好是 5 ⇒ 会被误判成书单页）
+    if (this.bookTypeNumber !== 1) {
       if (this.bookCount === 0){
         this.getBookCount()
       }

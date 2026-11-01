@@ -354,7 +354,9 @@ export default struct BookContentRefresh {
               EXHIBIT: this.EXHIBIT,
               searchValue: this.searchValue
             })
-          } else if (this.bookTypeNumber !== 5 && this.bookTypeNumber !== 1){
+          // 2026-11-01：去掉 `!== 5` 哨兵 —— 书单功能已删，但真实分组 id 可能正好是 5，
+          //   旧判断会把该分组误判成"书单页"⇒ 面包屑变了、页面却还停在分组卡片页。
+          } else if (this.bookTypeNumber !== 1) {
             BookContent({
               currentIndex:this.currentIndex,
               bookTypeNumber:this.bookTypeNumber,
