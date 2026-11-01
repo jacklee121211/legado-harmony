@@ -192,10 +192,11 @@ export default struct ShareGuideTip {
         .transition(TransitionEffect.OPACITY.animation({ duration: 220 }))
       }
     }
-    // 2026-11-01：不再铺满全宽 —— 只在气泡实际区域参与布局/命中，
-    //   左侧「返回/完成」等按钮区不再被这层盖住（用户：左右按钮点不动）。
-    .width(this.visible ? 'auto' : 0)
-    .constraintSize({ maxWidth: '90%' })
+    // 2026-11-01 二修：宽度必须**恒定**。改成 `visible ? 'auto' : 0` 后，第二次点全选
+    //   （勾选清空 → visible 变 false → 宽度 0）会让气泡在触摸过程中重新布局，
+    //   表现为"气泡跟着手跑到左上角"。命中问题已由"自身 + 所有子节点
+    //   HitTestMode.None"解决，不需要再收窄宽度。
+    .width('100%')
     // ⚠️ 显式高度（隐藏时 0）：见 capsuleHeight 注释 —— 不给就会被 overlay 撑到整屏高、
     //    吃掉整页命中测试（2026-10-25 真机回归，日志取证 `docs/日志.md:7` 等）。
     .height(this.visible ? this.capsuleHeight : 0)
