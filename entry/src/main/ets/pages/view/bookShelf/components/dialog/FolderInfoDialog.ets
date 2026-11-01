@@ -1051,7 +1051,7 @@ export default struct FolderInfoDialog{
   @State dialogHideTitle:string = '隐藏分组'
   @State dialogHideContent:string = '隐藏后可点击分组标签栏右侧分组管理入口查看隐藏分组并进入'
   @State dialogDisbandTitle:string = '解散分组'
-  @State dialogDisbandContent:string = '解散分组后，原组内书籍不会被删除，将自动移动至未分组'
+  @State dialogDisbandContent:string = '解散分组后，组内书籍不会被删除，将归还上级分组（根级分组则移入未分组）'
 
   //隐藏、解散分组弹窗
   hideDisbandDelDialog: CustomDialogController | null = new CustomDialogController({
@@ -1081,12 +1081,9 @@ export default struct FolderInfoDialog{
   }
   //解散分组
   disbandGroup(){
-    bookGroupUtil.delGroupById(this.itemData.groupId ?? [])
-    setTimeout(()=>{
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.cancel()
-      showMessage('解散分组成功')
-    },500)
+    // 2026-11-01：统一走 dissolveGroup —— 旧实现 delGroupById 会把书塞进「未分组」，
+    //   与"解散 = 书归还父级"矛盾（真机：在 1 里解散 11 后，11 的书没回到 1）
+    this.dissolveGroup(true)
   }
 
   //隐藏分组
