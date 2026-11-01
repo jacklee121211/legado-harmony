@@ -14,6 +14,9 @@ import BookSelectGroupDialog from './BookSelectGroupDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import { GroupTree } from '../../../../../common/group/GroupTree'
 import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
+import { BookShareBridge, buildSelection, MAX_SHARE_RECORDS } from '../../../../../common/share/BookShareBridge'
+import { Books } from '../../../../../database/entities/Books'
+import { common } from '@kit.AbilityKit'
 // 2026-10-25：`AddToBookListDialog`（加入书单弹窗）已随书单功能删除
 import coverInfoDialog from './coverInfoDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
@@ -61,8 +64,52 @@ export default struct FolderInfoDialog{
    * 以免异步回来前闪一下 0。
    */
   @State realBookCount: number = this.itemData.bookIds?.length || 0
+  // ── 2026-11-01 碰一碰 / 隔空传送：长按分组即可分享整组书籍 ──────────────────
+  /** 分享提示文案（空串 = 不显示徽标） */
+  @State private shareHint: string = ''
+  private readonly SHARE_OWNER_FOLDER: string = 'folder-info'
   aboutToAppear(): void {
     this.refreshBookCount()
+    this.setupShare()
+  }
+
+  aboutToDisappear(): void {
+    BookShareBridge.get().release(this.SHARE_OWNER_FOLDER)
+  }
+
+  /**
+   * 碰一碰 / 隔空传送（2026-11-01）。
+   *
+   * · 内容 = 本分组**直属**书籍的文件 URI（`buildSelection` 内部转 URI + utd）；
+   * · 官方上限 500 项（`MAX_SHARE_RECORDS`）⇒ 超过时用本地游标分批，
+   *   第一批备好后提示"再碰一次发送剩余 X 本"（用户拍板：手动接续）；
+   * · 能力闸门/注册注销都在 bridge 内部，不支持分享的设备静默降级。
+   */
+  private async setupShare(): Promise<void> {
+    const gid: number | undefined = this.itemData.groupId
+    if (gid === undefined) {
+      return
+    }
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
+      await BookShareBridge.get().acquire(this.SHARE_OWNER_FOLDER, ctx)
+      const all: Books[] = await booksDao.queryPreviewByGroups([gid], 5000)
+      const start: number = AppStorage.get<number>('GROUP_SHARE_CURSOR_' + gid) ?? 0
+      const batch: Books[] = all.slice(start, start + MAX_SHARE_RECORDS)
+      BookShareBridge.get().setSelection(batch.length > 0 ? buildSelection(batch) : null)
+      const remain: number = all.length - start - batch.length
+      if (all.length === 0) {
+        this.shareHint = ''
+      } else if (remain > 0) {
+        this.shareHint = `已备好 ${batch.length} 本，再碰一次发送剩余 ${remain} 本`
+        AppStorage.setOrCreate<number>('GROUP_SHARE_CURSOR_' + gid, start + batch.length)
+      } else {
+        this.shareHint = `已备好 ${all.length} 本`
+        AppStorage.setOrCreate<number>('GROUP_SHARE_CURSOR_' + gid, 0)
+      }
+    } catch (e) {
+      console.error('setupShare failed: ' + JSON.stringify(e))
+    }
   }
 
   /** 现算本分组书籍数（入口处 + 兜底重查后都要调） */
@@ -179,6 +226,29 @@ export default struct FolderInfoDialog{
         Column(){
           Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
           Text(`共${this.realBookCount}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
+          // ── 2026-11-01：碰一碰 / 隔空传送 标志（用户：弹窗顶部加个标志就行）──
+          if (this.shareHint.length > 0) {
+            Row({ space: 6 }) {
+              Text('碰一碰')
+                .fontSize(10).fontColor(Color.White)
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .borderRadius(6)
+                .backgroundColor('rgba(0, 0, 0, 0.30)')
+              Text('隔空传送')
+                .fontSize(10).fontColor(Color.White)
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .borderRadius(6)
+                .backgroundColor('rgba(0, 0, 0, 0.30)')
+              Text(this.shareHint)
+                .fontSize(10)
+                .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.62)' : 'rgba(0,0,0,0.45)')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+            }
+            .width('100%')
+            .margin({ top: 4 })
+          }
         }
       }.padding(20)
       // ── 图标区（2026-10-01 间距统一，用户："两行图标之间…没有间距，看起来难受"）────
