@@ -116,6 +116,26 @@ class bookGroupUtils{
   }
 
   /**
+   * 2026-11-02：**需要排除的分组 id 集合** —— 所有 `show=false` 分组及其整棵子树。
+   * 用于 `BooksDao.setHiddenGroupIds()`，实现"隐藏组的书与计数全部排除"。
+   */
+  async hiddenSubtreeIds(): Promise<number[]> {
+    const all: BookGroups[] = await BookGroupsDao.search()
+    const tree: GroupTree = GroupTree.build(all)
+    const out: number[] = []
+    for (const g of all) {
+      if (g.show === false && g.groupId !== undefined) {
+        for (const id of tree.subtreeIds(g.groupId)) {
+          if (out.indexOf(id) < 0) {
+            out.push(id)
+          }
+        }
+      }
+    }
+    return out
+  }
+
+  /**
    * **空分组自动解散**（2026-10-12 新增，用户需求原文：
    * 「自定义分组空了之后没有自动解散并更新刷新」「自定义分组没有书籍会自动解散」）。
    *

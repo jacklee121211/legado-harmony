@@ -46,11 +46,11 @@ const COUNT_COLUMN: ColumnInfo[] = [
 
 class BooksDao {
   /** 2026-11-02：被隐藏分组（含其子树）的 id 列表 —— 查询时排除这些分组里的书 */
-  static hiddenGroupIds: number[] = []
+  hiddenGroupIds: number[] = []
 
   /** 设置需要排除的隐藏分组 id（传空数组即取消过滤） */
-  static setHiddenGroupIds(ids: number[]): void {
-    BooksDao.hiddenGroupIds = ids
+  setHiddenGroupIds(ids: number[]): void {
+    this.hiddenGroupIds = ids
   }
 
   TABLE_NAME: string = 'books'
@@ -286,8 +286,8 @@ class BooksDao {
 
     // 2026-11-02：**隐藏分组里的书一律不出现在列表/计数里**（用户：隐藏组的书与计数全部排除）。
     //   由调用方在查询前用 `BooksDao.setHiddenGroupIds(子树id)` 设置；空数组＝不过滤。
-    if (BooksDao.hiddenGroupIds.length > 0) {
-      whereClause.push(`bookGroup NOT IN (${BooksDao.hiddenGroupIds.join(',')})`);
+    if (this.hiddenGroupIds.length > 0) {
+      whereClause.push(`bookGroup NOT IN (${this.hiddenGroupIds.join(',')})`);
     }
 
     if (type !== undefined) {
@@ -295,9 +295,10 @@ class BooksDao {
     }
     if (bookGroup !== undefined && bookGroup !== 2) {
       if (bookGroup === 4) {
-        whereClause.push(`bookGroup = ${bookGroup} or isLocalBook = ${true}`);
+        // 2026-11-02：括起来，避免与后面追加的 AND 条件抢优先级
+        whereClause.push(`(bookGroup = ${bookGroup} or isLocalBook = ${true})`);
       } else if (bookGroup === 3) {
-        whereClause.push(`bookGroup = ${bookGroup} or (bookGroup = 4 and isLocalBook = ${true})`);
+        whereClause.push(`(bookGroup = ${bookGroup} or (bookGroup = 4 and isLocalBook = ${true}))`);
       } else {
         whereClause.push(`bookGroup = ${bookGroup}`);
       }

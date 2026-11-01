@@ -3,6 +3,7 @@ import ShelfPrefs, { SortDir, SortKey } from '../../../../common/utils/ShelfPref
 import BasicDataSource from '../../../../common/LazyIDataSource/BasicDataSource'
 import { ThemeItem } from '../../../../common/model/Theme'
 import booksDao from '../../../../database/dao/BooksDao'
+import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 // 建表/迁移就绪信号（2026-10-20 闪退修复，见 aboutToAppear 注释）
 import DataBase from '../../../../database/index'
 import { Books } from '../../../../database/entities/Books'
@@ -351,7 +352,8 @@ export default struct BookContent {
     //     `isLoading = true`，用户看到正常的加载提示。
     try {
       const params: BooksTypeSearchParams = this.buildQueryParams();
-      let list: Books[] = await booksDao.searchPage(params, this.currentPage)
+      // 2026-11-02：隐藏分组（含子树）里的书不参与列表与计数
+      booksDao.setHiddenGroupIds(await bookGroupUtils.hiddenSubtreeIds());      let list: Books[] = await booksDao.searchPage(params, this.currentPage)
       // 首字母档：SQL 只能给 bookName 兜底序，真正的拼音序在这里做（见 sortByPinyin 注释）
       if (!this.onRecentChip && ShelfPrefs.getSortKey() === SortKey.PINYIN) {
         list = this.sortByPinyin(list, ShelfPrefs.getSortDir());
