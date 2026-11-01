@@ -340,7 +340,23 @@ export default struct BookSelectGroupDialog{
         }
         if (this.isMoveGroupNode) {
           Haptics.tap()
-          this.moveGroupNode(id, row.group.groupName)
+          // 2026-11-01：补确认弹窗（用户：没确认容易误触）。
+          //   每次点击新建实例 —— 弹窗参数不支持动态更新（SDK 明确写死），
+          //   复用会把标题永远停在第一次的分组名。
+          this.nodeMoveConfirm = new CustomDialogController({
+            builder: TitleContentDialog({
+              title: `移动分组至${row.group.groupName}`,
+              confirm: (): void => {
+                this.moveGroupNode(id, row.group.groupName)
+              }
+            }),
+            autoCancel: true,
+            alignment: DialogAlignment.Center,
+            gridCount: 4,
+            customStyle: false,
+            cornerRadius: 25
+          })
+          this.nodeMoveConfirm?.open()
           return
         }
         if (this.isManageMode) {
@@ -781,6 +797,9 @@ export default struct BookSelectGroupDialog{
   }
 
   //是否确认移动分组
+  /** 移动分组本身的确认弹窗（每次点击新建，避免标题不更新） */
+  nodeMoveConfirm: CustomDialogController | null = null
+
   clickBookTypeDialog: CustomDialogController | null = new CustomDialogController({
     builder: TitleContentDialog({
       confirm: async ()=> {
