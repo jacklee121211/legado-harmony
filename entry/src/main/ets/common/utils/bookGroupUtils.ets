@@ -6,6 +6,7 @@
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import BooksDao from '../../database/dao/BooksDao'
 import { BookGroups } from '../../database/entities/BookGroups'
+import { Books } from '../../database/entities/Books'
 import { GroupTree } from '../group/GroupTree'
 import toolsUtils from './ToolsUtils'
 
@@ -78,41 +79,76 @@ class bookGroupUtils{
     }
     const groups: BookGroups[] = await BookGroupsDao.search()
     let parentId: number = 0
+    let exists: boolean = false
     for (const g of groups) {
       if ((g.groupId ?? -1) === id) {
         parentId = g.parentId ?? 0
+        exists = true
         break
       }
     }
-    const target: number = parentId > 0 ? parentId : 3
-    if (mode === 'collapse') {
-      // 2026-11-01：**全部解散** —— 整棵子树的书全部上提到父级，子树目录行全删
-      const tree: GroupTree = GroupTree.build(groups)
-      const ids: number[] = tree.subtreeIds(id)
-      await BooksDao.queryBookByGroup(ids, target)
-      await BookGroupsDao.deleteBook(ids)
+    // ── 2026-11-02 预检：分组不存在 ⇒ 直接返回（不半途改库、不误删） ──────────
+    if (!exists) {
+      console.error(`[GRP-PRECHECK] dissolveGroup: 分组不存在 id=${id}，已跳过`)
       return
     }
-    // ① 直属书归还父级
-    await BooksDao.queryBookByGroup([id], target)
-    // ② 子分组挂到同一父级（保持层级不断链）
-    const moved: number[] = []
-    for (const g of groups) {
-      if ((g.parentId ?? 0) === id && g.groupId !== undefined && g.groupId !== id) {
-        moved.push(g.groupId)
+    const target: number = parentId > 0 ? parentId : 3
+    // ── 2026-11-02 回滚快照：记录"哪些书来自哪个分组"，失败按快照逆序恢复 ──────
+    const idsPreview: number[] = mode === 'collapse' ? GroupTree.build(groups).subtreeIds(id) : [id]
+    const allBooks: Books[] = await BooksDao.search()
+    const bookSnap: Books[] = []
+    for (const b of allBooks) {
+      if (b.bookGroup !== undefined && idsPreview.indexOf(b.bookGroup) >= 0) {
+        bookSnap.push(b)
       }
     }
-    for (const cid of moved) {
+    try {
+      if (mode === 'collapse') {
+        // 2026-11-01：**全部解散** —— 整棵子树的书全部上提到父级，子树目录行全删
+        const tree: GroupTree = GroupTree.build(groups)
+        const ids: number[] = tree.subtreeIds(id)
+        await BooksDao.queryBookByGroup(ids, target)
+        await BookGroupsDao.deleteBook(ids)
+        return
+      }
+      // ① 直属书归还父级
+      await BooksDao.queryBookByGroup([id], target)
+      // ② 子分组挂到同一父级（保持层级不断链）
+      const moved: number[] = []
       for (const g of groups) {
-        if ((g.groupId ?? -1) === cid) {
-          g.parentId = parentId > 0 ? parentId : 0
-          await BookGroupsDao.update(g)
-          break
+        if ((g.parentId ?? 0) === id && g.groupId !== undefined && g.groupId !== id) {
+          moved.push(g.groupId)
         }
       }
+      for (const cid of moved) {
+        for (const g of groups) {
+          if ((g.groupId ?? -1) === cid) {
+            g.parentId = parentId > 0 ? parentId : 0
+            await BookGroupsDao.update(g)
+            break
+          }
+        }
+      }
+      // ③ 删本分组行
+      await BookGroupsDao.deleteBook([id])
+    } catch (e) {
+      // ── 失败回滚：把动过的书按快照写回原分组 ────────────────────────────────
+      console.error(`[GRP-ROLLBACK] dissolveGroup 失败 id=${id} mode=${mode}，开始回滚：${JSON.stringify(e)}`)
+      let restored: number = 0
+        for (const b of bookSnap) {
+          if (b.id === undefined) {
+            continue
+          }
+          try {
+            await BooksDao.updateBookGroup([b.id], b.bookGroup)
+            restored++
+          } catch (e2) {
+            console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${b.id}: ${JSON.stringify(e2)}`)
+          }
+        }
+      console.error(`[GRP-ROLLBACK] 已回滚 ${restored}/${bookSnap.length} 本`)
+      throw e as Error
     }
-    // ③ 删本分组行
-    await BookGroupsDao.deleteBook([id])
   }
 
   /**
