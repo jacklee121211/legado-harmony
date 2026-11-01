@@ -162,6 +162,20 @@ export default struct BookSelectGroupDialog{
     })
   }
 
+  /** 分组的来源路径（`分组/父/子`），与面包屑同源；用于行内第二行灰字 */
+  private pathLabel(id: number): string {
+    if (id <= 1) {
+      return ''
+    }
+    const tree: GroupTree = GroupTree.build(this.groupList)
+    const path: BookGroups[] = tree.pathOf(id)
+    const names: string[] = ['分组']
+    for (const g of path) {
+      names.push(g.groupName)
+    }
+    return names.join('/')
+  }
+
   private isExpanded(id: number): boolean {
     return this.expandedIds.indexOf(id) >= 0
   }
@@ -308,9 +322,18 @@ export default struct BookSelectGroupDialog{
         SymbolGlyph($r('sys.symbol.folder'))
           .fontSize(18)
           .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#000000'])
-        Text(row.group.groupName).fontSize(14).maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Blank()
+        Column({ space: 2 }) {
+          Text(row.group.groupName).fontSize(14).fontWeight(600).maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          // 来源路径（用户要求：每个分组名下面显示「分组/父/子」）
+          Text(this.pathLabel(row.group.groupId ?? -1))
+            .fontSize(11)
+            .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.55)' : 'rgba(0,0,0,0.45)')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
         if (this.disabledIds.indexOf(row.group.groupId ?? -1) >= 0) {
           Text('不可选').fontSize(11).fontColor('rgb(174,174,174)')
         }
@@ -388,7 +411,7 @@ export default struct BookSelectGroupDialog{
       })
     }
     .width('100%')
-    .height(46)
+    .height(56)
     .padding({ left: 12, right: 12 })
     .borderRadius(10)
     .backgroundColor(ShelfColors.chip())
