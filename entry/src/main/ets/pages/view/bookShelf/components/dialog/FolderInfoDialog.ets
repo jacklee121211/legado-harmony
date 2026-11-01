@@ -938,10 +938,12 @@ export default struct FolderInfoDialog{
       me.parentId = targetId
       me.updateTime = Date.now()
       await BookGroupsDao.updatePartialGroup(me)
-      this.groupMoveGroup?.close()
-      this.cancel()
+      // 2026-11-01：先广播再关窗 —— 关窗会销毁本组件，广播放后面在部分路径上会丢
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+      console.log(`[GRP-MOVE] from=${gid} to=${targetId} ok groupsRefresh=${this.BOOK_IS_BOOK_GROUPS_REFRESHING}`)
+      this.groupMoveGroup?.close()
+      this.cancel()
       showMessage(`已移动到「${targetName}」`)
     } catch (e) {
       showMessage('移动失败')
