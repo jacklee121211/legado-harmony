@@ -563,7 +563,9 @@ export default struct BookContentRefresh {
               currentIndex:this.currentIndex,
               bookTypeNumber:this.bookTypeNumber,
               EXHIBIT: this.EXHIBIT,
-              searchValue: this.searchValue
+              searchValue: this.searchValue,
+              // 2026-11-01：本分组有子文件夹时（哪怕空的），不显示"暂无书籍"空态
+              hasChildGroups: this.childGroups.length > 0
             })
           } else {
             Scroll() {
