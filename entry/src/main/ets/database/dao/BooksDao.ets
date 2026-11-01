@@ -326,6 +326,39 @@ class BooksDao {
     }
   }
 
+  /**
+   * 2×2 分组卡片预览专供（2026-11-01）：一次查回若干分组下的书，每组最多 `limitPerGroup` 本。
+   *
+   * 为什么不用 `queryBookIds`：预览要**封面**，只取 id 没用；也不能逐组查（N 次查询），
+   * 分组一屏可能 20+ 个。这里一条 `WHERE bookGroup IN (...)` 查回后按组分桶。
+   * 排序与书架列表同源口径（置顶优先、再按手动排序、最后 id），保证预览与点进去的顺序一致。
+   */
+  async queryPreviewByGroups(groupIds: number[], limitPerGroup: number): Promise<Books[]> {
+    try {
+      const ids: number[] = groupIds.filter((id: number): boolean => typeof id === 'number' && id > 0)
+      if (ids.length === 0 || limitPerGroup <= 0) {
+        return []
+      }
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      const sql: string = `SELECT * FROM ${this.TABLE_NAME} WHERE bookGroup IN (${ids.join(',')}) ORDER BY isTop DESC, sort ASC, id ASC`
+      const rows: Books[] = await DbUtil.querySqlForList<Books>(sql, column)
+      const perGroup: Map<number, number> = new Map<number, number>()
+      const out: Books[] = []
+      for (const b of rows) {
+        const gid: number = b.bookGroup ?? 0
+        const n: number = perGroup.get(gid) ?? 0
+        if (n < limitPerGroup) {
+          out.push(b)
+          perGroup.set(gid, n + 1)
+        }
+      }
+      return out
+    } catch (err) {
+      console.log('queryPreviewByGroups, Error, ', JSON.stringify(err))
+      return []
+    }
+  }
+
   async searchPage(param?: BooksTypeSearchParams, pageNumber: number = 1, pageSize: number = 21) {
     let order = param?.order;
     // 2026-10-13 清死代码：原来的 `getOrder()` + `switch(sort)` 恒走 case 0，

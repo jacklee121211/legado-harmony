@@ -11,10 +11,14 @@ import coverInfoDialog from './components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
-import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
+import { NightMode } from '../../../common/utils/NightMode'
 import { resolveCoverSource, coverCorners } from '../../../common/utils/CoverSource'
 // 宫格列数（2026-10-23 多端适配）：与书籍宫格**同源同一份取值**
 import ShelfPrefs from '../../../common/utils/ShelfPrefs'
+// ── 2026-11-01 多级文件夹 ──────────────────────────────────────────────────
+import { Books } from '../../../database/entities/Books'
+import BooksDao from '../../../database/dao/BooksDao'
+import { GroupTree } from '../../../common/group/GroupTree'
 
 /**
  * 文件夹
@@ -57,6 +61,11 @@ export default struct BookFolder {
    * 整屏入场动画，删一本书就翻一次牌是噪音（同 `BookContent.animateOnNextLoad` 的取舍）。
    */
   @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('refreshGroupCounts') BOOK_IS_BOOK_REFRESHING: number = 0
+  // ── 2026-11-01 多级文件夹：2×2 预览数据 ──────────────────────────────────
+  /** 本页 2×2 预览用的书（每组最多 2 本，一次查询；见 `BooksDao.queryPreviewByGroups`） */
+  @State previewBooks: Books[] = []
+  /** 分组树（只用于查层级/父子，每次 `loadGroupList` 重建） */
+  private tree: GroupTree | null = null
 
   // ── 渐次入场（2026-09-24 新增，需求第 5 / 7 点）──────────────────────────────
   /**
@@ -166,7 +175,201 @@ export default struct BookFolder {
       type: this.currentIndex
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
+    // ── 2026-11-01 多级文件夹：建树（父子 / 深度）+ 拉 2×2 预览用的书 ──────────
+    this.tree = GroupTree.build(val)
+    const visibleIds: number[] = []
+    for (const g of val) {
+      if (g.groupId === undefined || !g.show) {
+        continue
+      }
+      // 与 build() 的过滤条件保持一致：除「未分组」外的系统单元不是"装书的地方"
+      if (g.isSystem && g.groupName !== '未分组') {
+        continue
+      }
+      visibleIds.push(g.groupId)
+    }
+    this.previewBooks = visibleIds.length > 0
+      ? await BooksDao.queryPreviewByGroups(visibleIds, 2)
+      : []
     return val
+  }
+
+  // ── 2026-11-01 多级文件夹：2×2 预览的数据取用 ────────────────────────────────
+  /**
+   * 直属子分组（`parentId === 本组 id`）。
+   * 口径与 build() 的渲染过滤一致：隐藏分组不显示、除「未分组」外的系统单元不算。
+   */
+  private childGroupsOf(item: BookGroups): BookGroups[] {
+    const id: number = item.groupId ?? -1
+    const out: BookGroups[] = []
+    if (id <= 0) {
+      return out
+    }
+    for (const g of this.groupList) {
+      if (g.groupId === undefined || g.groupId === id) {
+        continue
+      }
+      if ((g.parentId ?? 0) !== id) {
+        continue
+      }
+      if (!g.show || (g.isSystem && g.groupName !== '未分组')) {
+        continue
+      }
+      out.push(g)
+    }
+    return out
+  }
+
+  /** 层级（根级 = 1）；树还没建好时按 1 处理 */
+  private depthOf(item: BookGroups): number {
+    if (this.tree === null) {
+      return 1
+    }
+    return this.tree.depthOf(item.groupId)
+  }
+
+  /** 预览里子文件夹占的格数（最多 4） */
+  private previewGroupCount(item: BookGroups): number {
+    return Math.min(4, this.childGroupsOf(item).length)
+  }
+
+  /** 预览里书占的格数（子文件夹占完剩余格，最多 2 本） */
+  private previewBookCount(item: BookGroups): number {
+    return Math.min(4 - this.previewGroupCount(item), this.booksOfGroup(item).length)
+  }
+
+  /** 该组直属书（来自一次性预取 `previewBooks`） */
+  private booksOfGroup(item: BookGroups): Books[] {
+    const id: number = item.groupId ?? -1
+    const out: Books[] = []
+    for (const b of this.previewBooks) {
+      if ((b.bookGroup ?? 0) === id) {
+        out.push(b)
+      }
+    }
+    return out
+  }
+
+  /** 第 idx 个子文件夹的封面 */
+  private groupPreviewCover(item: BookGroups, idx: number): ResourceStr {
+    const kids: BookGroups[] = this.childGroupsOf(item)
+    if (idx < 0 || idx >= kids.length) {
+      return $r('app.media.icon_book_default_cover_one')
+    }
+    return resolveCoverSource(kids[idx].coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg')
+  }
+
+  /** 第 idx 本书的封面（优先级同书籍骨架：自定义 > 自带 > 原始） */
+  private bookPreviewCover(item: BookGroups, idx: number): ResourceStr {
+    const books: Books[] = this.booksOfGroup(item)
+    if (idx < 0 || idx >= books.length) {
+      return $r('app.media.icon_book_default_cover_one')
+    }
+    const b: Books = books[idx]
+    return resolveCoverSource(b.customCoverUrl ?? b.builtinCoverUrl ?? b.coverUrl ?? '')
+      ?? $r('app.media.icon_book_default_cover_one')
+  }
+
+  /** 2×2 预览的一格：子文件夹优先、书在后，空格留半透明底 */
+  @Builder
+  previewCell(item: BookGroups, idx: number) {
+    Stack() {
+      if (idx < this.previewGroupCount(item)) {
+        Image(this.groupPreviewCover(item, idx))
+          .width('100%')
+          .height('100%')
+          .borderRadius(3)
+          .draggable(false)
+      } else if (idx - this.previewGroupCount(item) < this.previewBookCount(item)) {
+        Image(this.bookPreviewCover(item, idx - this.previewGroupCount(item)))
+          .width('100%')
+          .height('100%')
+          .borderRadius(3)
+          .draggable(false)
+      } else {
+        // 空格：只留极淡的底，表示"这一格是空的"
+        Row()
+          .width('100%')
+          .height('100%')
+          .borderRadius(3)
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)')
+      }
+    }
+    .layoutWeight(1)
+    .height('100%')
+  }
+
+  /**
+   * 分组卡片内容：2×2 预览 + 外框线条（2026-11-01 用户拍板）。
+   *
+   * · 子文件夹在前、书在后；最多 4 格；>4 不提示（用户：「超过四个不管，用户自己知道」）；
+   * · 外框只用 `border` 线条 + 半透明底，**不用模糊**（用户明确担心兼容/性能）；
+   * · 角标：置顶沿用旧样式；层级 ≥ 2 时右上角显示「N 级」。
+   */
+  @Builder
+  folderPreview(item: BookGroups) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.previewGroupCount(item) === 0 && this.previewBookCount(item) === 0) {
+        // 空文件夹：退回"一张封面"的经典观感（否则四格全空，像一张坏掉的卡片）
+        Image(resolveCoverSource(item.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
+          .width('100%')
+          .height('100%')
+          .borderRadius(6)
+          .draggable(false)
+          .alt($r('app.media.icon_book_default_cover_one'))
+      } else {
+        Column({ space: 2 }) {
+          Row({ space: 2 }) {
+            this.previewCell(item, 0)
+            this.previewCell(item, 1)
+          }
+          .layoutWeight(1)
+
+          Row({ space: 2 }) {
+            this.previewCell(item, 2)
+            this.previewCell(item, 3)
+          }
+          .layoutWeight(1)
+        }
+        .width('100%')
+        .height('100%')
+        .padding(3)
+      }
+
+      Row() {
+        if (item.isTop) {
+          Text('置顶')
+            .fontColor(Color.White)
+            .fontWeight(300)
+            .fontSize(8)
+            .padding(3)
+            .borderRadius(5)
+            .backgroundColor('rgba(0, 0, 0, 0.45)')
+        }
+        Blank()
+        if (this.depthOf(item) >= 2) {
+          Text(`${this.depthOf(item)}级`)
+            .fontColor(Color.White)
+            .fontWeight(400)
+            .fontSize(8)
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius(4)
+            .backgroundColor('rgba(0, 0, 0, 0.45)')
+        }
+      }
+      .width('100%')
+      .padding(2)
+      .hitTestBehavior(HitTestMode.None)
+    }
+    .width(88)
+    .height(120)
+    .borderRadius(8)
+    .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)')
+    .border({
+      width: 1,
+      color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.12)'
+    })
+    .clip(true)
   }
 
   /**
@@ -344,61 +547,11 @@ export default struct BookFolder {
     Column({
       space: 5
     }) {
-      Column() {
-        Column() {
-          Stack() {
-            // ── 2026-10-21：先画叠加装饰层（在封面**下面**）──────────────────
-            this.FolderStackDecor()
-
-            Stack() {
-              Stack() {
-                if (item.isTop) {
-                  Text('置顶')
-                    .fontColor(Color.White)
-                    .fontWeight(300)
-                    .fontSize(8)
-                    .padding(3)
-                    .borderRadius(5)
-                    .backgroundColor('rgba(0, 0, 0, 0.45)')
-                    .zIndex(1)
-                }
-                // 2026-10-01：default:// 协议必须经 resolveCoverSource 转 $rawfile；
-                // 未设置封面（null）时落内置默认封面 c1（用户："没修改过分组的显示默认封面"）
-                // 2026-10-04：补书脊式圆角（同内置封面 SVG，90 宽画布左 4 / 右 8 等比）。
-                Image(resolveCoverSource(item.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
-                  .draggable(false)
-                  .alt($r('app.media.icon_book_default_cover_one'))
-                  .borderRadius(coverCorners(88))
-                  .width(88)
-                  .height(120)
-              }.alignContent(Alignment.BottomStart)
-            }
-            .zIndex(2)
-
-            // 2026-10-05（用户："太复杂了，一起简化"）："书页叠层 + 底条"装饰统一受
-            // `UiMotion.SHELF_COVER_STACK` 控制（默认 false ⇒ 卡片只留一张封面）。
-            if (UiMotion.SHELF_COVER_STACK && item.coverType !== 2) {
-              Row() {
-                Image($r('app.media.occlusion1')).draggable(false)
-              }
-              .zIndex(1)
-              .width(95).height(110)
-
-              Row() {
-                Image($r('app.media.occlusion2'))
-              }.zIndex(0)
-              .width(100).height(100)
-            }
-          }
-          .align(Alignment.BottomStart)
-        }
-
-        // 2026-10-05（用户："保留色条，色条有点溢出，优化一下"）：
-        // 宽度原来 100 > 封面 88，外层 Column 居中 ⇒ 左右各溢出 6vp；现在与封面同宽（88）。
-        if (UiMotion.SHELF_COVER_BASE_BAR) {
-          Row().width(88).height(20).backgroundColor(ShelfColors.skeleton()).borderRadius(10)
-        }
-      }
+      // ── 2026-11-01 多级文件夹：2×2 内容预览（替换原来的单封面 + 叠加装饰）────────
+      //   旧实现（单封面 + FolderStackDecor + occlusion 叠层 + 底条）保留在文件里
+      //   （`FolderStackDecor` / `UiMotion.SHELF_COVER_STACK` / `SHELF_COVER_BASE_BAR`），
+      //   需要回退时把下面这行换回旧的三层 Stack 即可。
+      this.folderPreview(item)
 
       Text(item.groupName)
         .fontSize(15)
@@ -408,7 +561,8 @@ export default struct BookFolder {
         })
         .ellipsisMode(EllipsisMode.END)
         .maxLines(2)
-      Text(`共${item.bookIds?.length || 0}本`)
+      // 「共N本」= 直属书（口径与点进去的列表同源）；有多级子文件夹时补一段数量
+      Text(this.countLabel(item))
         .fontSize(12)
         .fontColor('rgb(174,174,174)')
         .textOverflow({
@@ -478,6 +632,13 @@ export default struct BookFolder {
     }
     .padding(10)
     .borderRadius(10)
+  }
+
+  /** 卡片副标题：直属书数；有子文件夹时补一段数量（口径：直属，不递归） */
+  private countLabel(item: BookGroups): string {
+    const books: number = item.bookIds?.length ?? 0
+    const kids: number = this.childGroupsOf(item).length
+    return kids > 0 ? `共${books}本 · ${kids}个文件夹` : `共${books}本`
   }
 
   @State dialogGroupData: BookGroups = new BookGroups()

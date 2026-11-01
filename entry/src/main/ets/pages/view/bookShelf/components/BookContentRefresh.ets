@@ -16,6 +16,11 @@ import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUti
 import { NightMode } from '../../../../common/utils/NightMode'
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../common/model/Theme'
+// ── 2026-11-01 多级文件夹：左下角常驻「新建分组」按钮（复用现有弹窗与动效）──────────
+import addBookTypeDialog, { AddGroupChannel } from '../../../../componets/common/addBookTypeDialog'
+import { BookGroups } from '../../../../database/entities/BookGroups'
+import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
+import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 
 @Component
 export default struct BookContentRefresh {
@@ -50,6 +55,11 @@ export default struct BookContentRefresh {
   @StorageLink('SHELF_CURRENT_GROUP_NAME') currentGroupName: string = ''
   /** 「返回分组列表」按钮的 Q弹缩放（规范 §1 三件套） */
   @State backScale: number = 1
+  // ── 2026-11-01 多级文件夹：左下角「新建分组」按钮 ──────────────────────────
+  /** 「+」按钮 Q弹缩放 */
+  @State addScale: number = 1
+  /** 新建分组的输入通道（与 `addBookTypeDialog` 共用 AppStorage key） */
+  @StorageLink(AddGroupChannel.KEY_TEXT) newGroupName: string = ''
   @State checkGroup:Record<number, boolean> = {}
   /** 主题主色（悬浮按钮实底用） */
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
@@ -107,6 +117,81 @@ export default struct BookContentRefresh {
       }
     }
   }
+  /**
+   * 左下角常驻「新建分组」按钮（2026-11-01）。
+   * 只在分组卡片页显示（`bookTypeNumber === 1` 且不在「最近」态）。
+   * 风格与「返回分组列表」胶囊完全同源：主题主色实底 + 圆角 18 + Q弹 + `clickEffect`。
+   */
+  @Builder
+  addGroupButton() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.plus_circle'))
+        .fontSize(20)
+        .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
+    }
+    .padding({ left: 12, right: 14, top: 8, bottom: 8 })
+    .borderRadius(18)
+    .backgroundColor(this.theme.mainColor)
+    .scale({ x: this.addScale, y: this.addScale })
+    .clickEffect(UiMotion.CLICK)
+    .onClick(() => {
+      this.openAddGroupDialog()
+    })
+  }
+
+  /** 新建分组弹窗（复用 `addBookTypeDialog`：拒空名/重名，与「移动至」同款材质与动效） */
+  addGroupDialog: CustomDialogController | null = new CustomDialogController({
+    builder: addBookTypeDialog({
+      cancel: (): void => {
+        this.addGroupDialog?.close()
+      },
+      confirm: (): void => {
+        this.createGroupFromDialog()
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    gridCount: 4,
+    customStyle: false,
+    cornerRadius: 20,
+    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST)
+  })
+
+  private openAddGroupDialog(): void {
+    Haptics.tap()
+    runJellyClick((v: number) => {
+      this.addScale = v
+    })
+    this.newGroupName = ''
+    this.addGroupDialog?.open()
+  }
+
+  /** 确认新建：空名/同级重名拦截 → 根级分组（parentId=0）→ 广播刷新 */
+  private async createGroupFromDialog(): Promise<void> {
+    const name: string = (this.newGroupName ?? '').trim()
+    if (name === '') {
+      showMessage('分组名称不能为空')
+      return
+    }
+    const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+    for (const g of groups) {
+      if (!g.isSystem && (g.parentId ?? 0) === 0 && (g.groupName ?? '').trim() === name) {
+        showMessage(`已存${name}分组`)
+        return
+      }
+    }
+    const ng: BookGroups = new BookGroups()
+    ng.groupName = name
+    ng.groupType = this.currentIndex
+    ng.parentId = 0
+    await bookGroupUtils.addGroup(ng)
+    this.newGroupName = ''
+    this.isGroupRefreshing++
+    showMessage(`已添加${name}分组`)
+  }
+
   build() {
     // ★★ 2026-10-21 三修：**「返回分组列表」按钮移出 `Refresh`** ★★
     // 用户反馈：「我下划刷新，这个按钮也会跟着被下滑，能固定吗」。
@@ -242,6 +327,19 @@ export default struct BookContentRefresh {
           right: 20,
           bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
         })
+      }
+      // ── 2026-11-01：分组卡片页左下角常驻「新建分组」─────────────────────────
+      //  与外层 Stack 的 `BottomEnd` 对齐协作：整行铺满 + 左对齐 ⇒ 按钮贴左下；
+      //  `HitTestMode.Transparent` 让空白区域的触摸仍能落到下面的列表上。
+      if (this.bookTypeNumber === 1 && !this.onRecentChip) {
+        Row() {
+          this.addGroupButton()
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+        .padding({ left: 20 })
+        .margin({ bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight) })
+        .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .width('100%')
