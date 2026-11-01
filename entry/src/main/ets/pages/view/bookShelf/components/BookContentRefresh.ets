@@ -292,49 +292,71 @@ export default struct BookContentRefresh {
     return out
   }
 
-  private childCellCover(g: BookGroups, i: number): ResourceStr {
+  /** 子分组格子：只有真实书封面；没有就是空（淡底色块），不再回退默认封面/自身封面 */
+  private childCellCover(g: BookGroups, i: number): string {
     const list: Books[] = this.childBooksOf(g)
     if (i < list.length) {
       const c: ResourceStr | null = resolveCoverSource(list[i].coverUrl ?? '')
       if (c !== null) {
-        return c
+        return c as string
       }
     }
-    if (i === 0) {
-      const c: ResourceStr | null = resolveCoverSource(g.coverUrl ?? '')
-      if (c !== null) {
-        return c
-      }
-    }
-    return $rawfile('cover_defaults/c1.svg')
+    return ''
   }
 
-  /** 子分组卡片：与主栏文件夹卡同源 —— 2×2 预览宫格（2026-11-01） */
+  @Builder
+  childCell(g: BookGroups, i: number) {
+    Stack() {
+      if (this.childCellCover(g, i).length > 0) {
+        Image(this.childCellCover(g, i))
+          .width('100%').height('100%').borderRadius(4).draggable(false)
+      } else {
+        Row()
+          .width('100%').height('100%').borderRadius(4)
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')
+      }
+    }
+    .layoutWeight(1)
+    .height('100%')
+  }
+
+  /** 子分组卡片：与书籍卡片同尺寸；内容为 2×2 格子（空文件夹 = 四格淡底） */
   @Builder
   childFolderCard(g: BookGroups) {
-    Column({ space: 6 }) {
+    Column({ space: 8 }) {
       Stack({ alignContent: Alignment.Center }) {
         Row()
-          .width('100%').height('100%').borderRadius(9)
+          .width('100%').height('100%').borderRadius(10)
           .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)')
           .border({
             width: 1,
-            color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)'
+            color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'
           })
-        GridRow({ columns: 2, gutter: { x: 2, y: 2 } }) {
-          ForEach(this.previewCells, (i: number) => {
-            GridCol() {
-              Image(this.childCellCover(g, i))
-                .width('100%').height('100%').borderRadius(3).draggable(false)
-            }
-          }, (i: number) => 'cc' + (g.groupId ?? 0) + '_' + i)
+        Column({ space: 3 }) {
+          Row({ space: 3 }) {
+            this.childCell(g, 0)
+            this.childCell(g, 1)
+          }
+          .layoutWeight(1)
+          .width('100%')
+
+          Row({ space: 3 }) {
+            this.childCell(g, 2)
+            this.childCell(g, 3)
+          }
+          .layoutWeight(1)
+          .width('100%')
         }
-        .width('100%').height('100%').padding(3)
+        .width('100%')
+        .height('100%')
+        .padding(5)
       }
-      .width('100%').aspectRatio(0.78).clip(true)
+      .width('100%')
+      .aspectRatio(0.72)
+      .clip(true)
 
       Text(g.groupName)
-        .fontSize(13).fontWeight(600).maxLines(1)
+        .fontSize(15).fontWeight(700).maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
     }

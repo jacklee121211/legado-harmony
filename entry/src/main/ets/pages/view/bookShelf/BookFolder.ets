@@ -278,18 +278,22 @@ export default struct BookFolder {
         // 2026-11-01：格子是「子分组」时画三层叠（首层=该子分组自己的封面）
         Stack({ alignContent: Alignment.Center }) {
           Row()
-            .width('82%').height('82%').borderRadius(3)
-            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)')
-            .translate({ x: 4, y: 3 })
+            .width('80%').height('80%').borderRadius(3)
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)')
+            .translate({ x: 7, y: 6 })
           Row()
-            .width('91%').height('91%').borderRadius(3)
-            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.11)')
-            .translate({ x: 2, y: 1 })
+            .width('90%').height('90%').borderRadius(3)
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.15)')
+            .translate({ x: 3, y: 3 })
           Image(this.groupPreviewCover(item, idx))
             .width('100%')
             .height('100%')
             .borderRadius(3)
             .draggable(false)
+            .border({
+              width: 1,
+              color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.12)'
+            })
         }
         .width('100%')
         .height('100%')
