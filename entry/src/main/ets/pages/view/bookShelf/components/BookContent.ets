@@ -26,6 +26,8 @@ export default struct BookContent {
   @State bookList:Books[] = []
   // 2026-11-01：按分组缓存列表，进出分组时命中缓存就不再清空重查（避免封面重挂载闪默认图）
   private listCache: Map<number, Books[]> = new Map<number, Books[]>()
+  /** 2026-11-01：列表请求序号 —— 一次导航只允许最后一轮结果落地（日志显示一次点击触发 2-3 次查询） */
+  private loadToken: number = 0
 
   private listCacheKey(): number {
     return this.onRecentChip ? -1 : this.bookTypeNumber
@@ -298,6 +300,7 @@ export default struct BookContent {
   }
 
   async getBookList(){
+    const token: number = ++this.loadToken
     // ★ 2026-10-21 二修：**不再在查询开始时置 isLoading**。
     //
     // ── 一修为什么不行（真机录像实证）─────────────────────────────────────────
@@ -322,6 +325,10 @@ export default struct BookContent {
       // 首字母档：SQL 只能给 bookName 兜底序，真正的拼音序在这里做（见 sortByPinyin 注释）
       if (!this.onRecentChip && ShelfPrefs.getSortKey() === SortKey.PINYIN) {
         list = this.sortByPinyin(list, ShelfPrefs.getSortDir());
+      }
+      if (token !== this.loadToken) {
+        // 2026-11-01：已经有更新的一轮请求 ⇒ 丢弃本次结果，避免列表被替换两次
+        return
       }
       this.bookList = list
       // ── 开一波「渐次入场」（2026-09-24）──────────────────────────────────────
