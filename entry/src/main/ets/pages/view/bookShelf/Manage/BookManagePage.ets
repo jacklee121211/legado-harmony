@@ -1082,10 +1082,8 @@ export default struct BookManagePage {
    * 与碰一碰/隔空传送共用，保证「三种分享方式发出去的内容完全一致」。
    */
   private async manageShare(){
-    if (this.bookTypeNumber === 1) {
-      showMessage('分组暂不支持分享，请选择书籍');
-      return
-    }
+    // 2026-11-01：分组根页也允许分享 —— 选中的分组由 currentSelection()
+    //   展开成该子树内全部书籍（用户："选分组 = 选该组所有书籍"）。
     const sel: ShareSelection | null = await this.currentSelection()
     if (sel === null) {
       showMessage('选中书籍没有可分享的文件');
