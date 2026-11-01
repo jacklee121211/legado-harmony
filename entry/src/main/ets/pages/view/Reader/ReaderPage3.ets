@@ -11570,8 +11570,33 @@ oAnimInitNode 配套） */
   private readonly SELF_DRAWN_WEIGHT_BOOST: number = 100;
 
   /** 自绘层实际使用的字重（设置值 + 补偿，夹在 100~900） */
+  /**
+   * 自绘实际字重 = 设置值 + **按密度插值的补偿**（2026-11-01 用户实测结论）。
+   *
+   * 实测事实：
+   *   · m80 (density 3.375)：补偿 0（400）正好；加到 500 时自绘**比 ReaderKit 黑**；
+   *   · PuraX (2.55)：补偿 100（500）正好；400 时明显偏细；
+   *   · 平板 (2.25)：倾向 PuraX。
+   * ⇒ 同一补偿值无法同时满足，因为“字形笔画粗细”跟**字号落到多少 px** 相关：
+   *   m80 的 18fp = 60.75px，PuraX = 45.9px，px 越小笔画越细、越需要加粗。
+   *
+   * 公式（线性插值，锚点由两处实测值定）：
+   *   boost = clamp(round(120 × (3.375 − density)), 0, 200)
+   *   · m80   3.375 → 0     ✅（用户实测“正好”）
+   *   · PuraX 2.55  → 99    ≈100 ✅（用户实测“正好”）
+   *   · 平板  2.25  → 135
+   * 若某档不合适，只调系数 120 或上下限即可。
+   */
+  private readonly WEIGHT_BOOST_PER_DENSITY: number = 120;
+
   private selfDrawnFontWeight(): number {
-    const w: number = this.readerSetting.fontWeight + this.SELF_DRAWN_WEIGHT_BOOST;
+    const d: number = this.densityVp();
+    let boost: number = this.SELF_DRAWN_WEIGHT_BOOST;
+    if (d > 0) {
+      boost = Math.round(this.WEIGHT_BOOST_PER_DENSITY * (3.375 - d));
+      boost = Math.max(0, Math.min(200, boost));
+    }
+    const w: number = this.readerSetting.fontWeight + boost;
     return Math.max(100, Math.min(900, w));
   }
 
