@@ -14,6 +14,7 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
 // 三选项确认框（2026-10-22 新增）：分组管理模式下点分组 → 删除 / 解散 / 取消
 import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
+import FourActionDialog from '../../../../../componets/common/FourActionDialog'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 // 2026-10-22 分组管理「删除」需要取组内书籍 id + 逐本删除（见 doDeleteGroup）
 import BooksDao from '../../../../../database/dao/BooksDao'
@@ -885,6 +886,8 @@ export default struct BookSelectGroupDialog{
    *   `GroupType.openGroupPanel()` 都是"打开瞬间新建"）。
    */
   private manageDialog: CustomDialogController | null = null
+  /** 2026-11-02：隐藏分组专用四按钮动作窗（恢复显示/解散/删除/取消） */
+  private manageDialogHidden: CustomDialogController | null = null
 
   /**
    * 打开「删除 / 解散 / 取消」三选一。
@@ -912,26 +915,60 @@ export default struct BookSelectGroupDialog{
     }
     const gid: number = item.groupId
     const gname: string = item.groupName ?? ''
-    // 2026-11-02：被隐藏的分组，动作窗改为「恢复显示 / 解散 / 取消」——
-    //   ThreeActionDialog 只有三个槽位，隐藏分组最需要的是恢复入口（删除可恢复后再做）。
+    // 2026-11-02 二改（用户要求）：隐藏分组的动作窗升级为**四按钮**——
+    //   恢复显示 / 解散 / 删除 / 取消（ThreeActionDialog 只有三槽，故改用 FourActionDialog）。
     const hidden: boolean = !item.show
+    if (hidden) {
+      this.manageDialogHidden = new CustomDialogController({
+        builder: FourActionDialog({
+          title: `「${gname}」要怎么处理？`,
+          rawTitle: true,
+          hintPrimary: '恢复显示：重新出现在书架中',
+          hintSecondary: '解散：只解散分组，书籍归还上级分组',
+          hintTertiary: '删除：分组和组内书籍一起删除（不可恢复）',
+          option1Text: '恢复显示',
+          option2Text: '解散',
+          option3Text: '删除',
+          cancelText: '取消',
+          onOption1: (): void => {
+            this.doRestoreShow(gid, gname)
+          },
+          onOption2: (): void => {
+            this.doDissolveGroup(gid, gname).catch((e: Error): void => {
+              console.error('dissolveGroup in manage mode failed: ' + e.message)
+            })
+          },
+          onOption3: (): void => {
+            this.doDeleteGroup(gid, gname).catch((e: Error): void => {
+              console.error('deleteGroup in manage mode failed: ' + e.message)
+            })
+          },
+          onCancel: (): void => {
+            this.manageDialogHidden = null
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        gridCount: 4,
+        customStyle: false,
+        cornerRadius: 25
+      })
+      this.manageDialogHidden?.open()
+      return
+    }
     this.manageDialog = new CustomDialogController({
       builder: ThreeActionDialog({
         title: `「${gname}」要怎么处理？`,
         rawTitle: true,
-        hintPrimary: hidden ? '恢复显示：重新出现在书架中' : '删除：分组和组内书籍一起删除',
-        hintSecondary: hidden ? '解散：只解散分组，书籍归还上级分组' : '解散：只解散分组，书籍归还上级分组',
-        primaryText: hidden ? '恢复显示' : '删除',
+        hintPrimary: '删除：分组和组内书籍一起删除',
+        hintSecondary: '解散：只解散分组，书籍归还上级分组',
+        primaryText: '删除',
         secondaryText: '解散',
         cancelText: '取消',
         onPrimary: (): void => {
-          if (hidden) {
-            this.doRestoreShow(gid, gname)
-          } else {
-            this.doDeleteGroup(gid, gname).catch((e: Error): void => {
-              console.error('deleteGroup in manage mode failed: ' + e.message)
-            })
-          }
+          this.doDeleteGroup(gid, gname).catch((e: Error): void => {
+            console.error('deleteGroup in manage mode failed: ' + e.message)
+          })
         },
         onSecondary: (): void => {
           this.doDissolveGroup(gid, gname).catch((e: Error): void => {
