@@ -273,6 +273,10 @@ export default struct BookManagePage {
 
   //初始
   pageInit(): void {
+    // 2026-11-01：进入页面先清空上一页的勾选状态（否则子目录会沿用父页的全选，
+    //   表现为"全选一直亮着"且分享范围被放大成整个父目录）
+    this.checkLists = {}
+    this.allCheck = false
     // 2026-11-01：从「最近」进入 ⇒ 批量管理按"全部书"处理（最近 = 全部书 + 最近阅读排序）
     if (this.onRecentChip) {
       this.bookTypeNumber = 2
@@ -931,6 +935,10 @@ export default struct BookManagePage {
     this.checkLists = next;
     if(!value){
       this.allCheck = false;
+    } else {
+      // 2026-11-01：全选图标状态必须跟真实勾选一致（之前只在新页面里被置 false，
+      //   导致进入子目录时图标仍亮着，但实际并没有全选）
+      this.allCheck = true
     }
     // 全选 / 取消全选 ⇒ 广播，让所有格子回读新状态（2026-10-25）
     bumpSelectionVersion()
