@@ -61,6 +61,22 @@ export class GroupTree {
   /**
    * 取「有效 parentId」：父组不存在（脏数据/被删）时按根级处理，避免整棵树消失。
    */
+  /**
+   * 2026-11-01：是否为「孤儿分组」—— 父级在本列表里不存在，或 parentId 指向自己。
+   * 这类数据会被 `parentKey()` 兜底成根级，导致"移动至/批量管理"里凭空多出同名根分组。
+   * 展示端统一用本方法过滤，避免各处各写一遍。
+   */
+  isOrphan(g: BookGroups): boolean {
+    const pid: number = g.parentId ?? 0
+    if (pid <= 0) {
+      return false
+    }
+    if (g.groupId !== undefined && pid === g.groupId) {
+      return true
+    }
+    return !this.byId.has(pid)
+  }
+
   private parentKey(g: BookGroups): number {
     const pid: number = g.parentId ?? 0
     if (pid <= 0) {
