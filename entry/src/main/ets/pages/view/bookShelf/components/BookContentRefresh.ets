@@ -374,20 +374,44 @@ export default struct BookContentRefresh {
   /** 子分组卡片：统一组件 role='card'（与主栏同源） */
   @Builder
   childFolderCard(g: BookGroups) {
-    FolderCard({
-      role: 'card',
-      title: g.groupName,
-      cells: this.cellsOf(g),
-      onTap: (): void => {
-        if (g.groupId !== undefined) {
-          this.jumpToFolder(g.groupId)
+    Column({ space: 4 }) {
+      FolderCard({
+        role: 'card',
+        title: g.groupName,
+        cells: this.cellsOf(g),
+        onTap: (): void => {
+          if (g.groupId !== undefined) {
+            this.jumpToFolder(g.groupId)
+          }
+        },
+        onLongPress: (): void => {
+          Haptics.tap()
+          this.openChildGroupDialog(g)
         }
-      },
-      onLongPress: (): void => {
-        Haptics.tap()
-        this.openChildGroupDialog(g)
+      })
+      // 2026-11-01：子层卡片补计数（真机实测：根层有「共N本 · M个文件夹」，子层只有名字）
+      Text(this.childCountLabel(g))
+        .fontSize(12)
+        .fontColor('rgb(174,174,174)')
+        .fontWeight(500)
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+  }
+
+  /** 子分组卡片副标题：直属书数 + 直属子文件夹数（与根层 countLabel 同口径） */
+  private childCountLabel(g: BookGroups): string {
+    const books: number = g.bookIds?.length ?? 0
+    let kids: number = 0
+    for (const c of this.childGroups) {
+      if ((c.parentId ?? 0) === (g.groupId ?? -1)) {
+        kids++
       }
-    })
+    }
+    return kids > 0 ? `共${books}本 · ${kids}个文件夹` : `共${books}本`
   }
   private childBooksOf(g: BookGroups): Books[] {
     const out: Books[] = []
