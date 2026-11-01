@@ -369,11 +369,11 @@ export default struct FolderInfoDialog{
         if (this.itemData.show) {
           this.dialogTitle = this.dialogHideTitle;
           this.dialogContent = this.dialogHideContent;
+          this.openChildDialog(this.hideDisbandDelDialog);
         } else {
-          this.dialogTitle = '显示分组'
-          this.dialogContent = ''
+          // 2026-11-02：父级仍隐藏时，子级不允许单独恢复（恢复后依然不可见，语义混乱）
+          this.checkCanRestoreShow();
         }
-        this.openChildDialog(this.hideDisbandDelDialog);
         break;
       case 7 :
         // 2026-11-01：含子分组时让用户选「一起解散 / 子组保留（上提一级）」；否则沿用旧确认框
@@ -1073,12 +1073,44 @@ export default struct FolderInfoDialog{
   })
   //显示/隐藏
   hideOrDisband(){
-    if (this.dialogTitle === '隐藏分组' || this.dialogTitle === '显示分组') {
+    if (this.dialogTitle === '隐藏分组' || this.dialogTitle === '显示分组' || this.dialogTitle === '恢复显示') {
       this.hideGroup()
     } else {
       this.disbandGroup()
     }
   }
+  /**
+   * 2026-11-02：恢复显示前的父链校验 —— 父级仍隐藏则拒绝，并给出提示。
+   * 校验通过才弹「恢复显示」确认框（`hideDisbandDelDialog`，其 confirm 会走 hideOrDisband → hideGroup 反写）。
+   */
+  private async checkCanRestoreShow(): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      let pid: number = this.itemData.parentId ?? 0
+      let guard: number = 0
+      while (pid > 0 && guard < 12) {
+        const up: BookGroups | undefined = tree.get(pid)
+        if (up !== undefined && !up.show) {
+          showMessage(`请先恢复上级分组「${up.groupName ?? ''}」`)
+          return
+        }
+        pid = up?.parentId ?? 0
+        guard++
+      }
+      this.dialogTitle = '恢复显示'
+      this.dialogContent = '恢复后该分组将重新出现在书架中'
+      this.openChildDialog(this.hideDisbandDelDialog)
+    } catch (e) {
+      console.error('checkCanRestoreShow failed: ' + JSON.stringify(e))
+      showMessage('恢复失败')
+    }
+  }
+
   //解散分组
   disbandGroup(){
     // 2026-11-01：统一走 dissolveGroup —— 旧实现 delGroupById 会把书塞进「未分组」，
