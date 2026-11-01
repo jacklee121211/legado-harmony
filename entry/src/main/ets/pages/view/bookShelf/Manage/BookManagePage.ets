@@ -1595,6 +1595,9 @@ export default struct BookManagePage {
     console.log(`[PROBE-SEL] groups=[${gs.join(' | ')}] books=[${bs.join(' | ')}] checked=${JSON.stringify(this.checkLists)}`)
     // 2026-11-01：先按树反推父分组，再同步数组与全选图标
     this.cascadeGroupSelection()
+    // 级联改了 checkLists，但卡片勾选圈是在广播后回读的 ⇒ 必须发一次版本信号，
+    // 否则"勾满子项后父卡片不亮"（真机日志：checkLists 已是 true，卡片仍不亮）
+    bumpSelectionVersion()
     this.dataCheckList()
     this.selectIsAllTop()
     this.allCheck = this.isEverythingSelected()
