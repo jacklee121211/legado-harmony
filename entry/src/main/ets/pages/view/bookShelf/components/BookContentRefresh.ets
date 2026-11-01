@@ -336,7 +336,9 @@ export default struct BookContentRefresh {
         if (!k.show || out.length >= 4) {
           continue
         }
-        out.push({ isFolder: true, cover: resolveCoverSource(k.coverUrl ?? '') })
+        // 子分组没有自定义封面时给默认封面（新建链路未写 coverUrl ⇒ 首层空白）
+        const c: ResourceStr | null = resolveCoverSource(k.coverUrl ?? '')
+        out.push({ isFolder: true, cover: c !== null ? c : $rawfile('cover_defaults/c1.svg') })
       }
     }
     for (const b of this.childBooksOf(g)) {
