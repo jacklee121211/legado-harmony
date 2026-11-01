@@ -2,6 +2,7 @@ import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookFolderGridManage from './BookFolderGridManage'
+import { Books } from '../../../../../database/entities/Books'
 import BookFolderInfoManage from './BookFolderInfoManage'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 // 宫格列数（2026-10-25 多端适配补齐）：与书架分组宫格**同源同一份取值**
@@ -21,6 +22,8 @@ export default struct BookFolderManages {
   @Prop fitContent: boolean = false
   /** 当前所在分组 id（用于"本分组"角标；根目录传 0） */
   @Prop currentGroupId: number = 0
+  /** 当前页可见书籍（点父分组时要一起勾选） */
+  @Prop allBooks: Books[] = []
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   // ── 宫格列数的两个输入源（2026-10-25 补齐）────────────────────────────────
@@ -250,6 +253,7 @@ export default struct BookFolderManages {
                      group:item,
                      depth: this.depthOf(item),
                      allGroups: this.bookGroups,
+                     allBooks: this.allBooks,
                      isCurrent: (item.groupId ?? -1) === this.currentGroupId,
                      originLabel: this.originLabelOf(item),
                      checkGroup:this.checkGroup,

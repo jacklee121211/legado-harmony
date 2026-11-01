@@ -2,6 +2,7 @@ import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
+import { Books } from '../../../../../database/entities/Books'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
@@ -34,6 +35,8 @@ export default struct BookFolderGridManage {
   @Prop originLabel: string = ''
   /** 全部分组（级联选择需要算子孙/祖先） */
   @Prop allGroups: BookGroups[] = []
+  /** 当前页可见书籍（点父时要把它名下的书一起勾上，否则级联会立刻把父取消） */
+  @Prop allBooks: Books[] = []
 
   private levelColor(): string {
     // 2026-11-01：L1 也要有外框色（用户："祖分组也有外框颜色，不然太特别"）
@@ -75,6 +78,13 @@ export default struct BookFolderGridManage {
     const ids: number[] = this.subtreeIds(id)
     for (const x of ids) {
       this.checkGroup[x] = val
+    }
+    // 2026-11-01：把子树内所有书一起勾上/取消 —— 否则"点父"后级联会因书未选而立刻把父关掉
+    for (const b of this.allBooks) {
+      const bg: number = b.bookGroup ?? 0
+      if (ids.indexOf(bg) >= 0 && b.id !== undefined) {
+        this.checkGroup[b.id] = val
+      }
     }
     // 子全选 ⇒ 父选中；否则父取消（祖先链逐级重算）
     this.recalcAncestors(id)

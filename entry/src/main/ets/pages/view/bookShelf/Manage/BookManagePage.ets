@@ -161,6 +161,16 @@ export default struct BookManagePage {
    *   旧实现 (1,100) 在批量导入超过 100 本时只显示前 100 本。
    */
   async getBookList(): Promise<void> {
+    // 2026-11-01：自定义分组内，书籍区显示**该组子树内全部书**（含子分组的书），
+    //   与"共N本"、分享范围保持同一口径（用户：1 里应该是 5 本）。
+    if (this.bookTypeNumber >= 5) {
+      const all: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      const tree: GroupTree = GroupTree.build(all)
+      const ids: number[] = tree.subtreeIds(this.bookTypeNumber)
+      const val: Books[] = await booksDao.queryPreviewByGroups(ids, 100000)
+      this.bookList = val
+      return
+    }
     const val: Books[] = await booksDao.searchPage({
       type:this.currentIndex,
       bookGroup:this.bookTypeNumber,
