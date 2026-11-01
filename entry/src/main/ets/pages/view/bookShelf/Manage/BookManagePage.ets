@@ -2,6 +2,7 @@ import bookListManage from './bookManage/bookListManage';
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import { Haptics } from '../../../../common/utils/Haptics';
+import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import {showMessage} from '../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../componets/common/confirmDialog';
 import BookFolderManages from './bookManage/BookFolderManages';
@@ -162,7 +163,10 @@ export default struct BookManagePage {
   async getBookList(): Promise<void> {
     const val: Books[] = await booksDao.searchPage({
       type:this.currentIndex,
-      bookGroup:this.bookTypeNumber
+      bookGroup:this.bookTypeNumber,
+      // 2026-11-01：排序与所在页一致 —— 最近 = 最近阅读降序(2)，其余走 ShelfPrefs 档位
+      sortKey: this.onRecentChip ? 2 : ShelfPrefs.getSortKey(),
+      sortDir: this.onRecentChip ? 1 : ShelfPrefs.getSortDir()
     },1,0)
     this.bookList = val
   }
