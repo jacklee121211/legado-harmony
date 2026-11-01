@@ -132,6 +132,7 @@ export default struct FolderCard {
         if (this.showTitle) {
           Text(this.title)
             .fontSize(15).fontWeight(700).maxLines(2)
+            .textAlign(TextAlign.Center)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
         }

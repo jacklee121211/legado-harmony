@@ -189,8 +189,10 @@ export default struct BookFolder {
       }
       visibleIds.push(g.groupId)
     }
+    // 2026-11-01：每组预取 4 本（原来 2 本）—— 未分组书多，只取 2 本时
+    //   epub 等带自带封面的书可能压根没被取到，宫格里看不到它的封面
     this.previewBooks = visibleIds.length > 0
-      ? await BooksDao.queryPreviewByGroups(visibleIds, 2)
+      ? await BooksDao.queryPreviewByGroups(visibleIds, 4)
       : []
     return val
   }
@@ -623,6 +625,7 @@ export default struct BookFolder {
       Text(item.groupName)
         .fontSize(15)
         .fontWeight(700)
+        .textAlign(TextAlign.Center)
         .textOverflow({
           overflow: TextOverflow.Ellipsis
         })
