@@ -964,7 +964,9 @@ export default struct IndexShelf {
         AppRouter.push(RouteName.BOOK_MANAGE, {
           currentIndex: this.currentIndex,
           EXHIBIT: this.EXHIBIT,
-          bookTypeNumber: this.bookTypeNumber
+          bookTypeNumber: this.bookTypeNumber,
+          // 2026-11-01：把「最近」态带进批量管理（最近 = 全部书 + 最近阅读排序）
+          onRecentChip: this.onRecentChip
         } as BookManageRouteParam)
         break
       case '分组管理':

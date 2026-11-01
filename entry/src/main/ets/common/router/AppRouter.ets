@@ -258,6 +258,8 @@ export interface BookManageRouteParam {
   currentIndex: number;
   EXHIBIT: string;
   bookTypeNumber: number;
+  /** 2026-11-01：是否从「最近」进入（批量管理按页初始化用） */
+  onRecentChip?: boolean;
 }
 
 /**

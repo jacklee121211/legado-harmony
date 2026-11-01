@@ -91,6 +91,8 @@ export default struct BookManagePage {
   @State checkLists: Record<number, boolean> = {}
   @State checkListNumber:number[] = []
   @State bookGroups:BookGroups[] = [] // 分组
+  /** 2026-11-01：是否从「最近」进入（批量管理按页初始化） */
+  @State onRecentChip: boolean = false
   // 2026-10-25：`worksLists`（书单）随书单功能删除
   @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
@@ -205,6 +207,8 @@ export default struct BookManagePage {
     this.currentIndex = this.routeParam.currentIndex
     this.EXHIBIT = this.routeParam.EXHIBIT
     this.bookTypeNumber = this.routeParam.bookTypeNumber
+    // 2026-11-01：入口态（最近/全部/分组/未分组）
+    this.onRecentChip = this.routeParam.onRecentChip ?? false
     this.pageInit()
     // ── 碰一碰 / 隔空传送（2026-10-25 收口到 BookShareBridge）──────────────────
     // 官方要求：进入可分享页面注册、离开页面（含退后台）注销。
@@ -225,6 +229,13 @@ export default struct BookManagePage {
 
   //初始
   pageInit(): void {
+    // 2026-11-01：从「最近」进入 ⇒ 批量管理按"全部书"处理（最近 = 全部书 + 最近阅读排序）
+    if (this.onRecentChip) {
+      this.bookTypeNumber = 2
+      this.getBookList()
+      this.isMoveStatus = 0
+      return
+    }
     if (this.bookTypeNumber === 1) {
       this.getGroupList()
       this.isMoveStatus = 1
