@@ -68,6 +68,18 @@ export default struct BookFolderGridManage {
   build() {
     Column() {
       Stack() {
+        // 2026-11-01：三层叠（两层偏移底板 + 封面），与书架文件夹卡一致，
+        // 避免分组卡与同封面的书籍卡混淆（用户验收反馈）。
+        Row()
+          .width(88).height(120)
+          .borderRadius(coverCorners(88))
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)')
+          .translate({ x: 8, y: 6 })
+        Row()
+          .width(88).height(120)
+          .borderRadius(coverCorners(88))
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)')
+          .translate({ x: 4, y: 3 })
         Stack(){
           if (this.isManage){
             Checkbox()
