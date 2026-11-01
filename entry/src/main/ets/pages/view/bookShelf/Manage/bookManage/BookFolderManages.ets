@@ -3,6 +3,7 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookFolderGridManage from './BookFolderGridManage'
 import { Books } from '../../../../../database/entities/Books'
+import { gKey } from '../../../../../common/manage/SelectionKeys'
 import BookFolderInfoManage from './BookFolderInfoManage'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 // 宫格列数（2026-10-25 多端适配补齐）：与书架分组宫格**同源同一份取值**
@@ -80,9 +81,9 @@ export default struct BookFolderManages {
       return
     }
     const started: boolean = this.brush.begin(x, y,
-      (id: number): boolean => this.checkGroup[id] ?? false,
+      (id: number): boolean => this.checkGroup[gKey(id)] ?? false,
       (id: number, checked: boolean): void => {
-        this.checkGroup[id] = checked
+        this.checkGroup[gKey(id)] = checked
       })
     if (started) {
       Haptics.tick()
@@ -101,7 +102,7 @@ export default struct BookFolderManages {
       return
     }
     const changed: number = this.brush.update(x, y, (id: number, checked: boolean): void => {
-      this.checkGroup[id] = checked
+      this.checkGroup[gKey(id)] = checked
     })
     if (changed > 0) {
       Haptics.tick()

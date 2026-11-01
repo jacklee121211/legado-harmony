@@ -5,6 +5,7 @@ import BookOverlay from '../../../../../componets/bookDetail/BookOverlay'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
+import { gKey } from '../../../../../common/manage/SelectionKeys'
 
 /**
  * 文件夹列表_管理页
@@ -33,7 +34,7 @@ export default struct BookFolderInfoManage {
 
   private resyncChecked(): void {
     const id: number | undefined = this.group.groupId
-    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+    this.checked = id !== undefined && id !== null ? (this.checkGroup[gKey(id)] ?? false) : false
   }
 
   private toggle(): void {
@@ -44,7 +45,7 @@ export default struct BookFolderInfoManage {
     this.checked = !this.checked
     const id: number | undefined = this.group.groupId
     if (id !== undefined && id !== null) {
-      this.checkGroup[id] = this.checked
+      this.checkGroup[gKey(id)] = this.checked
     }
     this.onSelect()
   }

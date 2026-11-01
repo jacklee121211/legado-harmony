@@ -3,7 +3,7 @@ import { Haptics } from '../../../../../common/utils/Haptics';
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { Books } from '../../../../../database/entities/Books'
-import { bKey } from '../../../../../common/manage/SelectionKeys'
+import { bKey, gKey } from '../../../../../common/manage/SelectionKeys'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
@@ -60,7 +60,7 @@ export default struct BookFolderGridManage {
 
   private resyncChecked(): void {
     const id: number | undefined = this.group.groupId
-    this.checked = id !== undefined && id !== null ? (this.checkGroup[id] ?? false) : false
+    this.checked = id !== undefined && id !== null ? (this.checkGroup[gKey(id)] ?? false) : false
   }
 
   private toggle(): void {
@@ -78,7 +78,7 @@ export default struct BookFolderGridManage {
     const val: boolean = this.checked
     const ids: number[] = this.subtreeIds(id)
     for (const x of ids) {
-      this.checkGroup[x] = val
+      this.checkGroup[gKey(x)] = val
     }
     // 2026-11-01：把子树内所有书一起勾上/取消 —— 否则"点父"后级联会因书未选而立刻把父关掉
     for (const b of this.allBooks) {
@@ -129,12 +129,12 @@ export default struct BookFolderGridManage {
       }
       let allOn: boolean = kids.length > 0
       for (const k of kids) {
-        if (!(this.checkGroup[k] ?? false)) {
+        if (!(this.checkGroup[gKey(k)] ?? false)) {
           allOn = false
           break
         }
       }
-      this.checkGroup[pid] = allOn
+      this.checkGroup[gKey(pid)] = allOn
       let next: number = 0
       for (const g of this.allGroups) {
         if ((g.groupId ?? -1) === pid) {
