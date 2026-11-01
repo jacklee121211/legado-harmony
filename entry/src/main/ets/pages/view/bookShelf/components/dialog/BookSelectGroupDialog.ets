@@ -299,7 +299,7 @@ export default struct BookSelectGroupDialog{
     Row({ space: 6 }) {
       Row().width(row.depth * 14)
       if (row.hasChildren) {
-        SymbolGlyph(row.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+        SymbolGlyph(this.isExpanded(row.group.groupId ?? -1) ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
           .fontSize(16)
           .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.72)' : 'rgba(0,0,0,0.60)'])
           .onClick(() => {
@@ -371,7 +371,11 @@ export default struct BookSelectGroupDialog{
           }
           ForEach(this.rows, (row: GroupRow) => {
             this.groupRow(row)
-          }, (row: GroupRow) => 'r' + (row.group.groupId ?? 0) + (row.expanded ? 'e' : 'c'))
+            // 2026-11-01：key **只用 id**（不要把展开态拼进 key）——
+        //   展开态进 key 会让 ForEach 认为"旧行删除 + 新行新增"，
+        //   真机上表现为"点展开后这一整条从弹窗里消失"。
+        //   箭头方向改为读 `isExpanded()`（@State 依赖），同 key 也会正确重绘。
+      }, (row: GroupRow) => 'r' + (row.group.groupId ?? 0))
           this.addRow()
         }
         .width('100%')
