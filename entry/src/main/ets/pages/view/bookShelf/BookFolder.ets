@@ -275,11 +275,24 @@ export default struct BookFolder {
   previewCell(item: BookGroups, idx: number) {
     Stack() {
       if (idx < this.previewGroupCount(item)) {
-        Image(this.groupPreviewCover(item, idx))
-          .width('100%')
-          .height('100%')
-          .borderRadius(3)
-          .draggable(false)
+        // 2026-11-01：格子是「子分组」时画三层叠（首层=该子分组自己的封面）
+        Stack({ alignContent: Alignment.Center }) {
+          Row()
+            .width('82%').height('82%').borderRadius(3)
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)')
+            .translate({ x: 4, y: 3 })
+          Row()
+            .width('91%').height('91%').borderRadius(3)
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.11)')
+            .translate({ x: 2, y: 1 })
+          Image(this.groupPreviewCover(item, idx))
+            .width('100%')
+            .height('100%')
+            .borderRadius(3)
+            .draggable(false)
+        }
+        .width('100%')
+        .height('100%')
       } else if (idx - this.previewGroupCount(item) < this.previewBookCount(item)) {
         Image(this.bookPreviewCover(item, idx - this.previewGroupCount(item)))
           .width('100%')

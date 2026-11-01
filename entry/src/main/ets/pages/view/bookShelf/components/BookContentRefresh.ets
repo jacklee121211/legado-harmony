@@ -19,6 +19,8 @@ import { ThemeItem } from '../../../../common/model/Theme'
 // ── 2026-11-01 多级文件夹：左下角常驻「新建分组」按钮（复用现有弹窗与动效）──────────
 import addBookTypeDialog, { AddGroupChannel } from '../../../../componets/common/addBookTypeDialog'
 import { BookGroups } from '../../../../database/entities/BookGroups'
+import { Books } from '../../../../database/entities/Books'
+import BooksDao from '../../../../database/dao/BooksDao'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupTree } from '../../../../common/group/GroupTree'
@@ -74,6 +76,8 @@ export default struct BookContentRefresh {
   @State pathChips: PathChip[] = []
   /** 当前分组的直属子文件夹（进入父组后以横滑卡片行展示） */
   @State childGroups: BookGroups[] = []
+  /** 子分组卡片 2×2 预览用的书（每组最多 2 本） */
+  @State childPreviews: Books[] = []
   /** 新建分组时的父级（0 = 根级；分组内新建 = 当前分组 id） */
   private newGroupParentId: number = 0
   @State checkGroup:Record<number, boolean> = {}
@@ -240,12 +244,22 @@ export default struct BookContentRefresh {
       }
       this.pathChips = chips
       this.childGroups = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
+      // 2026-11-01：子文件夹卡片也要画 2×2 预览 ⇒ 预取每个子分组的书封面（每组最多 2 本）
+      const childIds: number[] = []
+      for (const g of this.childGroups) {
+        if (g.groupId !== undefined) {
+          childIds.push(g.groupId)
+        }
+      }
+      this.childPreviews = childIds.length > 0
+        ? await BooksDao.queryPreviewByGroups(childIds, 2) : []
       // 兼容既有字段（「返回分组列表」胶囊已被路径条取代，但该键仍被其它地方读写）
       AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME',
         path.length > 0 ? path[path.length - 1].groupName : '')
     } catch (e) {
       this.pathChips = []
       this.childGroups = []
+      this.childPreviews = []
       console.error('onFolderChanged failed: ' + JSON.stringify(e))
     }
   }
@@ -266,24 +280,58 @@ export default struct BookContentRefresh {
     return ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
   }
 
-  /** 子分组卡片：三层叠文件夹观感（区别于单书），左对齐宫格内使用 */
+  private previewCells: number[] = [0, 1, 2, 3]
+
+  private childBooksOf(g: BookGroups): Books[] {
+    const out: Books[] = []
+    for (const b of this.childPreviews) {
+      if ((b.bookGroup ?? 0) === (g.groupId ?? -1)) {
+        out.push(b)
+      }
+    }
+    return out
+  }
+
+  private childCellCover(g: BookGroups, i: number): ResourceStr {
+    const list: Books[] = this.childBooksOf(g)
+    if (i < list.length) {
+      const c: ResourceStr | null = resolveCoverSource(list[i].coverUrl ?? '')
+      if (c !== null) {
+        return c
+      }
+    }
+    if (i === 0) {
+      const c: ResourceStr | null = resolveCoverSource(g.coverUrl ?? '')
+      if (c !== null) {
+        return c
+      }
+    }
+    return $rawfile('cover_defaults/c1.svg')
+  }
+
+  /** 子分组卡片：与主栏文件夹卡同源 —— 2×2 预览宫格（2026-11-01） */
   @Builder
   childFolderCard(g: BookGroups) {
     Column({ space: 6 }) {
       Stack({ alignContent: Alignment.Center }) {
         Row()
-          .width(76).height(100).borderRadius(9)
-          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
-          .translate({ x: 10, y: 7 })
-        Row()
-          .width(80).height(104).borderRadius(9)
-          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)')
-          .translate({ x: 5, y: 3 })
-        Image(resolveCoverSource(g.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
-          .width(84).height(108).borderRadius(9).draggable(false)
-          .border({ width: 1, color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' })
+          .width('100%').height('100%').borderRadius(9)
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)')
+          .border({
+            width: 1,
+            color: NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)'
+          })
+        GridRow({ columns: 2, gutter: { x: 2, y: 2 } }) {
+          ForEach(this.previewCells, (i: number) => {
+            GridCol() {
+              Image(this.childCellCover(g, i))
+                .width('100%').height('100%').borderRadius(3).draggable(false)
+            }
+          }, (i: number) => 'cc' + (g.groupId ?? 0) + '_' + i)
+        }
+        .width('100%').height('100%').padding(3)
       }
-      .width(96).height(116)
+      .width('100%').aspectRatio(0.78).clip(true)
 
       Text(g.groupName)
         .fontSize(13).fontWeight(600).maxLines(1)
