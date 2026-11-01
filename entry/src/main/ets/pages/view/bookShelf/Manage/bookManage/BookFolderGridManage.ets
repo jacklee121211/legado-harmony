@@ -28,6 +28,8 @@ export default struct BookFolderGridManage {
   @State checked: boolean = false
   /** 2026-11-01：层级（1 = 顶层分组）。用于外框色边，最多 10 层。 */
   @Prop depth: number = 1
+  /** 全部分组（级联选择需要算子孙/祖先） */
+  @Prop allGroups: BookGroups[] = []
 
   private levelColor(): string {
     // 2026-11-01：L1 也要有外框色（用户："祖分组也有外框颜色，不然太特别"）
@@ -60,10 +62,74 @@ export default struct BookFolderGridManage {
     Haptics.tap()
     this.checked = !this.checked
     const id: number | undefined = this.group.groupId
-    if (id !== undefined && id !== null) {
-      this.checkGroup[id] = this.checked
+    if (id === undefined || id === null) {
+      this.onSelect()
+      return
     }
+    // 2026-11-01 级联：点父 ⇒ 父 + 全部子孙同选/同取消
+    const val: boolean = this.checked
+    const ids: number[] = this.subtreeIds(id)
+    for (const x of ids) {
+      this.checkGroup[x] = val
+    }
+    // 子全选 ⇒ 父选中；否则父取消（祖先链逐级重算）
+    this.recalcAncestors(id)
     this.onSelect()
+  }
+
+  /** 含自身的子树 id 集合 */
+  private subtreeIds(rootId: number): number[] {
+    const out: number[] = [rootId]
+    let guard: number = 0
+    let i: number = 0
+    while (i < out.length && guard < 500) {
+      const cur: number = out[i]
+      for (const g of this.allGroups) {
+        if ((g.parentId ?? 0) === cur && g.groupId !== undefined && out.indexOf(g.groupId) < 0) {
+          out.push(g.groupId)
+        }
+      }
+      i++
+      guard++
+    }
+    return out
+  }
+
+  /** 自底向上重算祖先：本节点所有子公司全选 ⇒ 祖先选中，否则取消 */
+  private recalcAncestors(startId: number): void {
+    let pid: number = 0
+    for (const g of this.allGroups) {
+      if ((g.groupId ?? -1) === startId) {
+        pid = g.parentId ?? 0
+        break
+      }
+    }
+    let guard: number = 0
+    while (pid !== 0 && guard < 12) {
+      const kids: number[] = []
+      for (const g of this.allGroups) {
+        if ((g.parentId ?? 0) === pid && g.groupId !== undefined) {
+          kids.push(g.groupId)
+        }
+      }
+      let allOn: boolean = kids.length > 0
+      for (const k of kids) {
+        if (!(this.checkGroup[k] ?? false)) {
+          allOn = false
+          break
+        }
+      }
+      this.checkGroup[pid] = allOn
+      let next: number = 0
+      for (const g of this.allGroups) {
+        if ((g.groupId ?? -1) === pid) {
+          next = g.parentId ?? 0
+          break
+        }
+      }
+      pid = next
+      guard++
+    }
   }
 
   @Builder

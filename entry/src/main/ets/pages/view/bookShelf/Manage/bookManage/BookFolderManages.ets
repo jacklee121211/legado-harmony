@@ -220,6 +220,7 @@ export default struct BookFolderManages {
                    BookFolderGridManage({
                      group:item,
                      depth: this.depthOf(item),
+                     allGroups: this.bookGroups,
                      checkGroup:this.checkGroup,
                      isManage:this.isManage,
                      onSelect:()=>{
