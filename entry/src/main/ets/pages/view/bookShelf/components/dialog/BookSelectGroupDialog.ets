@@ -300,19 +300,8 @@ export default struct BookSelectGroupDialog{
   groupRow(row: GroupRow) {
     Row({ space: 6 }) {
       Row().width(row.depth * 14)
-      if (row.hasChildren) {
-        // 2026-11-01：展开箭头独立成「左区」，行内选择只挂在中区 ⇒ 点箭头不会再触发选择
-        //   （单书移动时选择会立刻弹确认框，导致看起来"展不开"）
-        SymbolGlyph(this.isExpanded(row.group.groupId ?? -1) ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.72)' : 'rgba(0,0,0,0.60)'])
-          .padding({ left: 2, right: 6, top: 10, bottom: 10 })
-          .onClick(() => {
-            this.toggleExpand(row.group.groupId ?? -1)
-          })
-      } else {
-        Row().width(16)
-      }
+      // 2026-11-01：左侧只留缩进；展开箭头移到**行尾**（独立热区），不再抢行点击
+      Row().width(16)
       Row({ space: 6 }) {
         SymbolGlyph($r('sys.symbol.folder'))
           .fontSize(18)
@@ -362,6 +351,22 @@ export default struct BookSelectGroupDialog{
         this.moveGroupId = id
         this.moveTitle = row.group.groupName
         this.clickBookTypeDialog?.open()
+      })
+      // 行尾展开/收起：独立 36vp 热区，物理上与行内容不重叠
+      Row() {
+        if (row.hasChildren) {
+          SymbolGlyph(this.isExpanded(row.group.groupId ?? -1) ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+            .fontSize(16)
+            .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.72)' : 'rgba(0,0,0,0.60)'])
+        }
+      }
+      .width(36)
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => {
+        if (row.hasChildren) {
+          this.toggleExpand(row.group.groupId ?? -1)
+        }
       })
     }
     .width('100%')
