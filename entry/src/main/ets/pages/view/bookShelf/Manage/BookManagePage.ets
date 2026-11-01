@@ -55,7 +55,8 @@ import {
 // 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
 import HdsCompat, { HdsFloatingStyleModifier } from '../../../../common/utils/HdsCompat';
 // 手势划选（2026-10-25）：勾选状态广播（全选 / 划选 / 刷新回填都走它）
-import { bumpSelectionVersion } from './bookManage/ManageBrush';
+import { bumpSelectionVersion } from './bookManage/ManageBrush'
+import ThreeActionDialog from '../../../../componets/common/ThreeActionDialog';
 // 设备类型分流（2026-10-25 平板/2in1 dock 适配）：`deviceType` = phone / tablet / 2in1
 import { deviceInfo } from '@kit.BasicServicesKit';
 // 页签栏目标宽度要按屏宽算（`manageBarWidth()`）⇒ 需要 `display`。
@@ -1007,6 +1008,8 @@ export default struct BookManagePage {
     new buttonList(1,'置顶',$r('sys.symbol.pin')),
     new buttonList(2,'移动至',$r('sys.symbol.folder')),
     new buttonList(4,'隐藏分组',$r('sys.symbol.eye_slash')),
+    // 2026-11-02：分组区新增「解散」（书保留并归还上级；有子目录时弹三级选择）
+    new buttonList(7,'解散',$r('sys.symbol.minus_circle')),
     new buttonList(5,'删除',$r('sys.symbol.trash')),
     new buttonList(6,'分享',$r('sys.symbol.share'))
   ]
@@ -1131,6 +1134,9 @@ export default struct BookManagePage {
         break
       case 5 :
         this.delDialog?.open(); break;
+      case 7 :
+        // 2026-11-02：批量解散（书保留、归还上级；有后代分组时先问模式）
+        this.manageDissolve(); break;
       case 6 :
         this.manageShare(); break;
     }
@@ -1539,6 +1545,73 @@ export default struct BookManagePage {
   /** 2026-11-01：书籍是否勾选（负数键；兼容旧的裸 id 写法） */
   private bookOn(bid: number): boolean {
     return (this.checkLists[bKey(bid)] ?? false) || (this.checkLists[bid] ?? false)
+  }
+
+  /** 2026-11-02：批量解散的模式选择弹窗（每次新建实例，参数不可动态更新） */
+  private dissolveModeDialog: CustomDialogController | null = null
+
+  /**
+   * 2026-11-02：**批量解散**（书保留，归还各自上级分组）。
+   * 规则（用户拍板）：所选分组里**任意一个有后代分组** ⇒ 先问「一起解散 / 子组保留」；
+   * 全都无后代 ⇒ 直接按"保留子目录"（等价于只删本行、书升父级）。
+   */
+  private manageDissolve(): void {
+    const gids: number[] = []
+    let hasDescendant: boolean = false
+    const tree: GroupTree = GroupTree.build(this.bookGroups)
+    for (const id of this.checkListNumber) {
+      for (const g of this.bookGroups) {
+        if ((g.groupId ?? -1) === id) {
+          gids.push(id)
+          if (tree.subtreeIds(id).length > 1) {
+            hasDescendant = true
+          }
+          break
+        }
+      }
+    }
+    if (gids.length === 0) {
+      showMessage('请选择分组')
+      return
+    }
+    if (!hasDescendant) {
+      this.runDissolve(gids, 'keepChildren')
+      return
+    }
+    this.dissolveModeDialog = new CustomDialogController({
+      builder: ThreeActionDialog({
+        title: `解散 ${gids.length} 个分组`,
+        hintPrimary: '一起解散：子文件夹内的书全部上提到上级分组',
+        hintSecondary: '子组保留：子文件夹上提一级，书籍不受影响',
+        primaryText: '一起解散',
+        secondaryText: '子组保留',
+        cancelText: '取消',
+        onPrimary: (): void => { this.runDissolve(gids, 'collapse') },
+        onSecondary: (): void => { this.runDissolve(gids, 'keepChildren') },
+        onCancel: (): void => { this.dissolveModeDialog = null }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25
+    })
+    this.dissolveModeDialog?.open()
+  }
+
+  private async runDissolve(gids: number[], mode: string): Promise<void> {
+    try {
+      for (const gid of gids) {
+        await bookGroupUtil.dissolveGroup(gid, mode)
+      }
+      showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子文件夹已上提）')
+      this.isBookRefreshing++
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.pageInit()
+    } catch (e) {
+      console.error('runDissolve failed: ' + JSON.stringify(e))
+      showMessage('解散失败')
+    }
   }
 
   /** 分组层级（沿 parentId 上溯，1 = 顶层） */
