@@ -194,6 +194,11 @@ export default struct BookFolderManages {
    * 2026-11-01：按顶层分组分块（用户：不同分组之间要隔开）。
    * bookGroups 已由 getGroupList() 按 DFS 排好，这里只按"遇到 parentId=0 就开新块"切分。
    */
+  /** 2026-11-02：根目录（currentGroupId === 0）为平铺模式：单一区块、无底板、依次排列 */
+  private flatMode(): boolean {
+    return this.currentGroupId <= 0
+  }
+
   private blocks(): BookGroups[][] {
     const out: BookGroups[][] = []
     let cur: BookGroups[] = []
@@ -207,7 +212,8 @@ export default struct BookFolderManages {
         continue
       }
       const isRoot: boolean = (g.parentId ?? 0) === 0
-      if (isRoot && cur.length > 0) {
+      // 2026-11-02：平铺模式（根目录）**不切块**，全部顶层分组放进同一个区块依次排列
+      if (isRoot && cur.length > 0 && !this.flatMode()) {
         out.push(cur)
         cur = []
       }
