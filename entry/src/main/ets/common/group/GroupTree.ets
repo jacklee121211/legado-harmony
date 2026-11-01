@@ -100,7 +100,13 @@ export class GroupTree {
 
   /** 某父级下的直接子分组（parentId = 0 即根级） */
   childrenOf(parentId: number): BookGroups[] {
-    return this.childrenMap.get(parentId > 0 ? parentId : 0) ?? []
+    const list: BookGroups[] = this.childrenMap.get(parentId > 0 ? parentId : 0) ?? []
+    // 2026-11-01：根级统一剔除孤儿 —— 否则所有新调用点都会把"父亲不在列表"的分组
+    //   当成根级重复展示（真机 212 现象）。显示端的 isOrphan 过滤保留作双保险。
+    if (parentId <= 0) {
+      return list.filter((g: BookGroups): boolean => !this.isOrphan(g))
+    }
+    return list
   }
 
   /** 根级分组 */
