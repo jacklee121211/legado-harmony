@@ -16,12 +16,23 @@ import { GroupTree } from '../../../../../common/group/GroupTree'
 import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
 import GroupMergeDialog, { MergeConflictInfo } from './GroupMergeDialog'
 import { BookShareBridge, buildSelection, MAX_SHARE_RECORDS } from '../../../../../common/share/BookShareBridge'
+import bookDataPreferences from '../../../../../common/utils/DataPreferencesUtils'
 import { Books } from '../../../../../database/entities/Books'
 import { common } from '@kit.AbilityKit'
 // 2026-10-25：`AddToBookListDialog`（加入书单弹窗）已随书单功能删除
 import coverInfoDialog from './coverInfoDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
+
+/** 分享游标（持久化 + 生命周期，2026-11-01）：按分组隔离，30 分钟内有效 */
+interface ShareCursorData {
+  cursor: number
+  total: number
+  ts: number
+}
+
+/** 游标有效期：30 分钟（超时/书数变化/已发完 ⇒ 从头开始） */
+const SHARE_CURSOR_TTL_MS: number = 30 * 60 * 1000
 
 @CustomDialog
 /**
@@ -95,22 +106,52 @@ export default struct FolderInfoDialog{
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
       await BookShareBridge.get().acquire(this.SHARE_OWNER_FOLDER, ctx)
       const all: Books[] = await booksDao.queryPreviewByGroups([gid], 5000)
-      const start: number = AppStorage.get<number>('GROUP_SHARE_CURSOR_' + gid) ?? 0
+      const key: string = 'GROUP_SHARE_CURSOR_' + gid
+      const now: number = Date.now()
+      let start: number = 0
+      const raw = bookDataPreferences.shared.get(key)
+      if (typeof raw === 'string' && raw.length > 0) {
+        try {
+          const obj = JSON.parse(raw) as ShareCursorData
+          if (now - (obj.ts ?? 0) <= SHARE_CURSOR_TTL_MS
+            && (obj.total ?? -1) === all.length
+            && (obj.cursor ?? 0) > 0 && (obj.cursor ?? 0) < all.length) {
+            start = obj.cursor
+          }
+        } catch (e) {
+          start = 0
+        }
+      }
       const batch: Books[] = all.slice(start, start + MAX_SHARE_RECORDS)
       BookShareBridge.get().setSelection(batch.length > 0 ? buildSelection(batch) : null)
       const remain: number = all.length - start - batch.length
       if (all.length === 0) {
         this.shareHint = ''
+        bookDataPreferences.shared.delete(key)
       } else if (remain > 0) {
-        this.shareHint = `已备好 ${batch.length} 本，再碰一次发送剩余 ${remain} 本`
-        AppStorage.setOrCreate<number>('GROUP_SHARE_CURSOR_' + gid, start + batch.length)
+        this.shareHint = start > 0
+          ? `继续发送剩余 ${remain} 本（从第 ${start + 1} 本起）`
+          : `已备好 ${batch.length} 本，再碰一次发送剩余 ${remain} 本`
+        const data: ShareCursorData = { cursor: start + batch.length, total: all.length, ts: now }
+        bookDataPreferences.shared.set(key, JSON.stringify(data))
       } else {
         this.shareHint = `已备好 ${all.length} 本`
-        AppStorage.setOrCreate<number>('GROUP_SHARE_CURSOR_' + gid, 0)
+        bookDataPreferences.shared.delete(key)
       }
     } catch (e) {
       console.error('setupShare failed: ' + JSON.stringify(e))
     }
+  }
+
+  /** 「从头开始」：清掉本组游标后重建分享内容 */
+  private async restartShare(): Promise<void> {
+    const gid: number | undefined = this.itemData.groupId
+    if (gid === undefined) {
+      return
+    }
+    Haptics.tap()
+    bookDataPreferences.shared.delete('GROUP_SHARE_CURSOR_' + gid)
+    await this.setupShare()
   }
 
   /** 现算本分组书籍数（入口处 + 兜底重查后都要调） */
@@ -246,6 +287,17 @@ export default struct FolderInfoDialog{
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
+              if (this.shareHint.indexOf('继续发送') >= 0) {
+                Text('从头')
+                  .fontSize(10)
+                  .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : 'rgba(0,0,0,0.88)')
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .borderRadius(6)
+                  .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+                  .onClick(() => {
+                    this.restartShare()
+                  })
+              }
             }
             .width('100%')
             .margin({ top: 4 })
@@ -863,7 +915,20 @@ export default struct FolderInfoDialog{
         return
       }
       if (tree.hasSiblingNamed(targetId, this.itemData.groupName, gid)) {
-        showMessage('目标下已有同名分组，请先改名')
+        // 2026-11-01 闭环：目标下已有同名分组 → 「合并 / 重命名 / 取消」
+        const name: string = this.itemData.groupName ?? ''
+        const sibling: BookGroups | undefined = all.find((g: BookGroups): boolean =>
+          (g.parentId ?? 0) === targetId && (g.groupName ?? '') === name && g.groupId !== gid)
+        const siblingId: number = sibling?.groupId ?? -1
+        this.openGroupActionDialog(
+          `目标下已有同名分组「${name}」`,
+          '合并：把本组书籍并入对方，同名书逐本选择处理',
+          `重命名：本组改名为「${name} (2)」再移动`,
+          '合并',
+          '重命名',
+          (): void => { this.mergeGroupInto(gid, siblingId) },
+          (): void => { this.renameGroupAndMove(gid, targetId, name) }
+        )
         return
       }
       const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
@@ -881,6 +946,105 @@ export default struct FolderInfoDialog{
     } catch (e) {
       showMessage('移动失败')
       console.error('doMoveGroupNode failed: ' + JSON.stringify(e))
+    }
+  }
+
+  /** 同名合并：把 gid 的书并入 targetGid（同名书走冲突弹窗），成功后删掉 gid */
+  private async mergeGroupInto(gid: number, targetGid: number): Promise<void> {
+    if (targetGid <= 0) {
+      showMessage('目标分组无效')
+      return
+    }
+    try {
+      const moving: Books[] = await booksDao.queryPreviewByGroups([gid], 5000)
+      const existing: Books[] = await booksDao.queryPreviewByGroups([targetGid], 5000)
+      const conflicts: MergeConflictInfo[] = this.findConflicts(moving, existing)
+      if (conflicts.length > 0) {
+        this.mergeDialog = new CustomDialogController({
+          builder: GroupMergeDialog({
+            conflicts: conflicts,
+            onConfirm: (choices: number[]): void => {
+              this.mergeDialog?.close()
+              this.applyMergeMove(gid, targetGid, moving, conflicts, choices)
+            },
+            onClose: (): void => {
+              this.mergeDialog?.close()
+            }
+          }),
+          autoCancel: true,
+          alignment: DialogAlignment.Center,
+          gridCount: 4,
+          customStyle: false,
+          cornerRadius: 25,
+          cancel: (): void => {
+            this.mergeDialog?.close()
+          }
+        })
+        this.mergeDialog?.open()
+        return
+      }
+      await this.applyMergeMove(gid, targetGid, moving, [], [])
+    } catch (e) {
+      showMessage('合并失败')
+      console.error('mergeGroupInto failed: ' + JSON.stringify(e))
+    }
+  }
+
+  private async applyMergeMove(gid: number, targetGid: number, moving: Books[],
+    conflicts: MergeConflictInfo[], choices: number[]): Promise<void> {
+    try {
+      for (const b of moving) {
+        const idx: number = conflicts.findIndex((c: MergeConflictInfo): boolean => c.bookId === (b.id ?? -1))
+        const choice: number = idx >= 0 ? choices[idx] : -1
+        if (choice === 2) {
+          if (b.id !== undefined) {
+            await booksDao.updateBookGroup(b.id, 3)
+          }
+          continue
+        }
+        if (choice === 0 && idx >= 0) {
+          await booksUtil.delBooksById([conflicts[idx].oldId])
+        }
+        if (choice === 1) {
+          b.bookName = `${b.bookName} (2)`
+          await booksDao.update(b)
+        }
+        if (b.id !== undefined) {
+          await booksDao.updateBookGroup(b.id, targetGid)
+        }
+      }
+      await bookGroupUtil.delGroupById(gid)
+      showMessage('已合并')
+    } catch (e) {
+      showMessage('合并失败')
+      console.error('applyMergeMove failed: ' + JSON.stringify(e))
+    } finally {
+      this.cancel()
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.isBookRefreshing++
+    }
+  }
+
+  /** 同名重命名：`name (2)` 后挂到目标下 */
+  private async renameGroupAndMove(gid: number, targetId: number, name: string): Promise<void> {
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
+      if (me === undefined) {
+        return
+      }
+      me.groupName = `${name} (2)`
+      me.parentId = targetId
+      me.updateTime = Date.now()
+      await BookGroupsDao.updatePartialGroup(me)
+      showMessage(`已重命名为「${name} (2)」并移动`)
+    } catch (e) {
+      showMessage('重命名失败')
+      console.error('renameGroupAndMove failed: ' + JSON.stringify(e))
+    } finally {
+      this.cancel()
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.isBookRefreshing++
     }
   }
 

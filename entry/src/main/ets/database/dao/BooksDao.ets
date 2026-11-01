@@ -340,12 +340,21 @@ class BooksDao {
         return []
       }
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
-      const sql: string = `SELECT * FROM ${this.TABLE_NAME} WHERE bookGroup IN (${ids.join(',')}) ORDER BY isTop DESC, sort ASC, id ASC`
+      // 2026-11-01：口径与 `buildWhereClause` 对齐 —— 「未分组」(3) 还要并入老本地书
+      // （`bookGroup = 4 AND isLocalBook = 1`），否则 2×2 预览会漏书
+      let where: string = `bookGroup IN (${ids.join(',')})`
+      if (ids.indexOf(3) >= 0) {
+        where += ` OR (bookGroup = 4 AND isLocalBook = 1)`
+      }
+      const sql: string = `SELECT * FROM ${this.TABLE_NAME} WHERE (${where}) ORDER BY isTop DESC, sort ASC, id ASC`
       const rows: Books[] = await DbUtil.querySqlForList<Books>(sql, column)
       const perGroup: Map<number, number> = new Map<number, number>()
       const out: Books[] = []
       for (const b of rows) {
-        const gid: number = b.bookGroup ?? 0
+        let gid: number = b.bookGroup ?? 0
+        if (gid === 4 && ids.indexOf(4) < 0 && ids.indexOf(3) >= 0) {
+          gid = 3
+        }
         const n: number = perGroup.get(gid) ?? 0
         if (n < limitPerGroup) {
           out.push(b)
