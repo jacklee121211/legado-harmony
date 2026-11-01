@@ -33,7 +33,7 @@ export default struct BookHistoryContent {
     if (this.bookHistory.length === 0){
       Column() {
         Image($r('app.media.no_record')).width(200).height(200)
-        Text('暂无浏览记录')
+        Text('暂无书籍')
           .fontSize(12)
           .fontColor(ShelfColors.textSub())
           .fontWeight(500)
