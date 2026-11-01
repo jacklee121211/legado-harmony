@@ -192,12 +192,6 @@ export default struct BookFolder {
     this.previewBooks = visibleIds.length > 0
       ? await BooksDao.queryPreviewByGroups(visibleIds, 2)
       : []
-    // [PROBE 2026-11-01] 临时定位「未分组卡片不显示书」：打印可见 id 与预取结果分布
-    const dist: string[] = []
-    for (const b of this.previewBooks) {
-      dist.push(`${b.bookName}@${b.bookGroup}`)
-    }
-    console.log(`[PROBE-EQ] visibleIds=${JSON.stringify(visibleIds)} previewCount=${this.previewBooks.length} dist=${dist.join(',')}`)
     return val
   }
 
@@ -276,7 +270,9 @@ export default struct BookFolder {
     // 2026-11-01 修：`builtinCoverUrl` 是沙箱**路径**，`resolveCoverSource` 只处理自定义封面串，
     // 路径直接交给 Image 显示不出来（epub/pdf 自带封面在宫格里空白，txt 因无 builtin 反而正常）。
     // 统一走 `resolveBookCover`：custom > builtin(转 URI) > coverUrl > alt。
-    return resolveBookCover(b)
+    // 三层都没有时它返回 ''（Image('') 会画空白）⇒ 这里显式回退默认封面。
+    const cov: ResourceStr = resolveBookCover(b)
+    return cov === '' ? $r('app.media.icon_book_default_cover_one') : cov
   }
 
   /** 2×2 预览的一格：子文件夹优先、书在后，空格留半透明底 */
@@ -290,7 +286,8 @@ export default struct BookFolder {
       out.push({ isFolder: true, cover: c !== null ? c : $rawfile('cover_defaults/c1.svg') })
     }
     for (let i = 0; i < bc && out.length < 4; i++) {
-      out.push({ isFolder: false, cover: this.bookPreviewCover(item, i) })
+      const bcov: ResourceStr = this.bookPreviewCover(item, i)
+      out.push({ isFolder: false, cover: bcov })
     }
     return out
   }

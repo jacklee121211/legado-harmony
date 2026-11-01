@@ -47,6 +47,17 @@ export default struct FolderCard {
     return NightMode.isDarkSurface() ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'
   }
 
+  /** 有无可用封面：null/undefined/空串都算没有（`resolveBookCover` 无封面时返回 ''） */
+  private hasCover(c: ResourceStr | null): boolean {
+    if (c === null || c === undefined) {
+      return false
+    }
+    if (typeof c === 'string') {
+      return c.length > 0
+    }
+    return true
+  }
+
   @Builder
   cellContent(cell: FolderCell) {
     Stack() {
@@ -59,14 +70,14 @@ export default struct FolderCard {
           Row().width('90%').height('90%').borderRadius(3)
             .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.15)')
             .translate({ x: 3, y: 2 })
-          if (cell.cover !== null) {
+          if (this.hasCover(cell.cover)) {
             Image(cell.cover).width('100%').height('100%').borderRadius(3).draggable(false)
           } else {
             Row().width('100%').height('100%').borderRadius(3).backgroundColor(this.emptyColor())
           }
         }
         .width('100%').height('100%')
-      } else if (cell.cover !== null) {
+      } else if (this.hasCover(cell.cover)) {
         Image(cell.cover).width('100%').height('100%').borderRadius(4).draggable(false)
       } else {
         Row().width('100%').height('100%').borderRadius(4).backgroundColor(this.emptyColor())
@@ -88,7 +99,7 @@ export default struct FolderCard {
         Row().width('90%').height('90%').borderRadius(3)
           .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.15)')
           .translate({ x: 3, y: 2 })
-        if (this.cover !== null) {
+        if (this.hasCover(this.cover)) {
           Image(this.cover).width('100%').height('100%').borderRadius(3).draggable(false)
         } else {
           Row().width('100%').height('100%').borderRadius(3).backgroundColor(this.emptyColor())
