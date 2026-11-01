@@ -1493,10 +1493,95 @@ export default struct BookManagePage {
     this.syncShareSelection()
   }
   //判断checkLists变化值当key的值为false移除当前值
+  /** 分组层级（沿 parentId 上溯，1 = 顶层） */
+  private depthOfGroup(g: BookGroups): number {
+    let d: number = 1
+    let pid: number = g.parentId ?? 0
+    let guard: number = 0
+    while (pid !== 0 && guard < 12) {
+      d++
+      guard++
+      let next: number = 0
+      for (const x of this.bookGroups) {
+        if ((x.groupId ?? -1) === pid) {
+          next = x.parentId ?? 0
+          break
+        }
+      }
+      pid = next
+    }
+    return d
+  }
+
+  /**
+   * 2026-11-01：(a) 由「子项勾选」反推父分组 —— 深的先算，保证祖先读到的是子级最新结果。
+   * 规则：某分组下所有直属子分组 + 直属书**全部选中** ⇒ 该分组选中，否则取消。
+   */
+  private cascadeGroupSelection(): void {
+    if (this.bookGroups.length === 0) {
+      return
+    }
+    const ordered: BookGroups[] = this.bookGroups.slice()
+    ordered.sort((a: BookGroups, b: BookGroups): number => this.depthOfGroup(b) - this.depthOfGroup(a))
+    for (const g of ordered) {
+      const gid: number = g.groupId ?? -1
+      if (gid <= 0 || g.isSystem) {
+        continue
+      }
+      let hasChild: boolean = false
+      let allOn: boolean = true
+      for (const c of this.bookGroups) {
+        if ((c.parentId ?? 0) === gid && c.groupId !== undefined) {
+          hasChild = true
+          if (!(this.checkLists[c.groupId] ?? false)) {
+            allOn = false
+            break
+          }
+        }
+      }
+      if (allOn) {
+        for (const b of this.bookList) {
+          if ((b.bookGroup ?? 0) === gid) {
+            hasChild = true
+            if (!(this.checkLists[b.id ?? -1] ?? false)) {
+              allOn = false
+              break
+            }
+          }
+        }
+      }
+      if (hasChild) {
+        this.checkLists[gid] = allOn
+      }
+    }
+  }
+
+  /** 本页所有可选对象是否都已选中（决定顶部全选图标） */
+  private isEverythingSelected(): boolean {
+    let any: boolean = false
+    for (const g of this.bookGroups) {
+      if (g.groupId !== undefined && !g.isSystem && g.groupId > 0) {
+        any = true
+        if (!(this.checkLists[g.groupId] ?? false)) {
+          return false
+        }
+      }
+    }
+    for (const b of this.bookList) {
+      any = true
+      if (!(this.checkLists[b.id ?? -1] ?? false)) {
+        return false
+      }
+    }
+    return any
+  }
+
   listenCheckList() {
+    // 2026-11-01：先按树反推父分组，再同步数组与全选图标
+    this.cascadeGroupSelection()
     this.dataCheckList()
     this.selectIsAllTop()
-    this.allCheck = this.checkListNumber.length !== 0
+    this.allCheck = this.isEverythingSelected()
   }
 }
 
