@@ -170,7 +170,15 @@ export default struct BookSelectGroupDialog{
     if (i >= 0) {
       this.expandedIds.splice(i, 1)
     } else {
-      this.expandedIds.push(id)
+      // 2026-11-01 修「点展开后整条消失」：嵌套分组只有在**所有祖先都展开**时才可达；
+      // 只把自身加入 expandedIds，重建时从根走不到它 ⇒ 该行从弹窗里消失。
+      // 展开时把祖先链一并展开（`pathOf` 已含自身）。
+      const tree: GroupTree = GroupTree.build(this.groupList)
+      for (const a of tree.pathOf(id)) {
+        if (a.groupId !== undefined && this.expandedIds.indexOf(a.groupId) < 0) {
+          this.expandedIds.push(a.groupId)
+        }
+      }
     }
     this.expandedIds = this.expandedIds.slice()
     this.rebuildRows()
