@@ -84,9 +84,12 @@ class booksUtils{
       bookGroupUtils.updateAddBookIds(group, bookId)
     }
     //再去更新新的书籍的分组
-    bookId.forEach((item:number)=>{
-      BooksDao.updateBookGroup(item,group)
-    })
+    // ⚠️ 2026-11-01：原实现是**裸 forEach**（不 await）⇒ 调用方紧接着广播刷新时
+    //   写库可能还没提交，界面重查读到旧 `bookGroup`（"移动后卡片共 0 本 / 点进去空白"）。
+    //   改为逐个 await。
+    for (const item of bookId) {
+      await BooksDao.updateBookGroup(item, group)
+    }
   }
 
   async delBooksById(id:number|number[]){

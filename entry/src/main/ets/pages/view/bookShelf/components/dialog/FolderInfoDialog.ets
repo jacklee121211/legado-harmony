@@ -11,6 +11,8 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
+import booksUtil from '../../../../../common/utils/booksUtils'
+import { GroupTree } from '../../../../../common/group/GroupTree'
 // 2026-10-25：`AddToBookListDialog`（加入书单弹窗）已随书单功能删除
 import coverInfoDialog from './coverInfoDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
@@ -254,7 +256,8 @@ export default struct FolderInfoDialog{
         this.openChildDialog(this.hideDisbandDelDialog);
         break;
       case 8 :
-        this.openChildDialog(this.groupDelDialog); break;
+        // 2026-11-01：删除 = **真删**（递归子文件夹 + 书文件），先算数量再弹确认
+        this.prepareDeleteThenOpen(); break;
     }
   }
   //打开重名弹窗
@@ -368,11 +371,14 @@ export default struct FolderInfoDialog{
   })
 
   @State delCache:boolean = false
+  /** 删除确认框标题（2026-11-01：按实际子文件夹数/书数动态生成） */
+  @State delTitle:string = '删除'
   //删除分组弹窗
   groupDelDialog: CustomDialogController | null = new CustomDialogController({
     builder: confirmDialogExample({
       confirm: ()=> { this.deleteGroup() },
       delCache:this.delCache,
+      title:this.delTitle,
       // 2026-10-12：取消路径必须**真的 close**（同 bookMoveGroup 那个坑）
       cancel: ()=> { this.closeChildAndReopen(this.groupDelDialog) }
     }),
@@ -385,16 +391,74 @@ export default struct FolderInfoDialog{
       this.closeChildAndReopen(this.groupDelDialog)
     }
   })
-  //删除分组
-  deleteGroup() {
-    if (this.itemData.groupId) {
-      bookGroupUtil.delGroupById(this.itemData.groupId)
+  // ── 删除分组（2026-11-01 按新语义重写）────────────────────────────────────
+  /**
+   * 打开删除确认框前先算数量：删除 = **递归删子文件夹 + 真删书**（含书签/进度/封面文件）。
+   *
+   * 与「分组管理弹窗」的 `doDeleteGroup` 同一口径（`BookSelectGroupDialog.ets:661-681`）。
+   * 回退：把 `folderInfo` 的 `case 8` 改回 `this.openChildDialog(this.groupDelDialog)`、
+   *   并恢复旧的 `deleteGroup()`（只删组行、书落未分组）即回到 2026-10-31 行为。
+   */
+  private async prepareDeleteThenOpen(): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
     }
-    this.cancel()
-    setTimeout(()=>{
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const ids: number[] = tree.subtreeIds(gid)
+      let bookCount: number = 0
+      for (const id of ids) {
+        const bookIds: number[] = await booksDao.queryBooksByGroupId([id])
+        bookCount += bookIds.length
+      }
+      const subCount: number = ids.length - 1
+      let t: string = `删除「${this.itemData.groupName ?? ''}」`
+      if (subCount > 0) {
+        t += `及 ${subCount} 个子文件夹`
+      }
+      if (bookCount > 0) {
+        t += `、${bookCount} 本书`
+      }
+      this.delTitle = t
+    } catch (e) {
+      this.delTitle = `删除「${this.itemData.groupName ?? ''}」`
+      console.error('prepareDeleteThenOpen failed: ' + JSON.stringify(e))
+    }
+    this.openChildDialog(this.groupDelDialog)
+  }
+
+  /** 真删：子树内每个分组的书先逐本删（清书签/进度/封面），再删分组行 */
+  async deleteGroup(): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const ids: number[] = tree.subtreeIds(gid)
+      let bookCount: number = 0
+      for (const id of ids) {
+        const bookIds: number[] = await booksDao.queryBooksByGroupId([id])
+        if (bookIds.length > 0) {
+          await booksUtil.delBooksById(bookIds)
+          bookCount += bookIds.length
+        }
+      }
+      await bookGroupUtil.delGroupById(ids)
+      showMessage(bookCount > 0
+        ? `已删除「${this.itemData.groupName ?? ''}」及 ${bookCount} 本书`
+        : `已删除「${this.itemData.groupName ?? ''}」`)
+    } catch (e) {
+      showMessage('删除失败')
+      console.error('deleteGroup failed: ' + JSON.stringify(e))
+    } finally {
+      this.cancel()
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      showMessage('删除成功')
-    },500)
+      this.isBookRefreshing++
+    }
   }
 
   @State dialogTitle:string = ''

@@ -541,10 +541,13 @@ class BooksDao {
       predicates.in('id', validIds)
       const count = await DbUtil.queryForList<Books>(predicates, column)
       if (count.length > 0) {
-        count.forEach(async (item) => {
+        // ⚠️ 2026-11-01：原 `count.forEach(async (item) => …)` 不等待内层 update，
+        //   本方法会在写库完成前 resolve ⇒ 调用方广播刷新读到旧分组。
+        //   改为逐个 await（与 `queryBookByGroup` 2026-10-22 的修法同口径）。
+        for (const item of count) {
           item.bookGroup = groupId
           await this.update(item)
-        })
+        }
         return true
       }
       return false

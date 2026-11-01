@@ -737,18 +737,15 @@ export default struct BookSelectGroupDialog{
    * 而不是散落在各个弹窗里（管理页删书 / 移动分组等路径将来也要复用）。
    */
   private async cleanupOldGroup(): Promise<void> {
-    const oldGid: number = this.oldGroupId ?? -1
-    if (oldGid <= 0 || oldGid === 3) {
-      return
-    }
-    const dissolved: boolean = await bookGroupUtils.dissolveIfEmpty([oldGid])
-    if (dissolved) {
-      // 广播：管理页 `@Watch('getGroupList')` 据此重查分组列表（分组卡片消失）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      // 同时让书架的书列表也重查（书的 bookGroup 已经变成未分组）
-      this.isBookRefreshing++
-      showMessage('该分组已无书籍，已自动解散')
-    }
+    // ── 2026-11-01：**取消「空分组自动解散」**（用户拍板：控制权交给用户）──────────
+    // 多级文件夹下，父目录经常"只有子文件夹、没有直属书"，自动解散会把用户建好的
+    // 文件夹悄悄删掉；同时用户明确要求"空分组也能创建"。
+    // 回退：恢复下面被注释的两行（调 `bookGroupUtils.dissolveIfEmpty([oldGid])`）即可。
+    // const dissolved: boolean = await bookGroupUtils.dissolveIfEmpty([oldGid])
+    // if (dissolved) { … }
+    // 现在只做广播：书已经移到别处，分组卡片与书列表都要重查
+    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    this.isBookRefreshing++
   }
 
 }

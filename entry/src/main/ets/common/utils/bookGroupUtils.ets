@@ -28,8 +28,10 @@ class bookGroupUtils{
     }
   }
   //添加分组
+  // ⚠️ 2026-11-01：补 `await`（原实现裸调 ⇒ 新建后立刻重查列表可能查不到，
+  //   多级文件夹里还必须保证「父组先落库、子组再插入」的顺序）
   async addGroup(books: BookGroups){
-    BookGroupsDao.insert(books)
+    await BookGroupsDao.insert(books)
   }
   //删除分组
   /**
