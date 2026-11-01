@@ -12,7 +12,8 @@
  * 点任一材质 = 选中并立即应用（回调页面 `pickTexture`，与主页材质格同一入口），
  * 然后本弹窗自关。当前正在用的材质画橙圈。
  *
- * 弹窗配方与目录/定时弹窗同款：`systemMaterial` 沉浸光感 + 弹簧出入场
+ * 弹窗配方与目录/定时弹窗同款：弹簧出入场 + **顶栏同款的显式底色**
+ * （★ 2026-11-02 起不用 `systemMaterial` 沉浸光感 —— 它由系统按**整机**模式渲染）
  * （controller 由页面每次新建，参数不支持动态更新）。
  */
 import { common } from '@kit.AbilityKit'
@@ -20,6 +21,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { ReaderTexture, TextureItem, CustomTex } from '../../../common/utils/ReaderTexture'
 import { Haptics } from '../../../common/utils/Haptics'
 import UiMotion from '../../../common/utils/UiMotion'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 
 @CustomDialog
 export struct ReaderTextureDialog {
@@ -270,5 +272,11 @@ export struct ReaderTextureDialog {
     }
     .width('100%')
     .padding(20)
+    // ★ 2026-11-02：**顶栏同款显式底色**（按**阅读器**亮暗）。以前这一层完全没有底色，
+    //   整块由弹窗层画 —— 那是跟着**整机**模式走的 ⇒ 「系统暗 + 阅读器亮」会变黑底黑字。
+    //   圆角 20 与 options 的 `cornerRadius` 同值，`clip(true)` 防直角顶出圆角。
+    .borderRadius(20)
+    .clip(true)
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

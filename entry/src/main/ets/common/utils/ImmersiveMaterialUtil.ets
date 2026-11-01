@@ -11,6 +11,28 @@ import { NightMode } from './NightMode';
 const MATERIAL_NIGHT_PANEL: string = '#1F1F1F';
 
 /**
+ * 阅读器「顶栏同款」显式底色（2026-11-02 起）—— 阅读器自己的弹窗 / 面板一律用它。
+ *
+ * ── 为什么（用户真机反复验证）──────────────────────────────────────────────
+ * 阅读器里唯一**从来不被污染**的控件是顶栏，它的实现就是答案：**纯 ArkUI 节点 + 显式颜色**，
+ * 既不读 `NightMode.isDarkSurface()`、也不用系统材质
+ * ⇒ 既跟阅读器日/夜间，又不会被「全局亮暗 / 一镜到底转场」带偏。
+ * 顶栏那两个色值（`ReaderPage3` 顶栏胶囊）：
+ *   `this.colorMode == 0 ? 'rgba(31, 31, 31, 0.86)' : 'rgba(250, 250, 250, 0.90)'`
+ * 弹窗是**整块面板**（要盖住下面一整片正文才好读），所以取**同色系、不透明度提一档**：
+ * 夜里 0.96、日间 0.98 —— **不要自创别的色值**。
+ *
+ * 与之对照，出问题的老路径都是「系统模式驱动」：
+ *   · `CustomDialogControllerOptions.systemMaterial`（沉浸光感，`@since 26.0.0`）——
+ *     材质由系统按**整机**模式渲染 ⇒ 「系统暗 + 阅读器亮」必然被带成暗色；
+ *   · `MaterialColumnModifier.applyNormalAttribute()` 里的 `NightMode.isDarkSurface()` 分支 ——
+ *     同样认整机模式，不认阅读器档位。
+ * ⇒ 阅读器弹窗改成：**options 里不设 `systemMaterial` + 内容层画上面这两个色**。
+ */
+export const READER_PANEL_NIGHT_BG: string = 'rgba(31, 31, 31, 0.96)';
+export const READER_PANEL_DAY_BG: string = 'rgba(250, 250, 250, 0.98)';
+
+/**
  * 沉浸光感（Immersive Material）统一入口 —— 全工程唯一的"是否开、开多厚"决策点。
  *
  * ── 为什么要有这个类 ──────────────────────────────────────────────────────

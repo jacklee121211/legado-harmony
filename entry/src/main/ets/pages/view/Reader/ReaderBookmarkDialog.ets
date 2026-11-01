@@ -23,11 +23,12 @@
  *
  * ── 面板外观（与目录弹窗共用同一套）──────────────────────────────────────────
  * 高度常量直接 import `ReaderCatalogDialog` 的导出值 ⇒ 两个弹窗高度永远一致，
- * 不会因为两处各写一份而慢慢飘开。材质走弹窗 options 的 `systemMaterial`（见
- * `ReaderPage3.openBookmarkDialog()`），内容层用 `MaterialColumnModifier(…, true)`
- * **不设任何 backgroundColor**。
+ * 不会因为两处各写一份而慢慢飘开。
+ * ★ 2026-11-02：底色改成**顶栏同款的显式色**（`ImmersiveMaterialUtil.READER_PANEL_*`，
+ *   由**阅读器自己的** `colorMode` 决定），options 里**不再有** `systemMaterial`
+ *   —— 沉浸光感由系统按整机模式渲染，「系统暗 + 阅读器亮」时会把面板带成暗色。
  */
-import { MaterialColumnModifier, MaterialDockModifier, default as ImmersiveMaterialUtil } from '../../../common/utils/ImmersiveMaterialUtil'
+import { MaterialDockModifier, default as ImmersiveMaterialUtil, READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 import { Haptics } from '../../../common/utils/Haptics'
@@ -36,9 +37,8 @@ import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao'
 //    （`CATALOG_PANEL_HEIGHT_TYPING` 只服务目录弹窗的键盘避让，见其常量注释。）
 import { CATALOG_PANEL_HEIGHT } from './ReaderCatalogDialog'
 
-/** 面板兜底色 —— 与目录弹窗**逐字一致**（0 = 夜间 ⇒ 深色；1 = 日间 ⇒ 浅色） */
-const PANEL_BG_NIGHT: string = '#1F1F1F'
-const PANEL_BG_DAY: string = 'rgba(248, 249, 250, 1)'
+/** 面板文字色常量见下方 `activeColor()` / `subColor()`（2026-11-02：面板底改成
+ *  `ImmersiveMaterialUtil.READER_PANEL_*` 之后，原来的 `PANEL_BG_NIGHT/DAY` 已删除） */
 
 @CustomDialog
 export struct ReaderBookmarkDialog {
@@ -67,15 +67,13 @@ export struct ReaderBookmarkDialog {
   private bmScroller: Scroller = new Scroller()
 
   /**
-   * 材质背板修饰器。构造时传"兜底色 + 已有 options 材质 = true"：
-   * 材质可用 ⇒ 内容层**一个背景属性都不设**（设了反而把材质挡掉，官方原文见
-   * `ImmersiveMaterialUtil.ets:353-395`）；材质不可用 ⇒ 落回实底纯色。
+   * 面板底色（2026-11-02）：**顶栏同款的显式色**，由**阅读器自己的** `colorMode` 决定。
+   * 以前这里是 `MaterialColumnModifier(兜底色, true)` —— 材质可用时内容层什么都不画、
+   * 交给 options 的 `systemMaterial`（沉浸光感，系统整机模式驱动）⇒ 会被带成暗色。
+   * 现在直接画在 build 的根 Column 上（见那里的 `.backgroundColor(...)`）。
    */
-  private surface: MaterialColumnModifier = new MaterialColumnModifier(PANEL_BG_NIGHT, true)
 
   aboutToAppear(): void {
-    // colorMode 0 = 夜间 ⇒ 深色兜底；1 = 日间 ⇒ 浅色兜底
-    this.surface = new MaterialColumnModifier(this.colorMode == 0 ? PANEL_BG_NIGHT : PANEL_BG_DAY, true)
     this.loadBookmarks()
   }
 
@@ -291,6 +289,7 @@ export struct ReaderBookmarkDialog {
     .clip(true)
     // 内保护边距：底部给 dock 留位（dock 是绝对定位在 Stack 右下角，不留会被裁一半）
     .padding({ left: 16, right: 16, bottom: 72 })
-    .attributeModifier(this.surface)
+    // ★ 顶栏同款显式底色（2026-11-02）：不再靠 options 的 `systemMaterial`（系统整机模式驱动）
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

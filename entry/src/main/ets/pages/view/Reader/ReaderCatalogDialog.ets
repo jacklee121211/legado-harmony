@@ -1,6 +1,6 @@
 import { bookParser } from '@kit.ReaderKit'
 import BasicDataSource from '../../../common/LazyIDataSource/BasicDataSource'
-import { MaterialColumnModifier, MaterialDockModifier, default as ImmersiveMaterialUtil } from '../../../common/utils/ImmersiveMaterialUtil'
+import { MaterialDockModifier, default as ImmersiveMaterialUtil, READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
@@ -16,6 +16,9 @@ import { Haptics } from '../../../common/utils/Haptics'
  * · `@CustomDialog` 由 `CustomDialogControllerOptions` 直接给 `alignment`/`width`/`height`，
  *   **不受 sheet 的 `detents` 底部锚定**（`detents` 是"底部多段高度"语义，会把面板锚死在底部）；
  * · 只有走**弹窗 options 的 `systemMaterial`** 才能拿到真沉浸光感材质 ——
+ *   ★ 2026-11-02：**这条已不用**。材质由系统按**整机**模式渲染，「系统暗 + 阅读器亮」
+ *   时会把面板带成暗色 ⇒ 改成顶栏同款的显式底色（见下方「面板底色」注释）。
+ *   以下两条官方原文保留作历史依据：
  *   `SheetOptions` 全部字段里**没有** `systemMaterial`。
  *   证据：`…\ets\component\custom_dialog_controller.d.ts:681`
  *   `systemMaterial?: SystemUiMaterial;`（@since 26.0.0）；
@@ -43,16 +46,18 @@ import { Haptics } from '../../../common/utils/Haptics'
  */
 
 /**
- * 面板兜底色 —— 与改造前的 `backgroundColor(this.colorMode == 0 ? '#1F1F1F' : 'rgba(248,249,250,1)')`
- * **逐字一致**。
  * ⚠️ 命名别搞反：本页 `colorMode` 的 **0 = 夜间（深色）**、1 = 日间 —— 依据是日夜切换那一段
  *    （`ReaderPage3` 的切换闭包把 colorMode 取反后，`colorMode == 0` 分支里设
  *     `readerSetting.nightMode = true` + 黑底白字），且全文文字色都是
  *     `colorMode == 0 ? 'rgba(248,249,250,1)'（近白）: 'rgba(19,19,19,1)'（近黑）`。
- * ⇒ 深色底 `#1F1F1F` 属于**夜间**。
+ * ⇒ 深色底属于**夜间**。
+ *
+ * 面板底色（2026-11-02 改）：以前是 `MaterialColumnModifier(兜底色, true)` —— 材质可用时
+ * **一个背景属性都不设**，靠 `CustomDialogControllerOptions.systemMaterial`（沉浸光感）画。
+ * 那条路径**由系统按整机模式渲染** ⇒ 「系统暗 + 阅读器亮」以及一镜到底转场时会被带成暗色。
+ * 现在改成**顶栏同款的显式底色**（`ImmersiveMaterialUtil.READER_PANEL_*`，与顶栏同色系），
+ * 由**阅读器自己的** `colorMode` 决定。
  */
-const PANEL_BG_NIGHT: string = '#1F1F1F'
-const PANEL_BG_DAY: string = 'rgba(248, 249, 250, 1)'
 
 /**
  * 面板高度（vp）—— **高度写在内容层，不在 `CustomDialogControllerOptions` 里**。
@@ -147,17 +152,9 @@ export struct ReaderCatalogDialog {
   @State typing: boolean = false
 
   private scrollerForList: Scroller = new Scroller()
-  /**
-   * 材质背板修饰器。构造时传"兜底色 + 已有 options 材质 = true"：
-   * 材质可用 ⇒ 内容层**一个背景属性都不设**（设了反而把材质挡掉，官方原文见
-   * `ImmersiveMaterialUtil.ets:353-395`）；材质不可用 ⇒ 落回改造前的实底纯色。
-   */
-  private surface: MaterialColumnModifier = new MaterialColumnModifier(PANEL_BG_NIGHT, true)
 
   aboutToAppear(): void {
     this.keyword = this.initKeyword
-    // colorMode 0 = 夜间 ⇒ 深色兜底；1 = 日间 ⇒ 浅色兜底（与改造前 `backgroundColor` 的三元一致）
-    this.surface = new MaterialColumnModifier(this.colorMode == 0 ? PANEL_BG_NIGHT : PANEL_BG_DAY, true)
     this.rebuildFilteredCatalog()
   }
 
@@ -232,7 +229,8 @@ export struct ReaderCatalogDialog {
       // ⚠️ 搜索栏留在**目录弹窗**（用户原话「搜索不变」）；书签弹窗没有搜索。
       this.CatalogListPane()
     }
-    // ★ 悬浮外观由**弹窗 options** 提供（`width: '92%'` + `cornerRadius` + `systemMaterial`），
+    // ★ 悬浮外观由**弹窗 options** 提供（`width: '92%'` + `cornerRadius` + 位置/动效）；
+    //   底色由**本节点**画（顶栏同款显式色）。2026-11-02 起 options 里**不再有** `systemMaterial`。
     //   所以内容层**不能**再写左右 margin（同时写 `width('100%')` + 左右 margin 会让总宽超出容器，
     //   表现就是"贴右侧 + 内容残缺 + 底部溢出"）。
     //   这里只写 `width('100%')`、不写任何 margin ⇒ 宽度 = 弹窗宽度，宽度语义单一，不会再溢出。
@@ -247,8 +245,8 @@ export struct ReaderCatalogDialog {
     // ★ 内保护边距：顶部/底部/定位那条浮动按钮由 `CatalogListPane()` 内部绘制（Stack 右下角），
     //   不设内保护时它贴到面板最下沿、被裁掉一半（用户 2026-09-22 反馈"太靠下"）。
     .padding({ left: 16, right: 16, bottom: 72 })
-    // 材质优先 / 兜底实底（详见 `MaterialColumnModifier` 的注释）
-    .attributeModifier(this.surface)
+    // ★ 顶栏同款显式底色（2026-11-02）：不再靠 options 的 `systemMaterial`（系统整机模式驱动）
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 
   @Builder

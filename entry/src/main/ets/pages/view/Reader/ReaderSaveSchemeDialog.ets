@@ -1,4 +1,4 @@
-import { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
 import { hilog } from '@kit.PerformanceAnalysisKit'
@@ -16,9 +16,9 @@ import { ReaderTexture } from '../../../common/utils/ReaderTexture'
  *   全能自由搭配，并且被保存成方案。」（2026-10-06）
  *
  * ── 配方与邻居完全一致（刻意照抄 `SleepTimerDialog`）────────────────────────
- * · 材质走 `CustomDialogControllerOptions.systemMaterial`
- *   （`custom_dialog_controller.d.ts`，@since 26.0.0）+ `customStyle:false`
- *   ⇒ 悬空四圆角 + 半透明沉浸光感；内容层**一个背景属性都不设**（设了会挡掉材质）。
+ * · ★ 2026-11-02：底色是**顶栏同款的显式色**（`ImmersiveMaterialUtil.READER_PANEL_*`），
+ *   画在内容层根 Column 上；`options.systemMaterial`（沉浸光感）**已下线** ——
+ *   它由系统按**整机**模式渲染，「系统暗 + 阅读器亮」时会变成黑底黑字。
  * · `@StorageLink('readerColorMode')` 而不是 `@Prop`：弹窗由页面**每次新建**时构造，
  *   但日夜配色是"随页面变化"的，直接吃父页面写进 AppStorage 的同一个 key
  *   ⇒ 零传参、天然同步（与 `ReaderListenDialog` / `SleepTimerDialog` 同款）。
@@ -61,7 +61,9 @@ export struct ReaderSaveSchemeDialog {
   /** 0 = 夜间，1 = 日间（与 `ReaderPage3.colorMode` 同义，见文件头） */
   @StorageLink('readerColorMode') colorMode: number = 1
 
-  private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
+  /** 面板底色（2026-11-02）：**顶栏同款的显式色**，按**阅读器**亮暗。
+   *  以前是 `MaterialColumnModifier(兜底色, true)`，靠 options 的 `systemMaterial`
+   *  （沉浸光感，系统整机模式驱动）画 ⇒ 「系统暗 + 阅读器亮」会变黑底黑字。 */
 
   // ── 预览（aboutToAppear 一次性算好；build 里只读）────────────────────────────
   /** 内置材质缩略图（rawfile 名；'' = 不用） */
@@ -105,9 +107,6 @@ export struct ReaderSaveSchemeDialog {
   }
 
   aboutToAppear(): void {
-    // 材质不可用时的兜底色（夜里给深底，否则白底 + 白字）
-    this.surface = new MaterialColumnModifier(
-      this.colorMode == 0 ? '#1F1F1F' : Color.White, true);
     // ── 背景预览源与文案（V3：材质/自定义材质都要能表达）────────────────────────
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
     if (this.bgKind === ReaderCustomBg.BG_KIND_TEX) {
@@ -233,6 +232,9 @@ export struct ReaderSaveSchemeDialog {
     .width('100%')
     .padding(20)
     .borderRadius(20)
-    .attributeModifier(this.surface)
+    // ★ 2026-11-02：顶栏同款显式底色（按**阅读器**亮暗，不再走系统材质）
+    //   `clip(true)` 防止子节点/直角顶出圆角（与目录、听书面板同款写法）
+    .clip(true)
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

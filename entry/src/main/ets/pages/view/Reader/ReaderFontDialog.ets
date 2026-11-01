@@ -14,7 +14,9 @@
  *   对应属性（同文件 :69-200），引擎内部不可达，不做（UI 上不出现，避免无效开关）。
  *
  * ── 结构与风格 ──────────────────────────────────────────────────────────────
- * 弹窗配方与「更多材质」同款（@CustomDialog + 页面每次新建 controller + 沉浸光感材质 +
+ * 弹窗配方与「更多材质」同款（@CustomDialog + 页面每次新建 controller + 弹簧出入场；
+ * ★ 2026-11-02 起底色改成**顶栏同款的显式色**，不再用 `systemMaterial` 沉浸光感 ——
+ *   材质由系统按**整机**模式渲染，「系统暗 + 阅读器亮」时会把面板带成黑底黑字）+
  * 弹簧出入场）；列表橙圈沿用背景方案的选中语言；正文字色随 colorMode 日/夜切换。
  * 字体文件登记/导入/下载/删除全部委托 `ReaderFontLib`（本弹窗只管 UI）。
  *
@@ -61,7 +63,7 @@ import {
 import { ReaderFontCatalog, CatalogFont } from '../../../common/utils/ReaderFontCatalog';
 import { Haptics } from '../../../common/utils/Haptics';
 // ── 会员化（2026-09-28）：导入/下载字体为 VIP 特权 ──────────────────────────
-import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil';
 import UiMotion from '../../../common/utils/UiMotion';
 import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
@@ -197,6 +199,8 @@ export struct ReaderFontDialog {
       builder: VipDialog({
         dark: this.colorMode == 0,
         vipOwned: VipManager.isVip(),
+        // ★ 2026-11-02：阅读器宿主 ⇒ 让 `VipDialog` 自己按阅读器亮暗画顶栏同款实底
+        readerPanel: true,
         onClose: (): void => {
           this.vipDialog?.close()
           this.vipDialog = null
@@ -207,7 +211,7 @@ export struct ReaderFontDialog {
       width: '88%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（系统整机模式驱动 ⇒ 阅读器亮/系统暗时变黑底）
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
@@ -1320,5 +1324,11 @@ export struct ReaderFontDialog {
     .padding(16)
     .width('100%')
     .height('78%')
+    // ★ 2026-11-02：**顶栏同款显式底色**（按**阅读器**亮暗；以前完全没有底色，
+    //   整块靠弹窗层画 —— 那是跟着**整机**模式走的 ⇒ 「系统暗 + 阅读器亮」会变黑底黑字）。
+    //   圆角 20 与 options 的 `cornerRadius` **同值**，`clip(true)` 防止内容/底色的直角顶出圆角。
+    .borderRadius(20)
+    .clip(true)
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

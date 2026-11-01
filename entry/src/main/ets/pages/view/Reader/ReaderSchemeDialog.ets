@@ -21,13 +21,15 @@
  * ── 交互 ──────────────────────────────────────────────────────────────────
  * · 点缩略图 = 应用该方案（回调页面 `applyScheme`）并自关；
  * · 右上角小 × = 删除该方案（本弹窗内即时刷新列表）。
- * 弹窗配方与「更多材质」同款：`systemMaterial` 沉浸光感 + 弹簧出入场。
+ * 弹窗配方与「更多材质」同款：弹簧出入场 + **顶栏同款的显式底色**
+ * （★ 2026-11-02 起不用 `systemMaterial` 沉浸光感 —— 它由系统按**整机**模式渲染）。
  */
 import { common } from '@kit.AbilityKit'
 import { ReaderCustomBg, SchemeV3 } from '../../../common/utils/ReaderCustomBg'
 import { ReaderTexture } from '../../../common/utils/ReaderTexture'
 import { Haptics } from '../../../common/utils/Haptics'
 import UiMotion from '../../../common/utils/UiMotion'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 
 /**
  * 一条方案卡片的**渲染快照**（`aboutToAppear` 一次性算好）。
@@ -318,5 +320,11 @@ export struct ReaderSchemeDialog {
     }
     .width('100%')
     .padding(20)
+    // ★ 2026-11-02：**顶栏同款显式底色**（按**阅读器**亮暗）。以前这一层完全没有底色，
+    //   整块由弹窗层画 —— 那是跟着**整机**模式走的 ⇒ 「系统暗 + 阅读器亮」会变黑底黑字。
+    //   圆角 20 与 options 的 `cornerRadius` 同值，`clip(true)` 防直角顶出圆角。
+    .borderRadius(20)
+    .clip(true)
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

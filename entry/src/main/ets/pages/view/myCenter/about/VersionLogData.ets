@@ -19,9 +19,17 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 新增文件截断护栏脚本',
+    version: 'V3.0.11 阅读器 dock 与弹窗改用顶栏同款自绘底色',
     date: '2026-11-01',
     items: [
+      '底部 dock 删掉 HdsTabs 与原生 Tabs 两个分支，统一成一个 Row 自绘胶囊：高',
+      '圆角',
+      'clip(true)、左右各 16vp（calc(100% - 32vp)）、底部留 bottomRectHeight + 10vp，底色与顶栏同样两值（夜 rgba(31,31,31,0.86) / 日 rgba(250,250,250,0.90)），5 格等分 + 原入场动效与点击派发不变',
+      'HdsTabs/HdsCompat 等未用 import 一并清理',
+      '阅读器专属弹窗（目录/书签/听书/设置/字体/更多材质/更多方案/保存配色/睡眠定时/VIP）删掉 options 的 systemMaterial，内容层改画顶栏同款显式底色（READER_PANEL_NIGHT_BG 0.96 / READER_PANEL_DAY_BG 0.98），颜色一律取阅读器 readerColorMode',
+      'TtsControlPanel 让出背景，避免同一半透明色 alpha 叠两层',
+      '共享组件 VipDialog 增加宿主参数 readerPanel（默认 false，书架/我的/字体管理行为不变）',
+      'ReaderSettingDialog 补 @StorageLink(\'readerColorMode\') 与圆角裁切',
       '新增提交前检查脚本：已跟踪源码行数骤减超过 20% 时阻断提交',
       '避免再次出现文件被截断后误提交的问题',
       '新增折叠形态识别（展开/折叠/半折悬停），仅用于状态说明，不参与布局',

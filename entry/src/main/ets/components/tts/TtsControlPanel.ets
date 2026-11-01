@@ -45,9 +45,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Haptics } from '../../common/utils/Haptics';
 // ── 离线模式（2026-10-13 新增）：离线时隐藏 AI 相关的四块 UI ──
 import { STORAGE_KEY_OFFLINE_MODE } from '../../common/utils/OfflineMode';
-// 材质：面板底色用 MaterialColumnModifier（"让出背景"，材质走弹窗 options）；
-// 面板内滑条**不设材质**（用户选 A：材质优先 —— 与"滑条光效"互斥，官方禁止材质嵌套）
-import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil';
+// 材质：面板底色**不在本组件画**（2026-11-02 起由宿主 `ReaderListenDialog` 画顶栏同款显式色，
+// 原 `MaterialColumnModifier` 已随 `systemMaterial` 一起下线，因此这里不再需要那个 import）
 import UiMotion from '../../common/utils/UiMotion';
 
 /** 面板滑杆定义（避免 @Builder 传函数参数的严格模式问题） */
@@ -379,18 +378,11 @@ export struct TtsControlPanel {
       String(this.compactMode), this.panelMinHeight, this.panelMaxHeight);
   }
   private sleepTicker: number = -1;
-  /**
-   * 面板底色（材质优先）。调用方（`ReaderListenDialog`）已通过
-   * `CustomDialogControllerOptions.systemMaterial` 提供材质 ⇒ 传 `true` 让出背景：
-   * 材质可用时**不设任何背景属性**，不可用时落回实底纯色（一键回退）。
-   * 2026-09-23 用户拍板选 **A：材质优先** ⇒ 面板要真材质，面板内滑条**不设材质**。
-   */
-  private surface: MaterialColumnModifier = new MaterialColumnModifier('#1F1F1F', true);
+  // 面板底色**不在本组件画**（2026-11-02）：由宿主 `ReaderListenDialog` 的底色层
+  // （那个 Column）按**阅读器**亮暗画顶栏同款显式色。这里再画一层会让同一半透明色
+  // 叠两次（alpha 复合 ⇒ 比别处更不透明），所以本组件保持"透明、让出背景"。
 
   aboutToAppear(): void {
-    // 底色兜底值随日夜模式（材质可用时用不到它）
-    this.surface = new MaterialColumnModifier(
-      this.colorMode == 0 ? '#1F1F1F' : 'rgba(248, 249, 250, 1)', true);
     // D2：进入面板时把**已保存**的接口配置填进草稿（下次进入直接显示之前的数据）
     this.aiBaseUrlDraft = this.prefs.aiBaseUrl;
     this.aiApiKeyDraft = this.prefs.aiApiKey;
@@ -3313,14 +3305,9 @@ export struct TtsControlPanel {
       minHeight: this.panelMinHeight,
       maxHeight: this.panelMaxHeight > 0 ? this.panelMaxHeight : '100%'
     })
-    // ── 底色：**材质优先**（2026-09-23 用户拍板选 A）────────────────────────────
-    // 交给 `MaterialColumnModifier(fallback, true)`：材质可用时**一个背景属性都不设**，
-    // 露出调用方（`ReaderListenDialog`）通过 `CustomDialogControllerOptions.systemMaterial`
-    // 提供的**真材质**；材质不可用（`ImmersiveMaterialUtil.ENABLED = false`）自动落回实底纯色。
-    // ⚠️ 与"滑条光效"是二选一（官方《沉浸光感功耗优化》「避免材质嵌套…视觉上又相互干扰」）：
-    //   用户选 A ⇒ 面板要真材质，面板内滑条**不设材质**（见两处滑条的注释）。
-    // ⚠️ 不要在这里调 `.systemMaterial()`：弹窗的材质必须走 options。
-    .attributeModifier(this.surface)
+    // ── 底色：**本组件不画**（2026-11-02）────────────────────────────────────
+    // 底色层在宿主 `ReaderListenDialog`（顶栏同款显式色，按**阅读器**亮暗），
+    // 这里若再画一层，同一半透明色会 alpha 复合两次 ⇒ 比其它面板更不透明。
     // 探针：面板根（最终高度）
     .onAreaChange((_o: Area, n: Area) => {
       this.probe('panel', n);

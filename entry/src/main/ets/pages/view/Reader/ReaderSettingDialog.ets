@@ -1,4 +1,5 @@
 import { display } from '@kit.ArkUI'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 /**
  * 阅读设置面板弹窗（2026-09-23 从"底栏胶囊内换内容"改成 `@CustomDialog`）。
  *
@@ -49,6 +50,14 @@ export struct ReaderSettingDialog {
   @BuilderParam content: () => void
 
   /**
+   * 面板底色来源（2026-11-02 新增）：**阅读器的**日/夜间，**不是**整机模式。
+   * 必须用 `@StorageLink`（这个控制器是"只建一次"的成员字段，`@Prop` 只会取构造快照，
+   * 切档后过期 —— 工程先例见 `ReaderListenDialog.ets:68-76`）。
+   * 0 = 夜间，1 = 日间（与 `ReaderPage3.colorMode` 同义）。
+   */
+  @StorageLink('readerColorMode') colorMode: number = 1
+
+  /**
    * 弹窗内容最大高度（vp）＝ 屏幕高的 70%。
    * 2026-09-25 用户反馈：「底部这一行按钮**溢出弹窗了**，并且**没法上下拖拽**」
    *   （小屏/大字号设备内容总高超过屏幕）。⇒ 内容包进 Scroll：
@@ -91,5 +100,13 @@ export struct ReaderSettingDialog {
     // SDK `custom_dialog_controller.d.ts:126` 原文：「If the width and height of the dialog box are
     // not set, the dialog box … adapts its height to the custom content node.」
     // ⚠️ 刻意**不写 `height('100%')`**：那会按父容器上限解析（听书面板踩过这个坑）。
+    //
+    // ★ 2026-11-02：底色改由**本节点**画（顶栏同款的显式色，按**阅读器**亮暗）。
+    //   以前整块靠 options 的 `systemMaterial`（沉浸光感，系统按**整机**模式渲染）
+    //   ⇒ 「系统暗 + 阅读器亮」/ 一镜到底转场时面板被带成暗色（黑底黑字）。
+    //   圆角仍是 options 那个 20（内层同值 + `clip` 才不会被直角顶出圆角）。
+    .borderRadius(20)
+    .clip(true)
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

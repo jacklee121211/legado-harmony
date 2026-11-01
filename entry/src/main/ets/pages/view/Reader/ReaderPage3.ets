@@ -10,8 +10,6 @@ import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { ClickUtil, PreferencesUtil } from '@pura/harmony-utils';
 import { Books } from '../../../database/entities/Books';
 import { WindowAbility } from '../../../entryability/WindowAbility';
-import { HdsTabs, HdsTabsAttribute, HdsTabsController, HdsTabsFloatingStyle, hdsMaterial } from '@kit.UIDesignKit';
-import HdsCompat, { HdsFloatingStyleModifier } from '../../../common/utils/HdsCompat';
 
 import { SleepTimerDialog } from './SleepTimerDialog'
 // 目录 / 书签弹窗（2026-09-23 从 `bindSheet` 迁出成 @CustomDialog，理由见该文件头注释）
@@ -40,7 +38,7 @@ import { PdfImporter } from '../../../common/format/PdfImporter';
 import { filePreview } from '@kit.PreviewKit';
 import CommonConstants from '../../../common/constants/CommonConstants';
 import { TtsPrefs, loadTtsPrefs } from '../../../tts/TtsPrefs';
-import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil';
+import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -378,15 +376,16 @@ const SYSTEM_CJK_FONT_PATH: string = '/system/fonts/HarmonyOS_Sans_SC.ttf';
 const CATALOG_DIALOG_BOTTOM_GAP: number = 72;
 
 /**
- * 阅读器底部**四图标页签条**的高度（vp）—— 与改造前自绘 `Grid` 的 `height(60)` 一致。
- * 依据：官方对沉浸光感的生效范围限定，底部栏想拿真材质只能做成**真 Tabs**
- * （详见 `build()` 里那段 `Tabs({ barPosition: BarPosition.End })` 的注释）。
+ * 阅读器底部 dock 的**条高**（vp）—— 与改造前自绘 `Grid` 的 `height(60)` 一致。
+ * ★ 2026-11-02 起 dock 是**自绘胶囊**（顶栏同款：纯 ArkUI 节点 + 显式半透明色，
+ *   不读系统亮暗、不用系统材质），所以这个 60 只表示"条高"，圆角就是它的半高 30。
+ *   完整依据见 `readerDockBar()` 的注释。
  */
 const READER_BAR_HEIGHT: number = 60;
 
 /**
- * 阅读器底部页签条离**系统底部安全区**的额外留白（vp）—— 与改造前自绘胶囊的
- * `margin({ bottom: 10 })` 一致（悬浮条的留白现在由 `FloatingTabBarStyle.barBottomMargin` 表达）。
+ * 阅读器底部 dock 离**系统底部安全区**的额外留白（vp）—— 与改造前自绘胶囊的
+ * `margin({ bottom: 10 })` 一致（现在直接写成 dock 的 `.margin({ bottom })`）。
  */
 const READER_BAR_BOTTOM_GAP: number = 10;
 
@@ -1013,14 +1012,12 @@ export default struct ReaderPage3 {
     width: '92%',
     cornerRadius: 20,
     customStyle: false,
-    // ── 材质（2026-09-23 用户拍板选 **A：材质优先**）────────────────────────────
-    // 恢复弹窗的真材质（那一版用户评价"展开的效果非常好、大比例完美"）。
-    // 代价：面板内滑条**不设材质** ⇒ 没有粒子光效 —— 这是官方硬规则决定的，二者不可共存：
-    //   官方《沉浸光感功耗优化》原文「#### 避免材质嵌套 — 材质嵌套使用会导致效果被重复计算，
-    //   既增加功耗，**视觉上又相互干扰**。同一子树中只需在**最外层**设置一次沉浸式系统材质，
-    //   内层节点不应再设置。」
-    //   真机实测：弹窗层有材质 + 内层滑条也设 ⇒ 滑条按住出现**黑色圆形蒙版**。
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    // ★ 2026-11-02（用户拍板）：**不设 `systemMaterial`**。
+    //   沉浸光感是"系统按整机模式渲染"的材质 ⇒ 「系统暗 + 阅读器亮」以及一镜到底转场
+    //   （书架与阅读页同时可见）时必然被带成暗色，用户看到「比暗色还暗、黑底黑字」。
+    //   ⇒ 底色改由**内容层**按**阅读器**的亮暗画顶栏同款半透明实底
+    //      （`ReaderListenDialog` → `ImmersiveMaterialUtil.READER_PANEL_*`）。
+    //   顺带消除官方「避免材质嵌套」的约束：面板内滑条现在可以有自己的效果。
     // ── 弹窗出入场动效（2026-09-23，弹簧为主）────────────────────────────────
     // SDK `component/custom_dialog_controller.d.ts:205/226`：
     //   `openAnimation?: AnimateParam;` / `closeAnimation?: AnimateParam;`
@@ -1037,8 +1034,10 @@ export default struct ReaderPage3 {
    * 同：
    * · 控制器也是**成员字段**（`$` 只能用在组件构造上下文，写在方法里会 `ReferenceError`，
    *   真机崩溃原文见上面 `listenDialog` 的注释）——本弹窗虽然不传 `$`，但同理更安全。
-   * · `systemMaterial` / `openAnimation` / `closeAnimation` 三项与听书**完全一致**
-   *   （真材质 + 弹簧；官方 `custom_dialog_controller.d.ts:205/226`）。
+   * · `openAnimation` / `closeAnimation` 两项与听书**完全一致**
+   *   （弹簧；官方 `custom_dialog_controller.d.ts:205/226`）。
+   *   ★ 2026-11-02：`systemMaterial` **已从两家一起下线**（见 `listenDialog` 那一段），
+   *   底色改由各弹窗内容层按**阅读器**亮暗画顶栏同款显式色。
    * 不同：
    * · 内容不走 `@Link`，而是把**页面自己的 `@Builder ReaderSettingContent()`** 以
    *   `@BuilderParam` 闭包传进去（官方 FAQ `faqs-arkui-826` 原文见
@@ -1062,12 +1061,9 @@ export default struct ReaderPage3 {
     width: '92%',
     cornerRadius: 20,
     customStyle: false,
-    // 真材质：内容区自绘节点拿不到真材质（官方生效范围见 `IndexShelf` 顶部注释），
-    // 只有弹窗类能拿 ⇒ 这也是"改成弹窗"的核心收益之一。
-    // ⚠️ 代价：面板内 3 个滑条（亮度/字号/行距）**不能**再设 `sliderMaterial()`，
-    //   否则材质嵌套 ⇒ 按住出现黑色圆形蒙版（听书面板已实测踩坑）。
-    //   注意「本章」滑块留在底栏胶囊里（不在本弹窗内）⇒ 它的光效**保留**。
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    // ★ 2026-11-02：同样**不设 `systemMaterial`**（理由见 `listenDialog` 那一段）。
+    //   设置面板的底色由 `ReaderSettingDialog` 的根节点按 `@StorageLink('readerColorMode')`
+    //   画顶栏同款半透明实底 ⇒ 跟随**阅读器**日/夜间，而不是整机模式。
     openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     cancel: (): void => {
@@ -1675,7 +1671,7 @@ oAnimInitNode 配套） */
       width: '92%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `SleepTimerDialog`
       // 弹窗出入场：弹簧令牌（理由见 `listenDialog` 处的注释）
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
@@ -3216,7 +3212,7 @@ oAnimInitNode 配套） */
       width: '86%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `ReaderSaveSchemeDialog`
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
@@ -3264,7 +3260,7 @@ oAnimInitNode 配套） */
       width: '88%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `ReaderTextureDialog`
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
@@ -3300,7 +3296,7 @@ oAnimInitNode 配套） */
       width: '88%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `ReaderSchemeDialog`
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
@@ -3321,6 +3317,9 @@ oAnimInitNode 配套） */
       builder: VipDialog({
         dark: this.colorMode == 0,
         vipOwned: VipManager.isVip(),
+        // ★ 2026-11-02：阅读器宿主 ⇒ 让 `VipDialog` 自己按阅读器亮暗画顶栏同款实底。
+        //   不传时默认 `false` = 保持书架/我的等宿主的老行为（材质由宿主 options 提供）。
+        readerPanel: true,
         onClose: (): void => {
           this.vipDialog?.close()
           this.vipDialog = null
@@ -3331,7 +3330,7 @@ oAnimInitNode 配套） */
       width: '88%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `VipDialog`
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
@@ -3656,7 +3655,7 @@ oAnimInitNode 配套） */
       width: '86%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `ReaderFontDialog`
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
         this.fontDialog = null
@@ -6027,8 +6026,6 @@ oAnimInitNode 配套） */
   private foldStatusCb: ((s: display.FoldStatus) => void) | null = null;
   private foldHover: boolean = false;
   private foldGuardUntil: number = 0;
-  /** 阅读器底部 dock 的 HDS 控制器（2026-11-01 换 HdsTabs 后需要） */
-  private dockHdsController: HdsTabsController = new HdsTabsController();
   /**
    * 系统避让区变化回调（2026-11-01 新增，对齐官方最佳实践
    * `最佳实践/多设备功能开发/多设备适配屏幕差异/bpta-multi-device-screen-diff`）。
@@ -9408,32 +9405,20 @@ oAnimInitNode 配套） */
           // 出入场统一走 UiMotion 弹簧令牌（原 `{ duration: 500 }`）
           .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
           }
-          // ── 底部四图标：**真 Tabs**（2026-09-23 重构，用户点名要求）──────────────
-          // 【为什么必须换成 Tabs】官方对沉浸光感的生效范围有硬性限定（documentId
-          // `开发指南/ArkUI_方舟UI框架/…/沉浸光感/…/开启沉浸光感/arkts-immersive-light-sense-enable`）原文：
-          //   「沉浸光感开启后，除了弹窗类组件或方法、Slider、Toggle，其他组件**仅在**以下区域中生效：
-          //     Navigation/NavDestination 标题栏，或**横向 Tabs 中 barPosition 为 BarPosition.End
-          //     的底部 TabBar** 中。」
-          // 官方 FAQ 还给了反例原文：「位于 Navigation **内容区**中的 **Column** 组件…**不生效**
-          // 沉浸光感效果」，真机日志为
-          // `Material inactive: out of scope. Use component in navigation title bar or Tabbar.`
-          // ⇒ 原来这条自绘 Column + Grid 的"悬浮胶囊"**永远拿不到真材质**（只能毛玻璃模拟）。
-          //   官方唯一给"底部栏"开的口子，就是把它做成**真正的 Tabs 底部页签**。
-          //
-          // 【配方】与主页面底部页签逐条对齐（`pages/Index.ets:236-295`，已真机验证）：
-          //   · 悬浮样式生效三条件（官方原文）：「barOverlap 为 true、vertical 为 false、
-          //     barPosition 为 BarPosition.End，三个条件需同时满足，否则 systemMaterial 设置不生效。」
-          //   · 「设置悬浮材质后，**不建议**再通过 barBackgroundColor、barBackgroundBlurStyle
-          //      为 TabBar 设置背景色或背景模糊，避免遮挡材质效果」⇒ 本块**一个背景属性都不设**。
-          //   · 「TabContent 不支持设置沉浸光感」⇒ 材质只挂在 Tabs 上，TabContent 是空壳。
-          //   · 越界回弹会"扯出白区"⇒ `edgeEffect(EdgeEffect.None)`（与 Index.ets 同款修复）。
+          // ── 底部 dock：**顶栏同款自绘胶囊**（2026-11-02 定案）──────────────────
+          // 【历史】曾经为了拿沉浸光感材质，这里换过「真 Tabs」→「HdsTabs」两版。
+          //   两版都被真机否掉：材质的 bar 底色与 `gradientMask` 蒙层**跟随全局主题**
+          //   （官方默认蒙层 浅 `#CCF1F3F5` / 深 `#99000000`，且「蒙层高度不可设置为 0」）
+          //   ⇒ 「系统暗 + 阅读器亮」以及一镜到底转场时必然被带成暗色。
+          // 【现在】完全照抄**顶栏**（唯一从来不被污染的控件）：纯 ArkUI 节点 + 显式颜色，
+          //   不读 `NightMode.isDarkSurface()`、不用任何系统材质。实现与逐项依据见
+          //   `readerDockBar()` 的注释（圆角/留白/颜色值都在那里）。
           //
           // 【5 个页签 = 5 个动作，2026-10-13 由 4 个拆分而来】
           //   动作：0=目录 1=书签 2=听书 3=日夜 4=设置
-          //   为什么多一格：用户要求「目录和书签分离成两个按钮两个弹窗」。
           //   ⚠️ 动作 id 与页签位置**一一对应**（pos === action），下面 `ReaderBarItem(action, pos)`
           //      两套编号现在数值相同，但语义仍不同 —— 别合并成一个参数。
-          //   ⚠️ 动作由每个图标自己的 `onClick` 派发，**不要**改回 `Tabs.onTabBarClick()`
+          //   ⚠️ 动作由每个图标自己的 `onClick` 派发，**不要**改成 Tabs 的 `onTabBarClick`
           //      （真机实测：一次点击派发多次且第一个 index 恒为 0 ⇒ 点听书/设置都弹目录）。
           this.readerDockBar()
         }
@@ -9554,7 +9539,8 @@ oAnimInitNode 配套） */
    * （旧代码 `if (!this.isShowContentSetting) { 进度行 } else { 设置行 }`）⇒ 只能是硬切，
    * 而且页内节点永远拿不到真材质。
    * ⇒ 现在改成 `@CustomDialog`（`settingDialog`），与目录/听书完全一致：
-   *   **真材质 + 默认遮罩（0x33000000）+ 弹簧出入场**。
+   *   **默认遮罩（0x33000000）+ 弹簧出入场 + 顶栏同款显式底色**。
+   *   （2026-11-02：原先第 3 项是"真材质"，已下线 —— 材质由系统按整机模式渲染。）
    *
    * ── 为什么 UI 代码不用搬状态 ───────────────────────────────────────────────
    * 本 @Builder 由 `ReaderSettingDialog` 用 `@BuilderParam` 接收（写法 `content: () => {
@@ -9599,9 +9585,10 @@ oAnimInitNode 配套） */
         //   「传入的材质参数**仅作为开启沉浸光感的开关标记**，不影响实际视觉效果，
         //     实际使用组件内部预设的视觉参数，主要影响滑块大小、滑块样式、阴影等；
         //     传入 undefined 时沉浸光感不生效，恢复为原先的 Slider 样式。」
-        // ★ 滑条**不设材质**：本面板现在是 @CustomDialog 的真材质层，官方《沉浸光感功耗优化》
-        //   原文「同一子树中只需在**最外层**设置一次沉浸式系统材质，内层节点不应再设置」
-        //   ⇒ 真机实测内层滑条再设会出现黑色圆形蒙版（听书面板踩过同一个坑）。
+        // ★ 滑条**不设材质**（2026-11-02 起这条不再是硬约束：弹窗层已没有系统材质，
+        //   但仍保持不设 —— 省 GPU，且观感与改造前一致，用户没提过要滑条光效）。
+        //   历史上的硬约束原文（《沉浸光感功耗优化》）：「同一子树中只需在**最外层**设置一次
+        //   沉浸式系统材质，内层节点不应再设置」；真机实测内层滑条再设会出现黑色圆形蒙版。
         .borderRadius(20)
         .padding({ left: 8, right: 8 })
           .layoutWeight(1)
@@ -10395,7 +10382,7 @@ oAnimInitNode 配套） */
       //      真机截图实测（2026-09-23）：面板固定 560vp + 键盘弹起 ⇒ 顶边 ≈ −28vp，压住摄像头。
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `ReaderCatalogDialog`
       // 弹窗出入场：弹簧令牌（理由见 `listenDialog` 处的注释）
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
@@ -10430,13 +10417,13 @@ oAnimInitNode 配套） */
         }
       }),
       autoCancel: true,
-      // 位置/宽度/材质/动效与目录弹窗**逐项一致**：两个弹窗是一对，观感必须同一套。
+      // 位置/宽度/底色/动效与目录弹窗**逐项一致**：两个弹窗是一对，观感必须同一套。
       alignment: DialogAlignment.Bottom,
       offset: { dx: 0, dy: -CATALOG_DIALOG_BOTTOM_GAP },
       width: '92%',
       cornerRadius: 20,
       customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      // ★ 2026-11-02：不设 `systemMaterial`（理由见 `listenDialog` 那一段）；底色见 `ReaderBookmarkDialog`
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
@@ -10536,6 +10523,8 @@ oAnimInitNode 配套） */
     }
     .justifyContent(FlexAlign.Center)
     .height('100%')
+    // 每格等分胶囊宽度（原 `Tabs` / `HdsTabs` 的页签就是等分；`outerMinimal` 的 3 格同理会等分 3 份）
+    .layoutWeight(1)
     .clickEffect(UiMotion.CLICK)
     // ★★ 动作**由每个图标自己派发**（2026-09-23 真机修复）★★
     //   不要改回 `Tabs.onTabBarClick()`：真机实测一次点击它**会派发多次，且第一个
@@ -10670,7 +10659,7 @@ oAnimInitNode 配套） */
    *
    * 改造前：`this.isShowContentSetting = !this.isShowContentSetting`
    *   ⇒ 只是把底栏胶囊里的**进度行换成设置行** ⇒ 没有出入场、没有遮罩（用户真机反馈）。
-   * 现在：设置内容搬进 `@CustomDialog`（真材质 + 默认遮罩 + 弹簧），
+   * 现在：设置内容搬进 `@CustomDialog`（默认遮罩 + 弹簧 + 顶栏同款显式底色），
    *   `isShowContentSetting` 退化为**纯图标态**（实心/空心），不再影响布局。
    */
   private toggleSettingDialog(): void {
@@ -11067,81 +11056,56 @@ oAnimInitNode 配套） */
 
   /** 自绘层首屏已上屏 ⇒ 撤掉「正在排版…」占位（滚动 / 无动画共用） */
   /**
-   * 阅读器底部 dock（2026-11-01 换 HDS）。
+   * 阅读器底部 dock —— **顶栏同款自绘胶囊**（2026-11-02 定案，删掉 `HdsTabs` 与原生 `Tabs` 两个分支）。
    *
-   * 依据（官方文档原文）：
-   *  · 开发指南/UI_Design_Kit_UI设计套件/沉浸光感/ui-design-hds-component-material：
-   *    「**HDS 底部页签**：通过设置 HdsTabsFloatingStyle 的 systemMaterialEffect 参数，
-   *      可为底部页签设置沉浸光感视效。」
-   *  · …/组件适配沉浸光感/arkts-immersive-light-sense-component-adaptation：
-   *    「悬浮样式仅在 barOverlap 为 true、vertical 为 false、barPosition 为 BarPosition.End
-   *      时生效」——本实现三项全满足。
-   *  · 原生 Tabs 的悬浮材质**只在有滚动内容时才渲染**（实测：只有上下档出胶囊）
-   *    ⇒ 换 HDS 的底部页签组件，四档统一。
+   * ── 为什么改成这样（用户真机反复验证 + 代码取证）──────────────────────────────
+   * 顶栏是**唯一从来不被污染**的控件，它的实现就是答案：纯 ArkUI 节点 + 显式颜色 ——
+   * `this.colorMode == 0 ? 'rgba(31, 31, 31, 0.86)' : 'rgba(250, 250, 250, 0.90)'`。
+   * 它**不读** `NightMode.isDarkSurface()`、**不用**系统材质 ⇒ 既跟阅读器日/夜间，
+   * 又不会被「全局亮暗 / 一镜到底转场」带偏，且在四档阅读方式里都正常显示。
+   * 而 `HdsTabs` 的 bar 底色与 `gradientMask` 蒙层默认值都跟随**全局主题**
+   * （官方默认蒙层 浅 `#CCF1F3F5` / 深 `#99000000`，且「蒙层高度不可设置为 0」）
+   * ⇒ 「系统暗 + 阅读器亮」时必然被系统带成暗色。
+   * 这里用的**就是顶栏那两个色值**（用户认可的观感基准，不要自创色值）。
    *
-   * 一键回退：HdsCompat.supportsFloatingBar() 返回 false（API<23）即走 else 分支的
-   * 旧原生 Tabs（与改造前完全一致）。
+   * ── 纯色半透明 ⇒ 仿真/横滑档也画得出来（写清，别再走回材质）──────────────────
+   * 那两档的正文是 `ReadPageComponent` 的 XComponent surface。**采不到 surface 内容**的是
+   * 「材质 / 模糊 / gradientMask」这类需要采样背景的效果；纯色半透明不需要采样，直接合成在
+   * surface 之上 ⇒ 顶栏已证明（它在四档里都正常）。
+   * ⇒ 这一版同时解决了「仿真 / 横滑档 dock 看不到底板」的历史问题。
+   *
+   * ── 几何（逐项对齐原 `HdsTabsFloatingStyle`，观感不偏移）──────────────────────
+   *   · `.height(READER_BAR_HEIGHT)`（60）+ `.borderRadius(30)` + `.clip(true)` ⇒ 半高胶囊；
+   *   · 左右各 16vp（原 `barSideMargin: 16`）⇒ `.width('calc(100% - 32vp)')`（父 Column 居中）；
+   *   · 底部留 `bottomRectHeight + READER_BAR_BOTTOM_GAP`（原 `barBottomMargin`）；
+   *   · 5 个图标项仍由 `barActions()` + `ReaderBarItem(a, i)` 渲染，**交互一行未改**
+   *     （点击仍由每个图标自己的 `onClick` 派发，见 `ReaderBarItem` 的注释）。
+   *
+   * `calc` 取证：documentId `API参考/ArkUI_方舟UI框架/ArkTS组件/通用属性/布局与边框/尺寸设置/ts-universal-attributes-size`
+   *   「从API version 10开始，该接口支持calc计算特性」，官方示例
+   *   `.size({ width: 'calc(50% + 50vp)', height: 'calc(50%)' })`（% 与 vp 混算）。
+   * ⚠️ 不要改成 `width('100%')` + 左右 margin：同文档 margin 一节原文「设置组件的外边距属性。
+   *    在计算位置时外边距视为组件大小的一部分」⇒ 100% 再加 32vp 会横向溢出。
    */
   @Builder
   readerDockBar() {
-    if (HdsCompat.supportsFloatingBar()) {
-      HdsTabs({ barPosition: BarPosition.End, controller: this.dockHdsController }) {
-        ForEach(this.barActions(), (a: number, i: number) => {
-          TabContent() {
-            Column()
-          }.tabBar(this.ReaderBarItem(a, i))
-        }, (a: number) => 
-'readerbar-hds-' + a)
-      }
-      .scrollable(false)
-      // HdsTabsAttribute 没有 edgeEffect（SDK 声明），HDS 分支不设该属性
-      .barHeight(READER_BAR_HEIGHT)
-      .barOverlap(true)
-      .attributeModifier(this.dockHdsStyleModifier())
-      .backgroundColor(Color.Transparent)
-      .width('100%')
-      .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
-      .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
-    } else {
-      Tabs({ barPosition: BarPosition.End }) {
-        ForEach(this.barActions(), (a: number, i: number) => {
-          TabContent() {
-            Column()
-          }.tabBar(this.ReaderBarItem(a, i))
-        }, (a: number) => 
-'readerbar-' + a)
-      }
-      .scrollable(false)
-      .edgeEffect(EdgeEffect.None)
-      .barHeight(READER_BAR_HEIGHT)
-      .barOverlap(ImmersiveMaterialUtil.floatingTabBarAvailable())
-      .attributeModifier(ImmersiveMaterialUtil.tabsFloatingModifier(
-        this.bottomRectHeight + READER_BAR_BOTTOM_GAP))
-      .backgroundColor(ImmersiveMaterialUtil.floatingTabBarAvailable()
-        ? Color.Transparent
-        : this.readerSetting.themeColor)
-      .width('100%')
-      .height(READER_BAR_HEIGHT + READER_BAR_BOTTOM_GAP + this.bottomRectHeight)
-      .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
+    Row() {
+      ForEach(this.barActions(), (a: number, i: number) => {
+        this.ReaderBarItem(a, i)
+      }, (a: number) => 'readerbar-' + a)
     }
-  }
-
-  /** dock 的 HDS 悬浮样式（含沉浸光感材质）；低版本/材质关闭时挂空实现 */
-  private dockHdsStyleModifier(): AttributeModifier<HdsTabsAttribute> {
-    if (!HdsCompat.supportsFloatingBar()) {
-      return HdsCompat.NOOP_MODIFIER;
-    }
-    const st: HdsTabsFloatingStyle = {
-      barSideMargin: 16,
-      barBottomMargin: this.bottomRectHeight + READER_BAR_BOTTOM_GAP
-    // ★ 2026-11-01 用户拍板：**不要沉浸光感材质**，四档统一成 HDS 普通 bar。
-    //   原因：仿真/横滑画面是 ReadPageComponent 的 XComponent surface，材质采不到 surface 内容
-    //   ⇒ 那两档永远出不来胶囊（实测 3 轮，含 zIndex 提层）。统一去掉材质后四档由 HdsTabs 画同一条 bar。
-    //   一键恢复玻璃：把 if (ImmersiveMaterialUtil.isOn()) { st.systemMaterialEffect = {…} } 那一段恢复即可。
-
-
-    }
-    return new HdsFloatingStyleModifier(st);
+    .height(READER_BAR_HEIGHT)
+    // 左右各留 16vp（原 `HdsTabsFloatingStyle.barSideMargin: 16`）
+    .width('calc(100% - 32vp)')
+    .borderRadius(30)
+    .clip(true)
+    // ★ 与顶栏**完全相同的两个色值**（`ReaderPage3` 顶栏胶囊那两行）
+    .backgroundColor(this.colorMode == 0
+      ? 'rgba(31, 31, 31, 0.86)'
+      : 'rgba(250, 250, 250, 0.90)')
+    // 底部留白：系统底部安全区 + 与顶栏同口径的 10vp 间隙
+    .margin({ bottom: this.bottomRectHeight + READER_BAR_BOTTOM_GAP })
+    .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation(UiMotion.transitionParam()))
   }
   /**
    * 折叠形态识别 + 切换保护（2026-11-01，官方 pta-multi-device-screen-diff）。

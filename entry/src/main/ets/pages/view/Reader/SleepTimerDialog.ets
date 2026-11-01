@@ -1,4 +1,4 @@
-import { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
 
@@ -23,11 +23,11 @@ import { Haptics } from '../../../common/utils/Haptics'
  *   ⇒ 时/分两只滚轮同样用 `TextPicker`（**不是** `TimePicker`）。
  *   ⚠️ `TimePicker`（时钟选择器）已于 2026-10-06 **整体弃用**：它是"选目标时刻"的
  *      墙上时钟 API，与"再听多久"的计时语义不匹配（用户原话见下）。
- * · **材质**：走 `CustomDialogControllerOptions.systemMaterial`
- *   （`custom_dialog_controller.d.ts:681`，@since 26.0.0）+ `customStyle:false`，
- *   与长按书籍弹窗/加入书单弹窗同款 ⇒ 悬空四圆角 + 半透明沉浸光感。
- *   （⚠️ 这是**小弹窗**，不受 sheet 的 `detents` 限制，所以能上真材质；
- *     听书那个大面板做不到，见其注释。）
+ * · **底色（2026-11-02 改）**：原来走 `CustomDialogControllerOptions.systemMaterial`
+ *   （`custom_dialog_controller.d.ts:681`，@since 26.0.0）+ `customStyle:false` 拿沉浸光感，
+ *   但材质**由系统按整机模式渲染** ⇒ 「系统暗 + 阅读器亮」以及一镜到底转场时会被带成暗色。
+ *   现在改成**顶栏同款的显式底色**（`ImmersiveMaterialUtil.READER_PANEL_*`），
+ *   按**阅读器**的 `@StorageLink('readerColorMode')` 取色；options 里**不再有** `systemMaterial`。
  *
  * ── 到点暂停 ──────────────────────────────────────────────────────────────
  * 底层能力**早已存在且未被改动**：`TtsEngine.setSleepTimer(chapters, minutes)`、
@@ -102,18 +102,16 @@ export struct SleepTimerDialog {
   }
 
   /**
-   * 材质背板（调用方已通过 options 提供材质 ⇒ 传 true 让出背景）。
-   * 兜底色按日夜模式给：材质不可用（`ImmersiveMaterialUtil.ENABLED = false` /
-   * 设备不支持）时才会落到它，夜里必须是深底，否则白色兜底 + 白色文字。
+   * 底色（2026-11-02）：**顶栏同款的显式色**，按**阅读器**亮暗，画在 build 的根 Column 上。
+   * 以前这里是 `MaterialColumnModifier(兜底色, true)` + options 的 `systemMaterial`。
    */
-  private surface: MaterialColumnModifier = new MaterialColumnModifier(Color.White, true)
 
   /**
    * 次级按钮（取消 / 重置）的底色 —— 夜间要反过来用"淡白"。
    *
    * 原先写死 `'rgba(0, 0, 0, 0.06)'` 底 + `'rgba(0, 0, 0, 0.88)'` 字。
-   * 本弹窗的背景由**沉浸光感材质**提供（`systemMaterial`，见文件头），
-   * 而材质底色跟随**应用配色**（夜间 = 深底）⇒ 写死的黑字黑底会直接看不见。
+   * 本弹窗的底色现在由**阅读器自己的**亮暗决定（顶栏同款显式色，见文件头），
+   * 夜间是深底 ⇒ 写死的黑字黑底会直接看不见。
    * 证据与整体方案见 `ReaderPage3.syncAbilityColorMode()` 的注释。
    */
   private subBtnBg(): string {
@@ -156,9 +154,6 @@ export struct SleepTimerDialog {
     const initMin = this.initMinutes > 0 ? Math.min(this.initMinutes, 23 * 60 + 59) : 0;
     this.selHours = Math.floor(initMin / 60);
     this.selMinutesPart = initMin % 60;
-    // 材质不可用时的兜底色（夜里给深底，否则白底 + 白字）
-    this.surface = new MaterialColumnModifier(
-      this.colorMode == 0 ? '#1F1F1F' : Color.White, true);
   }
 
   /** 选中项在 `chapterOptions` 中的下标（0 = 关） */
@@ -352,6 +347,10 @@ export struct SleepTimerDialog {
     .width('100%')
     .padding(20)
     .borderRadius(20)
-    .attributeModifier(this.surface)
+    // ★ 2026-11-02：顶栏同款显式底色（按**阅读器**亮暗，不再走系统材质 —— 见文件头注释）；
+    //   `clip(true)` 防止子节点/直角顶出圆角（与目录、听书面板同款写法）
+    .clip(true)
+    // ★ 2026-11-02：顶栏同款显式底色（按**阅读器**亮暗，不再走系统材质 —— 见文件头注释）
+    .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }

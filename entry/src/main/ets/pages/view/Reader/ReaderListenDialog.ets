@@ -3,7 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit'
 import { TtsPrefs } from '../../../tts/TtsPrefs'
 import { TtsState } from '../../../tts/TtsEngine'
 import { TtsControlPanel } from '../../../components/tts/TtsControlPanel'
-import { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 // ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics'
 
@@ -19,6 +19,10 @@ import { Haptics } from '../../../common/utils/Haptics'
  *   前提是 `customStyle: false`（`custom_dialog_controller.d.ts:130-134`：
  *   「When this parameter is set to true: 1. The rounded corner radius is 0, and
  *     the background color is transparent.」）且内容层让出背景。
+ *   ⚠️ **2026-11-02 起不再用材质**：沉浸光感由系统按**整机**模式渲染
+ *   ⇒ 「系统暗 + 阅读器亮」/ 一镜到底转场时面板会被带成暗色（用户看到黑底黑字）。
+ *   现在底色是**顶栏同款的显式色**（`ImmersiveMaterialUtil.READER_PANEL_*`），
+ *   按 `@StorageLink('readerColorMode')` 取，同时也不再需要"内容层让出背景"。
  *
  * ── ⚠️ 上次翻车的根因 · 这次必须守住的铁律 ────────────────────────────────
  * 2026-09-22 曾把听书面板改成 CustomDialog，结果「点击就全屏 + 播放按钮 UI 不更新 +
@@ -118,12 +122,10 @@ export struct ReaderListenDialog {
    * 之后用户仍可手动换挡（顶部把手），**不会**被再次强制改写。
    */
   @State expanded: boolean = false
-  /** 材质背板：材质可用 ⇒ 内容层一个背景属性都不设；不可用 ⇒ 落回改造前的实底纯色 */
-  private surface: MaterialColumnModifier = new MaterialColumnModifier('#1F1F1F', true)
+  // 面板底色不在这里：由 build 的根 Stack 直接画（2026-11-02）——**顶栏同款的显式色**，
+  // 按 `@StorageLink('readerColorMode')` 取，**不走**系统材质（`systemMaterial`）。
 
   aboutToAppear(): void {
-    this.surface = new MaterialColumnModifier(
-      this.colorMode == 0 ? '#1F1F1F' : 'rgba(248, 249, 250, 1)', true)
     // ── 听书开启时默认全窗（2026-10-12 用户要求）────────────────────────────
     // 判据 = 引擎是否在播/暂停（`ttsState !== 'stopped'`）。
     // 为什么放在 `aboutToAppear`（而不是用 @Watch 跟 ttsState）：
@@ -254,7 +256,10 @@ export struct ReaderListenDialog {
       // ★ 内保护内边距：与原 sheet 内容层**逐字一致**（面板自己还有 20/12/16 的内边距，
       //   两者叠加才是最终留白；收起档的空间账就是按这套算的，不要单独改这里）。
       .padding({ left: 16, right: 16, top: 20, bottom: 20 })
-      .attributeModifier(this.surface)
+      // ★ 2026-11-02：**顶栏同款显式底色**（按**阅读器**亮暗）。原来是"内容层一个背景属性
+      //   都不设"、交给 options 的 `systemMaterial` 画 —— 那是系统按**整机**模式渲染的材质
+      //   ⇒ 「系统暗 + 阅读器亮」/ 一镜到底转场时面板被带成暗色（黑底黑字）。
+      .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
 
       // ── 两段换挡把手 ──────────────────────────────────────────────────
       // 覆盖在**上内边距那 20vp 里**（Stack 顶层对齐），**不占布局高度**

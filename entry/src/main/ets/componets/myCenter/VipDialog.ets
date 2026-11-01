@@ -17,6 +17,45 @@ import { Haptics } from '../../common/utils/Haptics'
 import UiMotion from '../../common/utils/UiMotion'
 import { IapManager } from '../../common/utils/IapManager'
 import { VipManager } from '../../common/utils/VipManager'
+import { READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../common/utils/ImmersiveMaterialUtil'
+
+/**
+ * 内容层底色 —— **只给阅读器宿主**用（2026-11-02）。
+ *
+ * 为什么用 `AttributeModifier` 而不是三元 `backgroundColor(...)`：
+ * 本组件是**共享**的（阅读器 / 我的页 / 书架 / 字体管理 都在用）。那些宿主的老行为是
+ * 「内容层**不设**背景，敞开让弹窗层（`CustomDialogControllerOptions.systemMaterial` 沉浸光感）
+ * 去画」。一旦这里无条件写上 `backgroundColor`，那些宿主就会被这层实底盖住材质
+ * ⇒ 必须留一个"什么都不做"的分支。
+ *
+ * 阅读器宿主（`readerPanel = true`）要的恰恰相反：底色必须**显式**、
+ * 且由**阅读器自己的**亮暗决定 —— 沉浸光感是系统按**整机**模式渲染的，
+ * 「系统暗 + 阅读器亮」时会把弹窗带成暗色（用户看到黑底黑字）。
+ * 色值取**顶栏同款**（`ImmersiveMaterialUtil.READER_PANEL_*`），不自创。
+ */
+class VipPanelBg implements AttributeModifier<ColumnAttribute> {
+  private readonly readerPanel: boolean;
+  private readonly dark: boolean;
+
+  constructor(readerPanel: boolean, dark: boolean) {
+    this.readerPanel = readerPanel;
+    this.dark = dark;
+  }
+
+  applyNormalAttribute(instance: ColumnAttribute): void {
+    if (!this.readerPanel) {
+      // 非阅读器宿主：保持原行为（不设背景，让弹窗层的材质透出来）
+      return;
+    }
+    instance.backgroundColor(this.dark ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG);
+    // 弹窗层的圆角是 options 里的 20；内容层自己画底必须**同值 + 裁切**，
+    // 否则直角会把弹窗的圆角顶掉（工程里目录/书签/听书面板都是这个写法）。
+    // 证据：`clip(value: boolean): T;`（`component/common.d.ts:21161`）、
+    //      `borderRadius(value: Length | BorderRadiuses): T;`（同文件 `:18250`）。
+    instance.borderRadius(20);
+    instance.clip(true);
+  }
+}
 
 @CustomDialog
 export struct VipDialog {
@@ -33,6 +72,20 @@ export struct VipDialog {
 
   /** 关闭回调：关闭权在页面（与更多方案同款协调方式） */
   onClose: () => void = (): void => {}
+
+  /**
+   * 阅读器宿主（2026-11-02 新增）：**true 时由本组件自己画"顶栏同款"显式底色**。
+   * 默认 `false` ⇒ 保持书架 / 我的 / 字体管理那些宿主的老行为（底色仍由弹窗层的
+   * `systemMaterial` 提供，一行都不变）。见 `VipPanelBg` 的注释。
+   */
+  @Prop readerPanel: boolean = false
+
+  /** 内容层底色修饰器（`readerPanel` 为 false 时**什么都不做**） */
+  private panelBg: AttributeModifier<ColumnAttribute> = new VipPanelBg(false, false)
+
+  aboutToAppear(): void {
+    this.panelBg = new VipPanelBg(this.readerPanel, this.dark)
+  }
 
   /** VIP 特权清单（用户要求"说清楚解锁了什么能力"；2026-10-01 新增自定义主题
    *  ；2026-10-07 新增防窥保护） */
@@ -157,5 +210,7 @@ export struct VipDialog {
     }
     .width('100%')
     .padding(20)
+    // 底色：阅读器宿主才画（顶栏同款显式色）；其它宿主保持"让弹窗层画"（见 `VipPanelBg`）
+    .attributeModifier(this.panelBg)
   }
 }
