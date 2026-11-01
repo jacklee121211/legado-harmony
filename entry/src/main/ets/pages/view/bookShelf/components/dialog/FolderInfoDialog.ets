@@ -546,9 +546,9 @@ export default struct FolderInfoDialog{
       this.openGroupActionDialog(
         `删除「${this.itemData.groupName ?? ''}」`,
         `全部删除：${subCount} 个子文件夹、${bookCount} 本书一并删除（不可恢复）`,
-        '保留有书的子文件夹：空文件夹删除，有书的子文件夹上提一级',
+        '保留子文件夹：本组自己的书删除，子文件夹（含空目录）上提一级',
         '全部删除',
-        '保留有书的子文件夹',
+        '保留子文件夹',
         (): void => { this.deleteGroup() },
         (): void => { this.deleteGroupKeepChildFolders() }
       )
