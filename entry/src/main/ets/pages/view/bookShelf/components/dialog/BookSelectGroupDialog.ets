@@ -299,67 +299,74 @@ export default struct BookSelectGroupDialog{
     Row({ space: 6 }) {
       Row().width(row.depth * 14)
       if (row.hasChildren) {
+        // 2026-11-01：展开箭头独立成「左区」，行内选择只挂在中区 ⇒ 点箭头不会再触发选择
+        //   （单书移动时选择会立刻弹确认框，导致看起来"展不开"）
         SymbolGlyph(this.isExpanded(row.group.groupId ?? -1) ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
           .fontSize(16)
           .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.72)' : 'rgba(0,0,0,0.60)'])
+          .padding({ left: 2, right: 6, top: 10, bottom: 10 })
           .onClick(() => {
             this.toggleExpand(row.group.groupId ?? -1)
           })
       } else {
         Row().width(16)
       }
-      SymbolGlyph($r('sys.symbol.folder'))
-        .fontSize(18)
-        .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#000000'])
-      Text(row.group.groupName).fontSize(14).maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Blank()
-      if (this.disabledIds.indexOf(row.group.groupId ?? -1) >= 0) {
-        Text('不可选').fontSize(11).fontColor('rgb(174,174,174)')
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.folder'))
+          .fontSize(18)
+          .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#000000'])
+        Text(row.group.groupName).fontSize(14).maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Blank()
+        if (this.disabledIds.indexOf(row.group.groupId ?? -1) >= 0) {
+          Text('不可选').fontSize(11).fontColor('rgb(174,174,174)')
+        }
+        // 2026-11-01：标出"当前所在分组"，点它是展开而不是选中
+        if (this.oldGroupId === (row.group.groupId ?? -1)) {
+          Text('当前').fontSize(11).fontColor('rgb(174,174,174)')
+        }
       }
-      // 2026-11-01：标出"当前所在分组"，点它是展开而不是选中
-      if (this.oldGroupId === (row.group.groupId ?? -1)) {
-        Text('当前').fontSize(11).fontColor('rgb(174,174,174)')
-      }
+      .layoutWeight(1)
+      .height('100%')
+      .onClick(() => {
+        const id: number = row.group.groupId ?? -1
+        if (id <= 0) {
+          return
+        }
+        // 2026-11-01：点到"书/分组当前所在分组"时不再静默返回 ——
+        //   它是文件夹 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
+        if (this.oldGroupId === id) {
+          if (row.hasChildren) {
+            this.toggleExpand(id)
+          } else {
+            showMessage(this.isMoveGroupNode ? '目标就是当前分组' : '书已经在这个分组里')
+          }
+          return
+        }
+        if (this.disabledIds.indexOf(id) >= 0) {
+          showMessage('不能移动到自身或其子目录')
+          return
+        }
+        if (this.isMoveGroupNode) {
+          Haptics.tap()
+          this.moveGroupNode(id, row.group.groupName)
+          return
+        }
+        if (this.isManageMode) {
+          this.openManageDialog(row.group)
+          return
+        }
+        Haptics.tap()
+        this.moveGroupId = id
+        this.moveTitle = row.group.groupName
+        this.clickBookTypeDialog?.open()
+      })
     }
     .width('100%')
     .height(46)
     .padding({ left: 12, right: 12 })
     .borderRadius(10)
     .backgroundColor(ShelfColors.chip())
-    .onClick(() => {
-      const id: number = row.group.groupId ?? -1
-      if (id <= 0) {
-        return
-      }
-      // 2026-11-01：点到"书/分组当前所在分组"时不再静默返回 ——
-      //   它是文件夹 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
-      if (this.oldGroupId === id) {
-        if (row.hasChildren) {
-          this.toggleExpand(id)
-        } else {
-          showMessage(this.isMoveGroupNode ? '目标就是当前分组' : '书已经在这个分组里')
-        }
-        return
-      }
-      if (this.disabledIds.indexOf(id) >= 0) {
-        showMessage('不能移动到自身或其子目录')
-        return
-      }
-      if (this.isMoveGroupNode) {
-        Haptics.tap()
-        this.moveGroupNode(id, row.group.groupName)
-        return
-      }
-      if (this.isManageMode) {
-        this.openManageDialog(row.group)
-        return
-      }
-      Haptics.tap()
-      this.moveGroupId = id
-      this.moveTitle = row.group.groupName
-      this.clickBookTypeDialog?.open()
-    })
     .margin({ bottom: PaddingConstants.PADDING_16 })
   }
 
