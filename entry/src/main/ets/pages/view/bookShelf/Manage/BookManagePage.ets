@@ -379,6 +379,8 @@ export default struct BookManagePage {
       //   回退/微调：只改这一个表达式即可。
       ShareGuideTip({ active: this.checkListNumber.length > 0 })
         .margin({ top: this.topRectHeight + 8 })
+        // 2026-11-01：碰一碰提示只是动画层，不能吃触摸，否则会挡住顶部「完成」按钮
+        .hitTestBehavior(HitTestMode.None)
     }
     .width('100%')
     .height('100%')
