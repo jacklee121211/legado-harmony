@@ -604,10 +604,6 @@ export default struct BookInfoDialogs{
       // 配套：`BookSelectGroupDialog` 的根 Column 用 `MaterialColumnModifier(Color.White, true)`
       // 让出背景（否则白底会挡住材质）。
       systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      // 2026-11-01：与「移动分组」弹窗保持一致的高度。
-      //   组件内列表是 `.height('65%')`，若弹窗自适应高度，65% 会算得很小 ⇒
-      //   展开出来的子行被裁掉，表现为「点箭头没反应」。分组移动一直有 height，所以正常。
-      height: 400,
       // 遮罩 / 返回键：与取消按钮同一条收尾路径 —— **必须真的 close 子弹窗**，
       // 否则同样会出现"子弹窗还在、父弹窗冒出来"（2026-10-12 一并修）。
       cancel: (): void => {
