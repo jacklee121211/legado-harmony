@@ -189,7 +189,10 @@ export default struct ShareGuideTip {
         .transition(TransitionEffect.OPACITY.animation({ duration: 220 }))
       }
     }
-    .width('100%')
+    // 2026-11-01：不再铺满全宽 —— 只在气泡实际区域参与布局/命中，
+    //   左侧「返回/完成」等按钮区不再被这层盖住（用户：左右按钮点不动）。
+    .width(this.visible ? 'auto' : 0)
+    .constraintSize({ maxWidth: '90%' })
     // ⚠️ 显式高度（隐藏时 0）：见 capsuleHeight 注释 —— 不给就会被 overlay 撑到整屏高、
     //    吃掉整页命中测试（2026-10-25 真机回归，日志取证 `docs/日志.md:7` 等）。
     .height(this.visible ? this.capsuleHeight : 0)
