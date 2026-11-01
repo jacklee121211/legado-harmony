@@ -40,6 +40,9 @@ export class BookGroups {
   isTop:boolean = false
   //是否系统参数
   isSystem:boolean = false
+  //父分组Id（0 = 根级）；多级文件夹 2026-11-01 新增
+  //  ⚠️ 只支持「新增列」的自动迁移（`AppDatabaseUtil.existsTable`），旧库由 `ALTER TABLE ADD COLUMN` 补默认 0
+  parentId:number = 0
   //书籍Id
   bookIds?:string[]
 }
@@ -69,6 +72,7 @@ export const ToBookGroups = (bookGroupsDb: BookGroupDb) => {
     canDelete: bookGroupsDb.canDelete,
     isTop: bookGroupsDb.isTop,
     isSystem: bookGroupsDb.isSystem,
+    parentId: bookGroupsDb.parentId ?? 0,
     bookIds
   }
   return bookGroups
@@ -101,6 +105,7 @@ export const ToBookGroupsDb = (bookGroups: BookGroups) => {
     canDelete: bookGroups.canDelete,
     isTop: bookGroups.isTop,
     isSystem: bookGroups.isSystem,
+    parentId: bookGroups.parentId ?? 0,
     bookIds
   }
   return bookGroupsDb
