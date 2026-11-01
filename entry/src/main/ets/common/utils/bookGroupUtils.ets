@@ -146,8 +146,7 @@ class bookGroupUtils{
         bookSnap.push(b)
       }
     }
-    try {
-      if (mode === 'collapse') {
+    try {      if (mode === 'collapse') {
         // 2026-11-01：**全部解散** —— 整棵子树的书全部上提到父级，子树目录行全删
         const tree: GroupTree = GroupTree.build(groups)
         const ids: number[] = tree.subtreeIds(id)
