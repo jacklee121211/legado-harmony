@@ -429,7 +429,9 @@ export default struct BookSelectGroupDialog{
         .padding(PaddingConstants.PADDING_20)
       }
       .align(Alignment.Top)
-      .height('65%')
+      // 2026-11-01：固定 65% 改为吃满剩余空间（layoutWeight(1)）——
+      //   行数随展开增长时，65% 在部分弹窗高度下会不够，展开出来的子行被挤到视口外。
+      .layoutWeight(1)
       .scrollBar(BarState.Off)
       // ★ 2026-10-25 官方 UX 自检 2.1.5.3.3「滑动过界反馈动效一致性」修复：
       //   `scroll.d.ts`「Default value: **EdgeEffect.None**」⇒ 本弹窗滚动容器是 `Scroll`，
