@@ -378,8 +378,10 @@ export default struct BookFolder {
       .padding(2)
       .hitTestBehavior(HitTestMode.None)
     }
-    .width(88)
-    .height(120)
+    // 2026-11-01：不再写死 88×120（会比书籍卡窄），改为撑满列宽 + 书封比例，
+    // 与分组内书籍卡片同宽同高（用户：「四宫格明显比书窄，统一才好看」）。
+    .width('100%')
+    .aspectRatio(0.72)
     .borderRadius(8)
     .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)')
     .border({
