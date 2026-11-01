@@ -768,9 +768,10 @@ export default struct FolderInfoDialog{
       showMessage('解散失败')
       console.error('applyDissolve failed: ' + JSON.stringify(e))
     } finally {
-      this.cancel()
+      // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+      this.cancel()
     }
   }
 
@@ -817,9 +818,10 @@ export default struct FolderInfoDialog{
       showMessage('删除失败')
       console.error('deleteGroupKeepChildFolders failed: ' + JSON.stringify(e))
     } finally {
-      this.cancel()
+      // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+      this.cancel()
     }
   }
 
@@ -849,9 +851,10 @@ export default struct FolderInfoDialog{
       showMessage('删除失败')
       console.error('deleteGroup failed: ' + JSON.stringify(e))
     } finally {
-      this.cancel()
+      // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+      this.cancel()
     }
   }
 
@@ -1021,9 +1024,10 @@ export default struct FolderInfoDialog{
       showMessage('合并失败')
       console.error('applyMergeMove failed: ' + JSON.stringify(e))
     } finally {
-      this.cancel()
+      // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+      this.cancel()
     }
   }
 
@@ -1044,9 +1048,10 @@ export default struct FolderInfoDialog{
       showMessage('重命名失败')
       console.error('renameGroupAndMove failed: ' + JSON.stringify(e))
     } finally {
-      this.cancel()
+      // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+      this.cancel()
     }
   }
 
