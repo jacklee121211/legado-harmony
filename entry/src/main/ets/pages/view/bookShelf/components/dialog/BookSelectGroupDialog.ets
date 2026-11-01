@@ -169,7 +169,7 @@ export default struct BookSelectGroupDialog{
     }
     const tree: GroupTree = GroupTree.build(this.groupList)
     const path: BookGroups[] = tree.pathOf(id)
-    const names: string[] = ['分组']
+    const names: string[] = ['根目录']
     for (const g of path) {
       names.push(g.groupName)
     }
