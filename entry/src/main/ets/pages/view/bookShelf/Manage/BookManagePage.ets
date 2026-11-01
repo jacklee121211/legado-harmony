@@ -181,6 +181,21 @@ export default struct BookManagePage {
       type: this.currentIndex
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
+    // 2026-11-01：自定义分组内只保留该组子树（区块展示用）
+    if (this.bookTypeNumber >= 5) {
+      const t0: GroupTree = GroupTree.build(val)
+      const ids: number[] = t0.subtreeIds(this.bookTypeNumber)
+      const sub: BookGroups[] = []
+      for (const g of val) {
+        if (g.groupId !== undefined && ids.indexOf(g.groupId) >= 0) {
+          sub.push(g)
+        }
+      }
+      val.length = 0
+      for (const g of sub) {
+        val.push(g)
+      }
+    }
     // 2026-11-01：按「父 → 其子 → 孙 → 下一个父」的 DFS 顺序展开（原来平铺，层级看不出来）
     const tree: GroupTree = GroupTree.build(val)
     const out: BookGroups[] = []
@@ -243,6 +258,11 @@ export default struct BookManagePage {
     if (this.bookTypeNumber === 1) {
       this.getGroupList()
       this.isMoveStatus = 1
+    } else if (this.bookTypeNumber >= 5) {
+      // 2026-11-01：自定义分组内 ⇒ 子树区块 + 该组书籍（双数据源）
+      this.getGroupList()
+      this.getBookList()
+      this.isMoveStatus = 0
     } else {
       // 2026-10-25：书单分支（`=== 5`）随书单功能删除
       this.getBookList()
@@ -366,7 +386,7 @@ export default struct BookManagePage {
     HdsTabs({ index: 0, barPosition: BarPosition.End, controller: this.manageTabController }) {
       TabContent() {
         Scroll(){
-          // 2026-10-25：书单分支（`bookTypeNumber === 5`）整块删除 ⇒ 只剩「分组 / 书籍」两路
+          // 2026-11-01：自定义分组内进入 ⇒ **子树区块 + 该组自己的书**（用户拍板）
           if (this.bookTypeNumber === 1){
             BookFolderManages({
               checkGroup:this.checkLists,
@@ -376,6 +396,26 @@ export default struct BookManagePage {
                 this.listenCheckList()
               }
             })
+          } else if (this.bookTypeNumber >= 5 && this.bookGroups.length > 0) {
+            Column({ space: 8 }) {
+              BookFolderManages({
+                checkGroup:this.checkLists,
+                EXHIBIT:this.EXHIBIT,
+                bookGroups:this.bookGroups,
+                onSelect:()=>{
+                  this.listenCheckList()
+                }
+              })
+              bookListManage({
+                checkGroup:this.checkLists,
+                EXHIBIT:this.EXHIBIT,
+                bookList:this.bookList,
+                onSelect:()=>{
+                  this.listenCheckList()
+                }
+              })
+            }
+            .width('100%')
           } else {
             bookListManage({
               checkGroup:this.checkLists,
