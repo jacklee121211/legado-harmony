@@ -75,6 +75,8 @@ export default struct FolderCard {
   }
 
   build() {
+    // 单一根容器（ArkTS 要求）：角色差异只用内部 if/else 表达
+    Column() {
     if (this.role === 'cell') {
       // 父卡里的格子：三层叠 + 自己的封面
       Stack({ alignContent: Alignment.Center }) {
@@ -120,6 +122,7 @@ export default struct FolderCard {
           .width('100%')
       }
       .padding({ left: 6, right: 6, top: 4, bottom: 8 })
+    }
     }
     // 点击/长按统一由外部注入（与层级无关）
     .onClick(() => {

@@ -22,6 +22,7 @@ import { BookGroups } from '../../../../database/entities/BookGroups'
 import { Books } from '../../../../database/entities/Books'
 import BooksDao from '../../../../database/dao/BooksDao'
 import FolderInfoDialog from './dialog/FolderInfoDialog'
+import FolderCard, { FolderCell } from './FolderCard'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupTree } from '../../../../common/group/GroupTree'
@@ -274,6 +275,9 @@ export default struct BookContentRefresh {
     try {
       const all: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
       const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-01：统一父子框架 —— 当前树留一份，供子卡片算"子分组在前、书在后"的格子
+      this.allGroups = all
+      this.tree = tree
       const path: BookGroups[] = tree.pathOf(id)
       const chips: PathChip[] = [{ id: 1, name: '分组' }]
       for (const g of path) {
@@ -319,8 +323,49 @@ export default struct BookContentRefresh {
     return ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
   }
 
-  private previewCells: number[] = [0, 1, 2, 3]
+  /** 当前分组的树快照（供子卡片算格子） */
+  private allGroups: BookGroups[] = []
+  private tree: GroupTree | null = null
 
+  /** 子分组卡片的 2×2 格子：子分组在前（三层叠）、书在后（真实封面），最多 4 格 */
+  private cellsOf(g: BookGroups): FolderCell[] {
+    const out: FolderCell[] = []
+    const gid: number = g.groupId ?? -1
+    if (this.tree !== null) {
+      for (const k of this.tree.childrenOf(gid)) {
+        if (!k.show || out.length >= 4) {
+          continue
+        }
+        out.push({ isFolder: true, cover: resolveCoverSource(k.coverUrl ?? '') })
+      }
+    }
+    for (const b of this.childBooksOf(g)) {
+      if (out.length >= 4) {
+        break
+      }
+      out.push({ isFolder: false, cover: resolveCoverSource(b.coverUrl ?? '') })
+    }
+    return out
+  }
+
+  /** 子分组卡片：统一组件 role='card'（与主栏同源） */
+  @Builder
+  childFolderCard(g: BookGroups) {
+    FolderCard({
+      role: 'card',
+      title: g.groupName,
+      cells: this.cellsOf(g),
+      onTap: (): void => {
+        if (g.groupId !== undefined) {
+          this.jumpToFolder(g.groupId)
+        }
+      },
+      onLongPress: (): void => {
+        Haptics.tap()
+        this.openChildGroupDialog(g)
+      }
+    })
+  }
   private childBooksOf(g: BookGroups): Books[] {
     const out: Books[] = []
     for (const b of this.childPreviews) {
@@ -359,9 +404,9 @@ export default struct BookContentRefresh {
     .height('100%')
   }
 
-  /** 子分组卡片：与书籍卡片同尺寸；内容为 2×2 格子（空文件夹 = 四格淡底） */
+  /** 旧实现（保留可回退，不再调用） */
   @Builder
-  childFolderCard(g: BookGroups) {
+  childFolderCardOld(g: BookGroups) {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.Center }) {
         Row()
