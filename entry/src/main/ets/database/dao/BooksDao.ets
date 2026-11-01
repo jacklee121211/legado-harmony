@@ -207,6 +207,11 @@ class BooksDao {
       if (bookGroup !== undefined && bookGroup !== 2) {
         whereClause.push(`bookGroup = ${bookGroup}`);
       }
+      // 2026-11-02：**搜索也要排除隐藏分组**（本方法自带 where，不经过 buildWhereClause，
+      //   之前漏了 ⇒ 隐藏组里的书能被搜到）。
+      if (HiddenGroups.ids.length > 0) {
+        whereClause.push(`bookGroup NOT IN (${HiddenGroups.ids.join(',')})`);
+      }
       if (searchKey) {
         whereClause.push(`(
         bookName LIKE '%${searchKey}%'

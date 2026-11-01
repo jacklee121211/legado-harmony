@@ -1,6 +1,7 @@
 import { Books } from '../../../../../database/entities/Books'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import BooksDao from '../../../../../database/dao/BooksDao'
+import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
 import BookInfoGrids from '../BookInfoGrids'
 import { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 
@@ -58,6 +59,8 @@ export struct ShelfSearchPanel {
   async doSearch(kw: string): Promise<void> {
     const key = (kw ?? '').trim().toLowerCase()
     try {
+      // 2026-11-02：搜索前刷新全局隐藏集合，保证"隐藏组的书搜不到"
+      await bookGroupUtils.refreshHiddenGroupIds()
       const all: Books[] = await BooksDao.search({})
       if (key === '') {
         this.results = all
