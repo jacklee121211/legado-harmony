@@ -407,7 +407,8 @@ export default struct BookContentRefresh {
     const books: number = g.bookIds?.length ?? 0
     // 2026-11-01 修正：不能用 this.childGroups（那只是"当前目录"的子级），
     //   要用整棵树取该分组自己的子级，否则孙目录不会被计入（真机：11 有子目录 111 却只显示共1本）
-    const kids: number = g.groupId !== undefined ? this.tree.childrenOf(g.groupId).length : 0
+    const kids: number = (g.groupId !== undefined && this.tree !== null)
+      ? this.tree.childrenOf(g.groupId).length : 0
     return kids > 0 ? `共${books}本 · ${kids}个文件夹` : `共${books}本`
   }
   private childBooksOf(g: BookGroups): Books[] {
