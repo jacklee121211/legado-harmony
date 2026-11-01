@@ -547,6 +547,14 @@ export default struct BookInfoDialogs{
    */
   private bookMoveGroup: CustomDialogController | null = null
   private async openMoveGroupDialog(): Promise<void> {
+    // 2026-11-01：改为**页面级**打开（IndexShelf.onMoveBookRequest）。
+    //   原来在"正在关闭的弹窗组件"里 new CustomDialogController，真机上二级弹窗的
+    //   @State 绑定会失效：数据/点击都正常，但展开、重绘不生效（用户：单书移动至"死了"，
+    //   分组/批量的移动至正常，唯一差别就是中间多一层弹窗）。
+    AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_ID', this.bookData.id ?? 0)
+    AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_GROUP', this.bookData.bookGroup ?? 3)
+    this.controller?.close()
+    return
     // ① 预取（失败返回空数组，弹窗退回自己的异步兜底路径，不会卡住打开动作）
     const groups: BookGroups[] = await bookGroupUtils.prefetchGroups(this.bookData.bookType)
     const dlg = new CustomDialogController({

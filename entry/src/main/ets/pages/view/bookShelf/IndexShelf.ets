@@ -997,6 +997,61 @@ export default struct IndexShelf {
    */
   private groupManageDialog: CustomDialogController | null = null
 
+  // ── 2026-11-01：单书「移动至」改为页面级打开（避免二级弹窗状态绑定失效）────────
+  @StorageLink('SHELF_MOVE_BOOK_ID') @Watch('onMoveBookRequest') moveBookId: number = 0
+  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+  private bookMoveDialog: CustomDialogController | null = null
+
+  private onMoveBookRequest(): void {
+    if (this.moveBookId === undefined || this.moveBookId <= 0) {
+      return
+    }
+    const bookId: number = this.moveBookId
+    const oldGroup: number = AppStorage.get<number>('SHELF_MOVE_BOOK_GROUP') ?? 3
+    // 立即清空，保证下次同一个 id 也能再次触发
+    AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_ID', 0)
+    this.moveBookId = 0
+    this.openPageBookMoveDialog(bookId, oldGroup).catch((e: Error): void => {
+      console.error('openPageBookMoveDialog failed: ' + e.message)
+    })
+  }
+
+  private async openPageBookMoveDialog(bookId: number, oldGroup: number): Promise<void> {
+    const groups: BookGroups[] = await bookGroupUtils.prefetchGroups(this.currentIndex)
+    this.bookMoveDialog = new CustomDialogController({
+      builder: BookSelectGroupDialog({
+        Ids: bookId,
+        oldGroupId: oldGroup,
+        currentIndex: this.currentIndex,
+        isMoveStatus: 0,
+        presetGroups: groups,
+        moveGroup: (): void => {
+          this.bookMoveDialog?.close()
+          this.bookMoveDialog = null
+          this.isBookRefreshing++
+          this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+        },
+        onClose: (): void => {
+          this.bookMoveDialog?.close()
+          this.bookMoveDialog = null
+        }
+      }),
+      height: 400,
+      width: '92%',
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      cancel: (): void => {
+        this.bookMoveDialog?.close()
+        this.bookMoveDialog = null
+      }
+    })
+    this.bookMoveDialog?.open()
+  }
+
   private async openGroupManageDialog(): Promise<void> {
     const groups: BookGroups[] = await bookGroupUtils.prefetchGroups(this.currentIndex)
     const dlg = new CustomDialogController({
