@@ -166,6 +166,8 @@ export default struct BookSelectGroupDialog{
 
   private toggleExpand(id: number): void {
     Haptics.tap()
+    // [PROBE-TOGGLE 2026-11-01] 临时探针：记录切换前后的展开集合
+    console.log(`[PROBE-TOGGLE] id=${id} before=${JSON.stringify(this.expandedIds)} rowsBefore=${this.rows.length}`)
     const i: number = this.expandedIds.indexOf(id)
     if (i >= 0) {
       this.expandedIds.splice(i, 1)
@@ -209,6 +211,12 @@ export default struct BookSelectGroupDialog{
     }
     walk(0, 0)
     this.rows = out
+    // [PROBE-TREE 2026-11-01] 临时定位「移动至」树形不可用；验证后删除
+    const ids: number[] = []
+    for (const r of out) {
+      ids.push(r.depth * 1000 + (r.group.groupId ?? 0))
+    }
+    console.log(`[PROBE-TREE] mode=${this.isManageMode ? 'manage' : 'move'} preset=${this.presetGroups !== null} groupList=${this.groupList.length} rows=${out.length} ids=${JSON.stringify(ids)} expanded=${JSON.stringify(this.expandedIds)}`)
   }
 
   // ── 2026-11-01 树形行（官方 FAQ 方案二：列表 + 展开/折叠）──────────────────
@@ -325,6 +333,8 @@ export default struct BookSelectGroupDialog{
     .backgroundColor(ShelfColors.chip())
     .onClick(() => {
       const id: number = row.group.groupId ?? -1
+      // [PROBE-ROW 2026-11-01] 临时探针：看被哪个分支挡下
+      console.log(`[PROBE-ROW] id=${id} oldGroupId=${this.oldGroupId} show=${row.group.show} disabled=${JSON.stringify(this.disabledIds)} isManage=${this.isManageMode} moveNode=${this.isMoveGroupNode}`)
       if (id <= 0 || this.oldGroupId === id) {
         return
       }
