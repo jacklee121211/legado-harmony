@@ -185,8 +185,11 @@ export default struct BookContentRefresh {
         .fontSize(20)
         .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
     }
-    .padding({ left: 12, right: 14, top: 8, bottom: 8 })
-    .borderRadius(18)
+    // 2026-11-01：固定 38×38 正圆（原 left12/right14 非对称 padding 会拉成椭圆）
+    .width(38)
+    .height(38)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(19)
     .backgroundColor(this.theme.mainColor)
     .scale({ x: this.addScale, y: this.addScale })
     .clickEffect(UiMotion.CLICK)
@@ -558,8 +561,11 @@ export default struct BookContentRefresh {
               .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
           }
           .padding({ left: 10, right: 12, top: 8, bottom: 8 })
+          .width(38)
           .height(38)
-          .borderRadius(18)
+          .justifyContent(FlexAlign.Center)
+          .padding(0)
+          .borderRadius(19)
           .backgroundColor(this.theme.mainColor)
           .scale({ x: this.addScale, y: this.addScale })
           .clickEffect(UiMotion.CLICK)
