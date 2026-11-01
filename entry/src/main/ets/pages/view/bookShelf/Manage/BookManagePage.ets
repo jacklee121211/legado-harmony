@@ -210,6 +210,20 @@ export default struct BookManagePage {
         val.push(g)
       }
     }
+    // 2026-11-01：根目录批量管理**只显示顶层自定义分组**（用户：根目录没必要显示子文件夹，
+    //   要在子层处理就进去处理）。子层（>=5）仍按子树过滤。
+    if (this.bookTypeNumber === 1) {
+      const topOnly: BookGroups[] = []
+      for (const g of val) {
+        if ((g.parentId ?? 0) === 0) {
+          topOnly.push(g)
+        }
+      }
+      val.length = 0
+      for (const g of topOnly) {
+        val.push(g)
+      }
+    }
     // 2026-11-01：自定义分组内只保留该组子树（区块展示用）
     if (this.bookTypeNumber >= 5) {
       const t0: GroupTree = GroupTree.build(val)
