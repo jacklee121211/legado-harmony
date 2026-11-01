@@ -45,6 +45,14 @@ const COUNT_COLUMN: ColumnInfo[] = [
 ]
 
 class BooksDao {
+  /** 2026-11-02：被隐藏分组（含其子树）的 id 列表 —— 查询时排除这些分组里的书 */
+  static hiddenGroupIds: number[] = []
+
+  /** 设置需要排除的隐藏分组 id（传空数组即取消过滤） */
+  static setHiddenGroupIds(ids: number[]): void {
+    BooksDao.hiddenGroupIds = ids
+  }
+
   TABLE_NAME: string = 'books'
 
   /**
@@ -275,6 +283,12 @@ class BooksDao {
     const type = param?.type;
     const bookGroup = param?.bookGroup;
     const whereClause: string[] = [];
+
+    // 2026-11-02：**隐藏分组里的书一律不出现在列表/计数里**（用户：隐藏组的书与计数全部排除）。
+    //   由调用方在查询前用 `BooksDao.setHiddenGroupIds(子树id)` 设置；空数组＝不过滤。
+    if (BooksDao.hiddenGroupIds.length > 0) {
+      whereClause.push(`bookGroup NOT IN (${BooksDao.hiddenGroupIds.join(',')})`);
+    }
 
     if (type !== undefined) {
       whereClause.push(`bookType = ${type}`);
