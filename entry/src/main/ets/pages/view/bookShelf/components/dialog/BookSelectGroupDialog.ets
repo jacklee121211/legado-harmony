@@ -134,6 +134,8 @@ export default struct BookSelectGroupDialog{
    */
   private surface: MaterialColumnModifier = new MaterialColumnModifier(NightMode.isDarkSurface() ? ShelfColors.card() : Color.White, true)
   aboutToAppear(): void {
+    // [PROBE-DLG 2026-11-01] 临时探针：确认单书移动时传入的分组数据是否为空 / currentIndex 含义
+    console.log(`[PROBE-DLG] presetNull=${this.presetGroups === null} presetLen=${this.presetGroups === null ? -1 : this.presetGroups.length} currentIndex=${this.currentIndex} oldGroupId=${this.oldGroupId} moveNode=${this.isMoveGroupNode} moveStatus=${this.isMoveStatus}`)
     // ★ 2026-10-12：优先用**父级预取好的列表**（首帧就有内容，不再"过一会儿才刷出来"）。
     //   未传（null）才回落到异步现查 —— 保证这个弹窗被别处单独使用时行为不变。
     if (this.presetGroups !== null) {
