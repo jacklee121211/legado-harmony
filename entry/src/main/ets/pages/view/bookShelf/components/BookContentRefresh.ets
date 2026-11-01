@@ -272,7 +272,7 @@ export default struct BookContentRefresh {
     // 2026-11-01：async 竞态保护 —— 快速进出/连点时，旧请求可能后返回并覆盖新页数据
     //   （真机偶发"进入文件夹即时看不到子文件夹"，就是旧请求把 childGroups 清空了）
     const token: number = ++this.folderToken
-    if (id <= 1 || this.onRecentChip) {
+    if (id <= 2 || this.onRecentChip) {
       this.pathChips = []
       this.childGroups = []
       this.childPreviews = []
@@ -528,7 +528,7 @@ export default struct BookContentRefresh {
       //   ⇒ Stack 对齐改成 `BottomEnd`，按钮只给 `right` 外边距。
         Column() {
           // ── 2026-11-01 多层级排版：子分组宫格在前（左对齐、与书籍同列数），书在后 ──
-          if (!this.onRecentChip && this.bookTypeNumber > 1 && this.childGroups.length > 0) {
+          if (!this.onRecentChip && this.bookTypeNumber > 2 && this.childGroups.length > 0) {
             GridRow({ columns: this.folderColumns() }) {
               ForEach(this.childGroups, (g: BookGroups) => {
                 GridCol() {
@@ -613,7 +613,9 @@ export default struct BookContentRefresh {
       //  · 路径用 `/` 分隔（Windows 地址栏观感），超长省略；
       //  · 点击 = 回上一级；已经在根级分组（如 `分组/开心`）时 = 回分组列表。
       //  · 左侧「+」仍是"在当前分组下新建子分组"（与面包屑分离，避免多按钮语义混淆）。
-      if (this.bookTypeNumber > 1 && !this.onRecentChip) {
+      // 2026-11-01：只在"真正的文件夹"里显示。全部(2)/最近 都是**大类**（与分组同级），
+      //   不是文件夹 ⇒ 不显示「+新建子分组」和面包屑。
+      if (this.bookTypeNumber > 2 && !this.onRecentChip) {
         Row({ space: 8 }) {
           Row() {
             SymbolGlyph($r('sys.symbol.plus_circle'))
