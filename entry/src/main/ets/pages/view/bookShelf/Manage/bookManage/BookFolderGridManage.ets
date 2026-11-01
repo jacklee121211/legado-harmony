@@ -30,6 +30,8 @@ export default struct BookFolderGridManage {
   @Prop depth: number = 1
   /** 2026-11-01：是否就是当前所在分组（批量管理里给"本分组"角标） */
   @Prop isCurrent: boolean = false
+  /** 左上角来源标签：本分组 / 来自本分组 / 来自XX（空串 = 不显示） */
+  @Prop originLabel: string = ''
   /** 全部分组（级联选择需要算子孙/祖先） */
   @Prop allGroups: BookGroups[] = []
 
@@ -165,13 +167,18 @@ export default struct BookFolderGridManage {
               Text('置顶').fontColor(Color.White).fontWeight(300).fontSize(8).padding(3).borderRadius(5)
                 .backgroundColor('rgba(0, 0, 0, 0.45)').zIndex(1)
             }
-            // 2026-11-01：当前所在分组角标（左上角，亮暗色两套）
-            if (this.isCurrent) {
-              Text('本分组')
+            // 2026-11-01：左上角来源标签（本分组 / 来自本分组 / 来自XX）
+            if (this.originLabel.length > 0) {
+              Text(this.originLabel)
                 .fontColor(Color.White).fontWeight(300).fontSize(8)
                 .padding({ left: 4, right: 4, top: 3, bottom: 3 })
                 .borderRadius(5)
-                .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.22)' : 'rgba(0, 0, 0, 0.45)')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 64 })
+                .backgroundColor(this.originLabel === '本分组'
+                  ? (NightMode.isDarkSurface() ? 'rgba(255, 138, 128, 0.55)' : 'rgba(0, 0, 0, 0.55)')
+                  : (NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.22)' : 'rgba(0, 0, 0, 0.40)'))
                 .position({ x: 4, y: 4 })
                 .zIndex(3)
             }

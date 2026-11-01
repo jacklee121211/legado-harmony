@@ -141,6 +141,30 @@ export default struct BookFolderManages {
     showMessage('删除成功')
   }
 
+  /** 左上角来源标签：本分组 / 来自本分组 / 来自XX（用户：用来源标签代替纯色环） */
+  private originLabelOf(item: BookGroups): string {
+    const id: number = item.groupId ?? -1
+    if (id <= 0) {
+      return ''
+    }
+    if (id === this.currentGroupId) {
+      return '本分组'
+    }
+    const pid: number = item.parentId ?? 0
+    if (pid <= 0) {
+      return ''
+    }
+    if (pid === this.currentGroupId) {
+      return '来自本分组'
+    }
+    for (const g of this.bookGroups) {
+      if ((g.groupId ?? -1) === pid) {
+        return '来自' + (g.groupName ?? '')
+      }
+    }
+    return ''
+  }
+
   /** 层级：沿 parentId 往上数（1 = 顶层分组） */
   private depthOf(item: BookGroups): number {
     let d: number = 1
@@ -226,6 +250,7 @@ export default struct BookFolderManages {
                      depth: this.depthOf(item),
                      allGroups: this.bookGroups,
                      isCurrent: (item.groupId ?? -1) === this.currentGroupId,
+                     originLabel: this.originLabelOf(item),
                      checkGroup:this.checkGroup,
                      isManage:this.isManage,
                      onSelect:()=>{
