@@ -198,7 +198,12 @@ export default struct BookFolderManages {
     const out: BookGroups[][] = []
     let cur: BookGroups[] = []
     for (const g of this.bookGroups) {
-      if (!g.show || g.isSystem) {
+      // 2026-11-02：**管理页必须显示被隐藏的分组**，否则"隐藏后无法恢复"（用户原话：
+      //   隐藏还能隐藏，恢复不能恢复了）。移动模式下才过滤隐藏项。
+      if (g.isSystem) {
+        continue
+      }
+      if (!g.show && !this.isManage) {
         continue
       }
       const isRoot: boolean = (g.parentId ?? 0) === 0
