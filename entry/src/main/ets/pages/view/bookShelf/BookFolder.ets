@@ -192,6 +192,12 @@ export default struct BookFolder {
     this.previewBooks = visibleIds.length > 0
       ? await BooksDao.queryPreviewByGroups(visibleIds, 2)
       : []
+    // [PROBE 2026-11-01] 临时定位「未分组卡片不显示书」：打印可见 id 与预取结果分布
+    const dist: string[] = []
+    for (const b of this.previewBooks) {
+      dist.push(`${b.bookName}@${b.bookGroup}`)
+    }
+    console.log(`[PROBE-EQ] visibleIds=${JSON.stringify(visibleIds)} previewCount=${this.previewBooks.length} dist=${dist.join(',')}`)
     return val
   }
 
