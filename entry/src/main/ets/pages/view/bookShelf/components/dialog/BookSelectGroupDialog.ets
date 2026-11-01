@@ -21,6 +21,15 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
+import { GroupTree } from '../../../../../common/group/GroupTree'
+
+/** 树形列表的一行（2026-11-01 多级文件夹） */
+interface GroupRow {
+  group: BookGroups
+  depth: number
+  hasChildren: boolean
+  expanded: boolean
+}
 
 @Component
 @CustomDialog
@@ -50,6 +59,17 @@ export default struct BookSelectGroupDialog{
    * 新建分组（「+」格）、列表预取、新建后的真开真关重开 —— **完全共用**。
    */
   isManageMode: boolean = false
+  /**
+   * **移动「分组本身」模式**（2026-11-01 多级文件夹新增）。
+   *
+   * 与「移动书籍」的差异：点目标 = 把这个分组挂到目标分组下（改 `parentId`），
+   * 而不是把组内书搬过去。目标为 0（根目录）时挂回顶层。
+   * 传 `disabledIds`（自身 + 子孙）让那些行不可选，避免把父组拖进自己的子树。
+   */
+  isMoveGroupNode: boolean = false
+  disabledIds: number[] = []
+  moveGroupNode: (targetId: number, targetName: string) => void = () => {
+  }
   moveGroup:Function = ()=>{
 
   }
@@ -118,18 +138,207 @@ export default struct BookSelectGroupDialog{
     //   未传（null）才回落到异步现查 —— 保证这个弹窗被别处单独使用时行为不变。
     if (this.presetGroups !== null) {
       this.groupList = this.presetGroups
+      this.rebuildRows()
       return
     }
     this.getGroupList()
   }
 
   @State groupList:BookGroups[] = []
+  // ── 2026-11-01 多级文件夹：树形展示（官方 FAQ「如何实现简单列表折叠和展开」方案二）──
+  /** 已展开的父分组 id */
+  @State expandedIds: number[] = []
+  /** 当前可见行（已按展开状态拍平，带缩进 depth） */
+  @State rows: GroupRow[] = []
+
   getGroupList(){
     BookGroupsDao.search({
       type:this.currentIndex
     }).then((val)=>{
       this.groupList = val
+      this.rebuildRows()
     })
+  }
+
+  private isExpanded(id: number): boolean {
+    return this.expandedIds.indexOf(id) >= 0
+  }
+
+  private toggleExpand(id: number): void {
+    Haptics.tap()
+    const i: number = this.expandedIds.indexOf(id)
+    if (i >= 0) {
+      this.expandedIds.splice(i, 1)
+    } else {
+      this.expandedIds.push(id)
+    }
+    this.expandedIds = this.expandedIds.slice()
+    this.rebuildRows()
+  }
+
+  /** 把分组树按"已展开"拍平成可见行（递归 + 缩进） */
+  private rebuildRows(): void {
+    const tree: GroupTree = GroupTree.build(this.groupList)
+    const out: GroupRow[] = []
+    const walk = (parentId: number, depth: number): void => {
+      for (const g of tree.childrenOf(parentId)) {
+        if (g.isSystem) {
+          continue
+        }
+        // 管理模式下连隐藏分组也显示（否则隐藏组永远删不掉）；移动模式只看显示中的
+        if (!this.isManageMode && !g.show) {
+          continue
+        }
+        const kids: BookGroups[] = tree.childrenOf(g.groupId ?? -1)
+          .filter((c: BookGroups): boolean => !c.isSystem && (this.isManageMode || c.show))
+        const id: number = g.groupId ?? -1
+        const expanded: boolean = this.isExpanded(id)
+        out.push({ group: g, depth: depth, hasChildren: kids.length > 0, expanded: expanded })
+        if (expanded && kids.length > 0) {
+          walk(id, depth + 1)
+        }
+      }
+    }
+    walk(0, 0)
+    this.rows = out
+  }
+
+  // ── 2026-11-01 树形行（官方 FAQ 方案二：列表 + 展开/折叠）──────────────────
+
+  /** 「根目录」固定行（仅"移动分组本身"时出现）：把分组挂回顶层 */
+  @Builder
+  rootRow() {
+    Row({ space: 8 }) {
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(18)
+        .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#000000'])
+      Text('根目录（分组列表）').fontSize(14).maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Blank()
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(10)
+    .backgroundColor(ShelfColors.chip())
+    .onClick(() => {
+      if (this.isManageMode) {
+        return
+      }
+      Haptics.tap()
+      this.moveGroupNode(0, '根目录')
+    })
+    .margin({ bottom: PaddingConstants.PADDING_16 })
+  }
+
+  /** 「未分组」固定行（移动书籍时出现） */
+  @Builder
+  ungroupedRow() {
+    Row({ space: 8 }) {
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(18)
+        .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#000000'])
+      Text('未分组').fontSize(14).maxLines(1)
+      Blank()
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(10)
+    .backgroundColor(ShelfColors.chip())
+    .onClick(() => {
+      // 分组管理模式：「未分组」不是实体，点击完全无反馈（2026-10-22 用户拍板）
+      if (this.isManageMode) {
+        return
+      }
+      Haptics.tap()
+      this.moveGroupId = 3
+      this.moveTitle = '未分组'
+      this.clickBookTypeDialog?.open()
+    })
+    .margin({ bottom: PaddingConstants.PADDING_16 })
+  }
+
+  /** 「+ 新建分组」固定行（与旧「+」格同语义） */
+  @Builder
+  addRow() {
+    Row({ space: 8 }) {
+      Image($r('app.media.add')).width(22)
+      Text('新建分组').fontSize(14)
+      Blank()
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(10)
+    .backgroundColor(ShelfColors.chip())
+    .onClick(() => {
+      Haptics.tap()
+      if (this.isManageMode) {
+        // 管理模式：连续创建（父弹窗不关）
+        this.openManageAddTypeDialog()
+        return
+      }
+      // 移动模式：子开父退（沿用 v3.21 出规则）
+      this.controller?.close()
+      this.addBookType?.open()
+    })
+  }
+
+  /** 树形一行：缩进 + 展开箭头 + 名称 */
+  @Builder
+  groupRow(row: GroupRow) {
+    Row({ space: 6 }) {
+      Row().width(row.depth * 14)
+      if (row.hasChildren) {
+        SymbolGlyph(row.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.72)' : 'rgba(0,0,0,0.60)'])
+          .onClick(() => {
+            this.toggleExpand(row.group.groupId ?? -1)
+          })
+      } else {
+        Row().width(16)
+      }
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(18)
+        .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#000000'])
+      Text(row.group.groupName).fontSize(14).maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Blank()
+      if (this.disabledIds.indexOf(row.group.groupId ?? -1) >= 0) {
+        Text('不可选').fontSize(11).fontColor('rgb(174,174,174)')
+      }
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(10)
+    .backgroundColor(ShelfColors.chip())
+    .onClick(() => {
+      const id: number = row.group.groupId ?? -1
+      if (id <= 0 || this.oldGroupId === id) {
+        return
+      }
+      if (this.disabledIds.indexOf(id) >= 0) {
+        showMessage('不能移动到自身或其子目录')
+        return
+      }
+      if (this.isMoveGroupNode) {
+        Haptics.tap()
+        this.moveGroupNode(id, row.group.groupName)
+        return
+      }
+      if (this.isManageMode) {
+        this.openManageDialog(row.group)
+        return
+      }
+      Haptics.tap()
+      this.moveGroupId = id
+      this.moveTitle = row.group.groupName
+      this.clickBookTypeDialog?.open()
+    })
+    .margin({ bottom: PaddingConstants.PADDING_16 })
   }
 
   build() {
@@ -145,35 +354,21 @@ export default struct BookSelectGroupDialog{
 
       Divider().strokeWidth(0.5)
       Scroll(){
-        GridRow({
-          columns:3
-        }){
-          // ★ 「未分组」选项（第一格，锁定在列表最前面；2026-10-12 新增）
-          //   只在当前有分组（oldGroupId 已指向自定义分组）时才显示——
-          //   如果书本身就在未分组里，点"未分组"没有任何意义。
-          if (this.oldGroupId !== 3) {
-            GridCol(){
-              this.ungroupedTitle()
-            }
+        Column({ space: 2 }) {
+          // 固定项：移动书籍 → 「未分组」；移动分组本身 → 「根目录」
+          if (this.isMoveGroupNode) {
+            this.rootRow()
+          } else if (this.oldGroupId !== 3) {
+            this.ungroupedRow()
           }
-          GridCol(){
-            this.title()
-          }
-          ForEach(this.groupList,(item:BookGroups)=>{
-            // ── 2026-10-22：分组管理模式下**隐藏的分组也要显示** ────────────────
-            // 本模式是"管理全部分组"，若沿用移动模式的 `item.show` 过滤，
-            // 用户被隐藏的分组将**永远无法删除/解散**（设置页的"显示/隐藏分组"两栏
-            // 已在 2026-10-20 按用户要求删除，见 `groupTypePanel` 的注释）
-            // ⇒ 管理模式下不看 `show`，其余条件（真实分组、非系统、非当前组）不变。
-            if (item.groupId && !item.isSystem
-              && (this.isManageMode || item.show)
-              && this.oldGroupId !== item.groupId) {
-              GridCol(){
-                this.title(item)
-              }
-            }
-          }, (item: BookGroups): string => item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
-        }.padding(PaddingConstants.PADDING_20)
+          ForEach(this.rows, (row: GroupRow) => {
+            this.groupRow(row)
+          }, (row: GroupRow) => 'r' + (row.group.groupId ?? 0) + (row.expanded ? 'e' : 'c'))
+          this.addRow()
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .padding(PaddingConstants.PADDING_20)
       }
       .align(Alignment.Top)
       .height('65%')

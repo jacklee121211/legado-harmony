@@ -233,7 +233,8 @@ export default struct FolderInfoDialog{
       case 2 :
         this.isFolderTop(); break;
       case 3 :
-        this.openChildDialog(this.bookMoveGroup); break;
+        // 2026-11-01 多级文件夹：「移动至」= 把**分组本身**挂到另一个分组下（改 parentId）
+        this.openGroupMoveDialog(); break;
       case 4 :
         // 2026-10-25：「加入书单」入口已随书单功能删除 ⇒ 本分支不再可达
         break;
@@ -458,6 +459,87 @@ export default struct FolderInfoDialog{
       this.cancel()
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
+    }
+  }
+
+  /**
+   * 移动「分组本身」（2026-11-01 多级文件夹）。
+   *
+   * 与旧的「整组移动」不同：这里改的是 `book_groups.parentId`，不是把组内书搬走。
+   * 目标可以是任意分组（含子目录），也可以挂回根目录（targetId = 0）。
+   * 防环：`disabledIds` = 自身 + 全部子孙，UI 里不可选；DAO 前再校验一次。
+   */
+  groupMoveGroup: CustomDialogController | null = null
+
+  private async openGroupMoveDialog(): Promise<void> {
+    const gid: number = this.itemData.groupId ?? -1
+    if (gid <= 0) {
+      return
+    }
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const disabled: number[] = tree.subtreeIds(gid)
+      this.groupMoveGroup = new CustomDialogController({
+        builder: BookSelectGroupDialog({
+          isMoveGroupNode: true,
+          presetGroups: all,
+          disabledIds: disabled,
+          oldGroupId: gid,
+          moveGroupNode: (targetId: number, targetName: string): void => {
+            this.doMoveGroupNode(gid, targetId, targetName)
+          },
+          onClose: (): void => {
+            this.groupMoveGroup?.close()
+          }
+        }),
+        autoCancel: true,
+        width: '92%',
+        alignment: DialogAlignment.Bottom,
+        offset: { dx: 0, dy: -16 },
+        cornerRadius: 20,
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        cancel: (): void => {
+          this.groupMoveGroup?.close()
+        }
+      })
+      this.groupMoveGroup?.open()
+    } catch (e) {
+      showMessage('打开移动弹窗失败')
+      console.error('openGroupMoveDialog failed: ' + JSON.stringify(e))
+    }
+  }
+
+  /** 真正写 parentId：防环 + 深度校验 + 同名拦截（合并/重命名在 S6 做） */
+  private async doMoveGroupNode(gid: number, targetId: number, targetName: string): Promise<void> {
+    try {
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const chk = tree.canMoveTo(gid, targetId)
+      if (!chk.ok) {
+        showMessage(chk.reason)
+        return
+      }
+      if (tree.hasSiblingNamed(targetId, this.itemData.groupName, gid)) {
+        showMessage('目标下已有同名分组，请先改名')
+        return
+      }
+      const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
+      if (me === undefined) {
+        return
+      }
+      me.parentId = targetId
+      me.updateTime = Date.now()
+      await BookGroupsDao.updatePartialGroup(me)
+      this.groupMoveGroup?.close()
+      this.cancel()
+      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      this.isBookRefreshing++
+      showMessage(`已移动到「${targetName}」`)
+    } catch (e) {
+      showMessage('移动失败')
+      console.error('doMoveGroupNode failed: ' + JSON.stringify(e))
     }
   }
 
