@@ -984,12 +984,23 @@ export default struct BookSelectGroupDialog{
   /** 解散：只删分组行，组内书籍保留并落到「未分组」（`bookGroup = 3`） */
   private async doDissolveGroup(groupId: number, groupName: string): Promise<void> {
     try {
-      // 与 `FolderInfoDialog.disbandGroup()` **同一条实现**（用户：「和现有逻辑应该相同」）。
-      // `delGroupById` 内部 = 「组内书置 3」+「删分组行」，且 2026-10-22 已改为逐个 await
-      // ⇒ 本方法 resolve 时写库**确实已提交**，随后的广播才读得到新数据。
-      // 2026-11-01：解散 = **书归还父分组**（父为根则进未分组），子分组挂到同一父级，
-      //   不再一律塞进「未分组」（用户：「子目录解散后书应该还给父目录」）
-      await bookGroupUtils.dissolveGroup(groupId)
+      // 2026-11-01：与 FolderInfoDialog 的「一起解散 / 子组保留」对齐 ——
+      //   子树里**存在后代分组** ⇒ 先问模式；没有任何子分组 ⇒ 直接按保留子目录（等价于只删本行）
+      const all: BookGroups[] = await BookGroupsDao.search()
+      const tree: GroupTree = GroupTree.build(all)
+      const hasDescendant: boolean = tree.subtreeIds(groupId).length > 1
+      if (hasDescendant) {
+        const mode: string = await this.askDissolveMode(groupName)
+        if (mode === 'cancel') {
+          return
+        }
+        await bookGroupUtils.dissolveGroup(groupId, mode)
+        showMessage(mode === 'collapse'
+          ? `已解散「${groupName}」，全部书籍已归还上级分组`
+          : `已解散「${groupName}」，子文件夹已上提一级`)
+        return
+      }
+      await bookGroupUtils.dissolveGroup(groupId, 'keepChildren')
       showMessage(`已解散「${groupName}」，书籍已归还上级分组`)
     } catch (e) {
       console.error('doDissolveGroup failed: ' + JSON.stringify(e))
@@ -997,6 +1008,40 @@ export default struct BookSelectGroupDialog{
     } finally {
       this.afterGroupChanged()
     }
+  }
+
+  /** 三级选择：一起解散 / 子组保留 / 取消（返回 'collapse' | 'keepChildren' | 'cancel'） */
+  private askDissolveMode(groupName: string): Promise<string> {
+    return new Promise<string>((resolve: (v: string) => void): void => {
+      const ctrl: CustomDialogController = new CustomDialogController({
+        builder: ThreeActionDialog({
+          title: `解散「${groupName}」`,
+          primaryText: '一起解散',
+          secondaryText: '子组保留',
+          cancelText: '取消',
+          hintPrimary: '子文件夹内的书全部上提到上级分组',
+          hintSecondary: '子文件夹上提一级，书籍不受影响',
+          onPrimary: (): void => {
+            ctrl.close()
+            resolve('collapse')
+          },
+          onSecondary: (): void => {
+            ctrl.close()
+            resolve('keepChildren')
+          },
+          onCancel: (): void => {
+            ctrl.close()
+            resolve('cancel')
+          }
+        }),
+        autoCancel: false,
+        alignment: DialogAlignment.Center,
+        gridCount: 4,
+        customStyle: false,
+        cornerRadius: 25
+      })
+      ctrl.open()
+    })
   }
 
   /**
