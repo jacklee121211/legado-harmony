@@ -193,7 +193,8 @@ export default struct BookFolder {
     //   epub 等带自带封面的书可能压根没被取到，宫格里看不到它的封面。
     //   排序与书列表同源（`ShelfPrefs.getSortKey()`），保证宫格顺序 = 点进去的列表顺序。
     this.previewBooks = visibleIds.length > 0
-      ? await BooksDao.queryPreviewByGroups(visibleIds, 4, ShelfPrefs.getSortKey())
+      ? await BooksDao.queryPreviewByGroups(visibleIds, 4, ShelfPrefs.getSortKey(),
+        ShelfPrefs.getSortDir() === 1)
       : []
     return val
   }
