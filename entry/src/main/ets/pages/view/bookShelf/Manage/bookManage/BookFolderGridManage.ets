@@ -30,6 +30,32 @@ export default struct BookFolderGridManage {
   @State checked: boolean = false
   /** 2026-11-01：层级（1 = 顶层分组）。用于外框色边，最多 10 层。 */
   @Prop depth: number = 1
+  /** 子树书籍总数（自身 + 全部后代分组的 bookIds） */
+  private subtreeBookCount(): number {
+    let n: number = this.group.bookIds?.length ?? 0
+    const visited: number[] = []
+    let frontier: number[] = [this.group.groupId ?? -1]
+    let guard: number = 0
+    while (frontier.length > 0 && guard < 500) {
+      const cur: number[] = frontier
+      frontier = []
+      for (const pid of cur) {
+        if (visited.indexOf(pid) >= 0) {
+          continue
+        }
+        visited.push(pid)
+        for (const g of this.allGroups) {
+          if ((g.parentId ?? 0) === pid && g.groupId !== undefined && g.groupId !== this.group.groupId) {
+            n += g.bookIds?.length ?? 0
+            frontier.push(g.groupId)
+          }
+        }
+      }
+      guard++
+    }
+    return n
+  }
+
   /** 2026-11-01：是否就是当前所在分组（批量管理里给"本分组"角标） */
   @Prop isCurrent: boolean = false
   /** 左上角来源标签：本分组 / 来自本分组 / 来自XX（空串 = 不显示） */
@@ -236,7 +262,7 @@ export default struct BookFolderGridManage {
           })
           .ellipsisMode(EllipsisMode.END)
           .maxLines(2)
-      Text(`共${this.group.bookIds?.length||0}本`).fontSize(12).fontColor(ShelfColors.textSub())
+      Text(`共${this.subtreeBookCount()}本`).fontSize(12).fontColor(ShelfColors.textSub())
           .textOverflow({
             overflow:TextOverflow.Ellipsis
           })

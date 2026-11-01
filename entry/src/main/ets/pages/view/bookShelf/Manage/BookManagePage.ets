@@ -882,19 +882,22 @@ export default struct BookManagePage {
     Row({
       space:5
     }) {
-      Checkbox()
-        .select(this.allCheck)
-        .selectedColor(this.theme.mainColor)
-        .onClick(() => {
-          Haptics.tap();
-          if (this.verificationDate()) {
-            return
-          }
-          this.allCheck = !this.allCheck
-          this.dataMoveCheckList(this.allCheck)
-          this.listenCheckList()
-        })
-      // Text(!this.allCheck?'全选':'取消全选')
+      // 2026-11-01：自定义分组内（bookTypeNumber >= 5）隐藏顶部全选 ——
+      //   「本分组」卡片本身就是"全选本目录"的入口，两处并存会歧义（用户反馈）
+      if (this.bookTypeNumber < 5) {
+        Checkbox()
+          .select(this.allCheck)
+          .selectedColor(this.theme.mainColor)
+          .onClick(() => {
+            Haptics.tap();
+            if (this.verificationDate()) {
+              return
+            }
+            this.allCheck = !this.allCheck
+            this.dataMoveCheckList(this.allCheck)
+            this.listenCheckList()
+          })
+      }
     }
 
     .alignItems(VerticalAlign.Center)
