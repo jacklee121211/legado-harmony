@@ -55,10 +55,54 @@ class bookGroupUtils{
   async delGroupById(id:number|number[]){
     let Ids = toolsUtils.numberArrays(id)
     if (Ids.length === 0) return
-    //同时更新书籍分组为未分组
-    await BooksDao.queryBookByGroup(Ids, 3)
-    //删除分组
-    await BookGroupsDao.deleteBook(Ids)
+    // ── 2026-11-02 预检：只对真实存在的分组动手，避免"删了不存在的 id"出现假成功 ──
+    const groups: BookGroups[] = await BookGroupsDao.search()
+    const alive: number[] = []
+    for (const gid of Ids) {
+      let hit: boolean = false
+      for (const g of groups) {
+        if ((g.groupId ?? -1) === gid) {
+          hit = true
+          break
+        }
+      }
+      if (hit) {
+        alive.push(gid)
+      } else {
+        console.error(`[GRP-PRECHECK] delGroupById: 分组不存在 id=${gid}，已跳过`)
+      }
+    }
+    if (alive.length === 0) return
+    // ── 2026-11-02 回滚快照：失败时把这些书的 bookGroup 写回原值 ─────────────
+    const allBooks: Books[] = await BooksDao.search()
+    const snap: Books[] = []
+    for (const b of allBooks) {
+      if (b.bookGroup !== undefined && alive.indexOf(b.bookGroup) >= 0) {
+        snap.push(b)
+      }
+    }
+    try {
+      //同时更新书籍分组为未分组
+      await BooksDao.queryBookByGroup(alive, 3)
+      //删除分组
+      await BookGroupsDao.deleteBook(alive)
+    } catch (e) {
+      console.error(`[GRP-ROLLBACK] delGroupById 失败 ids=${alive.join(',')}：${JSON.stringify(e)}`)
+      let restored: number = 0
+      for (const b of snap) {
+        if (b.id === undefined) {
+          continue
+        }
+        try {
+          await BooksDao.updateBookGroup([b.id], b.bookGroup)
+          restored++
+        } catch (e2) {
+          console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${b.id}: ${JSON.stringify(e2)}`)
+        }
+      }
+      console.error(`[GRP-ROLLBACK] 已回滚 ${restored}/${snap.length} 本`)
+      throw e as Error
+    }
   }
 
   /**
