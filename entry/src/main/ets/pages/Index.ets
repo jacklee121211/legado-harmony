@@ -1,490 +1,2956 @@
-import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
-import { display, window } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
-import { util } from '@kit.ArkTS';
-import { deviceInfo } from '@kit.BasicServicesKit';
-import { image } from '@kit.ImageKit';
+import { showMessage } from '../componets/common/promptShow'
+import { ezCustomTransition, LongTakeSession, LongTakeTransitionDelegate } from '../common/ezlt'
+import { hostContext } from '../common/utils/HostContextUtil'
+import ReadShow from '../componets/common/ReadShow'
+import { NavItem } from '../componets/dataList/type'
+import { initAppData } from '../storage/appData'
+import BookShelf from './view/BookShelf'
+import MyCenter from './view/myCenter/MyCenter'
+// T29-④（Round 40）：依赖名统一改成合规的小写 `colorlibrary`（见 entry/oh-package.json5 注释）
+import { testGetColorFunction } from 'colorlibrary'
+import { BusinessError, emitter } from '@kit.BasicServicesKit'
+import { JSON } from '@kit.ArkTS'
+import { image } from '@kit.ImageKit'
+import { ThemeStorageKey } from '../common/constants/Theme'
+import { ThemeItem } from '../common/model/Theme'
+import { WindowAbility } from '../entryability/WindowAbility'
+import BrightnessUtil from '../../common/utils/BrightnessUtil'
+import { router } from '@kit.ArkUI'
+import BooksDao from '../database/dao/BooksDao'
+import { Books } from '../database/entities/Books'
+import ImmersiveMaterialUtil from '../common/utils/ImmersiveMaterialUtil'
+import AppRouter, { RouteName } from '../common/router/AppRouter'
+import UiMotion from '../common/utils/UiMotion'
+import BookDetailPage from './view/BookDetailPage'
+import ReaderPage3 from './view/Reader/ReaderPage3'
+import PdfViewerPage from './view/Reader/PdfViewerPage'
+// 应用接续（无缝流转，2026-10-24）：消费对端恢复标记
+import { ContinueBridge, ContinuePayload } from '../common/utils/ContinueBridge'
+// 2026-10-25：碰一碰/隔空传送的"退后台清空选定"（见 onPageHide）
+import { BookShareBridge } from '../common/share/BookShareBridge'
+import { PreferencesUtil } from '@pura/harmony-utils'
+import { hilog } from '@kit.PerformanceAnalysisKit'
+// 全量路线：复用生产导入管线（拷进沙箱 + 写库 + 抽封面）
+import { FileHandler } from '../common/utils/FileHandler'
+import { fileIo as fs } from '@kit.CoreFileKit'
+// 接续查询必须等建表完成（冷启动时建表是异步的）
+import DataBase from '../database'
+import {
+  PdfRouteParam,
+  ReaderRouteParam,
+  ReadStatisticsRouteParam,
+  ReadStatsRouteParam,
+  BookManageRouteParam,
+} from '../common/router/AppRouter'
+// ── 迁 Navigation 第 4 期：5 个真实可达页 ────────────────────────────────────
+import BookManagePage from './view/bookShelf/Manage/BookManagePage'
+import ReadStatistics from './view/myCenter/readStatistics'
+// 阅读数据详情页（2026-10-13 新增：日/月/年/总/自定义 五档 + Top 榜）
+import ReadStatsPage from './view/myCenter/ReadStatsPage'
+import MyThemeConfig from './view/myCenter/MyThemeConfig'
+import MySetPage from './view/myCenter/MySetPage'
+import CreateCustomTheme from './view/myCenter/CreateCustomTheme'
+// ── 关于我们回填（2026-09-30）──────────────────────────────────────────────
+import AboutPage from './view/myCenter/about/AboutPage'
+import VersionLogPage from './view/myCenter/about/VersionLogPage'
+import PrivacyPage from './view/myCenter/about/PrivacyPage'
+import LicensePage from './view/myCenter/about/LicensePage'
+import ContactPage from './view/myCenter/about/ContactPage'
+import { common } from '@kit.AbilityKit'
+import { NightMode, ShelfColors } from '../common/utils/NightMode'
+import CommonConstants from '../common/constants/CommonConstants'
+// ── PuraX 外屏「极简阅读」（2026-10-24）──────────────────────────────────────
+// 判定收口在 `common/utils/OuterScreen.ets`（文件头有完整 SDK 取证）；
+// 本页只订阅 AppStorage 广播键，**不自己判断形态**。
+// 外屏时的首页是 `OuterHomeCard`（单本"继续阅读"卡片），四页签书架整块不挂载。
+import { KEY_OUTER_MINIMAL } from '../common/utils/OuterScreen'
+import OuterHomeCard from './view/OuterHomeCard'
+// ── 底部页签迁 HDS（2026-10-09）────────────────────────────────────────────────
+// 官方最佳实践原文（documentId `最佳实践/沉浸光感/bpta-spatiality-immersive`）：
+//   「应用需要将传统的Navigation、Tabs等组件替换为HDS系列组件」
+//   「HDS底部页签（HdsTabs）：通过设置 HdsTabsFloatingStyle 的 systemMaterialEffect
+//     参数，可为底部页签设置沉浸光感视效。」
+// 而且**只有 HdsTabs 有 MiniBar**（书架听书 dock 的官方载体）：原生 `Tabs` 的
+// `FloatingTabBarStyle` 只有 7 个字段、无 miniBar —— SDK 原文
+// `openharmony\ets\component\tabs.d.ts:824-896`。
+import {
+  HdsBarStyle,
+  HdsTabs,
+  HdsTabsAttribute,
+  HdsTabsBarChangeMode,
+  HdsTabsController,
+  HdsTabsFloatingStyle,
+  hdsMaterial
+} from '@kit.UIDesignKit'
+// 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
+import HdsCompat, { HdsFloatingStyleModifier } from '../common/utils/HdsCompat'
+import { ListenDock, ListenTitleBar } from '../components/tts/ListenDock'
+// 小喵入口悬浮按钮（2026-10-26，临时验证用；回退见该文件头注释）
+import { AgentEntryFab } from '../components/agent/AgentEntryFab'
+import { ListenSession } from '../tts/ListenSession'
+import { ListenLauncher } from '../tts/ListenLauncher'
+import { ListenUnlock } from '../common/utils/ListenUnlock'
+// ── 全局震动反馈（2026-09-25 新增）────────────────────────────────────────────
+import { Haptics } from '../common/utils/Haptics'
+import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
+// ── 首次安装模式选择（2026-10-13 新增）──────────────────────────────────────
+import FirstRunModeDialog from '../componets/common/FirstRunModeDialog'
+import { FirstRunMode } from '../common/utils/FirstRunMode'
+import { OfflineMode } from '../common/utils/OfflineMode'
 
-const TAG: string = 'ReaderProbe';
-const DOMAIN: number = 0x0000;
-/** 翻页采样次数（用于反推每页字符数） */
-const FLIP_SAMPLES: number = 8;
-/** 视口高度递减阶梯（px）：用于判断引擎页边距是固定值还是随视口变化 */
-const VIEWPORT_STEPS: number[] = [0, 100, 200, 300];
-/** 是否跑视口/字号阶梯（默认关：先做一次干净的满屏渲染，便于截图量墨迹） */
-const RUN_SWEEP: boolean = true;
-
-class ProbeHandler extends bookParser.BookParserHandler {
-  private text: string = '';
-
-  constructor(text: string) {
-    super();
-    this.text = text;
-  }
-
-  getBookInfo(): bookParser.BookInfo {
-    const info: bookParser.BookInfo = {
-      bookTitle: 'Probe',
-      bookCreator: 'probe',
-      bookLanguage: 'zh'
-    };
-    return info;
-  }
-
-  getCatalogList(): bookParser.CatalogItem[] {
-    const item: bookParser.CatalogItem = {
-      catalogId: 0,
-      catalogName: '第1章',
-      catalogLevel: 1,
-      playOrder: 1,
-      idRef: '0',
-      href: '0'
-    };
-    return [item];
-  }
-
-  getSpineList(): bookParser.SpineItem[] {
-    const s: bookParser.SpineItem = {
-      idRef: '0',
-      index: 0,
-      href: '0',
-      properties: ''
-    };
-    return [s];
-  }
-
-  getSpineItemContent(spineIndex: number): Promise<string> {
-    const parts: string[] = this.text.split('\n');
-    let html: string = '<html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#FFFFFF;color:#000000;}</style></head><body>';
-    for (let i = 0; i < parts.length; i++) {
-      const p: string = parts[i].trim();
-      if (p.length > 0) {
-        html += '<p>' + p + '</p>';
-      }
-    }
-    html += '</body></html>';
-    return Promise.resolve(html);
-  }
-
-  getResourceContent(spineIndex: number, filePath: string): ArrayBuffer {
-    return new ArrayBuffer(0);
-  }
-
-  getDomPosByCatalogHref(href: string): string {
-    return '0';
-  }
-
-  getAbsoluteResourcePath(spineIndex: number): string {
-    return '';
-  }
-}
+// ── 阅读里程碑主动推广（2026-10-28 新增，用户需求）──────────────────────────
+// 「累计阅读 >1h 弹评分软引导 / >10h 弹 VIP」的**判定与记账**全在 `ReadPromo`；
+// 本页只做一件事：**拥有 controller 并弹出实体弹窗**（CustomDialogController 必须由
+// 页面持有，理由见 `docs/标准-弹窗与按钮统一规范.md` §2.1 + §4.4「参数不支持动态更新」）。
+import { ReadPromo, PromoKind } from '../common/utils/ReadPromo'
+import RatingPromptDialog from './view/myCenter/about/RatingPromptDialog'
+import AppGalleryUtil, { CommentResult } from '../common/utils/AppGalleryUtil'
+import { VipDialog } from '../componets/myCenter/VipDialog'
+import { VipManager } from '../common/utils/VipManager'
 
 @Entry
 @Component
-struct Index {
-  private controller: readerCore.ReaderComponentController = new readerCore.ReaderComponentController();
-  @State logs: string[] = [];
-  @State showPanel: boolean = true;
-  private lastWinW: number = 0;
-  private lastWinH: number = 0;
-  @State showReader: boolean = true;
-  private running: boolean = false;
+struct Main {
+  @State showReadShow: boolean = true
+  @State currentTabIndex: number = 0
+  /**
+   * App 级夜间开关（书架深色档的总闸）。
+   *
+   * 为什么主页面也要订它：底部页签条（自绘 `TabBuilder`）与整个 Ability 的配色
+   * 都由本页负责下发 —— 规则见 `NightMode.desiredDark()`：
+   *   · 停在**书架**页签且夜间开着 ⇒ 深色（书架已做深色适配）
+   *   · 停在**我的**页签          ⇒ 浅色（该页未适配，绝不能被带成深色）
+   * `@Watch` 保证"在阅读器里切了夜间、返回书架"时本页会重新下发一次。
+   */
+  @StorageLink(NightMode.KEY) @Watch('onNightModeChanged') nightOn: boolean = false
+  @State isShow: boolean = true
+  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
+  @StorageLink('topRectHeight') topRectHeight: number = 0
+  @State ShowBar: boolean = true
+  // 2026-10-09 迁 HdsTabs：控制器类型同步换成 HdsTabsController
+  // （SDK `@hms.hds.hdsBaseComponent.d.ets:5805`：`class HdsTabsController extends TabsController`，
+  //  所以 `changeIndex()` 等 TabsController 的能力全部保留）
+  tabController: HdsTabsController = new HdsTabsController()
+  /**
+   * 听书入口是否可见：解锁 + 未展开听书面板时。
+   * 与 `ReaderPage3:3140` 同源 —— `@StorageLink` 初值是 false，
+   * 必须主动从 Preferences 拉一次，否则已解锁用户冷启动后看不到入口。
+   */
+  @StorageLink('listenEntryUnlocked') listenUnlocked: boolean = false
+  /** 听书 dock 是否展开（HDS MiniBar 的 EXPAND 态） */
+  @StorageLink('listenExpanded') @Watch('onListenExpandedChanged') listenExpanded: boolean = false
+  /** HDS 最近一次回报的迷你栏样式（`onBarStyleChange` 里更新；只作闸门，不驱动 UI） */
+  // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**这里不能写 `HdsBarStyle.COLLAPSE`**。
+  //   字段初始化器是**无条件执行**的，而 `HdsBarStyle` 是 6.1.0(23) 才有的枚举
+  //   （SDK `@hms.hds.hdsBaseComponent.d.ets:5124` `@since 6.1.0(23)`）
+  //   ⇒ API 20 设备上该枚举是 undefined，取 `.COLLAPSE` 即抛 TypeError ⇒ 页面构造就崩。
+  //   ⇒ 改成可空 + 只有 23+ 分支（`onBarStyleChange` 回调）才会赋值。
+  private lastHdsMiniBar: HdsBarStyle | null = null
+  /** hdsFloatingStyle() 的缓存（防止切页签重建迷你栏 ⇒ 圆形闪一帧） */
+  private cachedFloatStyle: HdsTabsFloatingStyle | null = null
+  private cachedFloatKey: string = ''
+  /** 包着 `barFloatingStyle` 的属性修改器缓存（同上，防止重建 ⇒ 闪） */
+  private cachedFloatModifier: AttributeModifier<HdsTabsAttribute> | null = null
+  /** 是否存在听书会话（书名信息条的显示条件；必须走 StorageLink 才会驱动重绘） */
+  @StorageLink('listenActive') listenActive: boolean = false
 
-  private addLog(msg: string): void {
-    hilog.info(DOMAIN, TAG, '%{public}s', msg);
-    this.logs = this.logs.concat([msg]);
+  // ══════════════════════════════════════════════════════════════════════════
+  // 首次安装「全量 / 离线」模式选择弹窗（2026-10-13 新增，用户需求）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 需求：首次安装的用户第一次进入后，全屏灰色遮罩 + 屏幕中央四圆角材质弹窗，
+  //   上下两个按钮（上=全量、下=离线），点击只是**红框框选**，再点「确定」才生效；
+  //   默认框选全量模式；结果与设置页的离线/全量开关**天然同步**（同一份落盘数据）。
+  //
+  // ── 为什么在这里创建 controller ──────────────────────────────────────────
+  // `Index` 是 `@Entry` 主页面，冷启动即挂载 ⇒ 它是"进入软件后"最早可用弹窗的宿主。
+  // 启动流程本身不动（用户要求"流程正常启动"）：弹窗在 `aboutToAppear` 之后触发，
+  // 不阻塞 `initAppData()` / 建表等既有初始化。
+  //
+  // ⚠️ `CustomDialogController` 的参数**不支持动态更新**（SDK
+  //    `custom_dialog_controller.d.ts:756` NOTE 原文「Custom dialog box parameters
+  //    do not support dynamic updates」）⇒ 每次弹出都 **new 一个新 controller**
+  //    （规范 4.4 同款做法：`GroupType.openGroupPanel()`）。
+  /**
+   * 首启引导弹窗控制器（null = 尚未弹出/已关闭）。
+   * 只在 `maybeShowFirstRunDialog()` 里 new，保证每次都是新实例。
+   */
+  private firstRunDialog: CustomDialogController | null = null
+  /**
+   * 启动后延迟弹出的毫秒数。
+   * 为什么要延迟：冷启动首帧还要跑 `initAppData()` + 建表 + 一镜到底初始化，
+   * 弹窗与首帧同拍会和孩子布局抢帧。给一点余量让主界面先立住。
+   */
+  private static readonly FIRST_RUN_DELAY_MS: number = 600
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 阅读里程碑主动推广（2026-10-28 新增，用户需求）—— 本页是**唯一的弹窗宿主**
+  // ══════════════════════════════════════════════════════════════════════════
+  // 需求 ③④ 全文与判定表写在 `common/utils/ReadPromo.ets` 文件头（单一真源，不在这里重复）。
+  // 本页只承担三件事：① 冷启动/退书时触发判定；② new 两个 CustomDialogController；
+  // ③ 在弹窗的**每一条关闭路径**上给 `ReadPromo` 记账。
+  //
+  // ── 为什么要一个 @StorageProp 广播 ────────────────────────────────────────
+  // 阅读页（`ReaderPage3`）与 `Index` 之间没有直接引用（它是 NavDestination 子树），
+  // 而"刚退出一本书"这个时刻只有阅读页知道（`ReadTimeRecorder.detach()`）。
+  // 沿本工程既有做法用 AppStorage 公共信号（规范 §5：「所有数据变更必须广播 AppStorage
+  // 公共信号，谁改数据谁广播」），写端 `ReadTimeRecorder.detach()` 末尾自增 `readPromoTick`。
+  // SDK 依据：`StorageProp` 是 `(value: string) => PropertyDecorator`（@since 7，见
+  // SDK `ets/component/common.d.ts:952` 原文 `declare const StorageProp: (value: string) => PropertyDecorator;`；
+  // `Watch` 同文件 `declare const Watch: (value: string) => PropertyDecorator;`）
+  // ⇒ 写端只写 AppStorage、本页用 `@StorageProp` 单向下行 + `@Watch` 接通知即可
+  // （同款既有写法：`@StorageProp(KEY_OUTER_MINIMAL) @Watch(...)`，本文件 :431）。
+  @StorageProp('readPromoTick') @Watch('onReadPromoTick') readPromoTick: number = 0
+
+  /**
+   * 评分软引导弹窗 controller（null = 未弹 / 已关）。
+   * ⚠️ 参数不支持动态更新（SDK `custom_dialog_controller.d.ts:754-760` NOTE 原文
+   * 「Custom dialog box parameters do not support dynamic updates」）⇒ 每次弹出 **new 新实例**。
+   */
+  private promoRatingDialog: CustomDialogController | null = null
+  /** VIP 购买弹窗 controller（同上，每次 new） */
+  private promoVipDialog: CustomDialogController | null = null
+  /** 同一时刻只允许一个推广弹窗（防冷启动与退书信号叠弹） */
+  private readPromoBusy: boolean = false
+  /**
+   * 本次 VIP 弹窗是否已经记过账。
+   * 为什么会重复：`VipDialog` 自己的「关闭 / 买成」走 `onClose`（`VipDialog.ets:35,75,96`），
+   * 而点遮罩 / 返回键走 options 的 `cancel`（SDK `custom_dialog_controller.d.ts:70-79`
+   * 原文「Callback invoked when the dialog box is closed after the Back button or mask is
+   * touched or the Esc key is pressed.」）⇒ 两条路径都要记账，且必须幂等。
+   */
+  private promoVipCounted: boolean = false
+  /**
+   * 冷启动判定延时。为什么 1200ms：冷启动首帧要跑 `initAppData()` + 建表 + 一镜到底初始化，
+   * 首启弹窗用的是 600ms（`FIRST_RUN_DELAY_MS`，本文件 :173）；本弹窗的判定还要等
+   * `readDaily` 表就绪（`ReadPromo.isReady()`），给更宽余量让主界面先立住。
+   */
+  private static readonly READ_PROMO_COLD_DELAY_MS: number = 1200
+  /**
+   * 退书后判定延时。600ms 等返回转场收尾 —— 阅读页的 `setReaderActive(false)` 推迟到
+   * 本页阅读分支的 `onWillDisappear`（`restoreReaderColorMode()`，本文件 :2396-2397），
+   * 早于转场结束就判定会被 `maybeShowReadPromo()` 里那道 `readerActive` 闸拦掉。
+   */
+  private static readonly READ_PROMO_TICK_DELAY_MS: number = 600
+  /** 历史时长还没入账（DB 未就绪）时的重试间隔 */
+  private static readonly READ_PROMO_RETRY_MS: number = 800
+  /**
+   * 最多重试几次：**13** × 800ms ≈ 10.4s（+ 冷启动的 1200ms ≈ 11.6s）。
+   *
+   * ⚠️ 2026-10-28 Lead 复核把 6 改成 13（原值 6 ⇒ 1.2s + 4.8s ≈ 6s 就放弃）：
+   *   `ReadPromo` 自己的 DB 看门狗是 **8000ms**（`ReadPromo.ets:158 DB_WAIT_WATCHDOG_MS`），
+   *   即"DB 链路真挂了"时它要 8s 才放行 `isReady()`；重试窗口若只有 6s，**看门狗永远等不到**
+   *   ⇒ 老用户「装了新版本一进就弹」在 DB 慢/挂的那次冷启动里必然落空。
+   *   现在窗口 ≥ 10.4s > 8s ⇒ 看门狗放行后至少还有 1~2 次重试去判定（这正是两个常量必须配套的原因）。
+   * 仍没就绪就放弃本次冷启动判定，等下一个触发点（退书）——**不排队、不空转**。
+   */
+  private static readonly READ_PROMO_MAX_RETRY: number = 13
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 一镜到底（书架 → 阅读器）运行态 —— 2026-09-23
+  // ══════════════════════════════════════════════════════════════════════════
+  // 数据流：书架点击 → `LongTakeFlightData.capture()` 拍封面几何放进路由参数（rp.longTake）
+  //   并置臂旗 ltArm → READER 分支按 ltArm 建成「飞行分支」（挂 customTransition）
+  //   → delegate 用 rp.longTake 推导几何（LongTakeGeom）并同步设起始帧 → 三段 animateTo 编排。
+  // 为什么需要臂旗：customTransition 是飞行分支 NavDestination 的属性 —— 分支必须**先**建成、
+  //   delegate 才存在；而"是不是书架点的"只有点击侧知道 ⇒ 点击侧在 push 前置位。
+  //   详情页 / 快捷方式 / 书签回跳不置臂 ⇒ 走 else 普通分支 ⇒ EXPLODE 原样保留（反馈缺口A）。
+  // 回退：UiMotion.LONGTAKE_ENABLED = false ⇒ 点击侧整体旁路（不再置臂、不再捕获）。
+  /** 臂旗：书架点击在 push 前置位 ⇒ 本次 READER 建成「飞行分支」。弹栈后由 onDisappear 解除。 */
+  @StorageLink('ltArm') ltArm: boolean = false
+  // （2026-10-02 已回退上一轮的"看门狗 + Navigation.enabled 交互闸"：裸 ltTransEndAt
+  //  比较没有代际隔离，新转场清零打点会让所有在途看门狗误判失败、连环强制清空
+  //  正在进行的转场 —— 真机白屏卡死回归（2026-10-02 02:31 日志实证）。
+  //  保留的防御：① pop 分支同步拉进场终态；② 点击侧 ltArm 冷却闸。
+  //  中期方案：迁移官方库 @hmanimations/ezcustomtransition（打断/手势/生命周期已成熟）。）
+  /** 本次 READER 是否在演一镜到底（delegate 依据路由参数最终裁决） */
+  @State ltActive: boolean = false
+  /**
+   * Navigation 交互闸（2026-10-02 官方库迁移 Step 4）：一镜到底转场期间禁交互，
+   * 防返回打断转场（自研方案三轮卡死的根因）。由 customNavContentTransition
+   * 回调的 onTransitionStart/End 切换。skill: hmos-arkui-longtake-transition。
+   */
+  @State ltNavEnabled: boolean = true
+  /** 阅读器一镜到底会话（官方库迁移 2026-10-02）。@State：Delegate 的 longTakeSession
+   *  是 @ObjectLink，只接受父组件状态字段初始化 */
+  @State readerLtSession: LongTakeSession = new LongTakeSession()
+  /** PDF 阅读页一镜到底会话（2026-10-20；与 readerLtSession 分开，两个页面不会同时存在） */
+  @State pdfLtSession: LongTakeSession = new LongTakeSession()
+  /** 飞行层动画值：缩放（锚点取内容 (0,0)） */
+  @State ltScale: number = 1
+  /**
+   * 飞行层动画值：**纵向缩放**（十二轮 v3.7，与 ltScale 拆分的理由见 LongTakeGeom.sy0）：
+   * 盒子从全窗到槽位改为**四边各自线性插值**后，横向由 ltScale 承担（宽的 lerp 与
+   * W·sx 逐位相同），纵向由 ltScaleY 承担（sy0→1 线性）⇒ 盒子高 = clipH1×ltScaleY，
+   * 槽位在进/返回全程被盒子包含（旧"scale×clipH 乘积"对下半屏的书会中段露缝）。
+   * 初值 1（= 全窗高，与 ltClipH 初值 0 的保险丝同理：没就绪就不该有可见的书脸）。
+   */
+  @State ltScaleY: number = 1
+  /** 飞行层动画值：平移（vp，首帧 = 封面左上角在窗口里的位置；终态 = 屏幕左上角 = 参考效果的"铰链落点"） */
+  @State ltTx: number = 0
+  @State ltTy: number = 0
+  /**
+   * 「内容页/书脸」的裁切窗口高度（vp）= 封面高度：封面与内容页在书脊处**等高相连**
+   * （用户口述："内容页高度和左侧两个点一边高"）。飞行中从封面纵横比（clipH0）
+   * 长到全屏纵横比（clipH1）—— 内容页随放大变成全屏阅读器。
+   * 初值 0 = 保险丝：万一 delegate 的同步起始帧没赶上首帧，最多闪一帧空白，
+   * 绝不会闪出一整页阅读器（spec 验收标准 1）。
+   */
+  @State ltClipH: number = 0
+  /** 封面层：绕左缘（书脊）旋转角 / 透明度 / 本地圆角 / 图源（与书架同源 ⇒ 命中图片缓存） */
+  @State ltCoverAngle: number = 0
+  @State ltCoverOpacity: number = 1
+  @State ltCoverRadius: number = 0
+  @State ltCoverUrl: string = ''
+  /**
+   * 书架定格快照（五轮 2026-09-23，取代原"变暗层"）。点击瞬间截的整个书架（'main'），
+   * 垫在飞行书底下当"世界"：系统会中途隐藏/恢复书架 NavBar，原先露出来的是黑虚空
+   * （用户反馈"动画右侧有黑色区域，像遮罩"）——现在露出的是与真书架像素级一致的定格图。
+   * t=0 与真书架逐像素重合（无衔接感）；返回落地后 onDisAppear 清空、换回真书架。
+   * null = 快照失败 ⇒ 保留底下那层纯黑兜底（回到四轮前的观感）。
+   */
+  @State ltBackdrop: image.PixelMap | null = null
+  /**
+   * 飞行封面层的图源 = **封面卡片定格位图**（七轮 2026-09-30）。
+   * `null` = 截图失败 ⇒ 退回 `ltCoverUrl`（老路径）。
+   * 为什么不能直接用 `ltCoverUrl`：飞行封面层的盒子高度 = `ltClipH`，比图源自己的纵横比高，
+   * 会留一条"没人画"的空洞漏出书架定格图 —— 完整取证见 `UiMotion.LT_COVER_SNAPSHOT`。
+   */
+  @State ltCoverShot: image.PixelMap | null = null
+  /**
+   * 「内容页长什么样」——由 `ReaderPage3.publishLtPageBg()` 发布（键名同时写在
+   * `UiMotion.LT_PAGE_BG_KEY` / `LT_PAGE_IMG_KEY` 上）。
+   * ⚠️ 这里的装饰器参数必须是**字符串字面量**（ArkTS 限制）⇒ 与 UiMotion 里那两个常量
+   * 是"两处同一份真相"，改一处必须同步改另一处。
+   */
+  @StorageLink('ltReaderPageBg') ltPageBg: string = ''
+  @StorageLink('ltReaderPageImg') ltPageImg: string = ''
+  /**
+   * 飞行覆盖层显隐（十二轮 v3）：true = 常驻覆盖层可见（飞行进行中）。
+   * ⚠️ v3.4 起覆盖层是**常驻构建**（不能用 if 条件插入）：点火同拍才首次创建+布局
+   * 会与隐式动画注册同帧赛跑，头 1~2 帧渲染目标尺寸（封面被拉长再弹回）——
+   * 用户实测回归 + 检查点（无条件子节点）无此现象 ⇒ 改为 visibility 显隐，节点与
+   * 布局常驻。进场：delegate 同步置 true → onTransitionEnd 撤下（阅读期 None）；
+   * 返回：ltRunPop 首帧同步置 true（覆盖层布局早已存在 ⇒ 同帧复现无赛跑）。
+   * 取证见飞行分支树内 v3.4 注释。
+   */
+  @State ltFlightOverlay: boolean = false
+  /**
+   * 飞行分支"姿态就绪"门闩（十二轮 v3.3）：false = 整个分支透明。
+   * 为什么需要：真机日志（10:07:51）实证目的地 51.192 挂载、delegate 51.212 才点火
+   * ——中间 ~20ms（1-2 帧）分支已构建但起始姿态（scale/tx/clipH/覆盖层/阅读器透明度）
+   * 还没设置，渲染的是**上一轮/初始的残留状态**。true 只在 delegate 同步设完起始帧后
+   * 置位 ⇒ 分支的**第一个可见帧必然是正确姿态**，空窗期渲染为全透明（露出底下的书架）。
+   */
+  @State ltPoseReady: boolean = false
+  /**
+   * 真阅读器的透明度（十二轮 v3.1）：飞行期间 = 0。
+   * 为什么：飞行覆盖层的书架快照是 15MB 整窗位图，分支首帧有 1~2 帧上屏延迟，
+   * 缺口透出的是"覆盖层下面的东西"——若阅读器可见，透出的是它未上屏的黑 surface
+   * （用户实测：起飞瞬间"封面在，全屏黑一下"的闪屏）；置 0 后缺口透出的是
+   * NavDestination 底下的**真实书架**（与快照像素级同源）⇒ 无缝。
+   * 进场：delegate 同步置 0 → 封面淡出段（480~560ms）随封面一起回 1 —— 此时覆盖层
+   * 还盖着，阅读器在底下把首帧画好，onTransitionEnd 撤覆盖层时零闪呈现；
+   * 返回：delegate 同步置 0（覆盖层同帧盖住，无感）。
+   */
+  @State ltReaderOpacity: number = 1
+  /** 当前这次飞行的数据/几何（非 @State：只在 delegate 里读写，不参与渲染） */
+  private ltFlight: LongTakeFlightData | null = null
+  private ltGeom: LongTakeGeom | null = null
+  /**
+   * 飞行代际：delegate 每次武装新飞行时 +1（致命卡死修复，2026-09-24）。
+   * 用途见飞行分支 onDisAppear 清理块的「代际守卫」：清理定时器（+80ms）到点时
+   * 若代际已变（用户快速连点、新飞行已开始），本次清理整体让位——否则会把
+   * 新飞行的 ltArm/ltFlight/ltGeom/ltBackdrop 抹掉，导致转场进行中
+   * NavDestination 被撕掉重建（真机实锤：手势全失效、返回 `backEvent is null`
+   * 派发失败直接回桌面）。
+   */
+  private ltFlightGen: number = 0
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 「书架 ↔ 我的」切换动画（2026-09-24，需求第 2 项）—— 当天返工两次，最终版在下面
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // ── 三次改版的经过 ────────────────────────────────────────────────────────
+  // ① **淡入淡出**（`customContentTransition` 驱动 opacity/scale）—— 用户否掉：
+  //    「书架到我的**不能淡入淡出**，这样会很奇怪，有没有更好的切换方式，**平移**吧，
+  //      我给你个参考 D:\Arkts\xiaowei 你看一下，他的平移动画就很好。」
+  // ② **两页各自平移拼接**（`customContentTransition` 驱动 translate，旧页 `0→-D`、新页 `+D→0`）
+  //    —— 用户否掉：「来回点了几次，我发现动效很**割裂**，就像是书架和我的**中间有白色连接**一样。」
+  // ③ **本版：删掉自定义转场，回到官方内置平移，只调曲线与时长**。
+  //
+  // ── 为什么 ② 必然出缝 ─────────────────────────────────────────────────────
+  // documentId `FAQ/UI框架/UI界面/如何设置TabContent切换动画/faqs-arkui-1112`
+  //   场景二（"点击页签，TabContent 有左右切换效果…"）原文：
+  //   「**Tabs组件无法实现页面拼接。**」
+  //   ⇒ 让两个 TabContent 各自 `translate`、靠宽度精确对齐去"拼接"，正是官方明说不成立的做法；
+  //     对不齐的那部分就露出底色 —— 就是用户看到的那条白缝。
+  //
+  // ── ③ 的依据 ──────────────────────────────────────────────────────────────
+  // documentId `开发指南/ArkUI_方舟UI框架/…/选项卡_Tabs/arkts-navigation-tabs`
+  //   「TabContent切换动画」小节原文：
+  //   「**Tabs 自带的页签切换动画为平移动画。**若开发者需实现更高级的动画效果，
+  //      可通过 Tabs 提供的 API 实现自定义动画。」
+  //   ⇒ 用户要的"平移"，**内置动画本来就是**；而且由 Tabs 分页器**整体搬运一条连续的内容带**，
+  //     两个页签由同一机制同步位移 ⇒ **结构上不可能出现两页之间的缝**。
+  //   ⇒ 所以本版不再自绘，只改内置平移的两颗旋钮：`animationCurve` / `animationDuration`。
+  //
+  // ── 参数来源（参考项目 `xiaowei`）─────────────────────────────────────────
+  // `D:\Arkts\xiaowei\entry\src\main\ets\pages\Index.ets:77-82`（各页同款 `pageTransition`）：
+  //   PageTransitionEnter/Exit({ type: RouteType.Push/Pop, duration, **curve: Curve.FastOutSlowIn** })
+  //     .slide(SlideEffect.Right/Left)
+  // ⇒ 曲线取 `Curve.FastOutSlowIn`（见 `UiMotion.TABS_ANIM_CURVE`）；
+  //   时长取 `UiMotion.TABS_ANIM_DUR`（`xiaowei` 默认 521ms，本工程取 420ms）。
+  //   两颗旋钮都写在 `UiMotion.ets`，改一处即全局生效。
+  /**
+   * Navigation 的页面栈（2026-09-21 起）。
+   * 通过 `AppRouter.attach()` 交给路由门面，供后续迁移的页面入栈/出栈。
+   */
+  pageStack: NavPathStack = new NavPathStack()
+  // 主题颜色
+  @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
+  // ---------- 桌面快捷方式（快速听书 / 快速阅读）----------
+  /**
+   * 由 `EntryAbility.captureQuickAction()` 写入，值 `'listen'` | `'read'`。
+   * 用 `@StorageLink + @Watch` 而不只靠 `onPageShow`：这样**应用已在后台时**
+   * 点快捷方式（走 `onNewWant`）也能立刻响应，而不必等页面重新显示。
+   */
+  @StorageLink('quickAction') @Watch('onQuickActionChanged') quickAction: string = ''
+
+  onQuickActionChanged(): void {
+    this.consumeQuickAction();
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise<void>((resolve: () => void) => {
-      setTimeout(() => {
-        resolve();
-      }, ms);
-    });
-  }
+  // ---------- PuraX 外屏「极简阅读」（2026-10-24）----------
+  /**
+   * 当前是否处于**外屏极简形态**（PuraX 折叠态 1:1 小方屏）。
+   *
+   * 由 `common/utils/OuterScreen.ets` 统一计算后写进 `AppStorage('outerMinimal')`，
+   * 本页只订阅。用 `@StorageProp + @Watch` 而不是每次 `OuterScreen.isOn()`：
+   *   · `@StorageProp` ⇒ 折叠/展开时本页**自动重渲染**（书架 ↔ 极简卡片切换）；
+   *   · `@Watch`      ⇒ 切到外屏的那一刻要**自动进书**，光重渲染不够。
+   *
+   * ⚠️ 内屏 / 手机 / 平板 / 2in1 上这个值恒为 false ⇒ 本页走原有分支，零行为变化。
+   */
+  @StorageProp(KEY_OUTER_MINIMAL) @Watch('onOuterMinimalChanged') outerMinimal: boolean = false
 
-  aboutToAppear(): void {
-    setTimeout(() => {
-      this.runProbe();
-    }, 1500);
-    // ★ 2026-11-01：窗口尺寸变化（折叠屏切 单屏/双屏/三屏、2in1 拖窗）自动重测。
-    //   一次启动即可采到多种形态的数据（云真机按分钟计费，省时间）。
-    this.watchWindowSize();
-  }
+  /**
+   * 「外屏自动进书」是否已经做过（一次性闸）。
+   *
+   * 为什么必须要有：`@Watch` 在折叠过程中可能响多次（窗口尺寸会连报几次），
+   * 而 `outerMinimal` 保持 true 期间不该反复 push 阅读器（会叠出多个阅读页）。
+   * 语义：**每次"进入外屏态"最多自动跳一次**；用户从阅读器返回后停在极简卡片上，
+   * 不会又被弹回去。展开再合上（false → true）时重置，符合直觉。
+   */
+  private outerAutoOpened: boolean = false
 
-  /** 轮询屏幕尺寸；变化即重跑探针（标签会写 RESIZE） */
-  private watchWindowSize(): void {
-    try {
-      const d0: display.Display = display.getDefaultDisplaySync();
-      this.lastWinW = d0.width;
-      this.lastWinH = d0.height;
-    } catch (e) {
+  /**
+   * 上一次「自动进书」的时间戳（ms）。用于**抗折叠抖动**。
+   *
+   * 为什么光靠 `outerAutoOpened` 不够：折叠过程中 `compute()` 可能来回抖
+   * （例如先算出 326×326 命中 → 中间一帧 440×707 不命中 → 又命中），
+   * 于是 `outerMinimal` 走 false→true→false→true，`onOuterMinimalChanged()`
+   * 在 false 那一步会把 `outerAutoOpened` 复位 ⇒ 下一次 true 又会进一次。
+   * 若此时上一次的 `getLastReadBook()` 异步还没回来、`topName()` 仍不是 READER，
+   * 就会**连推两个阅读页**。
+   * ⇒ 加一道时间窗：距上次自动进书不足 `OUTER_AUTO_OPEN_COOLDOWN_MS` 时一律跳过。
+   *   一次物理折叠远短于 3 秒，而用户"真的再合一次手机"通常远长于 3 秒。
+   */
+  private outerAutoOpenedAt: number = 0
+
+  /** 自动进书的冷却窗（ms）。见 `outerAutoOpenedAt` 注释 */
+  private static readonly OUTER_AUTO_OPEN_COOLDOWN_MS: number = 3000
+
+  onOuterMinimalChanged(): void {
+    if (!this.outerMinimal) {
+      // 回到内屏：复位闸门，下次再合上还能自动进书
+      this.outerAutoOpened = false
+      return
     }
-    setInterval(() => {
-      try {
-        const d: display.Display = display.getDefaultDisplaySync();
-        if (d.width !== this.lastWinW || d.height !== this.lastWinH) {
-          this.lastWinW = d.width;
-          this.lastWinH = d.height;
-          this.addLog(`RESIZE ${d.width}x${d.height} density=${d.densityPixels} -> re-measure`);
-          this.runProbe();
-        }
-      } catch (e) {
-      }
-    }, 1200);
-  }
-
-  private async loadProbeText(): Promise<string> {
-    const ctx = getContext(this) as common.UIAbilityContext;
-    const buf: Uint8Array = await ctx.resourceManager.getRawFileContent('probe.txt');
-    const decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
-    return decoder.decodeToString(buf);
-  }
-
-  /** 窗口 / 避让区参数 */
-  private async logWindow(): Promise<void> {
-    try {
-      const ctx = getContext(this) as common.UIAbilityContext;
-      const win: window.Window = await window.getLastWindow(ctx);
-      const rect = win.getWindowProperties().windowRect;
-      this.addLog(`windowRect=${rect.width}x${rect.height} left=${rect.left} top=${rect.top}`);
-      const sys = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      const gesture = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM_GESTURE);
-      const nav = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
-      this.addLog(`avoid system.top=${sys.topRect.height} gesture.bottom=${gesture.bottomRect.height} nav.bottom=${nav.bottomRect.height}`);
-    } catch (e) {
-      this.addLog(`window info failed: ${JSON.stringify(e)}`);
-    }
-  }
-
-  /** 逐页翻页采样：记录 pageOffset，用于反推每页字符数 */
-  private async sampleFlip(tagText: string): Promise<void> {
-    for (let i = 0; i < FLIP_SAMPLES; i++) {
-      this.controller.flipPage(true);
-      await this.sleep(220);
-    }
-    this.addLog(`${tagText}: flipped ${FLIP_SAMPLES} pages`);
-    this.controller.flipPage(false);
-  }
-
-  private async runProbe(): Promise<void> {
-    if (this.running) {
-      return;
-    }
-    this.running = true;
-    this.logs = [];
-
-    this.addLog(`canIUse BookParser=${canIUse('SystemCapability.Reader.ReaderService.BookParser')}`);
-    this.addLog(`canIUse ReaderCore=${canIUse('SystemCapability.Reader.ReaderService.ReaderCore')}`);
-    this.addLog(`deviceType=${deviceInfo.deviceType} model=${deviceInfo.productModel}`);
-
-    let d: display.Display | null = null;
-    try {
-      d = display.getDefaultDisplaySync();
-      this.addLog(`display=${d.width}x${d.height} density=${d.densityPixels} dpi=${d.densityDPI}`);
-      this.addLog(`vp=${px2vp(d.width).toFixed(2)}x${px2vp(d.height).toFixed(2)}`);
-    } catch (e) {
-      this.addLog(`display failed: ${JSON.stringify(e)}`);
-    }
-
-    await this.logWindow();
-
-    // ── ENVPROBE：分档 / 折叠 / 全屏 / 渲染口径（2026-11-01 补全，云真机分档用）──
-    try {
-      const d0: display.Display = display.getDefaultDisplaySync();
-      let wbp: string = 'n/a';
-      let hbp: string = 'n/a';
-      try { wbp = String(this.getUIContext().getWindowWidthBreakpoint()); } catch (e) { }
-      try { hbp = String(this.getUIContext().getWindowHeightBreakpoint()); } catch (e) { }
-      let foldable: boolean = false;
-      let foldStatus: string = 'n/a';
-      let foldMode: string = 'n/a';
-      try { foldable = display.isFoldable(); } catch (e) { }
-      try { foldStatus = String(display.getFoldStatus()); } catch (e) { }
-      try { foldMode = String(display.getFoldDisplayMode()); } catch (e) { }
-      this.addLog(`ENVPROBE wbp=${wbp} hbp=${hbp} foldable=${foldable} foldStatus=${foldStatus} foldMode=${foldMode}`);
-      let sd: string = 'n/a';
-      try { sd = String(d0.scaledDensity); } catch (e) { }
-      this.addLog(`ENVPROBE density=${d0.densityPixels} scaledDensity=${sd} dpi=${d0.densityDPI} engineFont=systemDefault fontSize=30 lineHeight=1.6 flipMode=0`);
-      const win2: window.Window = await window.getLastWindow(getContext(this) as common.UIAbilityContext);
-      const wr: window.Rect = win2.getWindowProperties().windowRect;
-      const full: string = (wr.width >= d0.width - 1 && wr.height >= d0.height - 1) ? 'Y' : 'N';
-      this.addLog(`ENVPROBE window=${wr.width}x${wr.height} display=${d0.width}x${d0.height} fullscreen=${full} winVp=${(wr.width / d0.densityPixels).toFixed(2)}x${(wr.height / d0.densityPixels).toFixed(2)}`);
-    } catch (e) {
-      this.addLog(`ENVPROBE failed: ${JSON.stringify(e)}`);
-    }
-
-    let text: string = '';
-    try {
-      text = await this.loadProbeText();
-      this.addLog(`rawfile chars=${text.length}`);
-    } catch (e) {
-      this.addLog(`read rawfile failed: ${JSON.stringify(e)}`);
-      this.running = false;
-      return;
-    }
-
-    const ctx = getContext(this) as common.UIAbilityContext;
-    try {
-      await this.controller.init(ctx);
-      this.addLog('init OK');
-    } catch (e) {
-      this.addLog(`init FAILED: ${JSON.stringify(e)}`);
-      this.running = false;
-      return;
-    }
-
-    // 页码回调：pageShow 里的 pageOffset 是"当前页到全书起点的偏移"
-    try {
-      this.controller.on('pageShow', (info: readerCore.PageDataInfo) => {
-        this.addLog(`pageShow offset=${info.pageOffset} header='${info.pageHeaderContent}' footer='${info.pageFooterContent}'`);
-      });
-      this.addLog('pageShow subscribed');
-    } catch (e) {
-      this.addLog(`pageShow subscribe FAILED: ${JSON.stringify(e)}`);
-    }
-
-    try {
-      this.controller.registerBookParser(new ProbeHandler(text));
-      this.addLog('registerBookParser OK');
-    } catch (e) {
-      this.addLog(`registerBookParser FAILED: ${JSON.stringify(e)}`);
-    }
-
-    const width: number = d !== null ? d.width : 1080;
-    const height: number = d !== null ? d.height : 1920;
-    const density: number = d !== null ? d.densityPixels : 3;
-
-    // ① 全屏视口：基准测量
-    try {
-      this.controller.setPageConfig(this.mkSetting(width, height, density, 30));
-      this.addLog(`setPageConfig viewPort=${width}x${height} fontSize=30 OK`);
-      await this.controller.startPlay(0, '0');
-      this.addLog('startPlay OK');
-    } catch (e) {
-      this.addLog(`startPlay FAILED: ${JSON.stringify(e)}`);
-    }
-
-    // ② 翻页采样（等引擎首帧稳定）
-    await this.sleep(1500);
-    if (RUN_SWEEP) {
-      await this.sampleFlip('baseline(vp=full,fs=30)');
-    }
-
-    // ③ 视口阶梯：判断页边距是固定值还是随视口变化
-    if (RUN_SWEEP) {
-      for (let i = 0; i < VIEWPORT_STEPS.length; i++) {
-        const dh: number = VIEWPORT_STEPS[i];
-        if (dh === 0) {
-          continue;
-        }
-        try {
-          this.controller.setPageConfig(this.mkSetting(width, height - dh, density, 30));
-          await this.controller.startPlay(0, '0');
-          await this.sleep(400);
-          this.addLog(`viewport=${height - dh} (dh=${dh}) startPlay OK`);
-        } catch (e) {
-          this.addLog(`viewport=${height - dh} FAILED: ${JSON.stringify(e)}`);
-        }
-      }
-    }
-
-    // ④ 字号阶梯：判断页边距是否随字号变化
-    if (RUN_SWEEP) {
-      const fonts: number[] = [16, 20];
-      for (let i = 0; i < fonts.length; i++) {
-        try {
-          this.controller.setPageConfig(this.mkSetting(width, height, density, fonts[i]));
-          await this.controller.startPlay(0, '0');
-          await this.sleep(400);
-          this.addLog(`fontSize=${fonts[i]} startPlay OK`);
-        } catch (e) {
-          this.addLog(`fontSize=${fonts[i]} FAILED: ${JSON.stringify(e)}`);
-        }
-      }
-    }
-
-    // ⑤ 复原为基准配置，并隐藏面板，让外部截图能扫到纯正文
-    try {
-      this.controller.setPageConfig(this.mkSetting(width, height, density, 30));
-      await this.controller.startPlay(0, '0');
-      await this.sleep(500);
-      this.addLog('restored baseline config');
-    } catch (e) {
-      this.addLog(`restore FAILED: ${JSON.stringify(e)}`);
-    }
-
-    // ⑤' 先收起面板（纯正文），再自截图量首行/末行/行距
-    this.showPanel = false;
-    this.addLog('panel hidden, measuring...');
-    await this.sleep(1000);
-    await this.measureAndLog('baseline');
-
-    this.addLog('PROBE DONE');
-    this.running = false;
+    this.autoEnterReaderOnOuter()
   }
 
   /**
-   * 自截图 + 像素分析：量出引擎正文的首行/末行/行距。
-   * 结果全部打到 hilog（tag ReaderProbe），不依赖取文件。
+   * 外屏形态下**自动进入阅读器**（读最后阅读的那本书）。
+   *
+   * 用户口径：「外屏只有一个功能…就是在外屏点击后，快速阅读！我们现在快捷方式就能实现这个功能！」
+   * ⇒ 完全复用现成的快速阅读链路（`openLastReadBook(false)`），不新写跳转。
+   *
+   * 与 `consumeQuickAction()` 同款的两道门（那里踩过坑，见其注释）：
+   *   ① `startupStackCleared` —— 冷启动时页面栈可能还没立起来；
+   *   ② `AppRouter.isReady()` —— 路由门面未 attach 时 push 恒失败。
+   * 另加第三道：`AppRouter.topName() === RouteName.READER` ⇒ 已经在阅读页，不重复 push
+   * （例如"内屏正在看书 → 合上手机"，此时阅读页就地切精简版，不需要跳转）。
+   * 第四道：`outerAutoOpenedAt` 冷却窗 ⇒ 抗折叠抖动导致的连推（见该字段注释）。
+   *
+   * 失败兜底：`openLastReadBook` 自己会 toast「还没有阅读记录」，
+   * 同时本页会渲染 `OuterHomeCard` 的空态卡片 ⇒ 不会留下黑屏/死路。
    */
-  private async measureAndLog(tagText: string): Promise<void> {
-    try {
-      const ctx = getContext(this) as common.UIAbilityContext;
-      const win: window.Window = await window.getLastWindow(ctx);
-      const pm: image.PixelMap = await win.snapshot();
-      const info: image.ImageInfo = await pm.getImageInfo();
-      const w: number = info.size.width;
-      const h: number = info.size.height;
-      const buf: ArrayBuffer = new ArrayBuffer(w * h * 4);
-      await pm.readPixelsToBuffer(buf);
-      const px: Uint8Array = new Uint8Array(buf);
-      pm.release();
-
-      const x0: number = Math.floor(w * 0.03);
-      const x1: number = Math.floor(w * 0.80);
-      const inkCount: number[] = [];
-      const inkRows: number[] = [];
-      const yStart: number = Math.floor(h * 0.045);
-      const yEnd: number = Math.floor(h * 0.97);
-      for (let y = yStart; y < yEnd; y++) {
-        let c: number = 0;
-        const rowBase: number = y * w * 4;
-        for (let x = x0; x < x1; x += 4) {
-          const i: number = rowBase + x * 4;
-          // 底部手势条（底部 10% 的中间 40%）不算墨迹
-          if (y > h * 0.90 && x > w * 0.30 && x < w * 0.70) {
-            continue;
-          }
-          const lum: number = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
-          if (lum < 100) {
-            c++;
-          }
-        }
-        inkCount.push(c);
-        if (c >= 3) {
-          inkRows.push(y);
-        }
+  private autoEnterReaderOnOuter(attempt: number = 0): void {
+    if (!this.outerMinimal) {
+      return
+    }
+    if (this.outerAutoOpened) {
+      return
+    }
+    if (Date.now() - this.outerAutoOpenedAt < Main.OUTER_AUTO_OPEN_COOLDOWN_MS) {
+      return
+    }
+    if (!(AppStorage.get<boolean>('startupStackCleared') ?? false) || !AppRouter.isReady()) {
+      if (attempt < 25) {
+        setTimeout(() => {
+          this.autoEnterReaderOnOuter(attempt + 1)
+        }, 200)
       }
+      return
+    }
+    // 已经在阅读页（内屏看书时合上）⇒ 就地切精简版，不跳转
+    try {
+      if (AppRouter.topName() === RouteName.READER) {
+        this.outerAutoOpened = true
+        this.outerAutoOpenedAt = Date.now()
+        return
+      }
+    } catch (e) {
+      // 取不到栈顶就按正常流程走
+    }
+    this.outerAutoOpened = true
+    this.outerAutoOpenedAt = Date.now()
+    hilog.info(0x0000, 'OuterScreen', 'auto enter reader on outer screen')
+    this.openLastReadBook(false)
+  }
 
-      if (inkRows.length === 0) {
-        this.addLog(`MEASURE(${tagText}) size=${w}x${h} NO_INK`);
+  /**
+   * 消费快捷方式意图 → 打开「**真正最后一次阅读**」的书。
+   *
+   * 数据来源 `BooksDao.getLastReadBook()`：纯 `durChapterTime DESC` 取第一条，
+   * 且过滤掉 `durChapterTime = 0`（从未读过）的书 —— 所以拿到的一定是**真的最后读过**那一本，
+   * 而不是"置顶书"或"随便一本未读书"。
+   *
+   * **先同步清空标记、再异步查询**：`@Watch` 与 `onPageShow` 谁先到都可能，
+   * 清空在前可保证只跳一次。
+   */
+  private consumeQuickAction(attempt: number = 0): void {
+    const action = this.quickAction;
+    // ── 小艺「带我去」跳转（2026-10-26 新增，端插件 foreground 通道）──────────
+    // 由 `entryability/InsightIntentExecutorImpl.ets` 写入，形如 `tab:2`。
+    // 与 `listen` / `read` 走**同一条** `quickAction` 通道，不引入第二套机制。
+    // 只切底部页签，不需要 AppRouter 就绪 ⇒ 单独分支、不走下面的重试链。
+    if (action.startsWith('tab:')) {
+      const idx: number = Number(action.substring(4));
+      if (!isNaN(idx) && idx >= 0 && idx < this.nav.length) {
+        AppStorage.setOrCreate('quickAction', '');
+        this.currentTabIndex = idx;
+        // 书架页签且要求「打开导入」⇒ 追加一次导入动作（`pendingShelfAction`）
+        const pending: string = AppStorage.get<string>('pendingShelfAction') ?? '';
+        if (pending === 'import' && idx === 0) {
+          AppStorage.setOrCreate('pendingShelfAction', '');
+          // 等书架渲染后再触发导入选择器（复用书架页自身的入口，避免这里直接调文件选择器）
+          setTimeout(() => {
+            AppStorage.setOrCreate('shelfTriggerImport', Date.now());
+          }, 300);
+        }
+      } else {
+        AppStorage.setOrCreate('quickAction', '');
+      }
+      return;
+    }
+    if (action !== 'listen' && action !== 'read') {
+      return;
+    }
+    // ── 等启动就绪：冷启动真正的门槛是 Navigation 栈已 attach ────────────
+    // 历史原因：欢迎页 `onPageHide()` 会 `router.clear()`，与本页 `onPageShow` 抢时序
+    //   ⇒ 真机日志实测 `clear router stack` 紧跟 `pushUrl ReaderPage3`，阅读页成了栈里
+    //     唯一页面 ⇒ **返回直接回桌面**。当时的修法是等 `startupStackCleared`。
+    // 2026-09-23：欢迎页已删除（用户要求去掉启动页），`startupStackCleared` 改由本页
+    //   `aboutToAppear()` 直接置位 —— 它只代表"没有 router.clear() 抢栈"，
+    //   **不代表路由门面可用**。
+    // 2026-10-04 冷启动快捷方式日志实证：onPageShow 立即消费 → `AppRouter.push` 跑在
+    //   `Navigation.onAppear`（`attach`）之前（失败 toast 36.268 挂载 早于 首帧 36.324）
+    //   ⇒ `stack===null`，push 恒 false ⇒ 弹「页面栈尚未就绪」。
+    // ⇒ 门槛改为「标记 && AppRouter.isReady()」双条件，且**每次重试都重新检查**
+    //   （旧代码只在 attempt===0 查一次，重试链实际不轮询）。200ms×25 上限 5s。
+    if (!(AppStorage.get<boolean>('startupStackCleared') ?? false) || !AppRouter.isReady()) {
+      if (attempt < 25) {
+        setTimeout(() => {
+          this.consumeQuickAction(attempt + 1);
+        }, 200);
+      }
+      return;
+    }
+    // ── Bug B 修复：已经在阅读页上时，不再 push，交给阅读页就地切换模式 ──
+    // 否则表现为"点了没反应"或叠出第二个阅读页（用户实测：阅读页里点快速听书无效）。
+    try {
+      // 迁 Navigation 第 3 期：阅读页现在是 NavDestination，**不再出现在 router 的状态里**，
+      // 所以改问路由门面的栈顶（`AppRouter.topName()`）。若仍查 router，会判断不出
+      // "已经在阅读页"，于是叠出第二个阅读页（正是这段代码当初要修的问题）。
+      if (AppRouter.topName() === RouteName.READER) {
+        return; // 由 ReaderPage3 自己的 quickAction 监听消费
+      }
+    } catch (e) {
+      // 取不到状态就按正常流程走
+    }
+    AppStorage.setOrCreate('quickAction', '');
+    this.openLastReadBook(action === 'listen');
+  }
+
+  private openLastReadBook(autoListen: boolean): void {
+    BooksDao.getLastReadBook().then((book: Books | null) => {
+      if (book === null) {
+        // 兜底：不留静默失败
+        showMessage('还没有阅读记录，先去书架挑一本吧');
         return;
       }
+      // 迁 Navigation 第 3 期：阅读页已改为 NavDestination，改走路由门面。
+      // 参数必须用**显式类型**（ArkTS 的 arkts-no-untyped-obj-literals）。
+      const rp: ReaderRouteParam = { bookData: book, quickListen: autoListen };
+      if (!AppRouter.push(RouteName.READER, rp)) {
+        showMessage('打开失败：页面栈尚未就绪');
+      }
+    }).catch((e: BusinessError) => {
+      showMessage('读取阅读记录失败：' + e.message);
+    });
+  }
 
-      const first: number = inkRows[0];
-      const last: number = inkRows[inkRows.length - 1];
+  /**
+   * 夜间开关变化 ⇒ 重新下发 Ability 配色（书架深 / 我的浅，规则见 `NightMode.desiredDark()`）。
+   * ⚠️ 阅读器打开时本页**不会**也不该抢这个方向盘：`desiredDark()` 里
+   * `readerActive` 优先，两边算出来是同一个答案，谁调都不会打架。
+   */
+  onNightModeChanged(): void {
+    NightMode.setMainTab(this.currentTabIndex)
+    NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
+  }
 
-      // 行距：找连续墨迹段起点，取相邻起点差值的中位数
-      const starts: number[] = [];
-      let prevInk: boolean = false;
-      let gap: number = 0;
-      for (let y = 0; y < h; y++) {
-        const ink: boolean = inkCount[y] >= 3;
-        if (ink && !prevInk && (starts.length === 0 || gap >= 6)) {
-          starts.push(y);
+  /**
+   * 返回键 / **侧滑返回** 的页面级拦截（2026-10-19，为了 PDF 放大态）。
+   *
+   * SDK 原文（`build-tools/.../declarations/common.d.ts:24694`）：
+   *   `onBackPress?(): void | boolean;`
+   *   「Invoked when a user clicks the back button on a router-managed page (a custom component decorated
+   *     with @Entry). The value true means that the page executes its own return logic…」
+   * 官方 FAQ（`FAQ/UI框架/组件使用/侧滑无法从首页退出应用/faqs-arkui-531`）原文：
+   *   「onBackPress：属于自定义组件的生命周期回调函数之一，当用户点击返回按钮或**侧滑返回**时触发，
+   *     仅 @Entry 装饰的自定义组件生效。返回 true 表示页面自己处理返回逻辑，不进行页面路由。」
+   *
+   * 为什么需要它：真机日志（`docs/日志.md` 15:47:18.953）实证 —— 放大态下一次 **18.5px** 的横向 pan
+   * 之后 3ms 就出现 `transition start … isPopPage: 1`，而 `NavDestination.onBackPressed` **没有触发**
+   * （日志里没有 `PDFZOOM` 行）⇒ 侧滑返回走的是 @Entry 页面这一层。
+   * ⇒ 在这里拦：放大中直接返回 true（页面自己处理 = 不路由返回），并通知阅读页复位 100%。
+   * 其它情况返回 false，保持系统默认返回行为不变。
+   *
+   * ── 2026-10-26：无动画档的右滑**不在这里处理**（重要，别再往回改）─────────
+   * 现象：无动画档「从左往右滑」把整本书划走。真机日志（`Documents\日志`）原文：
+   *   `PAN RACC, T: Stack, DIS x 19.37 … 30.02` 紧接 2~5ms
+   *   `transition start … isPopPage: 1, isCustomAnimation: 1`
+   * 同一份日志里**正常翻页**的每一次都是 `PAN RACC, T: Row, …`。
+   * ⇒ `T: Row` = 阅读页自己的横滑手势；`T: Stack` = **`CardLongTakeDelegate.ExitGestureStyle()`**
+   *   挂在阅读页容器上的「右滑回书架」手势（一镜到底的书本合上动效）。
+   *   它在 `onActionStart` 里直接 `options?.pop()` ⇒ **既不是系统侧滑返回、也不是
+   *   `NavDestination.onBackPressed`**，所以本方法**根本不会被调用**（日志里没有任何本方法的行）。
+   *   这正是 `CardLongTakeDelegate.ets:69-75` 早就记录过的同一机理
+   *   （2026-10-19 PDF 放大态那次"用户顽疾的真凶"）。
+   * ⇒ 正确修法在**那里**：`READER_READ_MODE === 'none'` 时把该手势的 `fingers` 设成 9
+   *   （从源头不让它被识别）。本方法只保留 PDF 放大态那一条，不要在这里加时间窗去猜
+   *   （`onBackPress` 同时服务返回键，猜错就会让返回键失灵）。
+   */
+  onBackPress(): boolean {
+    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+      // 只消费、**不复位**（2026-10-19 用户反馈：「滑动的时候偶尔会触发重置 100%，
+      // 实际上滑动不能触发重置」）⇒ 放大态下这类返回事件一律静默吞掉。
+      console.info('PDFZOOM', 'entry onBackPress consumed (no reset)')
+      return true
+    }
+    return false
+  }
+
+  /**
+   * 应用接续（无缝流转，2026-10-24）：对端恢复标记。
+   *
+   * 用 `@StorageLink + @Watch` 而不是只在 `onPageShow` 里查 —— 与本页
+   * `quickAction` 那套（`:322`）同因：**应用已在后台时被接续拉起**不会重新走
+   * `aboutToAppear`，但 `@Watch` 一定会响。
+   */
+  @StorageLink('CONTINUE_PENDING') @Watch('onContinuePending') continuePending: string = ''
+  /** 接续接收中（书可能几 MB：导入期间给一个全局闸门，避免用户重复操作） */
+  @State continueReceiving: boolean = false
+  /** 本 Index 实例是否已处理过接续（容器重建后新实例会重置为 false，可再处理一次） */
+  private continueHandled: boolean = false
+
+  /**
+   * 消费一次接续数据 ⇒ 打开对应书籍并落到接续位置。
+   *
+   * 落点用 `continueSpine + continueDomPos`（字符级 DOM 锚点，跨设备/跨字号/跨翻页
+   * 模式都能精确命中），由 `ReaderPage3.aboutToAppear` 的 `startPlay` 消费。
+   * 字号/行距**刻意不迁移**（每块屏幕按自己的尺寸排版 ⇒ 布局不变）。
+   */
+  private onContinuePending(): void {
+    hilog.info(0x0000, 'ContinueIdx', 'onContinuePending: pending len=%{public}d',
+      this.continuePending.length)
+    if (this.continuePending.length === 0) {
+      return
+    }
+    // 读取（**不清除**，见 ContinueBridge.peekPending 注释：容器重建期间不能丢标记）
+    const p: ContinuePayload | null = ContinueBridge.peekPending()
+    if (p === null) {
+      return
+    }
+    // 同一个 Index 实例只处理一次（新旧 Index 谁先到都能试；容器重建后新实例会再来一次）
+    if (this.continueHandled) {
+      hilog.warn(0x0000, 'ContinueIdx', 'onContinuePending: already handled in this instance')
+      return
+    }
+    // ⚠️⚠️ 2026-10-24 修（真机日志定案）：**在这里立刻占位**，不能等 push 成功。
+    //
+    // 事故（`docs/日志.md` 00:09:50）：
+    //   `.337 importContinueBook: enter session=...`   ← 第1次（走 waitAssetPath 轮询）
+    //   `.349 onContinuePending: pending len=776`      ← @Watch/onPageShow 又触发一次
+    //   `.389 importContinueBook: enter session=...`   ← 第2次并发进来
+    //   `.506 CopyFile ok=true` / `.515 open: 神墓.txt` ← 第1次成功
+    //   `9.806 importContinueBook: asset timeout`      ← 第2次等不到 asset（已被
+    //                                                    releaseTarget 清空）⇒ 弹「接收超时」
+    // 根因：`continueReceiving` 只在 asset 就绪后才置 true、`continueHandled` 只在
+    //   push 成功后才置 true ⇒ `waitAssetPath` 轮询那几秒是**无保护窗口**，
+    //   双路径各触发一次，两次 importContinueBook 并行。
+    // 修法：进入即占位；失败路径再回滚（见下方 `this.continueHandled = false`）。
+    this.continueHandled = true
+    // 重入守卫（兜底：跨实例/异常路径）
+    if (this.continueReceiving) {
+      hilog.warn(0x0000, 'ContinueIdx', 'onContinuePending: already receiving, skip')
+      return
+    }
+    hilog.info(0x0000, 'ContinueIdx',
+      'onContinuePending: book=%{public}s url=%{public}s spine=%{public}d node=%{public}d char=%{public}d domPos=%{public}s session=%{public}s routerReady=%{public}s',
+      p.bookName, p.bookUrl, p.spineIndex, p.nodeIndex, p.charOffset, p.domPos,
+      p.sessionId, String(AppRouter.isReady()))
+    const open = (book: Books): void => {
+      hilog.info(0x0000, 'ContinueIdx', 'open: name=%{public}s id=%{public}d',
+        book.bookName, book.id ?? -1)
+      // 对端缺书：明确提示，不静默失败（全量"带书过去"是下一期的事）
+      if (book.bookName !== p.bookName) {
+        hilog.warn(0x0000, 'ContinueIdx', 'open: name mismatch %{public}s != %{public}s',
+          book.bookName, p.bookName)
+        showMessage(`本机没有《${p.bookName}》，请先导入这本书`)
+        this.continueHandled = false // 失败回滚：允许用户重试接续
+        return
+      }
+      // ── 同名不同书防护（2026-10-24）────────────────────────────────────────
+      // 只按 bookUrl+bookName 匹配会把"对端同名但不同源/不同版次"的书误当成同一本，
+      // 结果是打开错书还落到错位置。用**文件体积**做二次校验（拿不到就跳过，不阻断）。
+      if (p.bookUrl.length > 0 && book.bookUrl !== undefined && book.bookUrl.length > 0) {
+        const sameSize: boolean = this.sameBookFileSize(p.bookUrl, book.bookUrl)
+        if (!sameSize) {
+          hilog.warn(0x0000, 'ContinueIdx',
+            'open: size mismatch, treat as different book (src=%{public}s dst=%{public}s)',
+            p.bookUrl, book.bookUrl)
+          showMessage(`本机《${p.bookName}》与来源不是同一本，请先导入正确的书籍`)
+          this.continueHandled = false // 失败回滚：允许用户重试接续
+          return
         }
-        gap = ink ? 0 : gap + 1;
-        prevInk = ink;
       }
-      const diffs: number[] = [];
-      for (let i = 1; i < starts.length; i++) {
-        diffs.push(starts[i] - starts[i - 1]);
+      // ① 字体 / 背景 / 日夜间：写进本书的 ReaderSetting 持久位，
+      //    阅读页 `aboutToAppear` 一读就是对的（**字号/行距刻意不动** ⇒ 布局不变）。
+      this.applyContinueLayout(p)
+      // ② 背景记录（自定义颜色/材质）
+      ContinueBridge.saveBgIfAny(p)
+      const rp: ReaderRouteParam = {
+        bookData: book,
+        continueSpine: p.spineIndex,
+        continueDomPos: p.domPos,
+        // 备用坐标：domPos 若被引擎忽略/格式异常，阅读页用自己重算的
+        // `domPosFor(node,char)` 兜底（双保险，用户已同意）
+        continueNode: p.nodeIndex,
+        continueChar: p.charOffset,
+        // 排版：**内存下发**（绝不写 ReaderSetting 持久位，见 applyContinueLayout 注释）
+        // ✅ 带：字体/字重/字色/主题色/背景/日夜/翻页模式
+        // ❌ 不带：字号/行距（用户拍板：屏幕比例不同，真正影响体验的只有这两个）
+        continueFontName: p.fontName,
+        continueFontPath: p.fontPath,
+        continueFontWeight: p.fontWeight,
+        continueFontColor: p.fontColor,
+        continueThemeColor: p.themeColor,
+        continueThemeBgImg: p.themeBgImg,
+        continueNightMode: p.nightMode,
+        continueFlipMode: p.flipMode
       }
-      diffs.sort((a: number, b: number) => a - b);
-      const pitch: number = diffs.length > 0 ? diffs[Math.floor(diffs.length / 2)] : -1;
+      if (!AppRouter.push(RouteName.READER, rp)) {
+        showMessage('打开失败：页面栈尚未就绪')
+        this.continueHandled = false // 失败回滚：保留 pending，等新容器/下次 onPageShow 再试
+        return
+      }
+      // 跳转成功才清标记（失败时保留，等下一次 onPageShow / 新容器再试）
+      this.continueHandled = true
+      ContinueBridge.clearPending()
+      hilog.info(0x0000, 'ContinueIdx', 'open: push ok, pending cleared')
+    }
+    const find = (): void => {
+      const miss = (): void => {
+        // 对端确实没有这本书 ⇒ 走**全量路线**：把源端暂存在分布式目录的书文件
+        // 用现有导入管线（`FileHandler.CopyFile`：拷进沙箱 + 写库）落地，再打开。
+        this.importContinueBook(p, open)
+      }
+      if (p.bookUrl.length > 0) {
+        BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
+          if (list.length > 0) {
+            open(list[0])
+          } else {
+            miss()
+          }
+        }).catch((): void => {
+          miss()
+        })
+        return
+      }
+      BooksDao.getLastReadBook().then((book: Books | null) => {
+        if (book !== null && book.bookName === p.bookName) {
+          open(book)
+        } else {
+          miss()
+        }
+      }).catch((): void => {
+        miss()
+      })
+    }
+    // 等 DB 与页面栈双双就绪再动手（2026-10-24 修：冷启动时两者都可能还没好）
+    //
+    // ── 真机日志实证（`docs/日志.md` 15:57:26，冷启动接续）──────────────────
+    //   `onWindowStageRestore, inited=false` → `routerReady=false`
+    //   ⇒ 旧实现只 setTimeout 300ms 就去 `BooksDao.isExistBooks`
+    //   ⇒ 那时 `onWindowStageCreate` 里的 `DbUtil.initDB` / `DataBase.initAllTable`
+    //     **还是异步进行中**，查询直接抛错，被 `.catch` 吞成"没这本书"
+    //   ⇒ 明明两端都有《紫川》却报了"本机没有这本书"。
+    // 现在改成：DB 就绪 + 路由就绪**两个条件都满足**才查，且带重试上限。
+    this.waitReadyThenFind(p, find, 0)
+  }
 
-      this.addLog(`MEASURE(${tagText}) size=${w}x${h} first=${first} last=${last} `
-        + `lineStarts=${starts.length} pitch=${pitch} topMarginPx=${first} bottomMarginPx=${h - last}`);
+  /**
+   * 轮询等待「DB 就绪 + 路由就绪」，再执行查询。
+   * 上限 20 × 150ms = 3s（冷启动建表实测远小于此），超时也放行 —— 交给下游给提示。
+   */
+  private waitReadyThenFind(p: ContinuePayload, find: () => void, attempt: number): void {
+    DataBase.whenReady().then((): void => {
+      if (AppRouter.isReady()) {
+        hilog.info(0x0000, 'ContinueIdx', 'ready: db+router ok at attempt=%{public}d', attempt)
+        find()
+        return
+      }
+      if (attempt >= 20) {
+        hilog.warn(0x0000, 'ContinueIdx', 'ready: router timeout, give up')
+        showMessage('打开失败：页面栈尚未就绪')
+        return
+      }
+      setTimeout((): void => {
+        this.waitReadyThenFind(p, find, attempt + 1)
+      }, 150)
+    }).catch((): void => {
+      if (attempt >= 20) {
+        hilog.warn(0x0000, 'ContinueIdx', 'ready: db timeout, give up')
+        showMessage('接续失败：数据库尚未就绪')
+        return
+      }
+      setTimeout((): void => {
+        this.waitReadyThenFind(p, find, attempt + 1)
+      }, 150)
+    })
+  }
+
+  /**
+   * 把接续带过来的**字体 / 背景 / 日夜间**写进本书的 `ReaderSetting_${bookName}`。
+   *
+   * ⚠️ 字号（fontSize）、行距（lineHeight）**刻意不写** —— 用户 2026-10-24 拍板：
+   *    「字体、背景、日/夜需要带，字号和行距不要带，这样就能完美实现布局不变，
+   *      但是信息同步」。
+   * 写的是**持久位**而不是内存：阅读页 `aboutToAppear` 会从 Preferences 读初值，
+   * 先落盘再进页面 ⇒ 一进就是对的，不需要额外时序协调。
+   */
+  private applyContinueLayout(p: ContinuePayload): void {
+    // ⚠️⚠️ 2026-10-23 已**停用**（事故修复，勿恢复）⚠️⚠️
+    //   旧实现：读 `ReaderSetting_${bookName}` → JSON.parse → 改几个字段 →
+    //   `putSync(key, JSON.stringify(...))`。
+    //   致命错误：这块持久位存的是 **readerSetting 对象**（`ReaderPage3.ets:3875`
+    //   的读取契约就是"读回来当对象用"），而 `PreferencesUtil.getSync` 拿回来的
+    //   不是 string ⇒ `typeof raw === 'string'` 为 false ⇒ `setting = {}` ⇒
+    //   我们把整本设置**覆盖成 3 个字段的 JSON 字符串**。
+    //   后果（用户实测）：读回来变字符串 ⇒ `readerSetting.fontSize` 等全 undefined
+    //   ⇒ 引擎收到非法配置 ⇒ **进书黑屏，且已落盘所以退出重进也黑**。
+    //   ⇒ 现在改为：字体/背景/日夜间**通过 ReaderRouteParam 内存下发**给阅读页
+    //     （见下面 `open()` 组 rp 的地方），对端自己决定怎么用，绝不从外部改写
+    //     这本设置。本方法保留空实现只为兼容旧调用点，**不要往里加写盘逻辑**。
+    hilog.info(0x0000, 'ContinueIdx',
+      'applyContinueLayout: skipped by design (font=%{public}s night=%{public}s)',
+      p.fontName, String(p.nightMode))
+  }
+
+  /**
+   * 全量路线（2026-10-24）：对端没有这本书 ⇒ 用源端暂存在**分布式目录**的文件导入。
+   *
+   * 复用生产导入管线 `FileHandler.CopyFile(uri, index)`（拷进沙箱 + 写库 + 抽封面），
+   * 与「分享 / 用其他应用打开」完全同一条链路 ⇒ 入库结果与手动导入一致。
+   * 导入成功后回查一次 DB 拿到带 id 的 Books，再走正常打开流程。
+   *
+   * 失败（未开多设备协同 / 网络断 / 源端没暂存成功）⇒ 明确提示，不静默。
+   */
+  private importContinueBook(p: ContinuePayload, onImported: (book: Books) => void): void {
+    hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: enter session=%{public}s',
+      p.sessionId)
+    // ⚠️ 整个接收流程（含 waitAssetPath 轮询期）都算"接收中"⇒ 闸门从入口就打开，
+    //   否则轮询那几秒是无保护窗口（真机日志 00:09:50 就是在这里被并发进来第二次，
+    //   第 2 次等不到 asset ⇒ 9 秒后弹「接收超时」）。
+    this.continueReceiving = true
+    if (p.sessionId.length === 0) {
+      this.continueReceiving = false
+      this.continueHandled = false // 允许重试
+      hilog.warn(0x0000, 'ContinueIdx', 'importContinueBook: no session, source had no asset')
+      showMessage(`本机没有《${p.bookName}》，且源端未传出书籍文件，请先导入这本书`)
+      return
+    }
+    // Asset 是异步同步过来的（源端 save → 系统传输 → 对端 restored）
+    // ⇒ 必须轮询等 `CONTINUE_ASSET_PATH`，不能立刻断言"没有书"。
+    this.waitAssetPath(p, 0, (path: string) => {
+      if (path.length === 0) {
+        this.continueReceiving = false
+        this.continueHandled = false // 允许用户重试接续
+        hilog.warn(0x0000, 'ContinueIdx', 'importContinueBook: asset timeout')
+        showMessage(`《${p.bookName}》接收超时（请确认两端已开启多设备协同并处于同一网络）`)
+        return
+      }
+      hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: asset ready %{public}s', path)
+      this.continueReceiving = true
+      showMessage(`正在接收《${p.bookName}》…`)
+      FileHandler.CopyFile(path, 0).then((ok: boolean) => {
+        this.continueReceiving = false
+        hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: CopyFile ok=%{public}s', String(ok))
+        ContinueBridge.releaseTarget()
+        // 清理分布式目录里的暂存文件（已经拷进沙箱，留着占空间）
+        try {
+          if (fs.accessSync(path)) {
+            fs.unlinkSync(path)
+          }
+        } catch (e) {
+          // 清不掉不影响主流程
+        }
+        if (!ok) {
+          showMessage(`《${p.bookName}》导入失败`)
+          this.continueHandled = false // 失败回滚：允许重试
+          return
+        }
+        BooksDao.isExistBooks(p.bookUrl, p.bookName).then((list: Books[]) => {
+          hilog.info(0x0000, 'ContinueIdx', 'importContinueBook: relookup hits=%{public}d', list.length)
+          if (list.length > 0) {
+            onImported(list[0])
+            return
+          }
+          // 双条件（url+name）未命中 ⇒ 退回**只按书名**查（对端路径/导入批次可能不同）
+          BooksDao.getBooksByName(p.bookName).then((byName: Books[]) => {
+            hilog.info(0x0000, 'ContinueIdx',
+              'importContinueBook: name-lookup hits=%{public}d', byName.length)
+            if (byName.length > 0) {
+              onImported(byName[0])
+            } else {
+              showMessage(`《${p.bookName}》已导入但未找到记录，请回书架查看`)
+            }
+          }).catch((): void => {
+            showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
+          })
+        }).catch((): void => {
+          showMessage(`《${p.bookName}》已导入但回查失败，请回书架查看`)
+        })
+      }).catch((): void => {
+        this.continueReceiving = false
+        showMessage(`《${p.bookName}》导入失败`)
+      })
+    })
+  }
+
+  /**
+   * 轮询等待 Asset 落地（150ms × 60 ≈ 9s）。
+   * 大书（20MB 级）经分布式同步可能需要几秒，所以给足时间。
+   */
+  private waitAssetPath(p: ContinuePayload, attempt: number, cb: (path: string) => void): void {
+    const path: string = AppStorage.get<string>(ContinueBridge.KEY_ASSET_PATH) ?? ''
+    if (path.length > 0) {
+      cb(path)
+      return
+    }
+    if (attempt >= 60) {
+      cb('')
+      return
+    }
+    setTimeout((): void => {
+      this.waitAssetPath(p, attempt + 1, cb)
+    }, 150)
+  }
+
+  /**
+   * 同名不同书防护：比对两端的书文件体积。
+   * 拿不到 stat（文件不存在/无权限）时**判为相同**，不阻断正常接续。
+   */
+  private sameBookFileSize(srcUrl: string, dstUrl: string): boolean {
+    try {
+      if (!fs.accessSync(srcUrl) || !fs.accessSync(dstUrl)) {
+        return true
+      }
+      const s1 = fs.statSync(srcUrl)
+      const s2 = fs.statSync(dstUrl)
+      // 允许 1KB 误差（不同平台换行符/编码转换的极端情况），量级差异才算不同书
+      return Math.abs(s1.size - s2.size) <= 1024
     } catch (e) {
-      this.addLog(`MEASURE(${tagText}) FAILED: ${JSON.stringify(e)}`);
+      return true
     }
   }
 
-  private mkSetting(width: number, height: number, density: number, fontSize: number): readerCore.ReaderSetting {
-    const s: readerCore.ReaderSetting = {
-      fontName: '鸿蒙黑体',
-      fontSize: fontSize,
-      fontWeight: 400,
-      fontColor: '#000000',
-      fontPath: '',
-      lineHeight: 1.9,
-      nightMode: false,
-      themeColor: '#FFFFFF',
-      themeBgImg: '',
-      flipMode: '0',
-      scaledDensity: density,
-      viewPortWidth: width,
-      viewPortHeight: height
-    };
-    return s;
+  onPageShow(): void {
+    // ★ 应用接续（2026-10-24）：**冷启动**必须在这里补一次消费。
+    //   原因（踩过）：`@StorageLink` 的初值是**从 AppStorage 读取**的，读取**不触发
+    //   `@Watch`** —— 而冷启动路径是 `EntryAbility.onCreate` 先写 `CONTINUE_PENDING`
+    //   （那时 UI 还没起），再 `onWindowStageCreate` → `loadContent` → 本页构建。
+    //   于是 @Watch 永远不响 ⇒ 接续到冷启动的设备上会"停在书架、不跳阅读页"。
+    //   `consumePending()` 读走即清 ⇒ 与 @Watch 双路径并存也不会重复 push。
+    this.onContinuePending()
+    // 冷启动场景：@Watch 只在"绑定之后发生变化"时触发，
+    // 快捷方式在 onCreate 里就写好了标记，所以这里也消费一次（幂等，见 consumeQuickAction）。
+    this.consumeQuickAction();
+    // ★ 回前台/回到本页时重新对一次配色（例如用户是在阅读器里切的夜间，返回时本页可能没被重建）
+    NightMode.setMainTab(this.currentTabIndex)
+    NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
+    // 退出阅读页面后恢复系统亮度
+    BrightnessUtil.setBrightness('default', -1)
+    // 退出阅读页面后显示状态栏。
+    // ⚠️ 2026-09-22 真机反馈修复：**这一处已经不再是主要恢复点了**。
+    //    阅读页迁成 `NavDestination` 后（见本文件 :328），`Index` 压栈时**不会被隐藏**
+    //    ⇒ `onPageShow` 不会因"从阅读页返回"而触发，这行实际上不执行。
+    //    真正的恢复点已移到 `ReaderPage3.aboutToDisappear()`
+    //    （与它 `aboutToAppear` 里的隐藏**成对**，依据见那里的详细注释）。
+    //    这里保留是为了覆盖"`Index` 自身真的经历显示周期"的场景（如从后台回前台），无害。
+    WindowAbility.getInstance().toggleWindowSystemBar(['status', 'navigation'], this.getUIContext().getHostContext());
+    // initBookListData()
+    setTimeout(() => {
+      this.showReadShow = false
+      this.isShow = false
+    }, 5000)
+
+    // T13/D-17：`getContext()`（@deprecated since 18）→ `UIContext.getHostContext()`（确定性取值）
+    console.debug('res1', this.bottomRectHeight)
+    // ★ 回前台 ⇒ 补一次书架刷新（2026-10-07）：
+    //   `onPageShow` 对 @Entry 页面在"应用进入前台"时触发（官方 FAQ `faqs-arkui-1607`：
+    //   「onPageShow在router路由页面（即@Entry装饰的自定义组件）每次显示时触发一次，
+    //   包括路由跳转、应用进入前台等场景」），这是**冷启动之外**唯一能覆盖
+    //   "后台期间数据被别的进程改了"的钩子 —— 典型场景：分享接收页
+    //   （`ShareReceivePage`，运行在 ShareExtensionAbility **独立进程**，AppStorage
+    //   不互通，它的导入广播到不了主进程）导入完书籍，用户回到本应用 ⇒ 书架若不
+    //   重查就看不到新书。后台标记见 `onPageHide`。
+    if (this.backgroundedSinceLastShow) {
+      this.backgroundedSinceLastShow = false
+      const tick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1
+      AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, tick)
+    }
   }
 
-  build() {
-    Stack() {
-      if (this.showReader) {
-        ReadPageComponent({
-          controller: this.controller,
-          readerCallback: (err: Error, data: readerCore.ReaderComponentController) => {
-            if (data !== undefined && data !== null) {
-              this.controller = data;
-              hilog.info(DOMAIN, TAG, 'readerCallback OK');
-            } else {
-              hilog.error(DOMAIN, TAG, 'readerCallback err=%{public}s', JSON.stringify(err));
-            }
-          }
-        })
-          .width('100%')
-          .height('100%')
-      }
+  /**
+   * 是否经历过一次"应用退到后台"（书架回前台补刷的闸门，见 `onPageShow` 尾部）。
+   * 为什么需要闸门：冷启动的首次 `onPageShow` 也会触发，那时书架 `aboutToAppear`
+   * 本来就会首查，再广播一次是重复加载 —— 只在"真的从后台回来"时才补刷。
+   * @Entry 的 `onPageHide` 只在应用退后台时触发（NavDestination 压栈不会隐藏
+   * @Entry 页面，本文件 :331 注释已实证同机理），不会被子页面误触发。
+   */
+  private backgroundedSinceLastShow: boolean = false
 
-      if (this.showPanel) {
-        Column({ space: 6 }) {
-          Text('ReaderKit 探针').fontSize(18).fontWeight(700)
-          Row({ space: 8 }) {
-            Button('重跑').onClick(() => {
-              this.runProbe();
-            })
-            Button('清空').onClick(() => {
-              this.logs = [];
-            })
-            Button('收起').onClick(() => {
-              this.showPanel = false;
-            })
+  onPageHide(): void {
+    this.backgroundedSinceLastShow = true
+    // ★ 2026-10-25 碰一碰/隔空传送：退后台清空"选定快照"。
+    //   官方要求「离开可分享页面（**包括应用退至后台**）时取消监听」，本工程的做法是
+    //   **保留监听、清空内容** —— 依据 Share Kit 的处理机制：无内容时回调里走
+    //   `clarifyNonShare` 引导用户，不会误发；而保留监听可以避免"回前台后必须
+    //   重开关一次弹窗才恢复"的暗坑。
+    //   若将来要求严格按原文 off，把这里换成 `BookShareBridge.get().releaseAll()`，
+    //   代价见 `BookShareBridge.release()` 注释（顺序由页面重新 acquire 恢复）。
+    BookShareBridge.get().clearSelection()
+  }
+
+  screenShot() {
+    // 切换回首页
+    let index = this.currentTabIndex
+    this.tabController.changeIndex(0)
+    this.getUIContext().getComponentSnapshot().get('main', ((err: Error, pixmap: image.PixelMap) => {
+      if (err) {
+        console.log("error: " + JSON.stringify(err))
+        return
+      }
+      AppStorage.setOrCreate('screen_shot', pixmap)
+    }))
+    // 恢复当前页
+    this.tabController.changeIndex(index)
+  }
+
+  /**
+   * 启动初始化（2026-09-23 从**已删除的 `welcomePage`** 搬过来，合并进原有的 aboutToAppear）。
+   *
+   * 原流程：`EntryAbility.loadContent('pages/welcomePage')` → 欢迎页 `onPageShow` 里
+   * `initAppData()` + 1.5s 后 `router.replaceUrl('pages/Index')`。
+   * 用户要求「直接去掉启动动画页，毫无意义」⇒ `EntryAbility` 现在**直接加载本页**，
+   * 初始化搬到本方法开头：早于首次 `build()`，书架不会先渲染成空；
+   * 页面上下文里 `getContext()` 可用（与原来在欢迎页调用等价）。
+   */
+  aboutToAppear(): void {
+    // ★ 启动数据初始化（原来在 welcomePage 里做）
+    initAppData();
+    // 现在**不存在** `router.clear()`（欢迎页已删）⇒ 这个"等清栈"标记不再有竞态，
+    // 直接置位；`consumeQuickAction()` 首次调用即可通过（原来要等欢迎页 replaceUrl）。
+    AppStorage.setOrCreate('startupStackCleared', true);
+    // 退出阅读页面后显示状态栏。
+    // ⚠️ 2026-09-22：这只在 `Index` **首次创建**时跑一次，无法覆盖"从阅读页返回"。
+    //    恢复点见 `ReaderPage3.aboutToDisappear()`。保留此处无害（幂等）。
+    WindowAbility.getInstance().toggleWindowSystemBar(['status', 'navigation'], this.getUIContext().getHostContext());
+    // 注册监听截图事件 用于我的页面下主题设置预览
+    emitter.on('screen_shot', () => {
+      this.screenShot()
+    })
+    //测试颜色模块
+    testGetColorFunction();
+    // ★ 首帧前就把配色对齐（冷启动时夜间开关可能已经是持久化的 true）
+    NightMode.setMainTab(this.currentTabIndex)
+    // 听书解锁位：与 ReaderPage3:3140 同源（@StorageLink 初值 false，必须从 Preferences 拉）
+    this.listenUnlocked = ListenUnlock.isUnlocked()
+    NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
+    // ★ 首次安装模式选择（2026-10-13）：流程正常启动，主界面立住后再弹引导。
+    this.maybeShowFirstRunDialog()
+    // ★ 阅读里程碑主动推广（2026-10-28）：先灌历史时长，再在首帧稳定后判定一次。
+    //   ① `init()` 幂等：只在首次调用时启动 `readDaily` 历史秒数的一次性入账
+    //      （老用户"装了新版本一进就弹"的唯一依据，见 `ReadPromo.ets` 头注释）；
+    //   ② 冷启动判定**必须延迟**且**必须等入账跑完**：`readDaily` 的建表在
+    //      `EntryAbility.onWindowStageCreate` 的 `DbUtil.initDB().then(...)` 链里
+    //      （`EntryAbility.ets:468`），本页 `aboutToAppear` 时可能还没跑完 ⇒
+    //      用 `ReadPromo.isReady()` 做闸、未就绪就短间隔重试
+    //      （最多 `READ_PROMO_MAX_RETRY` 次，之后放弃等下一个触发点，绝不空转）。
+    ReadPromo.init(this.hostAbilityContext())
+    setTimeout((): void => {
+      this.maybeShowReadPromo('coldStart', 0)
+    }, Main.READ_PROMO_COLD_DELAY_MS)
+    // ★ PuraX 外屏（2026-10-24）：冷启动时 `outerMinimal` 在**本页挂载前**就已经是 true
+    //   （`EntryAbility` 在 loadContent 之前就写好了）⇒ `@Watch` 一次都不会触发
+    //   （`@StorageProp` 只在值**变化**时回调）。所以这里必须主动补一次。
+    //   非外屏设备上 `autoEnterReaderOnOuter()` 第一行就 return，零副作用。
+    this.autoEnterReaderOnOuter()
+  }
+
+  /**
+   * 首次安装时弹出「全量 / 离线」模式选择（2026-10-13 新增，用户需求）。
+   *
+   * ── 三重判定全在 `FirstRunMode.shouldShow()` 里 ─────────────────────────────
+   *   · `FirstRunMode.ENABLED === false` ⇒ 永不弹（开发者一键开关，用户明确要求）；
+   *   · 已落盘 `firstRunModeChosen === true` ⇒ 不再弹（只弹一次）；
+   *   · `IGNORE_FLAG_FOR_DEBUG` ⇒ 调试期每次冷启都弹。
+   *
+   * ── 与设置页开关"天然同步"的实现 ──────────────────────────────────────────
+   * 本弹窗**不自己存模式值**：确认时调 `OfflineMode.set()` —— 与设置页
+   * `MySetPage.itemOnclick` 的 `SET_OFFLINE_MODE` 分支（`MySetPage.ets:737`）
+   * 是**同一个函数**，写同一个 Preferences 键 + 同一个 AppStorage 广播键
+   * ⇒ 两处天然同源，不存在"两边各存一份、互相覆盖"的问题。
+   */
+  private maybeShowFirstRunDialog(): void {
+    if (!FirstRunMode.shouldShow()) {
+      return
+    }
+    setTimeout(() => {
+      // 再次判定：延迟期间可能已经因为其它路径标记完成（防御性）
+      if (!FirstRunMode.shouldShow()) {
+        return
+      }
+      // 规范 4.4：options 不支持动态更新 ⇒ 每次 new 新 controller
+      this.firstRunDialog = new CustomDialogController({
+        builder: FirstRunModeDialog({
+          // 用户要求「默认框选全量模式」⇒ 初始选中 = false
+          initialOffline: false,
+          confirm: (offline: boolean): void => {
+            // ① 落盘 + 全应用广播（与设置页开关同一入口 ⇒ 天然同步）
+            OfflineMode.set(offline)
+            // ② 标记首启引导已完成 ⇒ 以后不再弹
+            FirstRunMode.markDone()
+            this.firstRunDialog = null
           }
-          Scroll() {
-            Column({ space: 2 }) {
-              ForEach(this.logs, (line: string) => {
-                Text(line).fontSize(11).width('100%')
-              }, (line: string, idx: number) => `${idx}-${line}`)
-            }.width('100%').alignItems(HorizontalAlign.Start)
-          }
-          .layoutWeight(1)
-          .width('100%')
-          .backgroundColor('#F2F2F2')
+        }),
+        // 强制选择语义：点遮罩 / 返回键都不关（用户必须选一个再确定）
+        autoCancel: false,
+        alignment: DialogAlignment.Center,
+        width: '80%',
+        cornerRadius: 20,
+        // ★ 材质生效的必要条件（规范 2.2）
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        // 灰色遮罩（SDK 默认即 0x33000000，这里显式写出来便于阅读与调整）
+        maskColor: '0x80000000',
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      })
+      this.firstRunDialog.open()
+    }, Main.FIRST_RUN_DELAY_MS)
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 阅读里程碑主动推广（2026-10-28 新增）—— 触发、判定、controller、记账
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 取 UIAbilityContext（与 `AboutPage.ets:205-207` 同款；系统评分/商店都要 UIAbilityContext） */
+  private hostAbilityContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext
+  }
+
+  /** 推广弹窗的提示（失败不能影响主流程） */
+  private promoToast(message: string): void {
+    try {
+      showMessage(message)
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `promoToast failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 紧接着系统评分弹窗之后的提示**必须延时**。
+   * 依据（真机日志，`AboutPage.ets:218-238` 原文）：`showCommentDialog()` 的 Promise
+   * 在系统 UIExtension 销毁**之前**就返回，此时 ArkUI 拒收 Toast 节点 ——
+   *   `Current Node(id: 1) is prohibited add child(tag Toast, ...)`
+   *   `Current modalUiextension count is : 1`
+   * ⇒ 不延时 = 用户什么都看不到。300ms 是该处取的保守值。
+   */
+  private promoToastAfterComment(delayMs: number, message: string): void {
+    setTimeout((): void => {
+      this.promoToast(message)
+    }, delayMs)
+  }
+
+  /**
+   * 「刚退出一本书」广播的处理（`ReadTimeRecorder.detach()` 末尾自增，见那边埋点②注释）。
+   * 延时 `READ_PROMO_TICK_DELAY_MS` 再判定：等 NavDestination 的返回转场收尾
+   * （`readerActive` 在转场开始前才被本页 `restoreReaderColorMode()` 置 false）。
+   */
+  onReadPromoTick(): void {
+    setTimeout((): void => {
+      this.maybeShowReadPromo('readerExit', 0)
+    }, Main.READ_PROMO_TICK_DELAY_MS)
+  }
+
+  /**
+   * 判定并弹出推广弹窗（**本页唯一的推广入口**）。
+   *
+   * 不排队的取舍（刻意）：命中任一闸门就直接 return，不缓存"待弹"状态。
+   * 理由：所有闸门都是**瞬时**条件（阅读器在栈顶 / 另一个推广弹窗开着 / 首启弹窗开着），
+   * 缓存一个待弹队列反而可能在用户已经进下一本书时突然弹出来。丢掉的这次机会由
+   * **下一个触发点**补上 —— 冷启动 + 每次退书都会判定（退书 ≥ 每小时至少一次）。
+   *
+   * @param source 触发来源（只用于日志定位：'coldStart' / 'readerExit'）
+   * @param attempt 已经重试过的次数（历史时长入账未完成时用）
+   */
+  private maybeShowReadPromo(source: string, attempt: number): void {
+    try {
+      if (!ReadPromo.ENABLED) {
+        return
+      }
+      if (this.readPromoBusy) {
+        return
+      }
+      // 首启引导还在（`FirstRunMode.ENABLED` 当前是 false ⇒ 正常情况下这条路不会走，
+      // 但一旦将来翻 true，两个弹窗会在冷启动时叠弹）⇒ 让位给首启引导。
+      if (this.firstRunDialog !== null) {
+        return
+      }
+      // 阅读器在栈顶 ⇒ 绝不弹（弹窗会盖在阅读页上；退书流程里此时转场还没结束）
+      if (AppStorage.get<boolean>(NightMode.READER_KEY) === true) {
+        return
+      }
+      // 历史秒数还没从 `readDaily` 并入（DB 未就绪）⇒ 此刻判定会把老用户判成新用户（漏弹）
+      if (!ReadPromo.isReady()) {
+        if (attempt < Main.READ_PROMO_MAX_RETRY) {
+          setTimeout((): void => {
+            this.maybeShowReadPromo(source, attempt + 1)
+          }, Main.READ_PROMO_RETRY_MS)
+        } else {
+          hilog.warn(0x0000, 'ReadPromo', `promo check skipped (not ready) source=${source}`)
         }
-        .width('92%')
-        .height('78%')
-        .padding(12)
-        .backgroundColor('#FFFFFFEE')
-        .borderRadius(12)
+        return
+      }
+      const kind: PromoKind = ReadPromo.check(this.hostAbilityContext())
+      hilog.info(0x0000, 'ReadPromo',
+        `check source=${source}, kind=${kind}, totalSec=${ReadPromo.totalSeconds()}`)
+      if (kind === PromoKind.RATING) {
+        this.openPromoRatingDialog()
+      } else if (kind === PromoKind.VIP) {
+        this.openPromoVipDialog()
+      }
+    } catch (e) {
+      // 任何异常都不许影响主流程（推广是增值功能，绝不能挡住书架/退书）
+      hilog.warn(0x0000, 'ReadPromo', `maybeShowReadPromo failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 弹出「喜欢喵阅吗？」评分软引导。
+   *
+   * options 配方逐条对齐 `docs/标准-弹窗与按钮统一规范.md`：
+   *  · §2.2 `customStyle: false` + `cornerRadius: 20` + `systemMaterial` + SPRING_FAST 开关动画；
+   *  · §2.4 本弹窗是**内容自适应的短弹窗** ⇒ **不给 height**；
+   *  · §4.1 关闭权在调用方（`RatingPromptDialog.ets:20-24` 明确「本弹窗不自己关」）。
+   * SDK 依据：`systemMaterial?: SystemUiMaterial`（`custom_dialog_controller.d.ts:681`，@since 26.0.0）；
+   * `customStyle: true` 时「The rounded corner radius is 0, and the background color is
+   * transparent」（同文件 :130-134）⇒ 材质无处附着，所以必须 false。
+   */
+  private openPromoRatingDialog(): void {
+    this.readPromoBusy = true
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: RatingPromptDialog({
+          theme: this.theme,
+          onGoRating: (): void => {
+            this.onPromoGoRating()
+          },
+          onLater: (): void => {
+            this.onPromoRatingLater()
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: '80%',
+        cornerRadius: 20,
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        cancel: (): void => {
+          // 点遮罩 / 返回键 = 用户把软引导关掉了（SDK :70-79 原文）⇒ 与「以后再说」同样记一次
+          this.promoRatingDialog = null
+          this.readPromoBusy = false
+          ReadPromo.markRatingShown()
+        }
+      })
+      this.promoRatingDialog = dialog
+      dialog.open()
+    } catch (e) {
+      this.promoRatingDialog = null
+      this.readPromoBusy = false
+      hilog.warn(0x0000, 'ReadPromo', `openPromoRatingDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 软引导点「去评分」：先关窗（关闭权在宿主），再拉起系统评分。
+   *
+   * ══ 2026-10-28 用户口径修正（重要）═══════════════════════════════════════════════
+   * 用户原话：「引导评分这个，**无需知道用户是否真的评价了**…三十天的话我记得我们有
+   *   **已评分判断**，足够了，只要是判断**未评分且上次推送评分超过三十天**，则推第二次」。
+   * ⇒ 本方法**不再**写 `markRatingDone()`（旧实现点一下就永久静音，与"未评分就继续每 30 天问"冲突），
+   *   只写 `markRatingShown()`（= 本次已推送，下一次最早 30 天后）。
+   *   是否"已评分"完全交给既有判断 `AppGalleryUtil.shouldSkipPrompt()`（本地记的
+   *   `RATING_REVIEWED_AT` / `RATING_LIMIT_AT`，来源是系统错误码 1021500007/0009/0008）
+   *   —— `ReadPromo.check()` 里一旦它为真就把 `RATING_DONE` 钉成终态（见 `ReadPromo.ets:270-274`）。
+   */
+  private onPromoGoRating(): void {
+    const dialog: CustomDialogController | null = this.promoRatingDialog
+    this.promoRatingDialog = null
+    this.readPromoBusy = false
+    try {
+      dialog?.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `close rating dialog failed: ${JSON.stringify(e)}`)
+    }
+    // 只记「推送过一次」：30 天计时从这里起算；**不**判定用户是否真的评价了。
+    ReadPromo.markRatingShown()
+    hilog.info(0x0000, 'ReadPromo', 'rating prompt confirmed, next eligible in 30d')
+    this.runSystemComment().catch((e: Error): void => {
+      hilog.warn(0x0000, 'ReadPromo', `runSystemComment failed: ${e.message}`)
+    })
+  }
+
+  /**
+   * 拉起系统评分弹窗并按业务结局分支（结局语义见 `AppGalleryUtil.ets:99-112` 的 CommentResult）。
+   *
+   * 为什么**不能**在 0007/0009/0008 之后跳商店：用户明明已经评价过，却被丢进应用市场，
+   * 是体验事故（`AppGalleryUtil.ets:48-58` 的真机修正原文）。
+   *
+   * ⚠️ 2026-10-28：本方法**不再**写 `markRatingDone()`。
+   *   · 0007/0009/0008 时 `AppGalleryUtil` 自己会写 `RATING_REVIEWED_AT`/`RATING_LIMIT_AT`
+   *     （`AppGalleryUtil.ets:210-219`），下次判定由 `shouldSkipPrompt()` 命中并钉终态
+   *     ⇒ 这里重复记一笔没有意义，反而会让"点过一次就永不再问"。
+   *   · 0006（未登录）/ 真不可用 ⇒ 30 天后照常再问（用户口径：「未评分且超过 30 天就推第二次」）。
+   */
+  private async runSystemComment(): Promise<void> {
+    let result: CommentResult = CommentResult.UNAVAILABLE
+    try {
+      result = await AppGalleryUtil.showCommentDialog(this.hostAbilityContext())
+    } catch (e) {
+      // `showCommentDialog` 自述"永不抛异常"（AppGalleryUtil.ets:137），这里只作双保险
+      hilog.warn(0x0000, 'ReadPromo', `showCommentDialog threw: ${JSON.stringify(e)}`)
+      return
+    }
+    hilog.info(0x0000, 'ReadPromo', `system comment result=${result}`)
+    if (result === CommentResult.SHOWN) {
+      // 系统弹窗已接管；用户是否真的提交不由我们判定（用户口径：无需知道）
+      return
+    }
+    if (result === CommentResult.ALREADY_REVIEWED_CURRENT ||
+      result === CommentResult.REVIEWED_WITHIN_YEAR) {
+      // 系统明确说"评过" ⇒ AppGalleryUtil 已落 `RATING_REVIEWED_AT`
+      //   ⇒ 下次 `ReadPromo.check()` 里 `shouldSkipPrompt()` 为真，自动钉终态
+      this.promoToastAfterComment(300, '感谢你之前的评价')
+      return
+    }
+    if (result === CommentResult.LIMIT_REACHED) {
+      // 达上限 ⇒ 已落 `RATING_LIMIT_AT`，同上
+      this.promoToastAfterComment(300, '感谢支持')
+      return
+    }
+    if (result === CommentResult.NOT_LOGGED_IN) {
+      // 用户**想评但没评上**（未登录华为账号）⇒ 不算评分，30 天后照常再来
+      this.promoToastAfterComment(300, '请先登录华为账号再评价')
+      return
+    }
+    // UNAVAILABLE（0001/0002/0003/0005/未知）⇒ 本次没评成，30 天后照常再来
+    this.promoToastAfterComment(300, '请前往应用市场评价')
+  }
+
+  /** 软引导点「以后再说」：先关窗，再记「这次弹过了，30 天后再来」 */
+  private onPromoRatingLater(): void {
+    const dialog: CustomDialogController | null = this.promoRatingDialog
+    this.promoRatingDialog = null
+    this.readPromoBusy = false
+    try {
+      dialog?.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `close rating dialog failed: ${JSON.stringify(e)}`)
+    }
+    ReadPromo.markRatingShown()
+  }
+
+  /**
+   * 弹出 VIP 开通弹窗。
+   *
+   * controller 写法照抄本工程既有标准实现 `MySetPage.ets:1488-1514`（`openVip()`）：
+   * 全字段一致（`width: '88%'` 是 VIP 窗的既定值），`onClose` 里"先 close + 置 null"，
+   * `cancel` 里"置 null" —— 因为 `VipDialog` 内部的 `this.controller?.close()` **无效**，
+   * 关闭权同样在宿主（同 `VipDialog.ets:34-35` 注释）。
+   */
+  private openPromoVipDialog(): void {
+    this.readPromoBusy = true
+    this.promoVipCounted = false
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: VipDialog({
+          dark: NightMode.isDarkSurface(),
+          vipOwned: VipManager.isVip(),
+          onClose: (): void => {
+            this.onPromoVipClosed()
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: '88%',
+        cornerRadius: 20,
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        cancel: (): void => {
+          // 点遮罩 / 返回键 = 用户把它关掉了 ⇒ 同样要记一次
+          // （否则 90 天后不会有第二次，与需求「关掉后 90 天再弹第二次」冲突）
+          this.promoVipDialog = null
+          this.accountPromoVipClose()
+        }
+      })
+      this.promoVipDialog = dialog
+      dialog.open()
+    } catch (e) {
+      this.promoVipDialog = null
+      this.readPromoBusy = false
+      hilog.warn(0x0000, 'ReadPromo', `openPromoVipDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /** VIP 窗自己的关闭回调（「关闭」按钮 / 买成后 `VipDialog.buy()` 主动调，:73-76） */
+  private onPromoVipClosed(): void {
+    const dialog: CustomDialogController | null = this.promoVipDialog
+    this.promoVipDialog = null
+    try {
+      dialog?.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `close vip dialog failed: ${JSON.stringify(e)}`)
+    }
+    this.accountPromoVipClose()
+  }
+
+  /**
+   * VIP 弹窗关闭的**唯一记账点**（`onClose` 与 `cancel` 都会走到这里）。
+   *
+   * 记账规则（对应 `ReadPromo.ets` 的状态机）：
+   *  · 关窗那一刻已是 VIP（在窗里买成 / 本来就是）⇒ `markVipBought()` 永久停推；
+   *  · 否则 ⇒ `markVipShown()` 次数 +1，第 2 次之后 `check()` 恒 NONE。
+   */
+  private accountPromoVipClose(): void {
+    this.readPromoBusy = false
+    if (this.promoVipCounted) {
+      return
+    }
+    this.promoVipCounted = true
+    try {
+      if (VipManager.isVip()) {
+        ReadPromo.markVipBought()
       } else {
-        // 面板收起后留一个很小的入口，不挡正文
-        Text('日志')
-          .fontSize(10)
-          .fontColor('#808080')
-          .padding(4)
-          .backgroundColor('#FFFFFFAA')
-          .borderRadius(6)
-          .position({ x: '84%', y: '95%' })
-          .onClick(() => {
-            this.showPanel = true;
-          })
+        ReadPromo.markVipShown()
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'ReadPromo', `accountPromoVipClose failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 底部页签**未选中**态的颜色。
+   * 原来是写死的 `'#000000'`；书架做了深色适配后，深色档下必须翻成浅色，
+   * 否则「我的」那格会是黑字压在深色悬浮条上（材质已跟随应用配色变深）。
+   */
+  private tabIdleColor(): string {
+    return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.72)' : '#000000'
+  }
+
+  @Builder
+  TabBuilder(index = 0, name: string, symbol: Resource) {
+    Column() {
+      Flex({
+        direction: FlexDirection.Column,
+        alignItems: ItemAlign.Center,
+        justifyContent: FlexAlign.Center
+      }) {
+        // 2026-10-01：四个页签全部 symbol 化（用户反馈原媒体图标对无暗色适配 ——
+        // PNG 的 fillColor 不生效，色值烧死在图里）。SymbolGlyph 的 fontColor
+        // 走 tabIdleColor()/主题色，深浅档天然自适应。tabIdleColor 本身已双档取色。
+        SymbolGlyph(symbol)
+          .fontSize(24)
+          .fontColor([this.currentTabIndex === index ? this.theme.mainColor : this.tabIdleColor()])
+        Text(name).fontSize(11).margin(5).fontColor(this.currentTabIndex === index ? this.theme.mainColor : this.tabIdleColor())
       }
     }
     .width('100%')
+    .margin({ top: 4 })
+    .height("100%")
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 听书迷你 dock（2026-10-09 新增，用户需求）—— HdsTabs 的 MiniBar 载体
+  // ══════════════════════════════════════════════════════════════════════════
+  // 为什么用 MiniBar 而不是自绘：官方 MiniBar 的**原生语义**就是
+  // 「点击迷你栏，miniBar展开的同时和tabsBar会折叠起来」（官方 Spatialization
+  // 示例 README 原文）—— 正好是用户要的"圆形展开成 dock / 原 dock 收缩成圆形"。
+  // 自绘做不到这个几何（原生 Tabs 的 FloatingTabBarStyle 没有 miniBar，见文件头注释）。
+  /**
+   * 听书入口可见条件（用户 2026-10-09 第二版要求「分离式 dock 要在书架/主题/设置/我的
+   * 全部保持一致」）⇒ **不再按页签区分**，只要解锁就显示。
+   */
+  private listenEntryVisible(): boolean {
+    return true  // 2026-10-12：MiniBar 默认可见，不再锁在口令后面
+  }
+
+  @Builder
+  listenMiniBarBuilder() {
+    ListenDock({
+      controller: this.tabController,
+      onStartListen: (): void => {
+        this.startListenFromShelf()
+      }
+    })
+  }
+
+  /**
+   * 书架点圆形听书按钮 ⇒ **留在书架原地起播**（用户 2026-10-09 第二版明确要求：
+   * 「点击圆形播放不应该进入阅读页，只是此时如果进入阅读页直接就是沉浸听读模式而已，
+   *   而且进度都是同步的，这才是天然同步」）。
+   *
+   * ⇒ 不 push 任何页面；起播交给 `ListenLauncher`（TtsEngine 自开解析器）。
+   *   「进阅读页自动进入沉浸听读」由 `ReaderPage3.registerTtsCallbacks()` 末尾的
+   *   状态回拉负责 —— 该逻辑已真机实证生效：
+   *   日志原文 `01:51:12.935 tts state restored on enter: state=playing spine=174`。
+   *
+   * ⚠️ 前提（同期修复）：`ReaderPage3.aboutToDisappear()` 在听书进行中**不再 releaseBook()**。
+   *   否则 handler 会失效，起播后每一章都报 1017010002（真机日志 666 次）。
+   */
+  private startListenFromShelf(): void {
+    ListenLauncher.startLastRead(this.getUIContext().getHostContext() as common.UIAbilityContext);
+  }
+
+  /**
+   * `listenExpanded` 被外部改回 false（例如从阅读器返回、停播、无历史）时，
+   * 把 **HDS 的几何**也钉回折叠态 —— 光改 AppStorage 不会动 HDS 的容器宽度。
+   *
+   * 真机症状（用户截图 01:50:31）：容器是展开的宽条，里面却画着圆形内容、
+   * 书名条还挂着 ⇒ 就是这两套状态不同步。
+   * 用 `lastHdsMiniBar` 做闸门，避免 HDS 自己已经折叠时再调一次造成回环。
+   */
+  onListenExpandedChanged(): void {
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：闸门必须在**碰任何 HDS 符号之前**。
+    //   `applyMiniBarStyle()` 与 `HdsBarStyle` 都是 6.1.0(23) 才有
+    //   （SDK `@hms.hds.hdsBaseComponent.d.ets:5124 / :5805`）
+    //   ⇒ API 20 设备上 `HdsBarStyle` undefined，取 `.EXPAND` 即抛。
+    //   23 以下没有迷你栏（没有悬浮样式），本回调本来也无事可做。
+    if (!HdsCompat.supportsFloatingBar()) {
+      return;
+    }
+    if (!this.listenExpanded && this.lastHdsMiniBar === HdsBarStyle.EXPAND) {
+      this.tabController.applyMiniBarStyle(HdsBarStyle.COLLAPSE);
+    }
+  }
+
+  /**
+   * HdsTabs 悬浮样式 + MiniBar。
+   *
+   * 与旧实现（`ImmersiveMaterialUtil.tabsFloatingStyle`）的差别：
+   * · 材质入口换成 HDS 的 `systemMaterialEffect`（`materialType` + `materialLevel`）；
+   *   官方推荐 `MaterialLevel.ADAPTIVE`（「由系统根据设备性能自动选择合适的档位，
+   *   推荐大多数场景使用」），不再自己判高低端。
+   * · 新增 `miniBar`（听书 dock）。
+   * · `barSideMargin` / `barBottomMargin` 沿用旧值，避免视觉跳变。
+   *
+   * 一键回退：`ImmersiveMaterialUtil.ENABLED = false` 时下面两处都会退成
+   * 不设材质的普通悬浮条；彻底回退到 `Tabs` 需要把本文件里的 HdsTabs 换回 Tabs
+   * （见文件头 import 注释）。
+   */
+  /**
+   * 悬浮样式 → `AttributeModifier`（2026-10-23 向下兼容鸿蒙6 新增）。
+   *
+   * ⚠️ **不要再改回 `.barFloatingStyle(...)`**：声明式语法会把它编译成裸方法调用
+   * （构建产物 `…\pages\Index.ts` 原文 `HdsTabs.barFloatingStyle(...)`），
+   * 而它是 6.1.0(23) 才有的属性（SDK `…d.ets:5680`）⇒ API 20 设备上方法不存在，
+   * **首页构建即 TypeError ⇒ 闪退**。
+   *
+   * 走 `AttributeModifier` 的理由：`applyNormalAttribute()` 是**回调**，
+   * 只有 modifier 真被挂上时才执行 ⇒ 低版本挂 `HdsCompat.NOOP_MODIFIER`，
+   * 一个 HDS 23 独有属性都不会碰到。官方认可：HDS 自己的
+   * `HdsTabsModifier implements AttributeModifier<HdsTabsAttribute>`
+   * （SDK `…d.ets:5751`）就是这条通道。
+   *
+   * 缓存：与 `hdsFloatingStyle()` 同生命周期（`cachedFloatModifier`），
+   * 否则每次渲染 new 一个 modifier ⇒ HDS 当成"配置变了"重建迷你栏 ⇒ 圆形闪。
+   */
+  private floatStyleModifier(): AttributeModifier<HdsTabsAttribute> {
+    if (!HdsCompat.supportsFloatingBar()) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    const st: HdsTabsFloatingStyle | undefined = this.hdsFloatingStyle();
+    if (st === undefined) {
+      return HdsCompat.NOOP_MODIFIER;
+    }
+    if (this.cachedFloatModifier === null) {
+      this.cachedFloatModifier = new HdsFloatingStyleModifier(st);
+    }
+    return this.cachedFloatModifier;
+  }
+
+  private hdsFloatingStyle(): HdsTabsFloatingStyle | undefined {
+    // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：闸门必须在**第一行**。
+    //   `HdsTabsFloatingStyle` 是 6.1.0(23) 才有的接口（SDK `…d.ets:5380`），
+    //   下面 `const st: HdsTabsFloatingStyle = {…}` 是**对象字面量构造**，
+    //   API 20 上执行即抛 TypeError。23 以下直接返回 undefined
+    //   （`floatStyleModifier()` 会换成空 modifier，页签退回普通贴底条）。
+    if (!HdsCompat.supportsFloatingBar()) {
+      return undefined;
+    }
+    // ★★ 2026-10-09「切页签时圆形闪一下」修复：**缓存样式对象，不要每次渲染都新建** ★★
+    //   原因：`.barFloatingStyle(新对象)` 每次切页签都会拿到一个**新引用**
+    //   （`onAnimationStart` 里 `currentTabIndex = target` 触发 Index 重渲染 ⇒ 本方法重跑），
+    //   HDS 会把新对象当成"配置变了"重新应用 ⇒ **迷你栏 builder 重建** ⇒
+    //   圆形那一帧重新布局 + 沉浸光感材质重新合成 ⇒ 肉眼就是"闪一下"。
+    //   缓存后：只有真的影响样式的输入（底部避让值 / 听书入口是否可见）变了才重建对象。
+    const key: string = `${this.bottomRectHeight}|${this.listenEntryVisible()}`;
+    if (this.cachedFloatStyle !== null && this.cachedFloatKey === key) {
+      return this.cachedFloatStyle;
+    }
+    // 样式对象要重建 ⇒ 包着它的 modifier 也必须一起失效，否则新样式不生效
+    this.cachedFloatModifier = null;
+    const st: HdsTabsFloatingStyle = {
+      barSideMargin: 16,
+      barBottomMargin: this.bottomRectHeight + 8,
+      // ★★ 2026-10-11 修「书架底部手势条那条白条蒙版」（用户真机截图对比设置页）★★
+      //
+      // ── 那条白条是什么 ────────────────────────────────────────────────────
+      // HDS 悬浮页签**自带一层底部渐变蒙层**（`gradientMask` = 背板蒙层，
+      // SDK `@hms.hds.hdsBaseComponent.d.ets:5416` 原文注释：
+      // 「Sets gradient mask for bottom of tabs.」）。官方 API 参考
+      // （documentId `API参考/UI_Design_Kit_UI设计套件/ArkTS组件/HdsTabs_底部页签/ui-design-hdstabs`）
+      // 对它的默认值原文：
+      //   「默认值：蒙层颜色浅色模式是 #CCF1F3F5，深色模式是 #99000000。
+      //     蒙层高度等于页签栏默认高度加 16vp。说明：**蒙层高度不可设置为 0**。」
+      // ⇒ 浅色下 = 80% 不透明的浅灰 #F1F3F5 渐变，**全宽**铺满屏幕最底 72vp
+      //   （56vp 默认条高 + 16vp）；深色下换成 60% 黑。
+      //
+      // ── 为什么只有书架看得出来 ─────────────────────────────────────────────
+      // 蒙层是全局的（挂在 HdsTabs 上，四个页签都有），但它只是给内容"压一层灰白"：
+      //   · 设置/主题/我的：底色本来就是 `page_bg_alt` #F5F5F5 ≈ 蒙层色 #F1F3F5 ⇒ 压上去看不出；
+      //   · 书架：底色是主题色（#ffece0 之类）⇒ 压上去就是一条**白条**（用户截图反馈）。
+      // 真机截图像素验证（`screenshot_20261010_210433`，橙主题）：屏幕最底实测
+      //   (243,242,240) ≈ 0.8×#F1F3F5 + 0.2×#ffece0 = (243.6,241.6,240.8) ✓
+      //   同屏 y≈2600 处仍是纯主题色 (254,236,224) ⇒ 蒙层上边界正落在 72vp 处 ✓
+      // 设置页对比截图（`…_210552`）底部 (243,244,246) ≈ 0.8×#F1F3F5 + 0.2×#F5F5F5 ✓
+      // —— 同一层蒙层，两个页面观感却不同，根因就在这里。
+      //
+      // ── 怎么关 ────────────────────────────────────────────────────────────
+      // 官方明确「蒙层高度**不可设置为 0**」⇒ 唯一关法是**把颜色设成全透明**
+      // （只传颜色、不传高度：高度留默认，反正全透明不可见）。
+      // 这也是 HdsTabs 之前那套 `FloatingTabBarStyle` 的老关法 —— 见
+      // `common/utils/ImmersiveMaterialUtil.ets` 的 `tabsFloatingStyle()`（`maskColor: Color.Transparent,
+      // maskHeight: 0`），当时的注释已经记着"系统默认遮罩在真机上是屏幕底部一大片灰色渐变"。
+      // 迁 HdsTabs 时字段改名成 `gradientMask`、并禁止 0 高度，这层蒙层就**又回来了**。
+      //
+      // ── 【教训 · 通用规则】（2026-10-11，写给后来者）──────────────────────────
+      //   ① **组件换代（ArkUI 原生 → HDS 等）时，旧代码里"显式关掉的系统默认效果"必须逐条复查**：
+      //      这次就是 `FloatingTabBarStyle.maskColor: Transparent` 在迁 HdsTabs 时漏迁（字段改名 +
+      //      新组件禁止 0 高度，老写法搬不过来）⇒ 蒙层静默回归，**两天后才被用户看出来**。
+      //      旧实现在 `ImmersiveMaterialUtil.tabsFloatingStyle()`，新实现就是本方法，两边要一一对照。
+      //   ② **"没写这个字段" ≠ "没有这个效果"**：系统/HDS 组件的默认值往往就是"有"；
+      //      查默认值一律看官方 API 参考表里的「默认值：」列（SDK 注释里的 `@default` 不一定写全）。
+      //   ③ 排查方法（可复用）：`devecocli ui layout --format json` dump **真机节点树**，
+      //      拿「正常页 vs 异常页」里**同一个元素**的 `bounds` 并列对比 → `ui screenshot` 逐行采样颜色
+      //      → 最后**单变量 A/B**（只注释掉可疑的那一行 → 重装 → 再截图）确认因果。
+      //      本次全过程记在 `docs/底部手势区贯通-排查记录.md`。
+      //
+      // ⚠️ 回退：删掉下面这行 ⇒ 恢复官方默认蒙层（书架底部重新出现白条）。
+      gradientMask: { maskColor: Color.Transparent }
+    };
+    // ★ 一键回退点：`ImmersiveMaterialUtil.ENABLED = false`（或设备不支持沉浸光感）时
+    //   **一个材质字段都不设** ⇒ 页签条回到普通悬浮/贴底形态，与改造前一致。
+    //   （`isOn()` = 总开关 && `uiMaterial.isImmersiveMaterialSupported()`）
+    if (ImmersiveMaterialUtil.isOn()) {
+      st.systemMaterialEffect = {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      };
+    }
+    if (this.listenEntryVisible()) {
+      st.miniBar = {
+        // ⚠️ **故意不设 `miniBarStyle`**：第一版设成 COLLAPSE，而 `hdsFloatingStyle()`
+        //    每次渲染都重建一个对象 ⇒ HDS 反复把初始态刷回 COLLAPSE，
+        //    真机表现就是"点了不展开"。窄屏默认折叠由 HDS 自己按官方规则决定
+        //    （「宽屏设备（如平板）默认展开，窄屏设备（如手机）默认折叠」）。
+        miniBarBuilder: () => {
+          this.listenMiniBarBuilder()
+        },
+        // ★ 必须关掉迷你栏裁剪（默认 true）。第一版把 48×48 的圆形放在裁剪容器里，
+        //   真机表现是"右侧缺一块、像月牙" —— 圆被迷你栏自己的裁剪区切掉了。
+        enableMiniBarClip: false,
+        /**
+         * 折叠/展开的唯一真相源。
+         *
+         * ★ 2026-10-09 用户第二版要求：「**把播放和暂停都放在展开后**」。
+         *   所以点圆形**只展开**，起播/暂停/续播全部由展开 dock 里的 ▶⏸ 驱动
+         *   （`ListenDock.onPlayPauseTap()` → `onStartListen` 回调 → 本文件的
+         *    `startListenFromShelf()`）。
+         *   ⚠️ 第一版在这里按 `mode === USER_CLICK && →EXPAND` 直接起播，
+         *      真机表现是"点圆形立刻播放+展开"，与用户预期不符 ⇒ 已删除该分支。
+         */
+        onBarStyleChange: (miniBarStyle: HdsBarStyle, tabBarStyle: HdsBarStyle,
+          miniBarWidth: number, tabBarWidth: number, mode: HdsTabsBarChangeMode): void => {
+          this.lastHdsMiniBar = miniBarStyle
+          ListenSession.setExpanded(miniBarStyle === HdsBarStyle.EXPAND)
+        }
+      };
+    }
+    // 写入缓存：下次切页签（Index 重渲染）直接复用同一个对象引用，
+    // HDS 不会把它当成"配置变了"，迷你栏就不会重建 ⇒ 圆不再闪。
+    this.cachedFloatStyle = st;
+    this.cachedFloatKey = key;
+    return st;
+  }
+
+  // 底部导航（2026-10-01 用户改版）：**书架、主题、设置、我的** 四页签。
+  // · 主题/设置原来是「我的」页顶部角落按钮（用户"很难点击"）⇒ 提级为 dock 页签，
+  //   拇指热区直达；两页本来就是设置类页面，做成常驻页签（无返回语义、状态保持）恰好合适。
+  // · 图标：四页签**全部 symbol 化**（书架=book、主题=paintpalette、设置=gearshape、
+  //   我的=person，SDK 符号表逐一核实）—— 原媒体图标对（PNG）无暗色适配（fillColor
+  //   对位图不生效），symbol 的 fontColor 深浅档天然自适应。
+  //   书架用 book（空心线条翻开的书）：与另三枚 outline 风格统一（book_1 是实心块面，
+  //   2026-10-06 用户反馈不搭；实心原版可随时改回 sys.symbol.book_1）。
+  // · ⚠️ 索引连带：`onAnimationStart` 里"我的"刷新计数的条件 1 → 3（见下方）。
+  nav: NavItem[] = [
+    new NavItem(0, '书架', $r('sys.symbol.book')),
+    new NavItem(1, '主题', $r('sys.symbol.paintpalette')),
+    new NavItem(2, '设置', $r('sys.symbol.gearshape')),
+    new NavItem(3, '我的', $r('sys.symbol.person'))
+  ]
+
+  build() {
+    // ── Navigation 宿主（2026-09-21 第 1 期：只搭骨架，零行为变化）──────────────
+    // 官方两处硬前提都要求 Navigation 而不是 router：
+    //   ① 标题栏沉浸光感生效范围：「其他组件**仅在** Navigation/NavDestination 标题栏，
+    //      或横向 Tabs 中 barPosition 为 BarPosition.End 的底部 TabBar 中生效」；
+    //   ② 一镜到底（skill `hmos-arkui-longtake-transition`）：「应用必须基于
+    //      Navigation + NavDestination 的路由体系，**而非 Router**」。
+    // 本期 `appRoutes()` 匹配不到任何 name ⇒ 所有页面仍走 router，视觉与行为不变。
+    Navigation(this.pageStack) {
+    // ⚠️⚠️ 2026-10-09 严重回退：「书名条」原先靠一个 Stack 包住 `#main` 来叠放，
+    //   结果**打断了一镜到底的几何基准** —— `LongTakeBook.capture()` 与
+    //   `Index` 的飞行计算都是拿 `getRectangleById('main')` 的 `windowOffset` 当原点
+    //   （证据：`common/utils/LongTakeBook.ets:81-82` 同时取 `componentId` 与 `'main'`）。
+    //   把 `#main` 从 Navigation 的直接子节点变成 Stack 的子节点后，真机表现是
+    //   「开启圆形播放后，书架打开/回落动画位置全变、回落到第二本书，且不可逆」。
+    //   ⇒ 这里**必须**保持 `Column` 是 Navigation 的直接子节点，结构不许再包一层。
+    //   书名条改由迷你栏 builder 自己向上溢出绘制（`enableMiniBarClip: false` 已开）。
+    Column() {
+      if (this.outerMinimal) {
+        // ── PuraX 外屏极简首页（2026-10-24）──────────────────────────────────
+        // 四页签书架**整块不挂载**（不是 `visibility` 隐藏）：
+        //   ① 326×326vp 上宫格封面每本只有 ~90vp，书名不可读；
+        //   ② 用户明确要求「外屏只有一个功能…不需要全量的功能，比如书架」；
+        //   ③ 不挂载 ⇒ 书架的数据查询/入场动画/一镜到底几何全部不跑，外屏更轻。
+        // ⚠️ 下面 `else` 分支里的代码缩进**刻意保持原样**（未整体右移 2 格）：
+        //    本文件 2400+ 行、书架块 160 行，整体重排会让这次改动的 diff 无法审阅。
+        //    功能上完全等价（ArkTS 不依赖缩进），且 `else` 分支内容**一个字符都没改**。
+        OuterHomeCard({
+          onOpen: (): void => {
+            this.openLastReadBook(false)
+          }
+        })
+      } else {
+      HdsTabs({
+        index: this.currentTabIndex,
+        barPosition: BarPosition.End,
+        controller: this.tabController
+      }) {
+        ForEach(this.nav, (item: NavItem) => {
+          TabContent() {
+            Column() {
+              if (item.index === 0) {
+                BookShelf()
+              } else if (item.index === 1) {
+                // 2026-10-01：主题页从 push 页（RouteName.THEME_CONFIG）提级为常驻页签
+                MyThemeConfig()
+              } else if (item.index === 2) {
+                // 2026-10-01：设置页从 push 页（RouteName.MY_SET）提级为常驻页签
+                MySetPage()
+              } else if (item.index === 3) {
+                MyCenter()
+              }
+            }
+          }.tabBar(
+            this.TabBuilder(item.index, item.title, item.symbol!)
+          )
+          // 内容区延伸到状态栏区域（2026-09-21）。
+          // 官方参考实现（documentId `…/沉浸光感典型场景/arkts-immersive-light-sample`）原文把
+          // `.expandSafeArea([SafeAreaType.SYSTEM])` **同时**挂在 Tabs 和每个 TabContent 上，并在
+          // 步骤说明里写明理由：「设置底部 Tabs 悬浮并为 Tabs 组件开启沉浸光感，同时使用
+          // ExpandSafeArea 将显示内容延伸至状态栏区域，使应用整体体验更加一致。」
+          // 本工程页面内部仍按 `topRectHeight` 自行避让文字，所以这里只是让**背景**铺到状态栏下，
+          // 不会造成内容与状态栏重叠。
+          .expandSafeArea([SafeAreaType.SYSTEM])
+        })
+      }
+      .barHeight(this.ShowBar ? 56 : 0)
+      // ══════════════════════════════════════════════════════════════════════
+      // 页签切换动画（2026-09-24 最终版）：**用官方内置平移，只调曲线与时长**
+      // ══════════════════════════════════════════════════════════════════════
+      // 为什么不再自绘：官方 FAQ `faqs-arkui-1112` 场景二原文「**Tabs组件无法实现页面拼接。**」
+      //   ⇒ 上一版让两个 TabContent 各自 `translate` 去拼接，必然在接缝处露出底色（用户看到的白缝）。
+      //   而官方指南（documentId `…/选项卡_Tabs/arkts-navigation-tabs`）原文：
+      //   「**Tabs 自带的页签切换动画为平移动画。**」—— 内置动画由分页器**整体搬运连续内容带**，
+      //   结构上不可能出缝。
+      //
+      // ── `animationCurve` ─────────────────────────────────────────────────
+      // SDK `component/tabs.d.ts:1219`（@since 20）。默认值原文：
+      //   「When pages are turned by **swiping**, the default value is **interpolatingSpring(-1, 1, 228, 30)**.
+      //     When pages are turned by **tapping tabs or calling the changeIndex API**, the default value is
+      //     **cubicBezierCurve(0.2, 0.0, 0.1, 1.0)**. When a custom animation curve is set, it applies to
+      //     **all** tab switching animations…」
+      // ⇒ 2026-09-23 曾把它设成系统那条"滑动弹簧"（`UiMotion.TABS_SWITCH`）让"点击也变弹簧"；
+      //   本次按用户对参考项目 `xiaowei` 的偏好改为 `Curve.FastOutSlowIn`（`xiaowei` 的
+      //   `pageTransition` 用的就是这条）。
+      // ⚠️ 连带影响（说清楚）：官方原文「it applies to **all** tab switching animations」⇒
+      //   **解锁标签栏后的左右滑动**也会从弹簧变成 `FastOutSlowIn`。滑动默认关闭
+      //   （`APP_INDEX_SCROLLABLE` 默认 true ⇒ `.scrollable(false)`），影响面很小。
+      // ⚠️ 2026-10-09 迁 HdsTabs 后**必须删掉** `.animationCurve(...)`：
+      //   `HdsTabsAttribute` **不继承 `TabsAttribute`**（SDK `@hms.hds.hdsBaseComponent.d.ets:5483`
+      //   原文 `declare class HdsTabsAttribute extends CommonMethod<HdsTabsAttribute>`），
+      //   它只有 vertical/barPosition/scrollable/barMode/barWidth/barHeight/animationDuration/
+      //   onChange/onAnimationStart/divider/barOverlap/barBackground*/onContentWillChange/
+      //   onTabBarClick/blurStrategy/barFloatingStyle/onSelected/onUnselected/cachedMaxCount
+      //   —— **没有 animationCurve、没有 edgeEffect**。
+      //   页签切换曲线因此回到 HdsTabs 的默认值；离线验证用 MCP check（0 error）。
+      // ── `animationDuration` ──────────────────────────────────────────────
+      // SDK `component/tabs.d.ts:1246`。默认值原文：「API version 11 and later versions: …
+      //   the default value is **0** when the tab bar is set to **BottomTabBarStyle** and **300**
+      //   when the tab bar is set to any other style.」（本工程用的是自绘 `TabBuilder` ⇒ 非
+      //   BottomTabBarStyle ⇒ 默认 300。）
+      // ⚠️ 关键约束（同文件 `:1228-1232`）原文：「For details about curves **unaffected by
+      //   animationDuration**… These curves include **springMotion**, **responsiveSpringMotion**,
+      //   and **interpolatingSpring**.」⇒ 弹簧曲线下这个参数**完全无效**；这也正是 2026-09-23
+      //   那版 `TABS_SWITCH` 弹簧"改了时长没反应"的原因。现在曲线换成了具名曲线，它才生效。
+      // 回退：删掉这两行 ⇒ 回到系统默认（点击 `cubicBezierCurve(0.2,0,0.1,1)` / 300ms）。
+      .animationDuration(UiMotion.TABS_ANIM_DUR)
+      // ★ 禁用手势滑动切换（2026-09-24 用户要求）：「书架和我的不再允许通过手势左右滑动
+      //   切换，只能通过底部按钮」。原实现 `.scrollable(!APP_INDEX_SCROLLABLE)`，
+      //   而 `APP_INDEX_SCROLLABLE` 默认 false（`storage/appData.ets:10`）⇒ 实际一直可滑。
+      //   现在钉死 `false`；TabBuilder 上的长按解锁手势已一并删除。
+      //   （`APP_INDEX_SCROLLABLE` 键保留，仍由「标签锁」开关控制**书架内部分类页签**的
+      //   滑动 —— `IndexShelf.ets` 的 `.scrollable()`，与主页签无关。）
+      // 回退：改回 `.scrollable(true)` 即恢复手势滑动。
+      .scrollable(false)
+      // ★ 关掉「拉到边界时的过滚动回弹」（2026-09-22 用户反馈修复）。
+      //   用户原话：「书架和我的能左右滑动切换…但是不能往另一个方向滑动，
+      //   现在往另一个方向滑动会有拉扯出白色区域」。
+      //   SDK 依据（`tabs.d.ts:1282` 的 `edgeEffect(edgeEffect: Optional<EdgeEffect>)`）：
+      //     「Sets the edge effect used when the boundary of the scrolling area is reached.
+      //       Default value: **EdgeEffect.Spring**」
+      //   ⇒ 默认 `Spring` 会在滑到第一个/最后一个页签之外时"拉出"一段空白再弹回，
+      //     真机看就是"扯出一块白"。改成 `None`：到边界即停，不再拉白。
+      //   `EdgeEffect = { Spring, Fade, None }`（`enums.d.ts`，全局枚举）。
+      //   注意：这只影响**越界回弹**，不改变页签之间正常的左右滑动切换。
+      // ⚠️ 2026-10-09 迁 HdsTabs 后**必须删掉** `.edgeEffect(EdgeEffect.None)`：
+      //   依据同上一段 —— `HdsTabsAttribute` 上没有 `edgeEffect`。
+      //   旧实现原文（保留备查）：「默认 `EdgeEffect.Spring` 会在滑到第一个/最后一个页签
+      //   之外时"拉出"一段空白再弹回，真机看就是"扯出一块白"。改成 `None`：到边界即停。」
+      //   ⚠️ 这是本次迁移**唯一的行为回退风险点**：HdsTabs 下越界回弹可能重新出现。
+      //   但 `.scrollable(false)` 已禁手势 ⇒ 越界手势本身不成立，实际影响面接近 0。
+      //   真机验证点：在书架页签上向左拖，看是否拉出白边。
+      // ── 沉浸光感悬浮页签（2026-09-21）────────────────────────────────────
+      // 官方硬性约束（documentId `…/沉浸光感开发指导/组件适配沉浸光感/…`）原文：
+      //   「悬浮样式仅在 barOverlap 为 true、vertical 为 false、barPosition 为
+      //     BarPosition.End 时生效，三个条件需同时满足，否则 systemMaterial 设置不生效。」
+      // 本组件：`barPosition: BarPosition.End` ✓、`vertical` 未设（默认 false）✓，
+      // 所以这里补上 `barOverlap(true)` 就凑齐了三条件。
+      //
+      // 另外两条官方提醒也都遵守了：
+      //   · 「设置悬浮材质后，不建议再通过 barBackgroundColor、barBackgroundBlurStyle
+      //      为 TabBar 设置背景色或背景模糊，避免遮挡材质效果」——本文件没有设置这两个属性。
+      //   · 「TabContent 不支持设置沉浸光感」——没有在 TabContent 上设材质。
+      //
+      // ⚠️ 布局连带变化：悬浮后页签条是**浮在内容之上**的，所以系统底部安全区避让
+      //    从"给 Tabs 加 padding"改成"给悬浮条加 barBottomMargin"，否则两处叠加会把条顶太高。
+      //    关闭沉浸光感时（`ImmersiveMaterialUtil.ENABLED = false`）两个表达式都会回到原样。
+      .barOverlap(ImmersiveMaterialUtil.isOn())
+      // ⚠️ 2026-10-23 向下兼容鸿蒙6（API 20）：**不要用 `.barFloatingStyle(...)`**。
+      //   它是 6.1.0(23) 才有的属性（SDK `…\@hms.hds.hdsBaseComponent.d.ets:5680`），
+      //   声明式语法会把它编译成裸调用 `HdsTabs.barFloatingStyle(...)`
+      //   （本工程构建产物 `entry\build\…\pages\Index.ts` 原文），
+      //   API 20 设备上该方法不存在 ⇒ **首页构建即 TypeError ⇒ 闪退**。
+      //   ⇒ 改走官方 `AttributeModifier` 通道，低版本自动挂空 modifier（什么都不设）。
+      .attributeModifier(this.floatStyleModifier())
+      .padding({ bottom: ImmersiveMaterialUtil.isOn() ? 0 : this.bottomRectHeight })
+      // 同 TabContent 上的说明：官方参考实现给 Tabs 也挂了 expandSafeArea。
+      .expandSafeArea([SafeAreaType.SYSTEM])
+      .onAnimationStart((index, targetIndex) => {
+        // 全局震动方案（2026-09-25）：底部页签切换给一次反馈。
+        // 本工程 `.scrollable(false)`（见下方注释）⇒ 走到这里只会是"点了页签"，
+        // 左右滑动已被禁，不存在"滑动切页也震"的误触。
+        Haptics.tap();
+        this.currentTabIndex = targetIndex
+        // ★ 切回书架时清空 dataSource 重查 = 和冷启动同款干净动画
+        if (targetIndex === 0 && index !== 0) {
+          AppStorage.setOrCreate('shelfDockReturn', (AppStorage.get<number>('shelfDockReturn') ?? 0) + 1)
+        }
+        // ★ 换页签 ⇒ 听书 dock 一律收回圆形（它只在书架页签可见）。
+        //   不停播：听书是后台会话（用户拍板"全 app 都继续，仅书架显示控制入口"）。
+        ListenSession.setExpanded(false)
+        // ★ 页签变了 ⇒ 重新算配色并下发：书架（0）= 深色档、主题(1)/设置(2)/我的(3) = 浅色档。
+        //   规则与依据见 `NightMode.desiredDark()`。
+        NightMode.setMainTab(targetIndex)
+        // ⚠️ 2026-10-09 回退：这里**恢复为同步调用**。
+        //   曾经为"切页签圆形闪"把它延后 340ms，但真机日志证明闪的成因是
+        //   **迷你栏节点被高频重建**（`dock node rebuilt` 约 2 次/秒，且与切页签无关），
+        //   跟配色模式切换**没有关系**。延后 `sync` 只会引入"切页签后 340ms 内还是旧配色"
+        //   的可见副作用，**净负收益** ⇒ 还原。（教训：修 A 之前先用日志证明确实是 A。）
+        NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
+        // 切到「我的」（2026-10-01 四页签后 index = 3）时通知 `MyCenter` 重拉三个计数
+        //（读过/读完/书签）。为什么必须在这里做：`MyCenter` 是**子组件**、没有 `onPageShow`，
+        // 而"读完一本书 → 返回 → 切到我的"正是不刷新就看不到新数字的主场景。
+        // 机制见 `MyCenter.ets` 的 `@StorageLink('myCenterTick')`。
+        if (targetIndex === 3) {
+          AppStorage.setOrCreate('myCenterTick', Date.now())
+        }
+      })
+
+      if (this.showReadShow) {
+        ReadShow({ showReadShow: this.showReadShow }).offset({ y: -150 - this.bottomRectHeight })
+      }
+      }
+    }
+    .width("100%")
+    .height("100%")
+    .id('main')
+    }
+    .hideTitleBar(true)
+    // ══════════════════════════════════════════════════════════════════════════
+    // 2026-10-23 平板布局修正（用户反馈「平板进入后分成左右两侧，像平行世界」）
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── 根因 ────────────────────────────────────────────────────────────────
+    //   `Navigation` 的 `mode` **默认是 `NavigationMode.Auto`**：宽屏（平板）下
+    //   自动切成 **Split 分栏**（左 = 导航栏/NavBar，右 = 内容区）⇒ 用户看到的
+    //   "左右两半、像平行世界"就是 Split 模式。手机宽度不够，Auto 落到 Stack，
+    //   所以手机上一直是单栏。
+    // ── 用户要求 ────────────────────────────────────────────────────────────
+    //   「让平板和手机一样的布局」⇒ 显式钉成 `NavigationMode.Stack`（单栏）。
+    // ── 为什么可以安全钉死 ──────────────────────────────────────────────────
+    //   本工程路由是**一镜到底的整页飞行**（`ezCustomTransition` + `LongTakeBook`
+    //   几何计算），Split 分栏会让"整页飞行"的几何基准失效（左栏不再是全屏）。
+    //   官方 skill `hmos-arkui-longtake-transition` 的前提也是**整页 NavDestination**。
+    //   `Navigation.mode()` 是 `@since 9`（`navigation.d.ts`），API 20 可用。
+    // ── 回退 ────────────────────────────────────────────────────────────────
+    //   删掉本行即恢复系统默认（平板上重新变回左右分栏）。
+    .mode(NavigationMode.Stack)
+    // ── 一镜到底官方库迁移（2026-10-02，@hmanimations/ezcustomtransition）────────
+    // skill: hmos-arkui-longtake-transition Step 4。转场回调交由官方库接管
+    //（打断/手势/生命周期由库内 session 状态机管理），并按官方要求在转场期间
+    // 禁用 Navigation 交互（防打断竞态——自研方案三轮卡死的根因）。
+    // 旧自研 delegate（ltDelegate/ltArm 飞行分支/overlay/backdrop）保留代码但不再臂活：
+    // 点击侧已改发 longTakeTransitionParam，不再置 ltArm ⇒ ltDelegate 永不触发。
+    .customNavContentTransition((from: NavContentInfo, to: NavContentInfo, operation: NavigationOperation) => {
+      return ezCustomTransition.customNavContentTransition(from, to, operation, {
+        onTransitionStart: (): void => {
+          this.ltNavEnabled = false
+        },
+        onTransitionEnd: (): void => {
+          this.ltNavEnabled = true
+        }
+      })
+    })
+    .enabled(this.ltNavEnabled)
+    // ★ 书架 NavBar 可见性变化 ⇒ 记录书架层可见性（保留键位）。
+    //   ⚠️ 2026-09-24 屏闪修复：这里**不能再调 `NightMode.sync()`**。
+    //   真机日志（2026-09-23 日志2）实证：push 阅读器时 `NavBar Visible State Change
+    //   true -> false`（28.411）与 `SetAbilityColorMode colorMode: 1`（28.412）同帧 ——
+    //   此回调在转场**开始那一帧**触发，sync 会把整个 Ability 翻成书的日间配色，
+    //   暗色书架在 560ms 入场动画里被全窗重涂成亮色 ⇒ 开书必闪。
+    //   对非阅读页它本来就是视觉 no-op（`desiredDark()` 不读 HOME_KEY，
+    //   见 NightMode.ets「保留键位，暂不参与裁决」注释）⇒ 删掉只去 bug、不改行为。
+    //   阅读器的配色翻转已由 `ReaderPage3.aboutToAppear` 的延迟块（转场结束后）负责。
+    .onNavBarStateChange((isVisible: boolean) => {
+      NightMode.setHomeVisible(isVisible)
+    })
+    .navDestination(this.appRoutes)
+    .onAppear(() => {
+      // 把 Navigation 的页面栈交给路由门面：后续迁移的页面通过 `AppRouter` 入栈/出栈。
+      AppRouter.attach(this.pageStack)
+    })
+    .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    // ── 小喵入口悬浮按钮（2026-10-26，临时验证用）────────────────────────────
+    // ⚠️⚠️ 2026-10-26 15:3x **已临时停用**：真机日志证明它导致「dock 栏以上整片触摸失效」。
+    //   证据（`C:\Users\Administrator\Documents\日志`）：点击上半区时
+    //     `ITK Id:..., TTHNI:fId: 0` 后面**一个节点都没有**，紧跟
+    //     `W  Touch test result is empty.`（18 次）；
+    //   而同期点底部 TabBar 命中链正常（`{ T: TabBar, D: 11 };{ T: Stack, D: 13 }`），
+    //   点内容区也正常（`{ T: Tabs, D: 10 };{ T: Swiper, D: 11 };{ T: List, D: 19 }`）
+    //   ⇒ 根节点正常，是**某一块区域被整片遮住**。
+    //   已排除的修法：给按钮加 `.clip(true)` + `.hitTestBehavior(HitTestMode.Transparent)`
+    //   无效（`Transparent` 是"自己响应但不阻塞兄弟/祖先"，容器自身仍参与命中）。
+    //
+    // 本步只做 A/B 验证：**先确认"摘掉它 ⇒ 触摸恢复"**，再决定正确写法。
+    // 恢复方式：把下面 4 行（`.overlay(...)` 整段）取消注释即可。
+    // .overlay(this.agentEntryOverlay(), {
+    //   align: Alignment.BottomEnd,
+    //   offset: { x: -16, y: -96 }
+    // })
+  }
+
+  /** 小喵入口（全页悬浮，四个页签都能看到） */
+  @Builder
+  agentEntryOverlay() {
+    AgentEntryFab()
+  }
+
+  // ═══ 一镜到底：转场 delegate 与进/出两段编排 ═══════════════════════════════
+  // 写法对齐官方示例2（documentId `API参考/ArkUI_方舟UI框架/ArkTS组件/导航与切换/
+  // NavDestination/ts-basic-components-navdestination` 示例2）：
+  // 起始帧在 delegate 里【同步】设好；返回的 transition 只做「点火」，
+  // 真正编排由 event 里的显式 animateTo 串行驱动（探针已验证该机制真机成立）。
+
+  /**
+   * 飞行封面层的图源（七轮 2026-09-30）：优先用点击瞬间截的**封面位图**，
+   * 失败/关开关时退回书架同源的 `ltCoverUrl`（老路径）。
+   *
+   * 为什么不是直接用 `Image(coverUrl)`：图层盒子的高度 = `ltClipH`，比图源自身纵横比高，
+   * 图源只按自己比例铺 ⇒ 底部留空洞漏出书架定格图（真机日志 + 截图逐像素实证，
+   * 见 `UiMotion.LT_COVER_SNAPSHOT`）。位图一定吃 `ImageFit.Fill` ⇒ 铺满。
+   * `Image(src)` 的形参类型是 `PixelMap | ResourceStr | DrawableDescriptor`
+   * （SDK `component/image.d.ts`）⇒ 这里返回 `PixelMap | string` 可直接传入。
+   */
+  private ltCoverSrc(): image.PixelMap | string {
+    return this.ltCoverShot !== null ? this.ltCoverShot : this.ltCoverUrl
+  }
+
+  /**
+   * READER「飞行分支」的 customTransition delegate。
+   * 只有飞行分支会挂它 ⇒ 走到这里就意味着本次是书架点击进入（rp.longTake 必有值）。
+   */
+  private ltDelegate(op: NavigationOperation, isEnter: boolean, rp: ReaderRouteParam)
+    : Array<NavDestinationTransition> | undefined {
+    console.info('LTBOOK', `delegate op=${op} isEnter=${isEnter} arm=${this.ltArm}`)
+    if (op === NavigationOperation.PUSH && isEnter) {
+      const f = rp.longTake !== undefined ? rp.longTake : null
+      this.ltFlight = f
+      this.ltActive = f !== null
+      if (f === null) {
+        // 兜底：臂旗在但飞行数据不在（理论不可达）⇒ 交回系统默认。
+        // 此时分支按普通阅读页呈现：解除姿态门闩与阅读器透明度，绝不留黑屏。
+        this.ltPoseReady = true
+        this.ltReaderOpacity = 1
+        return undefined
+      }
+      // ★ 新飞行开始：代际 +1 —— 在途的上一次清理定时器到点时据此让位
+      // （快速连点场景：上一次关书的 80ms 清理会迟到到本次开书之后才触发）
+      this.ltFlightGen++
+      const g = LongTakeGeom.from(f, this.getUIContext())
+      this.ltGeom = g
+      // 起始帧：同步设置（此刻目标页尚未渲染首帧 —— 探针已验证此机制生效）
+      this.ltScale = g.s0
+      this.ltScaleY = g.sy0
+      this.ltTx = g.tx0
+      this.ltTy = g.ty0
+      this.ltClipH = g.clipH0
+      this.ltCoverRadius = g.coverRadius
+      this.ltCoverAngle = 0
+      this.ltCoverOpacity = 1
+      this.ltCoverUrl = f.coverUrl
+      this.ltBackdrop = f.backdrop
+      // 七轮：封面位图（治"底部空洞"）；截图失败时 f.coverShot = null ⇒ 飞行层退回旧图源
+      this.ltCoverShot = f.coverShot
+      // 十二轮 v3：首帧即挂飞行覆盖层（全图片），把垫底的真阅读器挡住
+      this.ltFlightOverlay = true
+      // v3.1：飞行期间阅读器透明（首帧缺口透出真书架而不是它的黑 surface）
+      this.ltReaderOpacity = 0
+      // v3.3：起始帧全部就位 ⇒ 解除姿态门闩，分支的第一个可见帧必然是正确姿态
+      this.ltPoseReady = true
+      const trans: Array<NavDestinationTransition> = [{
+        duration: UiMotion.LT_ENTER_DUR,
+        curve: Curve.Linear,
+        event: (): void => {
+          this.ltRunEnter()
+        },
+        onTransitionEnd: (): void => {
+          console.info('LTBOOK', 'enter transition end')
+          // 十二轮 v3：飞行结束撤覆盖层 ⇒ 真阅读器"直接呈现"
+          //（此刻封面已淡出、书体块满窗，与阅读器底色同源，交换仅文字出现；
+          //  阅读器已在淡出段恢复不透明并把首帧画好 ⇒ 零闪）
+          this.ltFlightOverlay = false
+        }
+      }]
+      return trans
+    }
+    if (op === NavigationOperation.POP && !isEnter) {
+      if (this.ltFlight === null || this.ltGeom === null) {
+        return undefined
+      }
+      // ── 打断兜底（2026-10-01 修"快速开合卡死"，本轮保留）────────────────────
+      // 真机日志实证：进场动画未结束（enter transition end 未打点）就按返回时，
+      // 飞行值停在半途（scale/ty/clipH 均非终态）—— pop 若从半途状态起飞，
+      // 与框架丢弃的上一个未完转场竞态，可能整段 pop 不完成（卡死现场）。
+      // ⇒ 先**同步把进场瞬间拉到终态**（满屏阅读器），pop 永远从已定义状态起飞。
+      this.ltScale = 1
+      this.ltScaleY = 1
+      this.ltTx = 0
+      this.ltTy = 0
+      this.ltClipH = this.ltGeom.clipH1
+      // 十二轮 v3：返回首帧同步重建覆盖层，盖住真阅读器
+      //（onHidden 后其 surface 停止合成/变黑——盖住后与我们无关了）
+      this.ltFlightOverlay = true
+      // v3.1：阅读器同帧透明（覆盖层快照若迟 1 帧，缺口透出的是真书架而不是正文）
+      this.ltReaderOpacity = 0
+      const trans: Array<NavDestinationTransition> = [{
+        duration: UiMotion.LT_POP_DUR,
+        curve: Curve.Linear,
+        event: (): void => {
+          this.ltRunPop()
+        },
+        onTransitionEnd: (): void => {
+          console.info('LTBOOK', 'pop transition end')
+          // ★ 配色还原·兜底点①（2026-09-24 第三轮起降级为兜底）：主还原点已前移到
+          //   两个 READER 分支的 `onWillDisappear`（返回**转场开始前**，见
+          //   `restoreReaderColorMode()` 注释）。真机日志2 证明本回调在转场结束
+          //   （30.431）才触发、晚于真书架可渲染的时机，作为主还原点会留 13ms+ 的
+          //   错色首帧窗口 ⇒ 保留只为幂等兜底（onWillDisappear 因异常未触发时补还原）。
+          this.restoreReaderColorMode()
+        }
+      }]
+      return trans
+    }
+    return undefined
+  }
+
+  /**
+   * 转场探针（八轮 2026-09-30，`UiMotion.LT_PROBE` 控制，查完可关）。
+   *
+   * 为什么必须加：`Image.onComplete` 的 `componentHeight` 在转场开始 4ms 就报出**终值**
+   * （真机日志 `Downloads\2.md`：33.911 报 2848px，而 2848px 是 560ms 动画的终值），
+   * 无法据此判断"裁切窗口到底是在跳变还是平滑插值"。
+   * `getRectangleById` 拿的是**布局尺寸**（官方文档：返回的组件位置为布局位置，
+   * 且 rotate/translate/scale 等图形变换不计入）⇒ 正是"这个状态变量当前被解释成多大"的直接证据。
+   */
+  private ltProbe(tag: string): void {
+    if (!UiMotion.LT_PROBE) {
+      return
+    }
+    const ui = this.getUIContext()
+    for (const ms of [0, 60, 150, 300, 470]) {
+      setTimeout((): void => {
+        let cover: string = 'n/a'
+        let clipLayer: string = 'n/a'
+        try {
+          const r = ui.getComponentUtils().getRectangleById('ltCoverNode')
+          cover = `${Math.round(r.size.width)}x${Math.round(r.size.height)}`
+        } catch (e) {
+          cover = 'no-cover'
+        }
+        try {
+          const r2 = ui.getComponentUtils().getRectangleById('ltClipNode')
+          clipLayer = `${Math.round(r2.size.width)}x${Math.round(r2.size.height)}`
+        } catch (e2) {
+          clipLayer = 'no-clip'
+        }
+        console.info('LTBOOK',
+          `probe ${tag} t=${ms} clipH=${this.ltClipH.toFixed(1)} scale=${this.ltScale.toFixed(3)} ` +
+          `t=(${this.ltTx.toFixed(1)},${this.ltTy.toFixed(1)}) angle=${this.ltCoverAngle.toFixed(1)} ` +
+          `cover=${cover} cliplayer=${clipLayer}`)
+      }, ms)
+    }
+  }
+
+  /**
+   * 进场编排（八轮 2026-09-30：改成"**先飞大、后开盖**"——见 `UiMotion.LT_COVER_FIRST`）。
+   *
+   * ① 0→`LT_GROW_DUR`：整本书（封面**合着**，把内容页盖住）放大、铰链从封面原位漂移到屏幕左缘，
+   *   内容页裁切窗口同步从封面纵横比长到全屏 —— 这一整段是"一坨整体"在飞，
+   *   封面把内容页挡着 ⇒ 阅读器还没画好也看不见（用户口述："让阅读器隐藏在封页的下面"）。
+   * ② `LT_GROW_DUR`→+`LT_FLIP2_DUR`：封面绕书脊掀开，露出（此时已加载好的）阅读器。
+   * ③ 末段封面淡出：盖住 >90° 背面镜像穿帮（spec §5.2）。
+   * 背景（快照垫层）全程静止不动 —— 与真书架像素级一致，无衔接感。
+   */
+  private ltRunEnter(): void {
+    const g = this.ltGeom
+    if (g === null) {
+      return
+    }
+    const ui = this.getUIContext()
+    this.ltProbe('enter')
+    if (UiMotion.LT_COVER_FIRST) {
+      // ① 整本书飞大到位（封面未动 ⇒ 内容页被盖住）
+      ui.animateTo({
+        duration: UiMotion.LT_GROW_DUR,
+        curve: Curve.Friction
+      }, (): void => {
+        this.ltScale = 1
+        this.ltScaleY = 1
+        this.ltTx = 0
+        this.ltTy = 0
+        this.ltClipH = g.clipH1
+      })
+      // ② 封面随后掀开
+      ui.animateTo({
+        delay: UiMotion.LT_GROW_DUR,
+        duration: UiMotion.LT_FLIP2_DUR,
+        curve: Curve.Friction,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'enter flight done')
+        }
+      }, (): void => {
+        this.ltCoverAngle = UiMotion.LT_FLIP_ANGLE
+      })
+      // ③ 末段淡出（LT_GROW_DUR + LT_FLIP2_DUR − 80 = 480，与旧 LT_FADE_DELAY 对齐）
+      ui.animateTo({
+        delay: UiMotion.LT_GROW_DUR + UiMotion.LT_FLIP2_DUR - UiMotion.LT_FADE_DUR,
+        duration: UiMotion.LT_FADE_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 0
+      })
+    } else {
+      // ── 一镜到底（**默认**，`LT_COVER_FIRST = false`）：包络与翻盖**同时从 0ms 起跑** ──
+      // 用户口径：「边飞边放大，非常丝滑的动画。一镜到底的效果」——所以这三段必须同时进行，
+      // 不能拆成"先飞大再翻页"（八轮试过，已被否决，见 UiMotion.LT_COVER_FIRST 注释）。
+      // ① 包络：书整体放大向左靠拢，内容页（裁切窗口）同步长到全屏（全是图形变换，正文不重排）
+      // ⚠️ 曲线必须是 FastOutSlowIn（十二轮 v3.3，治"点击瞬间书本细长+整屏向左抖几像素"）：
+      // 原先用 Curve.Friction（bezier(0.2,0,0.2,1)）起步极暴力——头 100ms 走约一半行程
+      // （交接书 §5.3 实测数据），前 2~3 帧内：书的左缘 = tx0×(1-p) 从 24.6vp 猛缩
+      // ⇒ 向左甩 ~8px（底下的书架不动 ⇒ 读作"整屏向左抖一下"）；同时 clipH 521→843
+      // 同步猛走 ⇒ 纵横比 0.75 骤变 ⇒ 封面画被拉"细长"；且此时翻折还没开始（delay 80ms），
+      // 光秃秃的矩形先被拽一把 ⇒ 用户看到"细长→回正→再动画"的冗余动作。
+      // FastOutSlowIn 头 100ms 只走 3~8%（见 UiMotion.LT_POP_SHRINK_CURVE 同款数据），
+      // 与已验收的返回动画同款节奏；翻折段保持 Friction（80ms 后才开始，不在抖动窗口内）。
+      ui.animateTo({
+        duration: UiMotion.LT_ENTER_DUR,
+        curve: Curve.FastOutSlowIn,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'enter flight done')
+        }
+      }, (): void => {
+        this.ltScale = 1
+        this.ltScaleY = 1
+        this.ltTx = 0
+        this.ltTy = 0
+        this.ltClipH = g.clipH1
+      })
+      // ② 封面绕书脊掀开（方向语义见 UiMotion.LT_FLIP_ANGLE 注释；真机上若方向反了改那个符号）
+      ui.animateTo({
+        delay: UiMotion.LT_FLIP_DELAY,
+        duration: UiMotion.LT_FLIP_DUR,
+        curve: Curve.Friction
+      }, (): void => {
+        this.ltCoverAngle = UiMotion.LT_FLIP_ANGLE
+      })
+      // ③ 封面淡出：盖住 >90° 时背面镜像的穿帮（spec §5.2）。
+      // v3.1：同一时段把垫底的真阅读器恢复不透明——此刻它仍被覆盖层盖着，
+      // 正好趁这 80ms 把首帧画好 ⇒ onTransitionEnd 撤覆盖层时零闪呈现。
+      ui.animateTo({
+        delay: UiMotion.LT_FADE_DELAY,
+        duration: UiMotion.LT_FADE_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 0
+        this.ltReaderOpacity = 1
+      })
+    }
+    // 诊断（五轮）：飞行中段量一次书架根节点 'main' 的实际宽度
+    setTimeout((): void => {
+      try {
+        const m = ui.getComponentUtils().getRectangleById('main')
+        console.info('LTBOOK',
+          `diag main mid-flight: ${JSON.stringify(m.size)} offset=${JSON.stringify(m.windowOffset)}`)
+      } catch (e) {
+        console.info('LTBOOK', `diag main mid-flight failed: ${(e as Error).message}`)
+      }
+    }, 300)
+  }
+
+  /**
+   * 返回编排（八轮 2026-09-30：改成"**先合盖、后缩小**"——进场的镜像，见 `UiMotion.LT_COVER_FIRST`）。
+   *
+   * ① 0→`LT_POP_FADEIN_DUR`：封面立即恢复不透明（起始是进场末尾的"掀开+透明"态）。
+   * ② 封面合上（`LT_FLIP2_DUR`）：**此阶段刻意不动 scale/translate/clipH** ⇒
+   *   全屏阅读器保持全屏，只是被合上来的封面盖住（用户口述："阅读器始终是矩形，跟随整体缩放"）。
+   * ③ `LT_FLIP2_DUR`→`LT_ENTER_DUR`：整本书（封面已盖住内容页）缩回书架封面原位原尺寸。
+   * 背景（快照垫层）全程不动，落地 onDisAppear 时换回真书架。
+   */
+  private ltRunPop(): void {
+    const g = this.ltGeom
+    if (g === null) {
+      return
+    }
+    const ui = this.getUIContext()
+    this.ltProbe('pop')
+    if (UiMotion.LT_COVER_FIRST) {
+      // ① 封面先恢复不透明（起始态 = 进场末尾的"掀开 + 透明"）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_FADEIN_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 1
+      })
+      // ② 封面合上盖住全屏阅读器 —— 此阶段**不动** scale/translate/clipH，
+      //    所以阅读器一直保持"全屏矩形"，不会出现"阅读器被裁成半屏"的观感。
+      ui.animateTo({
+        duration: UiMotion.LT_FLIP2_DUR,
+        curve: Curve.Friction
+      }, (): void => {
+        this.ltCoverAngle = 0
+      })
+      // ③ 整本书（封面已盖住内容页）缩回书架封面原位原尺寸
+      ui.animateTo({
+        delay: UiMotion.LT_FLIP2_DUR,
+        duration: UiMotion.LT_ENTER_DUR - UiMotion.LT_FLIP2_DUR,
+        curve: Curve.Friction,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'pop shrink done')
+        }
+      }, (): void => {
+        this.ltScale = g.s0
+        this.ltScaleY = g.sy0
+        this.ltTx = g.tx0
+        this.ltTy = g.ty0
+        this.ltClipH = g.clipH0
+      })
+    } else {
+      // ── 一镜到底（**默认**，`LT_COVER_FIRST = false`）：三段**同时从 0ms 起跑** ─────
+      // 用户口径：「应该是边飞边放大，非常丝滑的动画。一镜到底的效果」
+      // ① 封面先恢复不透明（起始态 = 进场末尾的"掀开 + 透明"）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_FADEIN_DUR
+      }, (): void => {
+        this.ltCoverOpacity = 1
+      })
+      // ② 封面合上（十二轮 v3.9：**与书体收缩同曲线、同时长**，一个动作落位）——
+      //    v3.6 用 480ms+Friction 对称进场，但 Friction 起步斜率是 FastOutSlowIn 的
+      //    约两倍：全屏封面回落第一瞬间就高速下拍，与慢起步的书体收缩**不同相**
+      //    ⇒ 用户实测"关闭不丝滑、太快"。改为 LT_POP_DUR + FastOutSlowIn：
+      //    封面挂一拍 → 与书体一起加速 → 一起减速 → 同帧落位，整本书一个动作。
+      //    （梯形全程仍可读；诉求 D 由 v3 的同步书脸保证。）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_FLIP_DUR,
+        curve: Curve.FastOutSlowIn
+      }, (): void => {
+        this.ltCoverAngle = 0
+      })
+      // ③ 整本书缩回书架封面原位原尺寸（620ms，起步慢的曲线 ⇒ 不会"头 100ms 走一半"）
+      //    v3.7：ltScaleY 同步缩回 sy0 —— 盒子四边线性插值，槽位全程被包含
+      //    （修"下半屏的书回落时像原书还在、被压上去"）
+      ui.animateTo({
+        duration: UiMotion.LT_POP_DUR,
+        curve: UiMotion.LT_POP_SHRINK_CURVE,
+        onFinish: (): void => {
+          console.info('LTBOOK', 'pop shrink done')
+        }
+      }, (): void => {
+        this.ltScale = g.s0
+        this.ltScaleY = g.sy0
+        this.ltTx = g.tx0
+        this.ltTy = g.ty0
+        this.ltClipH = g.clipH0
+      })
+    }
+  }
+
+  /**
+   * 阅读页返回时的「**App 配色还原**」（只做配色，不动系统栏/避让）。
+   *
+   * 关闭书籍屏闪修复（2026-09-24 第三轮，真机日志2 取证）：
+   * 用户实测「App 暗色 + 书日间，关闭书籍后整个软件闪一下亮色再回暗色」。
+   * 前两轮（09-23 迁出 aboutToDisappear、09-24 onTransitionEnd）都以为自己在
+   * "转场开始/结束的安全点"还原，但真机日志证明：`aboutToDisappear`/`onDisAppear`
+   * 都在**转场结束之后**才触发（日志2：transition finish 30.431 → onDisappear 30.440），
+   * `onTransitionEnd`（30.431）与 Ace 主题重涂（30.444）之间真书架已按**书的配色**
+   * 渲染了首帧 ⇒ 落位即闪。
+   *
+   * 现在 `sync()` 的还原点收敛为：
+   *   ① **主还原点**：两个 READER 分支的 `onWillDisappear`（返回**转场开始前**，
+   *      日志2：onWillDisappear 29.869 < animateTo 29.870）—— 收缩动画全程书架已是
+   *      正确深浅色，落位帧零重涂；
+   *   ② 兜底：`onTransitionEnd` + 两分支 `onDisAppear` 同步段（幂等短路，不再翻转）。
+   *
+   * 回退：删掉两个 `onWillDisappear` 里的 `restoreReaderColorMode()` 调用，
+   * 即回到 09-24 第二轮行为（还原点只剩转场结束后）。
+   */
+  private restoreReaderColorMode(): void {
+    NightMode.setReaderActive(false)
+    NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
+  }
+
+  /**
+   * 阅读页返回**转场结束后**的系统级收尾（两个入口分支的 `onDisAppear` 共用）。
+   *
+   * 亮暗色/屏闪重构（2026-09-23）：这三件事原来都在 `ReaderPage3.aboutToDisappear`
+   * （= 返回转场开始）执行 ⇒ 转场中途系统栏恢复 + 避让解冻 + Ability 配色翻转，
+   * 世界在动画里发生系统级跳变（用户实测的"关闭书籍屏闪"）⇒ 全部推迟到这里。
+   * 设计依据（存旧值原样还回、不做重算）见 `WindowAbility.restoreTopRect()`。
+   * ⚠️ 2026-09-24：其中的配色还原已**提前**到 `restoreReaderColorMode()` 的两个还原点
+   * （见其注释）；这里保留同一份调用只作幂等兜底，实际不会再翻转。
+   */
+  private releaseReaderImmersive(): void {
+    WindowAbility.getInstance().restoreTopRect();
+    WindowAbility.getInstance().toggleWindowSystemBar(['status', 'navigation'],
+      this.getUIContext().getHostContext());
+    // 状态栏底色还原（2026-10-19）：「显示系统状态栏」开启时阅读页把状态栏设成了全透明，
+    // 若不还原，退出后书架/我的的状态栏也会跟着透明（那是全 App 外观变化，不在授权范围内）。
+    WindowAbility.getInstance().restoreStatusBarBackground();
+    NightMode.setReaderActive(false);
+    NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext);
+  }
+
+  /**
+   * NavDestination 路由表。
+   *
+   * **第 1 期为空**：所有页面仍走 `router`，这里匹配不到任何 name，行为与改造前一致。
+   * 后续每迁一个页面：在 `RouteName` 加常量 → 在这里加分支 → 把该页面的
+   * 「入栈 / 返回」一起改成 `AppRouter.push()` / `AppRouter.pop()`
+   * （**必须成对改**：走 pathStack 进来的页面若调 `router.back()`，会把整个 Index 弹掉、直接回桌面）。
+   */
+  /**
+   * 阅读页内容（官方一镜到底库 contentBuilder 的实体，2026-10-02）。
+   * ⚠️ 必须是 @Builder 方法：Delegate 的 contentBuilder 回调箭头里只调它（`this.` 前缀），
+   * 组件实例化必须发生在 @Builder 上下文里——直接写进箭头闭包会被编译成普通函数
+   * 调用，运行即崩（见 READER 分支处的崩溃注释）。
+   */
+  @Builder
+  readerLtContent(rp: ReaderRouteParam) {
+    ReaderPage3({ initParam: rp })
+  }
+
+  /**
+   * PDF 阅读页的一镜到底内容（2026-10-20）。
+   * 与 `readerLtContent` 同款：Delegate 的 `contentBuilder` 箭头里只能调 @Builder 方法
+   * （直接实例化组件会被编译成普通函数调用 ⇒ "class constructor cannot called without 'new'"）。
+   */
+  @Builder
+  pdfLtContent(rp: PdfRouteParam) {
+    PdfViewerPage({ initParam: rp.bookData })
+  }
+
+  @Builder
+  appRoutes(name: string, param: object) {
+    if (name === RouteName.PDF_VIEWER) {
+      // ── PDF 阅读页（官方 PdfView，2026-10-20）──────────────────────────────
+      //
+      // ① 走 NavPathStack 而不是 router：`systemTransition` 只存在于 NavDestination 上
+      //    （SDK `component/nav_destination.d.ts:1065`，@since 14），router 页面拿不到转场动画。
+      // ② **与其它格式共用一镜到底**：真机反馈「PDF 的进入动画和其它格式不同」（2026-10-20 第 2 条）。
+      //    对齐方式与 READER 分支完全一致 —— 有 `longTakeTransitionParam` 时用官方
+      //    `LongTakeTransitionDelegate` 包裹，并**关掉系统转场**（`NavigationSystemTransitionType.NONE`，
+      //    SDK 原文 "No system transition animation"），否则两层动画叠加（依据见 READER 分支注释）。
+      // ③ `onDisAppear` 是全 App **唯一的**沉浸态恢复点（`releaseReaderImmersive`）——
+      //    上一版 PDF 分支没有它，退出后书架/主题/我的 全带黑色遮罩（2026-10-20 真机第 1 条）。
+      NavDestination() {
+        if ((param as PdfRouteParam).longTakeTransitionParam !== undefined) {
+          LongTakeTransitionDelegate({
+            longTakeSession: this.pdfLtSession,
+            contentBuilder: (): void => {
+              this.pdfLtContent(param as PdfRouteParam)
+            }
+          })
+        } else {
+          PdfViewerPage({ initParam: (param as PdfRouteParam).bookData })
+        }
+      }
+      .hideTitleBar(true)
+      .backgroundColor(Color.Transparent)
+      .onSizeChange((_old: SizeOptions, nv: SizeOptions) => {
+        if ((param as PdfRouteParam).longTakeTransitionParam !== undefined) {
+          this.pdfLtSession.setNewSize(nv)
+        }
+      })
+      .systemTransition((param as PdfRouteParam).longTakeTransitionParam !== undefined
+        ? NavigationSystemTransitionType.NONE
+        : UiMotion.pageTransition(UiMotion.T_READER))
+      .onDisAppear(() => {
+        // 与阅读器同款：返回转场结束后恢复系统栏/避让/状态栏底色（PDF 页自己不做）
+        setTimeout((): void => {
+          this.releaseReaderImmersive()
+        }, 80)
+      })
+      .onReady((navDestContext: NavDestinationContext) => {
+        const pp: PdfRouteParam = param as PdfRouteParam
+        if (pp.longTakeTransitionParam !== undefined) {
+          this.pdfLtSession.init(navDestContext, pp.longTakeTransitionParam, {
+            pop: (): void => {
+              this.pageStack.pop()
+            },
+            contentSizeUsePercent: true
+          })
+        }
+      })
+    } else if (name === RouteName.BOOK_DETAIL) {
+      // ── 第 2 期：书籍详情页 ────────────────────────────────────────────
+      // 原 `pages/view/BookDetailPage`（@Entry）已去掉 @Entry，参数经下面的 `@Prop bookData` 注入。
+      // `.hideTitleBar(true)`：该页**自带标题栏**（原 @Entry 页面同样没有系统标题栏），保持外观一致。
+      NavDestination() {
+        BookDetailPage({ initBook: param as Books })
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_DETAIL))
+    } else if (name === RouteName.READER) {
+      // ── 第 3 期：阅读页 ────────────────────────────────────────────────
+      // 参数含 `bookData` / `clickBookCatalogId` / `quickListen` / `bmChapterIndex` / `bmNode`，
+      // 统一经显式声明的 `ReaderRouteParam` 传入
+      // （ArkTS 的 `arkts-no-untyped-obj-literals` 禁止无类型字面量传给 `object` 参数）。
+      // 2026-09-23：一镜到底正式版。`ltArm` 臂旗由书架点击在 push 前置位（见上方字段区注释）：
+      //   置位 ⇒ 建成「飞行分支」（挂 customTransition，演一镜到底）；
+      //   未置位（详情页 / 快捷方式 / 书签回跳）⇒ 走 else 普通分支，EXPLODE 原样保留。
+      // 几何模型见 `LongTakeBook.ets` 头注释；编排参数见 `UiMotion.LT_*` 令牌。
+      // ⚠️ 2026-10-02 官方库迁移后本飞行分支**已退役**：点击侧不再置 ltArm（改发
+      // longTakeTransitionParam，走 else 普通分支 + LongTakeTransitionDelegate）。
+      // 分支代码整块保留 = 回退路径（点击侧恢复置 ltArm 即回到自研方案）。
+      if (this.ltArm) {
+        // 五轮结构（2026-09-23）—— z 序从下到上：
+        //   [纯黑兜底] → [书架定格快照] → [包络：[内容页=阅读器裁到书脸] + [封面] ]
+        // 快照垫层的由来：系统会中途隐藏/恢复书架 NavBar，包络四周原先露出的是黑虚空
+        // （用户反馈"动画右侧有黑色区域，像遮罩"）；现在露出的是与真书架像素级一致的
+        // 定格图 —— t=0 无缝、飞行中自然、返回落地 onDisAppear 时换回真书架。
+        NavDestination() {
+          Stack() {
+            // ── 真阅读器（十二轮 v3·快照飞行层）：垫底，全程不参与动画/裁剪 ──────────
+            // 活组件不进动画层（架构取证见 UiMotion 十二轮 v3 注释）：飞行期间它被上面的
+            // 全图片覆盖层挡住、安静加载；进场 onTransitionEnd 撤覆盖层 ⇒
+            // "封面完全展开，阅读器加载完，直接呈现"（用户口径 §2.3）；
+            // 返回时覆盖层首帧重建盖住它（onHidden 后 surface 停止合成/变黑也与我们无关）。
+            // v3.1：飞行期间 opacity=0 —— 覆盖层快照首帧有 1~2 帧上屏延迟，
+            // 缺口透出的是 NavDestination 底下的真实书架（与快照像素级同源），
+            // 而不是阅读器未上屏的黑 surface（用户实测的"起飞瞬间黑一下"）。
+            ReaderPage3({ initParam: param as ReaderRouteParam })
+              .opacity(this.ltReaderOpacity)
+            // ── 飞行覆盖层：全部是图片，零活组件 ─────────────────────────────────
+            // z 序：盖在真阅读器之上。黑底兜底 → 书架定格快照 → 包络(translate→scale→书脸clip)。
+            // ⚠️ v3.4：**常驻构建**（不能用 if 条件插入！）——检查点的飞行层是分支挂载即存在，
+            // delegate 点火时早已完成布局，隐式动画从"已布局的组件"上干净起步；
+            // 若用 if 在点火同一拍才首次创建+布局，组件首次布局与动画注册同帧赛跑，
+            // 头 1~2 帧会渲染目标尺寸（clipH1 全高 ⇒ 封面被拉长）再弹回
+            //（用户实测："封页被拉长→瞬间恢复→继续动画+整屏抖动"，检查点无此现象）。
+            // 阅读期用 visibility(None) 隐藏（节点与布局保留 ⇒ 返回时同帧复现，无赛跑）。
+            Stack() {
+                // 兜底垫底（**无条件**，十二轮 v3.5 恢复 + v3.7 换色）——取证链：
+                // · 两份真机日志的框架事件序列完全一致（挂载→NavBar隐藏→动画→自定义转场），
+                //   差异只在我们的树 ⇒ 抖动来自"对框架行为的可见性"变了；
+                // · 新版日志（10:52）：delegate 点火 21.727 → **NavBar 隐藏 21.729**（框架在
+                //   push 时隐藏书架 NavBar 并引发全屏重排，五轮注释"包络四周露出黑虚空"
+                //   记录的同一事件）→ 快照 ImageLoadSuccess **21.732** —— 即NavBar 隐藏的
+                //   重排落在快照上屏前的 1~2 帧空窗里；
+                // · v3.1 曾把垫底改成"仅快照失败才建"（为治 v3.0 的黑屏观感）⇒ 空窗期透出
+                //   **真实书架**，NavBar 隐藏的重排当着用户的面演一遍 = "打开动画全屏抖动"；
+                //   v3.5 恢复无条件垫底后抖动消失（用户验收）✔
+                // · v3.7：垫底色黑 → **书架页背景同色**（ShelfColors.pageBg()，主题自适应）
+                //   ——用户仍可在起飞头 1~2 帧察觉一帧垫底，黑色与浅色书架反差最大；
+                //   换成同底色后垫底帧与书架底色一致，只缺书封/卡片 ⇒ 观感为"一帧空书架"
+                //   而非"黑屏帧"（用户本轮反馈"点击出现了一个黑屏帧"）。
+                Column()
+                  .width('100%')
+                  .height('100%')
+                  .backgroundColor(ShelfColors.pageBg())
+                  .hitTestBehavior(HitTestMode.None)
+                if (this.ltBackdrop !== null) {
+                  Image(this.ltBackdrop)
+                    .width('100%')
+                    .height('100%')
+                    // v3.8：**同步加载**——治"起飞第一帧白屏"（用户截图 12:24：整屏只剩
+                    // 垫底色+封面，书架画面缺失一帧）。根因：Image 组件默认异步加载，
+                    // 常驻覆盖层虽在挂载即布局，位图仍要 ~26ms 后才首次上屏
+                    // （日志：mount 56.939 → ImageLoadSuccess 56.965）⇒ 门闩打开后的
+                    // 第一帧缺书架画面。syncLoad 让位图在首次布局时就同步就位
+                    // ⇒ 第一个可见帧 = 完整书架。代价：加载阻塞 UI 线程一帧——
+                    // 官方 FAQ 建议大图用异步，此处刻意违背：该帧发生在姿态门闩
+                    // 关闭的隐形窗口内（用户不可见），且 PixelMap 已解码、无解码开销。
+                    .syncLoad(true)
+                    .hitTestBehavior(HitTestMode.None)
+                }
+                // ── 书的包络（六轮修正 2026-09-23）────────────────────────────────
+                // 三层嵌套各司其职（由外到内）：translate（铰链漂移）→ scale（放大，锚点 (0,0)）
+                // → clip（裁出"书脸"）。translate 必须在这一层（只包住"书"），绝不能挂到外层
+                // 根节点——根节点上还有定格快照/黑底，挂上去整个"世界"会被书拖着平移
+                //（用户实测：右侧复刻出一个被拉着缩放的书架页、关闭时下移消失）。
+                Stack() {
+                  Stack() {
+                    // ── clip 层（裁出"书脸"）──────────────────────────────────────
+                    Stack() {
+                      // ── 内容页容器：固定为终态全窗高（clipH1 常量）────────────────
+                      // "书脸"高度由裁剪层自身高度动画实现（见下层属性）；
+                      // 容器固定全窗高 ⇒ 页色底衬不随动画重排，溢出部分被 `.clip(true)` 逐帧裁掉。
+                      Stack() {
+                        // ── 页色书体块（七轮 LT_PAGE_BG 底衬）───────────────────────
+                        // 飞行层里"内容页"的化身：与真阅读器底色/材质同源
+                        //（ReaderPage3.publishLtPageBg 发布）⇒ 落地交换时底色连续。
+                        if (UiMotion.LT_PAGE_BG && this.ltPageBg !== '') {
+                          Column()
+                            .width('100%')
+                            .height('100%')
+                            .backgroundColor(this.ltPageBg)
+                            .hitTestBehavior(HitTestMode.None)
+                        }
+                        if (UiMotion.LT_PAGE_BG && this.ltPageImg !== '') {
+                          // 自定义背景材质：与引擎用的同一张图（沙箱 URI，见 ReaderPage3.publishLtPageBg）
+                          Image(this.ltPageImg)
+                            .width('100%')
+                            .height('100%')
+                            .objectFit(ImageFit.Cover)
+                            .draggable(false)
+                            .hitTestBehavior(HitTestMode.None)
+                        }
+                      }
+                      .width('100%')
+                      // v3.7：容器回归 '100%' —— 盒子的纵向收缩改由 scale.y 承担
+                      //（四边线性插值几何，见 LongTakeGeom.sy0），层内不再需要动画高度
+                      .height('100%')
+                    }
+                    .width('100%')
+                    // v3.7：书脸层高度回归静态 '100%' —— 纵向收缩由 scale.y（sy0→1 线性）
+                    // 承担后，"书脸"不再是动画布局属性（布局属性隐式动画有首帧跳变前科，
+                    // v2 取证）；横向照旧由 scale.x 承担。盒子的可见边界 = 本层尺寸×scale。
+                    .height('100%')
+                    .id('ltClipNode')
+                    // 裁到组件自身边界（容器不溢出时为无操作，留作保险）
+                    .clip(true)
+                    // 封面：**铺满盒子**（宽高都 '100%'，随 scale.x/y 各向收缩）。
+                    // **图源优先用点击瞬间截的封面位图**（七轮），位图 + Fill 一定铺满盒子
+                    // （SVG 图源不吃 objectFit 的教训见 LT_COVER_SNAPSHOT）。
+                    // ⚠️ 它是裁切层的**兄弟层**（同在 scale 层里）：掀开时要扫出"书"的边界，
+                    // 放进裁切层会被 clip 切掉 3D 感。
+                    Image(this.ltCoverSrc())
+                      .id('ltCoverNode')
+                      .draggable(false)
+                      .alt($r('app.media.icon_book_default_cover_one'))
+                      .width('100%')
+                      .height('100%')
+                      // Cover = 保比例裁切铺放（不变形）；Fill 会竖向拉 ~1.6×（LT_COVER_FIT_CROP 取证）
+                      .objectFit(UiMotion.LT_COVER_FIT_CROP ? ImageFit.Cover : ImageFit.Fill)
+                      // v3.8：同步加载——与快照同理，保证第一个可见帧封面位图就在位
+                      //（否则首帧书脸位置是页色垫底，封面晚一帧浮现）
+                      .syncLoad(true)
+                      .borderRadius(this.ltCoverRadius)
+                      .shadow({ radius: 12, color: 'rgba(0, 0, 0, 0.22)', offsetX: 0, offsetY: 5 })
+                      // 绕书脊（左缘）翻折；显式透视 -3000（十二轮 v3：右缘变高方向，
+                      // 天生盖住等高书体块——用户口径"右侧天生缩放变高，所以会一直遮着"）
+                      .rotate({
+                        y: 1,
+                        centerX: 0,
+                        angle: this.ltCoverAngle,
+                        perspective: UiMotion.LT_COVER_PERSPECTIVE
+                      })
+                      .opacity(this.ltCoverOpacity)
+                      .hitTestBehavior(HitTestMode.None)
+                      // 诊断（七轮）：onComplete 字段可判定"封面到底铺满没有"（探针已关）。
+                      .onComplete((e) => {
+                        console.info('LTBOOK',
+                          `cover node ${e?.componentWidth}x${e?.componentHeight} ` +
+                          `src ${e?.width}x${e?.height} content ${e?.contentWidth}x${e?.contentHeight} ` +
+                          `offset ${e?.contentOffsetX},${e?.contentOffsetY} status ${e?.loadingStatus}`)
+                      })
+                  }
+                  .width('100%')
+                  .height('100%')
+                  .alignContent(Alignment.TopStart)
+                  // v3.7：横向 ltScale（s0→1）+ 纵向 ltScaleY（sy0→1）各自线性
+                  // ⇒ 盒子四边 lerp（全窗↔槽位），槽位在进/返回全程被包含
+                  .scale({ x: this.ltScale, y: this.ltScaleY, centerX: 0, centerY: 0 })
+                }
+                .width('100%')
+                .height('100%')
+                .translate({ x: this.ltTx, y: this.ltTy })
+                .hitTestBehavior(HitTestMode.None)
+              }
+              // v3.4：阅读期隐藏覆盖层（节点保留 ⇒ 返回时同帧复现、无首次布局赛跑）
+              .visibility(this.ltFlightOverlay ? Visibility.Visible : Visibility.None)
+          }
+          // v3.3 姿态门闩：delegate 同步设完起始帧之前，整个分支保持全透明
+          //（真机日志实证挂载与点火之间有 ~20ms 空窗，期间渲染的是残留状态）
+          .opacity(this.ltPoseReady ? 1 : 0)
+        }
+        .hideTitleBar(true)
+        // 飞行/返回期间让书架透出来（书从列表里起飞、降落回列表）；
+        // 阅读期正文自身满屏底色，透明背景不影响阅读。
+        .backgroundColor(Color.Transparent)
+        // ── PDF 放大态：把"返回"改成"恢复 100%"（2026-10-19 用户要求）─────────────
+        // 官方签名：`NavDestination.onBackPressed(callback: () => boolean)`
+        // （SDK `component/nav_destination.d.ts:720`，@since 10）——返回 **true = 消费本次返回**。
+        // 真机现象：放大后左右拖动会命中系统侧滑返回、把书划走；
+        // 放大中消费返回并给阅读页发"复位"信号；100% 时返回 false ⇒ 原有返回行为不变。
+        .onBackPressed(() => {
+          if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+            // 只消费、不再发"复位"信号：滑动不能触发回 100%（2026-10-19 用户反馈）
+            console.info('PDFZOOM', 'back consumed (no reset)')
+            return true
+          }
+          return false
+        })
+        // customTransition 生效性与分支绑死：普通分支不挂它 ⇒ EXPLODE 完全不受影响
+        .customTransition((op: NavigationOperation, isEnter: boolean)
+          : Array<NavDestinationTransition> | undefined => {
+          return this.ltDelegate(op, isEnter, param as ReaderRouteParam)
+        })
+        // ⚠️ 通用事件名是 `onDisAppear`（common.d.ts:20001，组件移出树时触发 ⇒ 返回转场之后）；
+        //    NavDestinationAttribute 上没有 onDisappear 拼法（编译器实测纠正）。
+        // ★ 配色还原·主还原点（2026-09-24 屏闪修复第三轮）：
+        //   `onWillDisappear`（SDK `nav_destination.d.ts:949`，@since 12）在返回**转场开始前**
+        //   触发（真机日志2：onWillDisappear 29.869 < animateTo 29.870 < 转场结束 30.431）。
+        //   在这里把 Ability 配色还原成三档裁决值 ⇒ 收缩动画全程书架已是正确深浅色、
+        //   落位帧**零重涂**，不再有「落位后闪一下亮色再变暗」。
+        //   （此前两轮把还原放在 onTransitionEnd/onDisAppear —— 真机日志证明它们都在
+        //   转场结束**之后**才触发：真书架先按书的配色渲染了首帧，再被全窗重涂成
+        //   三档配色 —— 这正是用户看到的落位闪屏。）
+        .onWillDisappear(() => {
+          this.restoreReaderColorMode()
+        })
+        .onDisAppear(() => {
+          // ★ 配色还原·兜底点②：同步执行（不能进 setTimeout —— 那是给切分支保险用的，
+          //   配色压在里面会产生「真书架已显示却还是书的配色」的 80ms 亮/暗闪窗）。
+          //   主还原点在 onWillDisappear（转场开始前），这里幂等短路。
+          this.restoreReaderColorMode()
+          // 弹栈完成后解除臂旗（下次非书架入口回到普通分支）+ 阅读页系统级收尾。
+          // setTimeout 保险：若 onDisAppear 在返回转场尚未完全收尾时先行触发，
+          // 立刻切分支会把飞行层在转场里拆掉。
+          // ★ 代际守卫（2026-09-24 致命卡死修复）：清理定时器到点时若已有**新飞行**
+          //   开始（快速连点：关书后 80ms 内又点开下一本），本次清理必须整体让位。
+          //   旧实现无差别清空 ltArm/ltFlight/ltGeom/ltBackdrop ⇒ 新飞行的臂旗被抹，
+          //   appRoutes 的 if(this.ltArm) 在**转场进行中**把飞行 NavDestination 撕掉
+          //   重建 ⇒ Navigation 栈/转场状态错乱（真机日志实锤：12.533 新飞行 delegate
+          //   → 12.538 旧清理抹状态 → 12.543 新建的目的地 11699 被销毁 → 13.326 返回
+          //   `backEvent is null` 派发失败直接回桌面、手势全失效）。
+          //   让位后不清理也安全：新飞行的 delegate 已覆写全部数据字段，且新飞行自己
+          //   的 onDisAppear 会安排属于自己的清理（自愈）；系统栏/避让由新飞行的
+          //   aboutToAppear 延迟块（+620ms）重新冻结+隐藏。
+          const genAtDisappear = this.ltFlightGen
+          setTimeout((): void => {
+            if (this.ltFlightGen !== genAtDisappear) {
+              console.info('LTBOOK', 'cleanup skipped: superseded by newer flight')
+              return
+            }
+            this.releaseReaderImmersive()
+            this.ltArm = false
+            this.ltActive = false
+            this.ltFlight = null
+            this.ltGeom = null
+            this.ltBackdrop = null
+            // 七轮：封面位图同批释放（810×1080×4 ≈ 3.5MB，别留着占内存）
+            this.ltCoverShot = null
+            // 十二轮 v3：覆盖层兜底复位（正常路径已随分支销毁；防异常时序残留）
+            this.ltFlightOverlay = false
+            // v3.3：姿态门闩复位（下次飞行由 delegate 重新置位）
+            this.ltPoseReady = false
+            // 返回冷却打点（2026-10-01）：点击侧在释放后 400ms 内点书 ⇒ 降级普通转场。
+            // 依据：极速打断会触发框架层缺陷（自定义转场被整体丢弃、NavDestination 残留
+            // disabled——2026-10-02 02:37 日志：pop transition end 缺失 + 两次 arm released
+            // + "Touch test result is empty"卡死），冷却把点击挪出危险窗口。
+            AppStorage.setOrCreate('ltArmReleasedAt', Date.now())
+            console.info('LTBOOK', 'arm released')
+          }, 80)
+        })
+      } else {
+        // ── 2026-10-02 官方库迁移：本分支同时服务两类入口 ────────────────────────
+        // · 书架点击（rp.longTakeTransitionParam 有值）⇒ LongTakeTransitionDelegate
+        //   包裹内容，一镜到底动效由官方库 session 状态机管理（打断/手势/生命周期内建）；
+        // · 详情页/快捷方式/书签回跳（无值）⇒ 原样 ReaderPage3 + EXPLODE，行为不变。
+        // NavDestination 背景按官方背景色规则交给 session 动态管理（best-practices
+        // 「背景色处理规则」），子组件实色由 ReaderPage3 自持。
+        NavDestination() {
+          if ((param as ReaderRouteParam).longTakeTransitionParam !== undefined) {
+            LongTakeTransitionDelegate({
+              longTakeSession: this.readerLtSession,
+              // ⚠️ 箭头函数里只能调 @Builder 方法（官方示例 `this.ContentBuilder()` 同款）——
+              // 组件实例化直接写进箭头闭包会被编译成普通函数调用（结构体没 new），
+              // 真机必崩 TypeError "class constructor cannot called without 'new'"
+              //（2026-10-02 03:10 崩溃报告，Kill Reason: Js Error）。
+              contentBuilder: (): void => {
+                this.readerLtContent(param as ReaderRouteParam)
+              }
+            })
+          } else {
+            ReaderPage3({ initParam: param as ReaderRouteParam })
+          }
+        }
+        .hideTitleBar(true)
+        // 背景恒透明（2026-10-02 三层书模型）：飞行/返回期间由 Delegate 的书体块+封面
+        // 自绘全部画面；落定后真阅读器自持底色 —— NavDestination 不设任何底色
+        .backgroundColor(Color.Transparent)
+        // ── PDF 放大态：把"返回"改成"恢复 100%"（2026-10-19 用户要求）─────────────
+        // 官方签名：`NavDestination.onBackPressed(callback: () => boolean)`
+        // （SDK `component/nav_destination.d.ts:720`，@since 10）——返回 **true = 消费本次返回**。
+        // 真机现象：放大后左右拖动会命中系统侧滑返回、把书划走；
+        // 放大中消费返回并给阅读页发"复位"信号；100% 时返回 false ⇒ 原有返回行为不变。
+        .onBackPressed(() => {
+          if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+            // 只消费、不再发"复位"信号：滑动不能触发回 100%（2026-10-19 用户反馈）
+            console.info('PDFZOOM', 'back consumed (no reset)')
+            return true
+          }
+          return false
+        })
+        // Step 6：尺寸变化（旋转/分屏）时同步 session，动画计算基准才不基于旧尺寸
+        .onSizeChange((_old: SizeOptions, nv: SizeOptions) => {
+          if ((param as ReaderRouteParam).longTakeTransitionParam !== undefined) {
+            this.readerLtSession.setNewSize(nv)
+          }
+        })
+        // ★★ 2026-10-02 关键修复：一镜到底分支**必须关掉系统转场（NONE）** ★★
+        //   根因（用户 2026-10-02 反馈 2 条现象一次解释）：
+        //   ·「封面一开始半透明、放大到一半才不透明」= 系统 EXPLODE 的**整页淡入**在跑；
+        //   ·「返回屏幕闪一下、有个缩放但太快看不清」= 系统 EXPLODE 的**整页缩放淡出**在跑，
+        //     它比我们的 720ms 短得多，且结束得早（真机日志 `ReaderPage3 transition finish`
+        //     出现在 push 后 385ms / pop 后 586ms，早于我们自己的 enter/pop-end）。
+        //   ⇒ NavDestination 的 `systemTransition` 与 Navigation 的 `customNavContentTransition`
+        //     **会同时生效**，两层动画叠加 = 半透明 + 闪 + 太快。
+        //   SDK 依据：`NavigationSystemTransitionType.NONE` = "No system transition animation"
+        //   （`nav_destination.d.ts:122-131`，@since 14）。
+        //   注意：只对**一镜到底分支**关；详情页/快捷方式/书签回跳仍走 EXPLODE，零回归。
+        .systemTransition((param as ReaderRouteParam).longTakeTransitionParam !== undefined
+          ? NavigationSystemTransitionType.NONE
+          : UiMotion.pageTransition(UiMotion.T_READER))
+        // ★ 配色还原·主还原点（普通分支同飞行分支，见上方 onWillDisappear 注释）：
+        //   返回转场开始前还原 ⇒ EXPLODE 动画全程书架已是正确深浅色，落位帧零重涂。
+        .onWillDisappear(() => {
+          this.restoreReaderColorMode()
+        })
+        // 阅读页系统级收尾（详情页等入口同样需要）：返回转场结束后恢复系统栏/避让/配色。
+        .onDisAppear(() => {
+          // ★ 配色还原·兜底点②（主还原点在 onWillDisappear，这里幂等短路）。
+          this.restoreReaderColorMode()
+          setTimeout((): void => {
+            this.releaseReaderImmersive()
+          }, 80)
+        })
+        // Step 2：解析书架点击带来的 LongTakeTransitionParam 并初始化 session
+        //（pop 回调 = 返回逻辑；contentSizeUsePercent = ReaderPage3 内容区为 100% 宽高）
+        .onReady((navDestContext: NavDestinationContext) => {
+          const rp: ReaderRouteParam = param as ReaderRouteParam
+          if (rp.longTakeTransitionParam !== undefined) {
+            this.readerLtSession.init(navDestContext, rp.longTakeTransitionParam, {
+              pop: (): void => {
+                this.pageStack.pop()
+              },
+              contentSizeUsePercent: true
+            })
+          }
+        })
+      }
+    } else if (name === RouteName.NONE) {
+      // 占位分支，永不匹配；避免空 @Builder 的编译告警
+      Column()
+    } else if (name === RouteName.BOOK_MANAGE) {
+      // ── 第 4 期：书架管理页 ────────────────────────────────────────────
+      // 参数沿用原 `routerParams` 的三个字段（见 `BookManageRouteParam`）。
+      NavDestination() {
+        BookManagePage({ routeParam: param as BookManageRouteParam })
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.READ_STATISTICS) {
+      // ── 第 4 期：读过/读完/书签 ────────────────────────────────────────
+      NavDestination() {
+        ReadStatistics({ routeParam: param as ReadStatisticsRouteParam })
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.READ_STATS) {
+      // ── 2026-10-13：阅读数据详情（五档 + 趋势 + Top 榜）────────────────
+      // 转场跟"二级设置类页面"同档（右滑入）：它就是从「我的」里点进来的二级页。
+      NavDestination() {
+        ReadStatsPage({ routeParam: param as ReadStatsRouteParam })
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.THEME_CONFIG) {
+      // ── 第 4 期：主题配置 ─────────────────────────────────────────────
+      NavDestination() {
+        MyThemeConfig()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.CUSTOM_THEME) {
+      // ── 第 4 期：自定义主题 ───────────────────────────────────────────
+      NavDestination() {
+        CreateCustomTheme()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.MY_SET) {
+      // ── 第 4 期：我的设置 ─────────────────────────────────────────────
+      NavDestination() {
+        MySetPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.ABOUT) {
+      // ── 关于我们（2026-09-30 回填）────────────────────────────────────
+      NavDestination() {
+        AboutPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.VERSION_LOG) {
+      // ── 更新日志 ──────────────────────────────────────────────────────
+      NavDestination() {
+        VersionLogPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.PRIVACY) {
+      // ── 用户隐私与协议（应用内 Web 组件）─────────────────────────────
+      NavDestination() {
+        PrivacyPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.LICENSE) {
+      // ── 开源许可 ──────────────────────────────────────────────────────
+      NavDestination() {
+        LicensePage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    } else if (name === RouteName.CONTACT) {
+      // ── 联系我们（2026-10-07 新增，应用内 Web 组件）──────────────────
+      NavDestination() {
+        ContactPage()
+      }
+      .hideTitleBar(true)
+      .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+    }
   }
 }
