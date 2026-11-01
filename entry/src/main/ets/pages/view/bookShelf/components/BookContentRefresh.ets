@@ -419,6 +419,15 @@ export default struct BookContentRefresh {
           this.openChildGroupDialog(g)
         }
       })
+      // 2026-11-02：被隐藏的分组在名称前显示"眼睛关闭"图标（谁隐藏谁标，子级不再额外标）
+      if (!g.show) {
+        Row({ space: 2 }) {
+          SymbolGlyph($r('sys.symbol.eye_slash')).fontSize(12).fontColor(['rgb(174,174,174)'])
+          Text('已隐藏').fontSize(11).fontColor('rgb(174,174,174)')
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+      }
       // 2026-11-01：子层卡片补计数（真机实测：根层有「共N本 · M个文件夹」，子层只有名字）
       Text(this.childCountLabel(g))
         .fontSize(12)

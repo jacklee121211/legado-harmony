@@ -59,7 +59,7 @@ export default struct FolderInfoDialog{
     //   ⚠️ `id` 是**语义键**不是下标（下面 `folderInfo()` 的 switch 按 id 分发），
     //   所以删掉 id 4 不影响置顶(2)/移动(3)/封面(5)/隐藏(6)/解散(7)/删除(8) 的绑定。
     new buttonList(5,'封面样式',$r('sys.symbol.picture')),
-    new buttonList(6, this.itemData.show?'隐藏分组':'显示分组',this.itemData.show?$r('sys.symbol.eye_slash'):$r('sys.symbol.eye')),
+    new buttonList(6, this.itemData.show?'隐藏分组':'恢复显示',this.itemData.show?$r('sys.symbol.eye_slash'):$r('sys.symbol.eye')),
     new buttonList(7,'解散分组',$r('sys.symbol.trash')),
     new buttonList(8,'删除',$r('sys.symbol.ohos_trash'))
   ]
