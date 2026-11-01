@@ -912,19 +912,26 @@ export default struct BookSelectGroupDialog{
     }
     const gid: number = item.groupId
     const gname: string = item.groupName ?? ''
+    // 2026-11-02：被隐藏的分组，动作窗改为「恢复显示 / 解散 / 取消」——
+    //   ThreeActionDialog 只有三个槽位，隐藏分组最需要的是恢复入口（删除可恢复后再做）。
+    const hidden: boolean = !item.show
     this.manageDialog = new CustomDialogController({
       builder: ThreeActionDialog({
         title: `「${gname}」要怎么处理？`,
         rawTitle: true,
-        hintPrimary: '删除：分组和组内书籍一起删除',
-        hintSecondary: '解散：只解散分组，书籍保留并移至未分组',
-        primaryText: '删除',
+        hintPrimary: hidden ? '恢复显示：重新出现在书架中' : '删除：分组和组内书籍一起删除',
+        hintSecondary: hidden ? '解散：只解散分组，书籍归还上级分组' : '解散：只解散分组，书籍归还上级分组',
+        primaryText: hidden ? '恢复显示' : '删除',
         secondaryText: '解散',
         cancelText: '取消',
         onPrimary: (): void => {
-          this.doDeleteGroup(gid, gname).catch((e: Error): void => {
-            console.error('deleteGroup in manage mode failed: ' + e.message)
-          })
+          if (hidden) {
+            this.doRestoreShow(gid, gname)
+          } else {
+            this.doDeleteGroup(gid, gname).catch((e: Error): void => {
+              console.error('deleteGroup in manage mode failed: ' + e.message)
+            })
+          }
         },
         onSecondary: (): void => {
           this.doDissolveGroup(gid, gname).catch((e: Error): void => {
@@ -1001,6 +1008,18 @@ export default struct BookSelectGroupDialog{
       showMessage('解散失败')
     } finally {
       this.afterGroupChanged()
+    }
+  }
+
+  /** 恢复显示（隐藏分组）：反写 show=true，双广播后重查本列表 */
+  private async doRestoreShow(groupId: number, groupName: string): Promise<void> {
+    try {
+      await bookGroupUtils.updateGroupShow(groupId)
+      showMessage(`已恢复「${groupName}」`)
+      this.afterGroupChanged()
+    } catch (e) {
+      console.error('doRestoreShow failed: ' + JSON.stringify(e))
+      showMessage('恢复失败')
     }
   }
 
