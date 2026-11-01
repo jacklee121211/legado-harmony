@@ -1007,7 +1007,10 @@ export default struct IndexShelf {
       return
     }
     const bookId: number = this.moveBookId
-    const oldGroup: number = AppStorage.get<number>('SHELF_MOVE_BOOK_GROUP') ?? 3
+    // 2026-11-01 修「单书弹窗偶发缺未分组」：默认值不能是 3（未分组）。
+    //   冷启动时书数据可能还没就绪 ⇒ 读到 undefined，旧默认 3 会让弹窗误以为
+    //   "书本来就在未分组里"从而隐藏该行。未知一律按 0 处理。
+    const oldGroup: number = AppStorage.get<number>('SHELF_MOVE_BOOK_GROUP') ?? 0
     // 立即清空，保证下次同一个 id 也能再次触发
     AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_ID', 0)
     this.moveBookId = 0
