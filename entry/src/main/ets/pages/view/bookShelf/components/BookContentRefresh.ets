@@ -258,13 +258,25 @@ export default struct BookContentRefresh {
     this.bookTypeNumber = id
   }
 
-  /** 路径条某一格：id=1 走既有「回分组根」广播，其余直接跳 */
-  private jumpToPathChip(p: PathChip): void {
-    if (p.id === 1) {
+  /** 面包屑文案：`分组/父组/子组`（首段是虚拟根「分组」） */
+  private pathText(): string {
+    const names: string[] = []
+    for (const p of this.pathChips) {
+      names.push(p.name)
+    }
+    return names.join('/')
+  }
+
+  /** 面包屑点击：回上一级；已在根级分组时回分组列表 */
+  private backOneLevel(): void {
+    const n: number = this.pathChips.length
+    if (n <= 2) {
       this.backToGroupList()
       return
     }
-    this.jumpToFolder(p.id)
+    const target: PathChip = this.pathChips[n - 2]
+    Haptics.tap()
+    this.bookTypeNumber = target.id
   }
 
   /** 路径条左侧「+」：在当前分组下新建子分组 */
@@ -397,11 +409,12 @@ export default struct BookContentRefresh {
         showMessage('刷新成功')
       })
 
-      // ── 多级路径条（2026-11-01，取代原来的单一「返回分组列表」胶囊）────────────
-      //  · 横向可滚动（Windows 资源管理器地址栏式），点任意一级直接跳；
-      //  · 左侧常驻「+」= 在当前分组下新建子分组；
-      //  · 只在"进入具体分组"时出现（`bookTypeNumber > 1` 且非「最近」）；
-      //  · 当前层级用 `secondColor` 底 + `mainColor` 字高亮。
+      // ── 多级面包屑（2026-11-01 用户定稿）────────────────────────────────────
+      //  · **一个按钮**、**右侧对齐**（与旧「返回分组列表」胶囊同位置、同尺寸风格）；
+      //  · 左侧保留返回 symbol（`chevron_left`），用户第一眼就知道"这是返回"；
+      //  · 路径用 `/` 分隔（Windows 地址栏观感），超长省略；
+      //  · 点击 = 回上一级；已经在根级分组（如 `分组/开心`）时 = 回分组列表。
+      //  · 左侧「+」仍是"在当前分组下新建子分组"（与面包屑分离，避免多按钮语义混淆）。
       if (this.bookTypeNumber > 1 && !this.onRecentChip) {
         Row({ space: 8 }) {
           Row() {
@@ -418,35 +431,31 @@ export default struct BookContentRefresh {
             this.openAddSubGroup()
           })
 
-          Scroll() {
-            Row({ space: 6 }) {
-              ForEach(this.pathChips, (p: PathChip) => {
-                Text(p.name)
-                  .fontSize(13)
-                  .fontWeight(500)
-                  .fontColor(p.id === this.bookTypeNumber
-                    ? this.theme.mainColor
-                    : (NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-                  .borderRadius(18)
-                  .backgroundColor(p.id === this.bookTypeNumber
-                    ? this.theme.secondColor
-                    : this.theme.mainColor)
-                  .clickEffect(UiMotion.CLICK)
-                  .onClick(() => {
-                    this.jumpToPathChip(p)
-                  })
-              }, (p: PathChip) => 'p' + p.id)
-            }
+          Blank()
+
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.chevron_left'))
+              .fontSize(16)
+              .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
+            Text(this.pathText())
+              .fontSize(13)
+              .fontWeight(500)
+              .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
-          .scrollable(ScrollDirection.Horizontal)
-          .scrollBar(BarState.Off)
-          .layoutWeight(1)
+          .constraintSize({ maxWidth: '70%' })
+          .padding({ left: 12, right: 14, top: 8, bottom: 8 })
+          .borderRadius(18)
+          .backgroundColor(this.theme.mainColor)
+          .clickEffect(UiMotion.CLICK)
+          .onClick(() => {
+            this.backOneLevel()
+          })
+          .margin({ right: 20 })
         }
         .width('100%')
-        .padding({ left: 20, right: 20 })
+        .padding({ left: 20 })
         .margin({ bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight) })
       }
       // ── 2026-11-01：分组卡片页左下角常驻「新建分组」─────────────────────────

@@ -437,6 +437,12 @@ export default struct BookFolder {
                 this.bookFolderInfo(item)
               }
             }
+            // ⚠️ 2026-11-01 修「点书名/共N本进不去」：真机日志显示点在文字上时
+            //   `CLK RACC, T: Text`（点在卡片空白处才是 `T: GridCol`）⇒ 手势落不到 GridCol。
+            //   把 onClick 同时挂到卡片内容 Column（更深的祖先），并让 Text 不参与命中。
+            .onClick(() => {
+              this.openGroup(item)
+            })
           }
           .gesture(
             LongPressGesture({ repeat: false, duration: 500 })
@@ -562,6 +568,7 @@ export default struct BookFolder {
         })
         .ellipsisMode(EllipsisMode.END)
         .maxLines(2)
+        .hitTestBehavior(HitTestMode.None)
       // 「共N本」= 直属书（口径与点进去的列表同源）；有多级子文件夹时补一段数量
       Text(this.countLabel(item))
         .fontSize(12)
@@ -572,6 +579,7 @@ export default struct BookFolder {
         .ellipsisMode(EllipsisMode.END)
         .fontWeight(500)
         .maxLines(1)
+        .hitTestBehavior(HitTestMode.None)
     }
     .borderRadius(8)
     .alignItems(HorizontalAlign.Start)
