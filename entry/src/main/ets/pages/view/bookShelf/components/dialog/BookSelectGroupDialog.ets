@@ -287,8 +287,10 @@ export default struct BookSelectGroupDialog{
         this.openManageAddTypeDialog()
         return
       }
-      // 移动模式：子开父退（沿用 v3.21 出规则）
-      this.controller?.close()
+      // 2026-11-01：移动模式改为「不关自己，直接叠加新建弹窗」——
+      //   `@CustomDialog` 内部的 `this.controller?.close()` 不可靠（本项目已多次实测），
+      //   先关自身再开子弹窗 ⇒ 子弹窗经常根本不出现（用户：移动至里新建分组失败）。
+      //   管理模式的 keepOpen 方式已验证可用，这里对齐它。
       this.addBookType?.open()
     })
   }

@@ -593,6 +593,8 @@ export default struct BookInfoDialogs{
         presetGroups: groups
       }),
       height: 400,
+      // 2026-11-01：与分组移动弹窗一致（分组移动显式 92%），避免二级弹窗测量过窄
+      width: '92%',
       autoCancel: true,
       alignment: DialogAlignment.Center,
       gridCount: 4,
