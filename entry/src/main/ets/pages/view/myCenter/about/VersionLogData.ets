@@ -19,9 +19,11 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 补齐阅读器漏网的系统模式驱动配色',
+    version: 'V3.0.11 交接文档补充模糊蒙版与残留项',
     date: '2026-11-01',
     items: [
+      '补充模糊材质蒙版颜色必须显式指定这一根因与修法',
+      '记录三处刻意未动的残留与通用规律',
       '进度胶囊：backgroundBlurStyle 显式传 colorMode（阅读器档位），不再用默认的 ThemeColorMode.SYSTEM —— 模糊材质的蒙版颜色原本跟整机，系统暗 + 阅读器亮时整条胶囊发黑',
       '设置面板：「亮度 / 随系统 / 常亮」三处 Text 补 fontColor（原来走系统默认字体色），标定键一并补齐',
       '目录/书签右侧三按钮：MaterialDockModifier 的模糊蒙版改为阅读器档位',
