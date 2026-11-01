@@ -1,5 +1,6 @@
 import bookListManage from './bookManage/bookListManage';
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
+import { GroupTree } from '../../../../common/group/GroupTree'
 import { Haptics } from '../../../../common/utils/Haptics';
 import {showMessage} from '../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../componets/common/confirmDialog';
@@ -174,7 +175,23 @@ export default struct BookManagePage {
       type: this.currentIndex
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
-    this.bookGroups = val
+    // 2026-11-01：按「父 → 其子 → 孙 → 下一个父」的 DFS 顺序展开（原来平铺，层级看不出来）
+    const tree: GroupTree = GroupTree.build(val)
+    const out: BookGroups[] = []
+    const walk = (pid: number): void => {
+      for (const g of tree.childrenOf(pid)) {
+        out.push(g)
+        walk(g.groupId ?? -1)
+      }
+    }
+    walk(0)
+    // 兜底：父级不在本次列表里的（数据异常）追加到末尾，避免漏显示
+    for (const g of val) {
+      if (out.indexOf(g) < 0) {
+        out.push(g)
+      }
+    }
+    this.bookGroups = out
   }
   /**
    * 注入路由参数（迁 Navigation 第 4 期）。
