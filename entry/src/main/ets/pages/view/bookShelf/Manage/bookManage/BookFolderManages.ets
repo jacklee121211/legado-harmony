@@ -152,7 +152,8 @@ export default struct BookFolderManages {
     }
     const pid: number = item.parentId ?? 0
     if (pid <= 0) {
-      return ''
+      // 根目录批量管理：每个自定义分组都标出来源（父 = 根目录）
+      return '来自根目录'
     }
     if (pid === this.currentGroupId) {
       return '来自本分组'

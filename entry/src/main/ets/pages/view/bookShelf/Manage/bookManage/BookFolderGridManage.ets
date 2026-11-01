@@ -177,8 +177,8 @@ export default struct BookFolderGridManage {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .constraintSize({ maxWidth: 64 })
                 .backgroundColor(this.originLabel === '本分组'
-                  ? (NightMode.isDarkSurface() ? 'rgba(255, 138, 128, 0.55)' : 'rgba(0, 0, 0, 0.55)')
-                  : (NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.22)' : 'rgba(0, 0, 0, 0.40)'))
+                  ? (NightMode.isDarkSurface() ? 'rgba(229,115,115,0.85)' : 'rgba(0, 0, 0, 0.55)')
+                  : (NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.32)' : 'rgba(0, 0, 0, 0.40)'))
                 .position({ x: 4, y: 4 })
                 .zIndex(3)
             }

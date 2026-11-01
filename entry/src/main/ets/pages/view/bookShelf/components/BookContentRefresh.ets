@@ -204,6 +204,9 @@ export default struct BookContentRefresh {
   /** 新建分组弹窗（复用 `addBookTypeDialog`：拒空名/重名，与「移动至」同款材质与动效） */
   addGroupDialog: CustomDialogController | null = new CustomDialogController({
     builder: addBookTypeDialog({
+      // 2026-11-01：连续创建 —— 保存后弹窗不关闭，方便一次建多个分组
+      //   （addBookTypeDialog 自带 keepOpen 契约：确定后调 confirm 但不关自己）
+      keepOpen: true,
       cancel: (): void => {
         this.addGroupDialog?.close()
       },
