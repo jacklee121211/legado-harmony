@@ -14,6 +14,7 @@ import BookSelectGroupDialog from './BookSelectGroupDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import { GroupTree } from '../../../../../common/group/GroupTree'
 import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
+import GroupMergeDialog, { MergeConflictInfo } from './GroupMergeDialog'
 import { BookShareBridge, buildSelection, MAX_SHARE_RECORDS } from '../../../../../common/share/BookShareBridge'
 import { Books } from '../../../../../database/entities/Books'
 import { common } from '@kit.AbilityKit'
@@ -578,7 +579,10 @@ export default struct FolderInfoDialog{
    * 解散（不删书）：
    * · `keepChildren = true` → 只解散本组：子分组上提一级，本组书移到父组（根级则未分组）；
    * · `keepChildren = false` → 整棵子树一起解散：子树内书全部移到父组（根级则未分组）。
+   * 若目标位置已有"同一本书"（书名+作者 或 大小+入库时间）→ 先弹合并冲突弹窗。
    */
+  mergeDialog: CustomDialogController | null = null
+
   private async dissolveGroup(keepChildren: boolean): Promise<void> {
     const gid: number = this.itemData.groupId ?? -1
     if (gid <= 0) {
@@ -589,30 +593,128 @@ export default struct FolderInfoDialog{
       const tree: GroupTree = GroupTree.build(all)
       const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
       const parentId: number = me?.parentId ?? 0
-      const bookTarget: number = parentId > 0 ? parentId : 3
+      const target: number = parentId > 0 ? parentId : 3
+      const ids: number[] = keepChildren ? [gid] : tree.subtreeIds(gid)
+      const moving: Books[] = []
+      for (const id of ids) {
+        const list: Books[] = await booksDao.queryPreviewByGroups([id], 5000)
+        for (const b of list) {
+          moving.push(b)
+        }
+      }
+      const existing: Books[] = await booksDao.queryPreviewByGroups([target], 5000)
+      const conflicts: MergeConflictInfo[] = this.findConflicts(moving, existing)
+      if (conflicts.length > 0) {
+        this.mergeDialog = new CustomDialogController({
+          builder: GroupMergeDialog({
+            conflicts: conflicts,
+            onConfirm: (choices: number[]): void => {
+              this.mergeDialog?.close()
+              this.applyDissolve(gid, ids, keepChildren, parentId, moving, target, conflicts, choices)
+            },
+            onClose: (): void => {
+              this.mergeDialog?.close()
+            }
+          }),
+          autoCancel: true,
+          alignment: DialogAlignment.Center,
+          gridCount: 4,
+          customStyle: false,
+          cornerRadius: 25,
+          cancel: (): void => {
+            this.mergeDialog?.close()
+          }
+        })
+        this.mergeDialog?.open()
+        return
+      }
+      await this.applyDissolve(gid, ids, keepChildren, parentId, moving, target, [], [])
+    } catch (e) {
+      showMessage('解散失败')
+      console.error('dissolveGroup failed: ' + JSON.stringify(e))
+    }
+  }
+
+  /** 冲突判定：书名+作者 相同，或 文件大小+入库时间 相同（2026-11-01 用户拍板） */
+  private sameBook(a: Books, b: Books): boolean {
+    const na: string = (a.bookName ?? '').trim()
+    const nb: string = (b.bookName ?? '').trim()
+    const aa: string = (a.author ?? '').trim()
+    const ab: string = (b.author ?? '').trim()
+    if (na !== '' && na === nb && aa === ab) {
+      return true
+    }
+    const size: number = a.fileSize ?? 0
+    if (size > 0 && size === (b.fileSize ?? -1)
+      && (a.createTime ?? -1) === (b.createTime ?? -2)) {
+      return true
+    }
+    return false
+  }
+
+  private bookDesc(b: Books): string {
+    const kb: number = Math.round((b.fileSize ?? 0) / 1024)
+    const t: number = b.createTime ?? 0
+    const day: string = t > 0 ? new Date(t).toISOString().substring(0, 10) : '未知时间'
+    return `${kb}KB · ${day}`
+  }
+
+  private findConflicts(moving: Books[], existing: Books[]): MergeConflictInfo[] {
+    const out: MergeConflictInfo[] = []
+    for (const b of moving) {
+      const hit: Books | undefined = existing.find((e: Books): boolean => this.sameBook(b, e))
+      if (hit !== undefined && b.id !== undefined && hit.id !== undefined) {
+        out.push({
+          bookId: b.id,
+          bookName: b.bookName,
+          detail: this.bookDesc(b),
+          oldId: hit.id,
+          oldName: hit.bookName,
+          oldDetail: this.bookDesc(hit)
+        })
+      }
+    }
+    return out
+  }
+
+  /** 按用户选择执行：覆盖=删旧、重命名=书名加 (2)、跳过=落未分组；然后删分组行 */
+  private async applyDissolve(gid: number, ids: number[], keepChildren: boolean, parentId: number,
+    moving: Books[], target: number, conflicts: MergeConflictInfo[], choices: number[]): Promise<void> {
+    try {
+      for (const b of moving) {
+        const idx: number = conflicts.findIndex((c: MergeConflictInfo): boolean => c.bookId === (b.id ?? -1))
+        const choice: number = idx >= 0 ? choices[idx] : -1
+        if (choice === 2) {
+          if (b.id !== undefined) {
+            await booksDao.updateBookGroup(b.id, 3)
+          }
+          continue
+        }
+        if (choice === 0 && idx >= 0) {
+          await booksUtil.delBooksById([conflicts[idx].oldId])
+        }
+        if (choice === 1) {
+          b.bookName = `${b.bookName} (2)`
+          await booksDao.update(b)
+        }
+        if (b.id !== undefined) {
+          await booksDao.updateBookGroup(b.id, target)
+        }
+      }
       if (keepChildren) {
+        const all: BookGroups[] = await BookGroupsDao.search()
+        const tree: GroupTree = GroupTree.build(all)
         for (const c of tree.childrenOf(gid)) {
           c.parentId = parentId
           c.updateTime = Date.now()
           await BookGroupsDao.updatePartialGroup(c)
         }
-        for (const b of await booksDao.queryBooksByGroupId([gid])) {
-          await booksDao.updateBookGroup(b, bookTarget)
-        }
-        await bookGroupUtil.delGroupById(gid)
-      } else {
-        const ids: number[] = tree.subtreeIds(gid)
-        for (const id of ids) {
-          for (const b of await booksDao.queryBooksByGroupId([id])) {
-            await booksDao.updateBookGroup(b, bookTarget)
-          }
-        }
-        await bookGroupUtil.delGroupById(ids)
       }
+      await bookGroupUtil.delGroupById(ids)
       showMessage(`已解散「${this.itemData.groupName ?? ''}」`)
     } catch (e) {
       showMessage('解散失败')
-      console.error('dissolveGroup failed: ' + JSON.stringify(e))
+      console.error('applyDissolve failed: ' + JSON.stringify(e))
     } finally {
       this.cancel()
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
