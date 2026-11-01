@@ -57,6 +57,53 @@ class bookGroupUtils{
   }
 
   /**
+   * 2026-11-01：**解散**分组（与「删除」语义区分开）
+   *
+   * 用户需求：「子目录被解散后，书应该还给父目录」，而不是落到「未分组」。
+   * 因此本方法：
+   *   ① 组内直属书的 `bookGroup` 改为**该组的 parentId**（父为根时用 3 = 未分组）；
+   *   ② 直属**子分组**的 `parentId` 挂到同一父级（不是跟着删除），避免孙目录变孤儿；
+   *   ③ 最后才删本分组行。
+   *
+   * ⚠️ 全部 `await`，保证调用方随后广播刷新时写库已提交
+   *   （同 `delGroupById` 2026-10-22 的教训）。
+   */
+  async dissolveGroup(id: number): Promise<void> {
+    if (id <= 0) {
+      return
+    }
+    const groups: BookGroups[] = await BookGroupsDao.search()
+    let parentId: number = 0
+    for (const g of groups) {
+      if ((g.groupId ?? -1) === id) {
+        parentId = g.parentId ?? 0
+        break
+      }
+    }
+    const target: number = parentId > 0 ? parentId : 3
+    // ① 直属书归还父级
+    await BooksDao.queryBookByGroup([id], target)
+    // ② 子分组挂到同一父级（保持层级不断链）
+    const moved: number[] = []
+    for (const g of groups) {
+      if ((g.parentId ?? 0) === id && g.groupId !== undefined && g.groupId !== id) {
+        moved.push(g.groupId)
+      }
+    }
+    for (const cid of moved) {
+      for (const g of groups) {
+        if ((g.groupId ?? -1) === cid) {
+          g.parentId = parentId > 0 ? parentId : 0
+          await BookGroupsDao.update(g)
+          break
+        }
+      }
+    }
+    // ③ 删本分组行
+    await BookGroupsDao.deleteBook([id])
+  }
+
+  /**
    * **空分组自动解散**（2026-10-12 新增，用户需求原文：
    * 「自定义分组空了之后没有自动解散并更新刷新」「自定义分组没有书籍会自动解散」）。
    *

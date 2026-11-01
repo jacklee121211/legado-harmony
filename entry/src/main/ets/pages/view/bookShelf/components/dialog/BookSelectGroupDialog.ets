@@ -987,8 +987,10 @@ export default struct BookSelectGroupDialog{
       // 与 `FolderInfoDialog.disbandGroup()` **同一条实现**（用户：「和现有逻辑应该相同」）。
       // `delGroupById` 内部 = 「组内书置 3」+「删分组行」，且 2026-10-22 已改为逐个 await
       // ⇒ 本方法 resolve 时写库**确实已提交**，随后的广播才读得到新数据。
-      await bookGroupUtils.delGroupById(groupId)
-      showMessage(`已解散「${groupName}」，书籍已移至未分组`)
+      // 2026-11-01：解散 = **书归还父分组**（父为根则进未分组），子分组挂到同一父级，
+      //   不再一律塞进「未分组」（用户：「子目录解散后书应该还给父目录」）
+      await bookGroupUtils.dissolveGroup(groupId)
+      showMessage(`已解散「${groupName}」，书籍已归还上级分组`)
     } catch (e) {
       console.error('doDissolveGroup failed: ' + JSON.stringify(e))
       showMessage('解散失败')
