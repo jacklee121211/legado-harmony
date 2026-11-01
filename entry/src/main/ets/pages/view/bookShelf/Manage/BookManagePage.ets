@@ -424,6 +424,8 @@ export default struct BookManagePage {
               .borderRadius(16)
               .backgroundColor('rgba(128,128,128,0.06)')
               .border({ width: 1, color: 'rgba(128,128,128,0.18)' })
+              // 2026-11-01：没有书时不渲染这块底板（否则空目录下会多出一个空白矩形）
+              .visibility(this.bookList.length > 0 ? Visibility.Visible : Visibility.None)
             }
             .width('100%')
           } else {
