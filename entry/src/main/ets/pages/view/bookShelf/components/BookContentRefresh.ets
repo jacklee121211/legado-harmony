@@ -80,6 +80,8 @@ export default struct BookContentRefresh {
   @State childGroups: BookGroups[] = []
   /** 子分组卡片 2×2 预览用的书（每组最多 2 本） */
   @State childPreviews: Books[] = []
+  /** 请求序号：异步重算的竞态保护（旧请求返回时丢弃） */
+  private folderToken: number = 0
   // 2026-11-01：分组/书籍刷新广播 → 当前页重算（修「删除/新建子分组后不实时刷新」）
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('onShelfRefresh') groupRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('onShelfRefresh') bookRefreshing: number = 0
@@ -267,13 +269,20 @@ export default struct BookContentRefresh {
    */
   private async onFolderChanged(): Promise<void> {
     const id: number = this.bookTypeNumber
+    // 2026-11-01：async 竞态保护 —— 快速进出/连点时，旧请求可能后返回并覆盖新页数据
+    //   （真机偶发"进入文件夹即时看不到子文件夹"，就是旧请求把 childGroups 清空了）
+    const token: number = ++this.folderToken
     if (id <= 1 || this.onRecentChip) {
       this.pathChips = []
       this.childGroups = []
+      this.childPreviews = []
       return
     }
     try {
       const all: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
+      if (token !== this.folderToken) {
+        return
+      }
       const tree: GroupTree = GroupTree.build(all)
       // 2026-11-01：统一父子框架 —— 当前树留一份，供子卡片算"子分组在前、书在后"的格子
       this.allGroups = all
@@ -294,8 +303,12 @@ export default struct BookContentRefresh {
           childIds.push(g.groupId)
         }
       }
-      this.childPreviews = childIds.length > 0
+      const previews: Books[] = childIds.length > 0
         ? await BooksDao.queryPreviewByGroups(childIds, 2) : []
+      if (token !== this.folderToken) {
+        return
+      }
+      this.childPreviews = previews
       // 兼容既有字段（「返回分组列表」胶囊已被路径条取代，但该键仍被其它地方读写）
       AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME',
         path.length > 0 ? path[path.length - 1].groupName : '')
