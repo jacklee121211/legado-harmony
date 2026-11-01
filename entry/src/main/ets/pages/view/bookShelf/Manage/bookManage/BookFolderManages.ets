@@ -137,6 +137,26 @@ export default struct BookFolderManages {
     showMessage('删除成功')
   }
 
+  /** 层级：沿 parentId 往上数（1 = 顶层分组） */
+  private depthOf(item: BookGroups): number {
+    let d: number = 1
+    let pid: number = item.parentId ?? 0
+    let guard: number = 0
+    while (pid !== 0 && guard < 12) {
+      d++
+      guard++
+      let next: number = 0
+      for (const g of this.bookGroups) {
+        if ((g.groupId ?? -1) === pid) {
+          next = g.parentId ?? 0
+          break
+        }
+      }
+      pid = next
+    }
+    return Math.min(d, 10)
+  }
+
   /**
    * 2026-11-01：按顶层分组分块（用户：不同分组之间要隔开）。
    * bookGroups 已由 getGroupList() 按 DFS 排好，这里只按"遇到 parentId=0 就开新块"切分。
@@ -197,6 +217,7 @@ export default struct BookFolderManages {
                  GridCol(){
                    BookFolderGridManage({
                      group:item,
+                     depth: this.depthOf(item),
                      checkGroup:this.checkGroup,
                      isManage:this.isManage,
                      onSelect:()=>{

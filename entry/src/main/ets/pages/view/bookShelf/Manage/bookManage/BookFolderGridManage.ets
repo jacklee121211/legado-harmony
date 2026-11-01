@@ -26,6 +26,21 @@ export default struct BookFolderGridManage {
   //   Checkbox 只当显示件（触摸穿透），整卡点击走 toggle()，外部批量改动靠
   //   `MANAGE_SEL_VERSION_KEY` 广播回读。
   @State checked: boolean = false
+  /** 2026-11-01：层级（1 = 顶层分组）。用于外框色边，最多 10 层。 */
+  @Prop depth: number = 1
+
+  private levelColor(): string {
+    if (this.depth <= 1) {
+      return 'rgba(0,0,0,0)'
+    }
+    // 10 层级配色（L1 无色）；夜间用更亮的同族色
+    const day: string[] = ['rgba(0,0,0,0)', '#7FB3D5', '#82C39B', '#E0B050', '#D98880',
+      '#B39DDB', '#4DB6AC', '#F06292', '#9575CD', '#A1887F']
+    const night: string[] = ['rgba(0,0,0,0)', '#9CC7E8', '#9FD9B4', '#F0C46A', '#E9A29B',
+      '#C9B8EC', '#6FD0C6', '#F58BAE', '#B39DDB', '#C0A79C']
+    const i: number = Math.min(this.depth, 10)
+    return NightMode.isDarkSurface() ? night[i] : day[i]
+  }
   @StorageProp(MANAGE_SEL_VERSION_KEY) @Watch('resyncChecked') selVersion: number = 0
 
   aboutToAppear(): void {
@@ -121,6 +136,9 @@ export default struct BookFolderGridManage {
           .maxLines(1)
     }
     .padding({ left:8,right:8,bottom:5,top:5 })
+    // 2026-11-01：按层级加色边（L1 无色；L2–L10 各一色，夜间另配）
+    .border({ width: 1, color: this.levelColor() })
+    .borderRadius(10)
     // 2026-10-25：整张卡片可点（含封面 / 分组名 / 空白处）
     .onClick((): void => {
       this.toggle()
