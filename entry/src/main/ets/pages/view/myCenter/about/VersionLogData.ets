@@ -19,9 +19,11 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 阅读器 dock 与弹窗改用顶栏同款自绘底色',
+    version: 'V3.0.11 新增 2026-11-01 交接文档',
     date: '2026-11-01',
     items: [
+      '记录阅读器亮暗隔离的最终方案与失败尝试，避免换手后重复踩坑',
+      '记录云真机实测结论、锚点清单与七条血泪教训',
       '底部 dock 删掉 HdsTabs 与原生 Tabs 两个分支，统一成一个 Row 自绘胶囊：高',
       '圆角',
       'clip(true)、左右各 16vp（calc(100% - 32vp)）、底部留 bottomRectHeight + 10vp，底色与顶栏同样两值（夜 rgba(31,31,31,0.86) / 日 rgba(250,250,250,0.90)），5 格等分 + 原入场动效与点击派发不变',
