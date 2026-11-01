@@ -810,9 +810,25 @@ export class MaterialColumnModifier implements AttributeModifier<ColumnAttribute
  */
 export class MaterialDockModifier implements AttributeModifier<ColumnAttribute> {
   private fallbackColor: ResourceColor;
+  /**
+   * 模糊材质的**明暗变体**（`BackgroundBlurStyleOptions.colorMode`）。
+   *
+   * ⚠️⚠️ 2026-11-02 漏网之鱼（用户真机：「书签页顶部/定位/底部三按钮出现变化」）⚠️⚠️
+   * 原来这里写死 `ThemeColorMode.SYSTEM`，而 SDK 对 `BackgroundBlurStyleOptions.colorMode`
+   * 的默认值/语义原文是（`component/common.d.ts`）：
+   *   `colorMode?: ThemeColorMode;`「Color mode used for the foreground blur.
+   *     **Default value: ThemeColorMode.SYSTEM**」
+   *   `ThemeColorMode.SYSTEM = 0`「System color mode.」
+   * ⇒ 材质的**蒙版颜色**永远跟**整机**深浅色走：阅读器亮 + 系统暗时，那块背板会变黑
+   *   （胶囊/底板整体发黑），和「顶栏永不污染」的观感直接冲突。
+   * ⇒ 阅读器里**必须**由调用方传阅读器档位（0 = 夜间 ⇒ `DARK`，1 = 日间 ⇒ `LIGHT`）。
+   *   默认值仍保留 `SYSTEM`，非阅读器宿主行为不变。
+   */
+  private colorMode: ThemeColorMode;
 
-  constructor(fallbackColor: ResourceColor) {
+  constructor(fallbackColor: ResourceColor, colorMode: ThemeColorMode = ThemeColorMode.SYSTEM) {
     this.fallbackColor = fallbackColor;
+    this.colorMode = colorMode;
   }
 
   applyNormalAttribute(instance: ColumnAttribute): void {
@@ -826,7 +842,8 @@ export class MaterialDockModifier implements AttributeModifier<ColumnAttribute> 
     //     半透明底 + `backgroundBlurStyle`。观感接近书架 dock，且绝不静默失效。
     //   （真正的沉浸光感只留给"标题栏 / 底部页签"这两个在生效范围内的位置。）
     if (ImmersiveMaterialUtil.isOn()) {
-      instance.backgroundBlurStyle(BlurStyle.COMPONENT_THICK, { colorMode: ThemeColorMode.SYSTEM });
+      // ★ 2026-11-02：`colorMode` 由调用方决定（阅读器传阅读器档位），**不再写死 SYSTEM**
+      instance.backgroundBlurStyle(BlurStyle.COMPONENT_THICK, { colorMode: this.colorMode });
       instance.backgroundColor(this.fallbackColor);
       return;
     }

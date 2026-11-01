@@ -19,9 +19,17 @@ export const APP_VERSION_FALLBACK: string = 'V3.0.11'
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.11 新增 2026-11-01 交接文档',
+    version: 'V3.0.11 补齐阅读器漏网的系统模式驱动配色',
     date: '2026-11-01',
     items: [
+      '进度胶囊：backgroundBlurStyle 显式传 colorMode（阅读器档位），不再用默认的 ThemeColorMode.SYSTEM —— 模糊材质的蒙版颜色原本跟整机，系统暗 + 阅读器亮时整条胶囊发黑',
+      '设置面板：「亮度 / 随系统 / 常亮」三处 Text 补 fontColor（原来走系统默认字体色），标定键一并补齐',
+      '目录/书签右侧三按钮：MaterialDockModifier 的模糊蒙版改为阅读器档位',
+      'Image(svg) 补 fillColor、SymbolSpan/Text 补 fontColor',
+      '目录弹窗搜索栏补 fontColor/placeholderColor/backgroundColor',
+      '睡眠定时：标题、时/分、两个 TextPicker（textStyle/selectedTextStyle/disappearTextStyle）补显式色',
+      '保存方案弹窗标题补 fontColor',
+      '「正在排版…」占位改读阅读器 colorMode + pageBaseColor（原来读 NightMode.isDarkSurface，系统暗时会闪黑屏）',
       '记录阅读器亮暗隔离的最终方案与失败尝试，避免换手后重复踩坑',
       '记录云真机实测结论、锚点清单与七条血泪教训',
       '底部 dock 删掉 HdsTabs 与原生 Tabs 两个分支，统一成一个 Row 自绘胶囊：高',

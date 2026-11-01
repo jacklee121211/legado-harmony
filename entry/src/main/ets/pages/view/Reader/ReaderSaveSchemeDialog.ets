@@ -148,6 +148,8 @@ export struct ReaderSaveSchemeDialog {
       Text('是否保存此方案（背景 + 字色）')
         .fontSize(16)
         .fontWeight(600)
+        // ★ 2026-11-02 漏网之鱼：显式色（原来没设 ⇒ 跟整机字体色，而面板跟阅读器 ⇒ 丢对比度）
+        .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
 
       // 预览：这一块就是即将存进方案区的样子（底 = 背景色/材质图，"字" = 字色）
       Row({ space: 10 }) {

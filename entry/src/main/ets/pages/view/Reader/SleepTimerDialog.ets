@@ -128,6 +128,18 @@ export struct SleepTimerDialog {
     return this.colorMode == 0 ? 'rgba(160, 160, 160, 1.00)' : 'rgba(136, 136, 136, 1.00)';
   }
 
+  /**
+   * 主文字色 —— **必须显式给**，不能靠系统默认。
+   *
+   * ⚠️ 2026-11-02 漏网之鱼（同类问题用户已在设置面板报过「丧失对比度，字体变色」）：
+   *   本弹窗的底色现在跟**阅读器**走（`ImmersiveMaterialUtil.READER_PANEL_*`），
+   *   而 `Text` 不给 `fontColor` 时用的是**系统**默认字体色 ⇒ 「系统暗 + 阅读器亮」
+   *   就是「浅底 + 白字」（标题「睡眠定时」、滚轮两旁的「时」「分」都是这样丢的）。
+   */
+  private fgMain(): string {
+    return this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)';
+  }
+
   aboutToAppear(): void {
     // 构造 1~99 的滚轮数据（"关" 放在首位，便于取消定时）
     const arr: string[] = ['关'];
@@ -201,6 +213,8 @@ export struct SleepTimerDialog {
       // 滚轮的"时/分"读数（例："剩余 1 时 30 分（90 分钟）"），二者同源 `totalMinutes()`。
       Row() {
         Text('睡眠定时').fontSize(16).fontWeight(600)
+          // ★ 2026-11-02：显式色（原来没设 ⇒ 跟整机，面板跟阅读器 ⇒ 丢对比度）
+          .fontColor(this.fgMain())
         Blank()
         Text(this.headerHint())
           .fontSize(12)
@@ -262,6 +276,14 @@ export struct SleepTimerDialog {
         TextPicker({ range: this.chapterOptions, selected: this.chapterIndex() })
           .width('100%')
           .height(180)
+          // ★ 2026-11-02 漏网之鱼：`TextPicker` 的文字色也**默认跟整机深浅色**。
+          //   证据（SDK `component/text_picker.d.ts`）：`textStyle(value: PickerTextStyle)`（`:573`）、
+          //   `selectedTextStyle(...)`（`:623`）、`disappearTextStyle(...)`（`:523`）；
+          //   `PickerTextStyle.color?: ResourceColor`（`common.d.ts:7268`）⇒ 三种状态都要显式给，
+          //   否则「系统暗 + 阅读器亮」时滚轮里的数字是白字压在浅底板上。
+          .textStyle({ color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.55)' : 'rgba(19, 19, 19, 0.55)' })
+          .selectedTextStyle({ color: this.fgMain() })
+          .disappearTextStyle({ color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.35)' : 'rgba(19, 19, 19, 0.35)' })
           .onChange((_value: string | string[], index: number | number[]) => {
             const idx = typeof index === 'number' ? index : index[0];
             this.selChapters = idx <= 0 ? 0 : idx;
@@ -275,21 +297,27 @@ export struct SleepTimerDialog {
           TextPicker({ range: this.hourOptions, selected: this.selHours })
             .width(84)
             .height(180)
+            .textStyle({ color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.55)' : 'rgba(19, 19, 19, 0.55)' })
+            .selectedTextStyle({ color: this.fgMain() })
+            .disappearTextStyle({ color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.35)' : 'rgba(19, 19, 19, 0.35)' })
             .onChange((_value: string | string[], index: number | number[]) => {
               const idx = typeof index === 'number' ? index : index[0];
               this.selHours = idx >= 0 && idx <= 23 ? idx : 0;
               Haptics.tick();
             })
-          Text('时').fontSize(14).opacity(0.6)
+          Text('时').fontSize(14).opacity(0.6).fontColor(this.fgMain())
           TextPicker({ range: this.minuteOptions, selected: this.selMinutesPart })
             .width(84)
             .height(180)
+            .textStyle({ color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.55)' : 'rgba(19, 19, 19, 0.55)' })
+            .selectedTextStyle({ color: this.fgMain() })
+            .disappearTextStyle({ color: this.colorMode == 0 ? 'rgba(248, 249, 250, 0.35)' : 'rgba(19, 19, 19, 0.35)' })
             .onChange((_value: string | string[], index: number | number[]) => {
               const idx = typeof index === 'number' ? index : index[0];
               this.selMinutesPart = idx >= 0 && idx <= 59 ? idx : 0;
               Haptics.tick();
             })
-          Text('分').fontSize(14).opacity(0.6)
+          Text('分').fontSize(14).opacity(0.6).fontColor(this.fgMain())
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)

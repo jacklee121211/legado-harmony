@@ -149,6 +149,20 @@ export struct ReaderBookmarkDialog {
    *   · 「底部」= 滚到最后一条。
    * 空列表时三个键都是空操作（`scrollToIndex` 会被 `bmRows.length` 判定挡住）。
    */
+  /**
+   * 三按钮的**前景色**（图标 + 文字）—— 必须用阅读器自己的档位。
+   *
+   * ⚠️ 2026-11-02 漏网之鱼（用户真机：「书签页顶部、定位、底部三按钮出现变化」）：
+   *   之前这三格的 `Image`（`app.media.top/down`，是 **svg**，源里写死 `fill="black"`）、
+   *   `SymbolSpan`、`Text` **都没设颜色** ⇒ 走系统默认（`Image.fillColor` 官方原文：
+   *   「If an invalid value is passed, the system uses the **default theme color: black in
+   *   light mode and white in dark mode**」）⇒ 面板现在跟**阅读器**走，前景却跟**整机**走
+   *   ⇒ 「系统暗 + 阅读器亮」时白字/黑图标混在浅底板上，对比度全丢。
+   */
+  private dockFg(): string {
+    return this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)';
+  }
+
   @Builder
   BookmarkDock() {
     Column() {
@@ -156,8 +170,10 @@ export struct ReaderBookmarkDialog {
         Image($r('app.media.top'))
           .width(20)
           .height(20)
+          .fillColor(this.dockFg())
         Text('顶部')
           .fontSize(12)
+          .fontColor(this.dockFg())
       }
       .padding(5)
       .onClick(() => {
@@ -170,10 +186,12 @@ export struct ReaderBookmarkDialog {
       Column() {
         Text() {
           SymbolSpan($r("sys.symbol.position"))
+            .fontColor([this.dockFg()])
         }
 
         Text('定位')
           .fontSize(12)
+          .fontColor(this.dockFg())
       }
       .padding(5)
       .onClick(() => {
@@ -187,8 +205,10 @@ export struct ReaderBookmarkDialog {
         Image($r('app.media.down'))
           .width(20)
           .height(20)
+          .fillColor(this.dockFg())
         Text('底部')
           .fontSize(12)
+          .fontColor(this.dockFg())
       }
       .padding(5)
       .onClick(() => {
@@ -204,8 +224,11 @@ export struct ReaderBookmarkDialog {
     //   （alpha 直接写进 `#AARRGGBB` 首字节，见 `ImmersiveMaterialUtil.tint` :233-238）。
     //   回退：把 `0.55` 改回 `0.82`。**改这里时必须同步改 `ReaderCatalogDialog` 的 dock**
     //   —— 两个弹窗的观感必须一致，否则来回切换会明显"一个透一个不透"。
+    // ★ 2026-11-02：第二个参数传**阅读器档位**，让模糊材质的蒙版颜色跟阅读器（而不是整机）。
+    //   `ThemeColorMode` 语义与"漏网之鱼"的完整取证见 `MaterialDockModifier` 的注释。
     .attributeModifier(new MaterialDockModifier(
-      ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55)))
+      ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55),
+      this.colorMode == 0 ? ThemeColorMode.DARK : ThemeColorMode.LIGHT))
     .borderRadius(20)
     .position({ bottom: '10%', right: '5%' })
   }

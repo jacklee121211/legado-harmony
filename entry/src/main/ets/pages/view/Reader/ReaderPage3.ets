@@ -8835,11 +8835,13 @@ oAnimInitNode 配套） */
           LoadingProgress()
             .width(48)
             .height(48)
-            // ⚠️ 本页**没有** `theme` 字段（那是 Index/ListenDock 的）⇒ 用中性色，深浅档各取一个
-            .color(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.85)' : 'rgba(0,0,0,0.65)')
+            // ★ 2026-11-02 漏网之鱼：这两处原来读 `NightMode.isDarkSurface()`（**整机/App 级**夜间），
+            //   而现在整页 UI 跟的是**阅读器**的 `colorMode` ⇒ 「系统暗 + 阅读器亮」时会闪一块黑屏
+            //   （用户最早抱怨的"先黑屏"就是这个观感）。改成与正文同源的**阅读器**配色。
+            .color(this.colorMode == 0 ? 'rgba(248,249,250,0.85)' : 'rgba(0,0,0,0.65)')
           Text('正在排版…')
             .fontSize(14)
-            .fontColor(NightMode.isDarkSurface() ? 'rgba(248,249,250,0.75)' : 'rgba(0,0,0,0.6)')
+            .fontColor(this.colorMode == 0 ? 'rgba(248,249,250,0.75)' : 'rgba(0,0,0,0.6)')
         }
         .width('100%')
         .height('100%')
@@ -8851,7 +8853,9 @@ oAnimInitNode 配套） */
         //     直接透上来，于是先看到黑、等 surface 出画才看见「正在排版…」。
         //   ⇒ 铺一个不透明的**阅读底色**（日间=白、夜间=深）把黑顶掉。
         //     用户原话：「把这个黑屏换成白屏，这样也能看到正在排版的字样」。
-        .backgroundColor(NightMode.isDarkSurface() ? '#000000' : '#FFFFFF')
+        //   ★ 2026-11-02：底色改用 `pageBaseColor()`（= 正文底色同一来源，含自定义背景色），
+        //     不再读 `NightMode.isDarkSurface()`。
+        .backgroundColor(this.pageBaseColor())
         // 不拦截触摸：排版期间用户仍可以点返回
         .hitTestBehavior(HitTestMode.None)
       }
@@ -9396,7 +9400,20 @@ oAnimInitNode 配套） */
           //   `BlurStyle` 枚举取值见 `component/common.d.ts:6614-6755`
           //   （`COMPONENT_ULTRA_THIN = 8` … `COMPONENT_ULTRA_THICK = 12`，@since 11）。
           .backgroundColor(this.colorMode == 0 ? 'rgba(28, 28, 30, 0.92)' : 'rgba(248, 249, 250, 0.92)')
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+          // ⚠️⚠️ 2026-11-02 漏网之鱼（用户真机：「上下章节进度条依旧材质不对变黑」）⚠️⚠️
+          //   模糊材质的**蒙版颜色**默认跟**整机**深浅色走 —— SDK 原文
+          //   （`component/common.d.ts`）：
+          //     `backgroundBlurStyle(value: BlurStyle, options?: BackgroundBlurStyleOptions)`
+          //     「…封装了不同的模糊半径、**蒙版颜色**、蒙版透明度、饱和度、亮度。」
+          //     `BackgroundBlurStyleOptions.colorMode?: ThemeColorMode;`
+          //     「Color mode used for the foreground blur. **Default value: ThemeColorMode.SYSTEM**」
+          //     `ThemeColorMode.SYSTEM = 0`「System color mode.」
+          //   ⇒ 不写 options 时，「系统暗 + 阅读器亮」下这层蒙版就是**暗的**，
+          //     压在上面那行 `backgroundColor` 上 ⇒ 整条进度胶囊发黑（用户看到的"变黑"）。
+          //   ⇒ 显式把 colorMode 绑到**阅读器**档位（与顶栏/dock 同一原则：不跟整机）。
+          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK, {
+            colorMode: this.colorMode == 0 ? ThemeColorMode.DARK : ThemeColorMode.LIGHT
+          })
           .borderRadius(24)
           .margin({ left: 12, right: 12, bottom: 10 })
           // 轻投影（`shadow` 是通用属性）。刻意比材质自带阴影淡很多 ——
@@ -9559,6 +9576,11 @@ oAnimInitNode 配套） */
     Column({ space: 12 }) {
       Row({ space: 5 }) {
         Text('亮度')
+          // ★ 2026-11-02 漏网之鱼（用户真机：「设置页亮度、随系统、常亮丧失对比度，字体变色」）：
+          //   这三处 `Text` 原来**一个 fontColor 都没设** ⇒ 走系统默认字体色
+          //   （跟**整机**深浅色）⇒ 面板现在跟**阅读器**走，系统暗 + 阅读器亮时
+          //   就是「浅底 + 白字」= 对比度全丢。同面板其它行都是 `colorMode` 三元，漏了这三处。
+          .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
         Slider({
           // ⚠️ 2026-10-25 修「点个别背景格震动反馈不一样」的根因（真机日志实证）：
           //   `BrightnessUtil.getBrightness('reader')` 在"随系统"时返回 **-1**（见
@@ -9600,6 +9622,8 @@ oAnimInitNode 配套） */
             }
           })
         Text('随系统')
+          // ★ 2026-11-02：同上（漏了 fontColor ⇒ 跟整机字体色，面板跟阅读器 ⇒ 丢对比度）
+          .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
         Toggle({ type: ToggleType.Switch, isOn: $$this.isLuminanceFollowSystem })
           .onChange((value) => {
             Haptics.tap();
@@ -9627,6 +9651,8 @@ oAnimInitNode 配套） */
             });
           })
         Text('常亮')
+          // ★ 2026-11-02：同上（用户原话里的「常量」就是这一格「常亮」）
+          .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
         Toggle({ type: ToggleType.Switch, isOn: $$this.isScreenState })
           .onChange((value) => {
             Haptics.tap();
@@ -9753,28 +9779,39 @@ oAnimInitNode 配套） */
           .maxLines(3)
 
         Row({ space: 6 }) {
+          // ★ 2026-11-02：开发者可选（`if (this.devMode)`）标定键也补齐显式字色 ——
+          //   原来只有蓝底没有字色 ⇒ 系统暗 + 阅读器亮时是浅底白字。与上面「亮度」行同一类漏网。
           Text('首行').fontSize(12).width(28)
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
           Text('-8').fontSize(13).padding({ left: 9, right: 9, top: 4, bottom: 4 })
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
             .borderRadius(10).backgroundColor('rgba(0,125,255,0.12)')
             .onClick(() => { Haptics.tap(); this.nudge('top', -8) })
           Text('+8').fontSize(13).padding({ left: 9, right: 9, top: 4, bottom: 4 })
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
             .borderRadius(10).backgroundColor('rgba(0,125,255,0.12)')
             .onClick(() => { Haptics.tap(); this.nudge('top', 8) })
           Text('行高').fontSize(12).width(28)
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
           Text('-.02').fontSize(13).padding({ left: 7, right: 7, top: 4, bottom: 4 })
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
             .borderRadius(10).backgroundColor('rgba(0,125,255,0.12)')
             .onClick(() => { Haptics.tap(); this.nudge('line', -0.02) })
           Text('+.02').fontSize(13).padding({ left: 7, right: 7, top: 4, bottom: 4 })
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
             .borderRadius(10).backgroundColor('rgba(0,125,255,0.12)')
             .onClick(() => { Haptics.tap(); this.nudge('line', 0.02) })
         }
 
         Row({ space: 6 }) {
           Text('宽比').fontSize(12).width(28)
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
           Text('-.005').fontSize(13).padding({ left: 7, right: 7, top: 4, bottom: 4 })
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
             .borderRadius(10).backgroundColor('rgba(0,125,255,0.12)')
             .onClick(() => { Haptics.tap(); this.nudge('w', -0.005) })
           Text('+.005').fontSize(13).padding({ left: 7, right: 7, top: 4, bottom: 4 })
+            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
             .borderRadius(10).backgroundColor('rgba(0,125,255,0.12)')
             .onClick(() => { Haptics.tap(); this.nudge('w', 0.005) })
           Text(`首行${this.calibTopPx.toFixed(0)} 行高×${this.calibLineMul.toFixed(3)} 宽比${this.calibWidthRatio.toFixed(3)}`)

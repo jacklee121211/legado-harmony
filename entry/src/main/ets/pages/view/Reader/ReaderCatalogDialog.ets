@@ -200,6 +200,20 @@ export struct ReaderCatalogDialog {
   // （2026-10-13 拆分：原 `activeColor()` 只被书签面板用，已随书签一起搬到
   //   `ReaderBookmarkDialog.ets`；本文件目录列表用内联三元，不依赖它。）
 
+  /**
+   * 右侧三按钮（顶部 / 定位 / 底部）的**前景色**（图标 + 文字）—— 必须用阅读器自己的档位。
+   *
+   * ⚠️ 2026-11-02 漏网之鱼（用户真机：「书签页顶部、定位、底部三按钮出现变化」，
+   *   目录弹窗这组是同款同位置、同样问题）：之前 `Image`（`app.media.top/down` 是 **svg**，
+   *   源里写死 `fill="black"`）、`SymbolSpan`、`Text` **都没设颜色** ⇒ 走系统默认
+   *   （`Image.fillColor` 官方原文：「If an invalid value is passed, the system uses the
+   *   **default theme color: black in light mode and white in dark mode**」）
+   *   ⇒ 面板跟**阅读器**走、前景跟**整机**走 ⇒ 「系统暗 + 阅读器亮」时对比度全丢。
+   */
+  private dockFg(): string {
+    return this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)';
+  }
+
   build() {
     Column() {
       // ── 目录搜索栏（2026-09-22 用户要求）──────────────────────────────
@@ -209,6 +223,13 @@ export struct ReaderCatalogDialog {
         .height(32)
         .width('100%')
         .padding({ left: 40, right: 40, bottom: 8 })
+        // ★ 2026-11-02 漏网之鱼：Search 的输入文字/占位符/底板**默认都跟整机深浅色**
+        //   （面板已改成跟**阅读器**走）⇒ 系统暗 + 阅读器亮时会出现"深色搜索条 + 白字"。
+        //   证据：`Search.fontColor`（`search.d.ts:538`）、`placeholderColor`（`:679`）；
+        //   底板走通用属性 `backgroundColor`。
+        .fontColor(this.dockFg())
+        .placeholderColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 0.45)' : 'rgba(19, 19, 19, 0.45)')
+        .backgroundColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 0.12)' : 'rgba(19, 19, 19, 0.06)')
         .onChange((v: string) => {
           this.keyword = v
           this.onKeywordChange(v)
@@ -302,8 +323,10 @@ export struct ReaderCatalogDialog {
           Image($r('app.media.top'))
             .width(20)
             .height(20)
+            .fillColor(this.dockFg())
           Text('顶部')
             .fontSize(12)
+            .fontColor(this.dockFg())
         }
         .padding(5)
         .onClick(() => {
@@ -314,10 +337,12 @@ export struct ReaderCatalogDialog {
         Column() {
           Text() {
             SymbolSpan($r("sys.symbol.position"))
+              .fontColor([this.dockFg()])
           }
 
           Text('定位')
             .fontSize(12)
+            .fontColor(this.dockFg())
         }
         .padding(5)
         .onClick(() => {
@@ -329,8 +354,10 @@ export struct ReaderCatalogDialog {
           Image($r('app.media.down'))
             .width(20)
             .height(20)
+            .fillColor(this.dockFg())
           Text('底部')
             .fontSize(12)
+            .fontColor(this.dockFg())
         }
         .padding(5)
         .onClick(() => {
@@ -355,8 +382,11 @@ export struct ReaderCatalogDialog {
       //      （`ImmersiveMaterialUtil.ets:233-238` 把 alpha 写进 `#AARRGGBB` 的首字节）。
       //   0.55 仍保证按钮字可读（底下是目录列表，透出的是暗色文字/深底）。
       //   回退：把 `0.55` 改回 `0.82`。
+      // ★ 2026-11-02：第二个参数传**阅读器档位**，让模糊材质的蒙版颜色跟阅读器（而不是整机）。
+      //   `ThemeColorMode` 语义与"漏网之鱼"的完整取证见 `MaterialDockModifier` 的注释。
       .attributeModifier(new MaterialDockModifier(
-        ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55)))
+        ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55),
+        this.colorMode == 0 ? ThemeColorMode.DARK : ThemeColorMode.LIGHT))
       .borderRadius(20)
       .position({ bottom: '10%', right: '5%' })
     }
