@@ -18,9 +18,18 @@ import { showMessage } from '../../../../componets/common/promptShow'
 import { IncomingFiles, INCOMING_TICK } from '../../../../common/format/IncomingFiles'
 import { intl } from '@kit.LocalizationKit'
 
+/** 2026-11-01：进出分组时复用列表缓存（改 false 即完全回到"每次重查"的旧行为） */
+const REUSE_LIST_CACHE: boolean = true
+
 @Component
 export default struct BookContent {
   @State bookList:Books[] = []
+  // 2026-11-01：按分组缓存列表，进出分组时命中缓存就不再清空重查（避免封面重挂载闪默认图）
+  private listCache: Map<number, Books[]> = new Map<number, Books[]>()
+
+  private listCacheKey(): number {
+    return this.onRecentChip ? -1 : this.bookTypeNumber
+  }
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`） */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
@@ -167,6 +176,8 @@ export default struct BookContent {
     // }
     if (this.isBookRefreshing >= 0) {
       this.animateOnNextLoad = false
+      // 2026-11-01：数据真的变了 ⇒ 缓存必须失效（否则会把旧列表当新数据复用）
+      this.listCache.clear()
       // ⚠️ bookCount 必须随刷新重取（2026-09-24 导入修复）：它只是 aboutToAppear 时
       // 取过一次的旧值，而 onReachEnd 的续页门槛是 `bookList.length < this.bookCount`
       // ⇒ 导入新书后旧 count 偏小，`loadMoreBooks` 永远不触发，
@@ -204,9 +215,15 @@ export default struct BookContent {
       if (this.bookCount === 0){
         this.getBookCount()
       }
-      // if (this.booksDataSource.totalCount() > 0) {
-      //   this.booksDataSource.clear()
-      // }
+      // 2026-11-01：命中缓存 ⇒ 直接复用旧列表（不重建 ⇒ 图片不重挂载 ⇒ 封面不闪默认图）
+      if (REUSE_LIST_CACHE) {
+        const cached: Books[] | undefined = this.listCache.get(this.listCacheKey())
+        if (cached !== undefined && cached.length > 0) {
+          this.bookList = cached
+          this.booksDataSource.resetAllData(cached)
+          return
+        }
+      }
       this.getBookList()
     }
   }
@@ -325,6 +342,10 @@ export default struct BookContent {
       //     「当 LazyForEach 用于滚动容器时，框架会根据滚动容器可视区域按需创建组件，
       //       当组件滑出可视区域外时，框架会销毁并回收组件以降低内存占用。」
       this.booksDataSource.resetAllData(list)
+      // 2026-11-01：首屏数据写入缓存，供下次进入同分组直接复用（避免重建导致封面闪默认图）
+      if (REUSE_LIST_CACHE && this.currentPage === 1) {
+        this.listCache.set(this.listCacheKey(), list)
+      }
     } finally {
       // 只有真正"加载完"才放开；同时**取消待显示的 loading**
       // （数据在 250ms 内回来 ⇒ 定时器被取消 ⇒ 一帧 loading 都不显示）
@@ -484,7 +505,7 @@ export default struct BookContent {
     } else if (this.bookList.length === 0){
       Column() {
         Image($r('app.media.no_record')).width(130).height(130)
-        Text('暂无浏览记录')
+        Text('暂无书籍')
           .fontSize(12)
           .fontColor(ShelfColors.textSub())
           .fontWeight(500)
