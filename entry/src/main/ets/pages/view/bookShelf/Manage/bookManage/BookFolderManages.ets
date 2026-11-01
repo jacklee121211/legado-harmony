@@ -19,6 +19,8 @@ export default struct BookFolderManages {
   @Prop isManage:boolean = true
   /** 2026-11-01：内联模式（与书籍块同页）—— 高度自适应，不抢占剩余空间 */
   @Prop fitContent: boolean = false
+  /** 当前所在分组 id（用于"本分组"角标；根目录传 0） */
+  @Prop currentGroupId: number = 0
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   // ── 宫格列数的两个输入源（2026-10-25 补齐）────────────────────────────────
@@ -223,6 +225,7 @@ export default struct BookFolderManages {
                      group:item,
                      depth: this.depthOf(item),
                      allGroups: this.bookGroups,
+                     isCurrent: (item.groupId ?? -1) === this.currentGroupId,
                      checkGroup:this.checkGroup,
                      isManage:this.isManage,
                      onSelect:()=>{

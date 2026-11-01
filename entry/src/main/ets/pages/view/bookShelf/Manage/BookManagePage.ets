@@ -404,6 +404,8 @@ export default struct BookManagePage {
                 bookGroups:this.bookGroups,
                 // 与书籍块同页 ⇒ 自适应高度（否则把书籍顶到很下面，间距显得极大）
                 fitContent: true,
+                // 本分组角标：当前所在分组 id
+                currentGroupId: this.bookTypeNumber,
                 onSelect:()=>{
                   this.listenCheckList()
                 }
