@@ -355,8 +355,6 @@ export default struct BookContentRefresh {
 
   /** 子分组卡片的 2×2 格子：子分组在前（三层叠）、书在后（真实封面），最多 4 格 */
   private cellsOf(g: BookGroups): FolderCell[] {
-    // [PROBE-GRID 2026-11-01] 临时探针：查看四宫格取数与子树书集合
-    console.log(`[PROBE-GRID] gid=${g.groupId ?? -1} name=${g.groupName ?? ''} childPreviews=${this.childPreviews.length} subtreeBooks=${this.subtreeBooksOf(g).length}`)
     const out: FolderCell[] = []
     const gid: number = g.groupId ?? -1
     if (this.tree !== null) {
