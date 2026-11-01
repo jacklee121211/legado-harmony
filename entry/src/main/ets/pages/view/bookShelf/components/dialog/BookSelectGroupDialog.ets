@@ -237,12 +237,6 @@ export default struct BookSelectGroupDialog{
     }
     walk(0, 0)
     this.rows = out
-    // [PROBE-DUP 2026-11-01] 定位"移动至树里出现两个同名分组"：一次性输出行明细
-    const dump: string[] = []
-    for (const r of out) {
-      dump.push(`${r.group.groupId}:${r.group.groupName}:p${r.group.parentId ?? 0}:d${r.depth}`)
-    }
-    console.log(`[PROBE-DUP] rows=${out.length} list=${this.groupList.length} ${dump.join(' | ')}`)
   }
 
   // ── 2026-11-01 树形行（官方 FAQ 方案二：列表 + 展开/折叠）──────────────────
