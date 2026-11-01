@@ -30,8 +30,9 @@ export default struct BookFolderGridManage {
   @Prop depth: number = 1
 
   private levelColor(): string {
+    // 2026-11-01：L1 也要有外框色（用户："祖分组也有外框颜色，不然太特别"）
     if (this.depth <= 1) {
-      return 'rgba(0,0,0,0)'
+      return NightMode.isDarkSurface() ? '#6FA8CC' : '#5B9BD5'
     }
     // 10 层级配色（L1 无色）；夜间用更亮的同族色
     const day: string[] = ['rgba(0,0,0,0)', '#7FB3D5', '#82C39B', '#E0B050', '#D98880',
