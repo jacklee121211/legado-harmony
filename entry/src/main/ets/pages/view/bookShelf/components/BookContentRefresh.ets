@@ -27,7 +27,7 @@ import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
-import { resolveCoverSource } from '../../../../common/utils/CoverSource'
+import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
 
 /** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
 interface PathChip {
@@ -358,7 +358,7 @@ export default struct BookContentRefresh {
       if (out.length >= 4) {
         break
       }
-      out.push({ isFolder: false, cover: resolveCoverSource(b.coverUrl ?? '') })
+      out.push({ isFolder: false, cover: resolveBookCover(b) })
     }
     return out
   }

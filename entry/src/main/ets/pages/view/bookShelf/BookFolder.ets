@@ -13,7 +13,7 @@ import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
 import { NightMode } from '../../../common/utils/NightMode'
-import { resolveCoverSource, coverCorners } from '../../../common/utils/CoverSource'
+import { resolveCoverSource, coverCorners, resolveBookCover } from '../../../common/utils/CoverSource'
 // 宫格列数（2026-10-23 多端适配）：与书籍宫格**同源同一份取值**
 import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 // ── 2026-11-01 多级文件夹 ──────────────────────────────────────────────────
@@ -267,8 +267,10 @@ export default struct BookFolder {
       return $r('app.media.icon_book_default_cover_one')
     }
     const b: Books = books[idx]
-    return resolveCoverSource(b.customCoverUrl ?? b.builtinCoverUrl ?? b.coverUrl ?? '')
-      ?? $r('app.media.icon_book_default_cover_one')
+    // 2026-11-01 修：`builtinCoverUrl` 是沙箱**路径**，`resolveCoverSource` 只处理自定义封面串，
+    // 路径直接交给 Image 显示不出来（epub/pdf 自带封面在宫格里空白，txt 因无 builtin 反而正常）。
+    // 统一走 `resolveBookCover`：custom > builtin(转 URI) > coverUrl > alt。
+    return resolveBookCover(b)
   }
 
   /** 2×2 预览的一格：子文件夹优先、书在后，空格留半透明底 */
