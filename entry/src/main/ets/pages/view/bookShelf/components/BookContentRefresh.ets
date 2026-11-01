@@ -310,7 +310,7 @@ export default struct BookContentRefresh {
         }
       }
       const previews: Books[] = childIds.length > 0
-        ? await BooksDao.queryPreviewByGroups(childIds, 2) : []
+        ? await BooksDao.queryPreviewByGroups(childIds, 2, ShelfPrefs.getSortKey(), ShelfPrefs.getSortDir() === 1) : []
       if (token !== this.folderToken) {
         return
       }
