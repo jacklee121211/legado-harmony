@@ -441,6 +441,8 @@ export default struct BookManagePage {
                 fitContent: true,
                 // 本分组角标：当前所在分组 id
                 currentGroupId: this.bookTypeNumber,
+                // 点父分组时要把本组书籍一并勾上（否则级联会因书未选而把父取消）
+                allBooks: this.bookList,
                 onSelect:()=>{
                   this.listenCheckList()
                 }
