@@ -344,7 +344,7 @@ export default struct BookManagePage {
           customLeftBuilder: () => {
             this.selectAll()
           },
-          title:`已选${this.checkListNumber.length}项`,
+          title:`已选${this.selectedBookCount()}本${this.selectedGroupCount() > 0 ? ` · ${this.selectedGroupCount()}个分组` : ''}`,
           customRightBuilder: () => {
             this.complete()
           }
@@ -1575,6 +1575,29 @@ export default struct BookManagePage {
         this.checkLists[gid] = allOn
       }
     }
+  }
+
+  /** 2026-11-01：已选**本页可见**书籍数（子文件夹的书不铺开，故不在此计入） */
+  private selectedBookCount(): number {
+    let n: number = 0
+    for (const b of this.bookList) {
+      if (this.checkLists[b.id ?? -1] ?? false) {
+        n++
+      }
+    }
+    return n
+  }
+
+  /** 2026-11-01：已选分组数（点分组=选中其整棵子树内的书，故单列显示） */
+  private selectedGroupCount(): number {
+    let n: number = 0
+    for (const g of this.bookGroups) {
+      const gid: number = g.groupId ?? -1
+      if (gid > 0 && !g.isSystem && (this.checkLists[gid] ?? false)) {
+        n++
+      }
+    }
+    return n
   }
 
   /** 本页所有可选对象是否都已选中（决定顶部全选图标） */
