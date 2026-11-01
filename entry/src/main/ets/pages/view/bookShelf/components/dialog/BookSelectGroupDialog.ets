@@ -909,12 +909,43 @@ export default struct BookSelectGroupDialog{
    *   · `BooksDao.queryBookByGroup` —— 原来 `forEach` 里裸调 `this.update(item)`。
    * ⇒ 现在 `await bookGroupUtils.delGroupById(...)` 返回时，写库**确实已提交**。
    */
-  private openManageDialog(item: BookGroups): void {
-    if (item.groupId === undefined) {
+  /**
+   * 2026-11-02：**父链上是否有隐藏分组**。
+   * 父隐藏 ⇒ 子级视觉上也隐藏（只标父级），且子级**不能单独恢复显示**，
+   * 必须先在「分组管理」里恢复上级；这里给出判定供文案提示。
+   */
+  private isParentChainHidden(item: BookGroups): boolean {
+    let pid: number = item.parentId ?? 0
+    let guard: number = 0
+    while (pid > 0 && guard < 16) {
+      guard++
+      let parent: BookGroups | undefined = undefined
+      for (const g of this.groupList) {
+        if ((g.groupId ?? -1) === pid) {
+          parent = g
+          break
+        }
+      }
+      if (parent === undefined) {
+        return false
+      }
+      if (!parent.show) {
+        return true
+      }
+      pid = parent.parentId ?? 0
+    }
+    return false
+  }
+
+  private openManageDialog(item: BookGroups): void {    if (item.groupId === undefined) {
       return
     }
     const gid: number = item.groupId
     const gname: string = item.groupName ?? ''
+    // 2026-11-02 三改：**父链隐藏**时子级本身没有"恢复显示"的语义（真机验证：
+    //   C1 自身 show=1，只是被父级 K 遮住 ⇒ 走到三按钮分支，且没有任何提示）。
+    //   ⇒ 这里单独判定父链，给三按钮窗加一行"先恢复上级"的说明。
+    const parentHidden: boolean = this.isParentChainHidden(item)
     // 2026-11-02 二改（用户要求）：隐藏分组的动作窗升级为**四按钮**——
     //   恢复显示 / 解散 / 删除 / 取消（ThreeActionDialog 只有三槽，故改用 FourActionDialog）。
     const hidden: boolean = !item.show
@@ -960,7 +991,7 @@ export default struct BookSelectGroupDialog{
       builder: ThreeActionDialog({
         title: `「${gname}」要怎么处理？`,
         rawTitle: true,
-        hintPrimary: '删除：分组和组内书籍一起删除',
+        hintPrimary: parentHidden ? '上级分组已隐藏：要恢复显示请先在「分组管理」恢复上级分组' : '删除：分组和组内书籍一起删除',
         hintSecondary: '解散：只解散分组，书籍归还上级分组',
         primaryText: '删除',
         secondaryText: '解散',
