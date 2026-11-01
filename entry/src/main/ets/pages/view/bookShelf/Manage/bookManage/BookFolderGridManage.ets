@@ -66,7 +66,8 @@ export default struct BookFolderGridManage {
     this.onSelect()
   }
 
-  build() {
+  @Builder
+  cardContent() {
     Column() {
       Stack() {
         // 2026-11-01：三层叠（两层偏移底板 + 封面），与书架文件夹卡一致，
@@ -149,9 +150,40 @@ export default struct BookFolderGridManage {
           .maxLines(1)
     }
     .padding({ left:8,right:8,bottom:5,top:5 })
-    // 2026-11-01：按层级加色边（L1 无色；L2–L10 各一色，夜间另配）
-    .border({ width: 1, color: this.levelColor() })
-    .borderRadius(10)
+  }
+
+  /** 第 level 层的外环颜色（1..10；夜间更亮） */
+  private ringColor(level: number): string {
+    const day: string[] = ['#5B9BD5', '#82C39B', '#E0B050', '#D98880', '#B39DDB',
+      '#4DB6AC', '#F06292', '#9575CD', '#A1887F', '#78909C']
+    const night: string[] = ['#6FA8CC', '#9FD9B4', '#F0C46A', '#E9A29B', '#C9B8EC',
+      '#6FD0C6', '#F58BAE', '#B39DDB', '#C0A79C', '#90A4AE']
+    const i: number = Math.max(1, Math.min(level, 10)) - 1
+    return NightMode.isDarkSurface() ? night[i] : day[i]
+  }
+
+  /**
+   * 2026-11-01：路线 A —— 每层深度画一圈 1.5vp 的圆角描边（padding 递减堆叠）。
+   * 最内层才是卡片内容；L1 起就有环，最多 10 环（与 GroupTree.MAX_GROUP_DEPTH 一致）。
+   */
+  @Builder
+  rings(idx: number) {
+    Column() {
+      if (idx > 1) {
+        this.rings(idx - 1)
+      } else {
+        this.cardContent()
+      }
+    }
+    .padding(2)
+    .border({ width: 1.5, color: this.ringColor(idx) })
+    .borderRadius(3 + idx)
+  }
+
+  build() {
+    Column() {
+      this.rings(Math.max(1, Math.min(this.depth, 10)))
+    }
     // 2026-10-25：整张卡片可点（含封面 / 分组名 / 空白处）
     .onClick((): void => {
       this.toggle()
