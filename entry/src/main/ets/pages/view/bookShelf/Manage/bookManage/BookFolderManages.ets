@@ -17,6 +17,8 @@ export default struct BookFolderManages {
   @Prop EXHIBIT:string
   @State delCache:boolean = false
   @Prop isManage:boolean = true
+  /** 2026-11-01：内联模式（与书籍块同页）—— 高度自适应，不抢占剩余空间 */
+  @Prop fitContent: boolean = false
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   // ── 宫格列数的两个输入源（2026-10-25 补齐）────────────────────────────────
@@ -261,7 +263,8 @@ export default struct BookFolderManages {
          }, (block: BookGroups[], bi: number) => 'blk' + bi + '_' + block.length + '_' + (block.length > 0 ? (block[0].groupId ?? 0) : 0))
        }
      }
-     .layoutWeight(1)
+     // 2026-11-01：内联模式（分组块 + 书籍块同页）时不吃剩余高度，避免把书籍顶到很下面
+     .layoutWeight(this.fitContent ? 0 : 1)
      // 列表模式下格子的父容器就是本 Column（ForEach 不产生布局节点）⇒ 手势挂这里
      .gesture(
        GestureGroup(GestureMode.Sequence,

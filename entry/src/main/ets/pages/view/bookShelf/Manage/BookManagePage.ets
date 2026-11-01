@@ -402,6 +402,8 @@ export default struct BookManagePage {
                 checkGroup:this.checkLists,
                 EXHIBIT:this.EXHIBIT,
                 bookGroups:this.bookGroups,
+                // 与书籍块同页 ⇒ 自适应高度（否则把书籍顶到很下面，间距显得极大）
+                fitContent: true,
                 onSelect:()=>{
                   this.listenCheckList()
                 }
