@@ -137,6 +137,30 @@ export default struct BookFolderManages {
     showMessage('删除成功')
   }
 
+  /**
+   * 2026-11-01：按顶层分组分块（用户：不同分组之间要隔开）。
+   * bookGroups 已由 getGroupList() 按 DFS 排好，这里只按"遇到 parentId=0 就开新块"切分。
+   */
+  private blocks(): BookGroups[][] {
+    const out: BookGroups[][] = []
+    let cur: BookGroups[] = []
+    for (const g of this.bookGroups) {
+      if (!g.show || g.isSystem) {
+        continue
+      }
+      const isRoot: boolean = (g.parentId ?? 0) === 0
+      if (isRoot && cur.length > 0) {
+        out.push(cur)
+        cur = []
+      }
+      cur.push(g)
+    }
+    if (cur.length > 0) {
+      out.push(cur)
+    }
+    return out
+  }
+
  build() {
    if (this.bookGroups === null || this.bookGroups.length === 0) {
      Column() {
@@ -163,50 +187,54 @@ export default struct BookFolderManages {
            }
          }, (item: BookGroups): string => groupCardKey(item))
        } else {
-         GridRow({
-           // 2026-10-25：由写死 3 列改为与书架分组宫格同源的列数（见上方字段注释）
-           columns: ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
-         }){
-           ForEach(this.bookGroups, (item: BookGroups) => {
-             if (item.show && !item.isSystem) {
-               GridCol(){
-                 BookFolderGridManage({
-                   group:item,
-                   checkGroup:this.checkGroup,
-                   isManage:this.isManage,
-                   onSelect:()=>{
-                     this.onSelect()
-                   }
+         ForEach(this.blocks(), (block: BookGroups[], bi: number) => {
+           // 2026-11-01：每个顶层分组一个圆角底板区块（块内 DFS，块间 16 间距）
+           Column() {
+             GridRow({
+               columns: ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
+             }){
+               ForEach(block, (item: BookGroups) => {
+                 GridCol(){
+                   BookFolderGridManage({
+                     group:item,
+                     checkGroup:this.checkGroup,
+                     isManage:this.isManage,
+                     onSelect:()=>{
+                       this.onSelect()
+                     }
+                   })
+                 }
+                 .onAreaChange((oldValue: Area, newValue: Area): void => {
+                   this.recordRect(item, newValue)
                  })
-               }
-               .onAreaChange((oldValue: Area, newValue: Area): void => {
-                 this.recordRect(item, newValue)
-               })
+               }, (item: BookGroups): string => groupCardKey(item))
              }
-           }, (item: BookGroups): string => groupCardKey(item))
-         }
-         // ⚠️ 手势必须挂在**格子的直接父容器**（GridRow）上：
-         //   矩形由 `GridCol.onAreaChange` 给出，其 `position` 是相对 GridRow 的
-         //   （SDK 原文见 `ManageBrush.ets` ②）；`localX/localY` 也相对被绑定的组件
-         //   ⇒ 只有两者是**同一个容器**时命中判定才对得上。
-         .gesture(
-           GestureGroup(GestureMode.Sequence,
-             LongPressGesture({ repeat: false, duration: 300 })
-               .onAction((event: GestureEvent): void => {
-                 this.brushBegin(event)
-               }),
-             PanGesture({ fingers: 1, distance: 1 })
-               .onActionUpdate((event: GestureEvent): void => {
-                 this.brushUpdate(event)
-               })
-               .onActionEnd((): void => {
-                 this.brushEnd()
-               })
-               .onActionCancel((): void => {
-                 this.brushEnd()
-               })
-           )
-         )
+             .gesture(
+               GestureGroup(GestureMode.Sequence,
+                 LongPressGesture({ repeat: false, duration: 300 })
+                   .onAction((event: GestureEvent): void => {
+                     this.brushBegin(event)
+                   }),
+                 PanGesture({ fingers: 1, distance: 1 })
+                   .onActionUpdate((event: GestureEvent): void => {
+                     this.brushUpdate(event)
+                   })
+                   .onActionEnd((): void => {
+                     this.brushEnd()
+                   })
+                   .onActionCancel((): void => {
+                     this.brushEnd()
+                   })
+               )
+             )
+           }
+           .width('100%')
+           .padding(6)
+           .borderRadius(16)
+           .backgroundColor(ShelfColors.card())
+           .border({ width: 1, color: 'rgba(128,128,128,0.18)' })
+           .margin({ bottom: 16 })
+         }, (block: BookGroups[], bi: number) => 'blk' + bi + '_' + block.length + '_' + (block.length > 0 ? (block[0].groupId ?? 0) : 0))
        }
      }
      .layoutWeight(1)
