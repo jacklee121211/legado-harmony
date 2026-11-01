@@ -604,7 +604,7 @@ export default struct BookContentRefresh {
         Row({ space: 8 }) {
           Row() {
             SymbolGlyph($r('sys.symbol.plus_circle'))
-              .fontSize(18)
+              .fontSize(20)
               .fontColor([NightMode.isDarkSurface() ? 'rgba(248,249,250,0.88)' : '#FFFFFF'])
           }
           .padding({ left: 10, right: 12, top: 8, bottom: 8 })

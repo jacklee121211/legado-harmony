@@ -55,10 +55,10 @@ export default struct FolderCard {
         Stack({ alignContent: Alignment.Center }) {
           Row().width('80%').height('80%').borderRadius(3)
             .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)')
-            .translate({ x: 4, y: 3 })
+            .translate({ x: 7, y: 5 })
           Row().width('90%').height('90%').borderRadius(3)
             .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.15)')
-            .translate({ x: 2, y: 1 })
+            .translate({ x: 3, y: 2 })
           if (cell.cover !== null) {
             Image(cell.cover).width('100%').height('100%').borderRadius(3).draggable(false)
           } else {
@@ -84,10 +84,10 @@ export default struct FolderCard {
       Stack({ alignContent: Alignment.Center }) {
         Row().width('80%').height('80%').borderRadius(3)
           .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)')
-          .translate({ x: 4, y: 3 })
+          .translate({ x: 7, y: 5 })
         Row().width('90%').height('90%').borderRadius(3)
           .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.24)' : 'rgba(0,0,0,0.15)')
-          .translate({ x: 2, y: 1 })
+          .translate({ x: 3, y: 2 })
         if (this.cover !== null) {
           Image(this.cover).width('100%').height('100%').borderRadius(3).draggable(false)
         } else {
