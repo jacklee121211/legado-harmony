@@ -11810,8 +11810,42 @@ oAnimInitNode 配套） */
    *   · 下留白 62vp（把自绘末行推到 RK 的 766vp）
    * ⚠️ `calibTopPx` 仍保留给 **TTS 高亮**（`TtsHlCalibV3`），不参与这里。
    */
+  /**
+   * 引擎上留白（vp）。
+   *
+   * ★ 2026-11-01 云真机实测（XT2 三折叠，4 次运行、3 种形态、density 2.55/3.0）：
+   *   引擎正文首行墨迹**恒定在 ≈158~165px**，与窗口宽度（447~1249vp）、密度、折叠形态
+   *   **全部无关** ⇒ 引擎页眉是**按 px 固定**的，不是按 vp，也不是按字号。
+   *   （探针把 fontSize 从 14 扫到 28，5 个结果完全相同 ⇒ 该接口对引擎不生效，字号假设作废。）
+   *
+   * 因此提供两条路径，**默认仍走旧的固定 vp 常量**（= 已验证的 m80 / PuraX 完美行为）：
+   *   · `ENGINE_MARGIN_BY_DENSITY = false`（默认）：top = ENGINE_TOP_MARGIN_VP(88)
+   *   · `= true`：top = 160px / density + ENGINE_MARGIN_OFFSET_VP(40.6)
+   *     ⇒ m80(3.375) 47.4+40.6 = 88.0（与旧值一致）；PuraX(2.55) 62.7+40.6 = 103.3；
+   *        平板(2.25) 71.1+40.6 = 111.7
+   * ⚠️ 切换后必须三台真机复验，不满意就把开关改回 false（一键回退）。
+   */
+  private readonly ENGINE_MARGIN_BY_DENSITY: boolean = false;
+  private readonly ENGINE_MARGIN_PX: number = 160;
+  private readonly ENGINE_MARGIN_OFFSET_VP: number = 40.6;
+
   private engineMarginVp(): number {
-    return this.ENGINE_TOP_MARGIN_VP;
+    if (!this.ENGINE_MARGIN_BY_DENSITY) {
+      return this.ENGINE_TOP_MARGIN_VP;
+    }
+    const d: number = this.densityVp();
+    if (d <= 0) {
+      return this.ENGINE_TOP_MARGIN_VP;
+    }
+    return this.ENGINE_MARGIN_PX / d + this.ENGINE_MARGIN_OFFSET_VP;
+  }
+
+  /** 引擎下留白（vp）：与上留白保持固定差（旧行为 88→62 即 −26） */
+  private engineBottomMarginVp(): number {
+    if (!this.ENGINE_MARGIN_BY_DENSITY) {
+      return this.ENGINE_BOTTOM_MARGIN_VP;
+    }
+    return Math.max(0, this.engineMarginVp() - 26);
   }
 
   /** 引擎正文**上**留白（vp，m80 实测反推；三台共用） */
@@ -11853,7 +11887,7 @@ oAnimInitNode 配套） */
    * **两态（信息条在上/在下）完全一致**，切换时不重排、不跳行。
    */
   private scrollBottomInsetVp(): number {
-    return Math.max(0, this.ENGINE_BOTTOM_MARGIN_VP - this.SELF_DRAWN_DELTA_VP
+    return Math.max(0, this.engineBottomMarginVp() - this.SELF_DRAWN_DELTA_VP
       - this.SELF_DRAWN_ONLY_OFFSET_VP - this.SELF_DRAWN_BOTTOM_ADJUST_VP);
   }
 
