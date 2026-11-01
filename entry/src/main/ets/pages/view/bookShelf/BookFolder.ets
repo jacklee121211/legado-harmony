@@ -190,9 +190,10 @@ export default struct BookFolder {
       visibleIds.push(g.groupId)
     }
     // 2026-11-01：每组预取 4 本（原来 2 本）—— 未分组书多，只取 2 本时
-    //   epub 等带自带封面的书可能压根没被取到，宫格里看不到它的封面
+    //   epub 等带自带封面的书可能压根没被取到，宫格里看不到它的封面。
+    //   排序与书列表同源（`ShelfPrefs.getSortKey()`），保证宫格顺序 = 点进去的列表顺序。
     this.previewBooks = visibleIds.length > 0
-      ? await BooksDao.queryPreviewByGroups(visibleIds, 4)
+      ? await BooksDao.queryPreviewByGroups(visibleIds, 4, ShelfPrefs.getSortKey())
       : []
     return val
   }

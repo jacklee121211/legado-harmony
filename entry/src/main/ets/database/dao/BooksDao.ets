@@ -333,7 +333,7 @@ class BooksDao {
    * 分组一屏可能 20+ 个。这里一条 `WHERE bookGroup IN (...)` 查回后按组分桶。
    * 排序与书架列表同源口径（置顶优先、再按手动排序、最后 id），保证预览与点进去的顺序一致。
    */
-  async queryPreviewByGroups(groupIds: number[], limitPerGroup: number): Promise<Books[]> {
+  async queryPreviewByGroups(groupIds: number[], limitPerGroup: number, sortKey: number = 0): Promise<Books[]> {
     try {
       const ids: number[] = groupIds.filter((id: number): boolean => typeof id === 'number' && id > 0)
       if (ids.length === 0 || limitPerGroup <= 0) {
@@ -346,7 +346,9 @@ class BooksDao {
       if (ids.indexOf(3) >= 0) {
         where += ` OR (bookGroup = 4 AND isLocalBook = 1)`
       }
-      const sql: string = `SELECT * FROM ${this.TABLE_NAME} WHERE (${where}) ORDER BY isTop DESC, sort ASC, id ASC`
+      // 2026-11-01：排序与书列表**同源**（`buildOrderByClause`）—— 否则宫格预览的顺序
+      //   跟点进去看到的列表对不上（用户：「未分组的宫格显示和其内部书的排序对不上」）。
+      const sql: string = `SELECT * FROM ${this.TABLE_NAME} WHERE (${where}) ORDER BY${this.buildOrderByClause(sortKey, true)}`
       const rows: Books[] = await DbUtil.querySqlForList<Books>(sql, column)
       const perGroup: Map<number, number> = new Map<number, number>()
       const out: Books[] = []
