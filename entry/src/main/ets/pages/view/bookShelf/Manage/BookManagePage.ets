@@ -1193,6 +1193,12 @@ export default struct BookManagePage {
     if (books.length <= 0) {
       return null
     }
+    // [PROBE-SHARE 2026-11-01] 临时探针：选中分组展开后的实际书籍
+    const names: string[] = []
+    for (const b of books) {
+      names.push(`${b.bookName}@${b.bookGroup ?? 0}`)
+    }
+    console.log(`[PROBE-SHARE] groupIds=${JSON.stringify(groupIds)} count=${books.length} books=${names.join(',')}`)
     return buildSelection(books)
   }
 
@@ -1577,6 +1583,16 @@ export default struct BookManagePage {
   }
 
   listenCheckList() {
+    // [PROBE-SEL 2026-11-01] 临时探针：看勾选/分组/书籍的真实集合
+    const gs: string[] = []
+    for (const g of this.bookGroups) {
+      gs.push(`${g.groupId}:${g.groupName}:p${g.parentId ?? 0}:s${g.show ? 1 : 0}`)
+    }
+    const bs: string[] = []
+    for (const b of this.bookList) {
+      bs.push(`${b.id}:${b.bookName}:g${b.bookGroup ?? 0}`)
+    }
+    console.log(`[PROBE-SEL] groups=[${gs.join(' | ')}] books=[${bs.join(' | ')}] checked=${JSON.stringify(this.checkLists)}`)
     // 2026-11-01：先按树反推父分组，再同步数组与全选图标
     this.cascadeGroupSelection()
     this.dataCheckList()
