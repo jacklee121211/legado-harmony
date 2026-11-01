@@ -181,6 +181,31 @@ export default struct BookManagePage {
       type: this.currentIndex
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
+    // 2026-11-01：过滤"孤儿分组" —— 父级不在结果里（已删/被隐藏）时 GroupTree 会把它
+    //   当根级返回，批量管理与移动至都会凭空多出一个同名根分组（真机 212 现象）。
+    {
+      const known: number[] = []
+      for (const g of val) {
+        if (g.groupId !== undefined) {
+          known.push(g.groupId)
+        }
+      }
+      const kept: BookGroups[] = []
+      for (const g of val) {
+        const pid: number = g.parentId ?? 0
+        if (pid !== 0 && known.indexOf(pid) < 0) {
+          continue
+        }
+        if ((g.groupId ?? -1) === pid) {
+          continue
+        }
+        kept.push(g)
+      }
+      val.length = 0
+      for (const g of kept) {
+        val.push(g)
+      }
+    }
     // 2026-11-01：自定义分组内只保留该组子树（区块展示用）
     if (this.bookTypeNumber >= 5) {
       const t0: GroupTree = GroupTree.build(val)
