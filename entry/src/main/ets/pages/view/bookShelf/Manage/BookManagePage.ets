@@ -1350,7 +1350,9 @@ export default struct BookManagePage {
        // 2026-10-25：`case 5`（书单）随书单功能删除
        default:
          await this.getBookList();
-         // this.isBookRefreshing++
+         // 2026-11-01：恢复广播（原来被注释）—— 删除/移动/隐藏后书架必须立即刷新，
+         //   否则要退出重进甚至重启才看得到（用户反复反馈过的问题）。
+         this.isBookRefreshing++
          break;
    }
    this.dataMoveCheckList(false)
