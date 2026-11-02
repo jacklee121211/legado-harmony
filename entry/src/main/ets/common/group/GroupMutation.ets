@@ -1,5 +1,7 @@
 import { Books } from '../../database/entities/Books'
+import { BookGroups } from '../../database/entities/BookGroups'
 import BooksDao from '../../database/dao/BooksDao'
+import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../utils/bookGroupUtils'
 import { GroupStore } from './GroupStore'
 import { GroupEvents } from './GroupEvents'
@@ -132,6 +134,45 @@ export class GroupMutation {
     const bookIds: number[] = await BooksDao.queryBooksByGroupId(ids)
     await bookGroupUtils.moveBookByGroupId(ids, targetGroupId)
     await GroupMutation.afterChange([targetGroupId], bookIds, false)
+  }
+
+  /**
+   * 把某个**分组节点**挂到目标父分组下（`targetParentId === 0` = 挂回根级）。
+   *
+   * ⚠️ 2026-11-02 第 26 轮（B⑥）新增 —— 补上 P2 的最后一个漏网写入口。
+   * 原 `FolderInfoDialog.doMoveGroupNode()` 自己写 `parentId` + `updatePartialGroup`，
+   * 只 bump 旧的 AppStorage 信号，**不刷 GroupStore、不发 GroupEvents**。
+   * 真机后果（`2026-11-09-U3/50-restored-root.json`）：把「12」移回「1」之后，
+   * **根页仍残留一张根级的「12」卡片**，要重新进入一次才消失
+   * （因为根页按 `USE_STORE_IN_FOLDER=true` 读 `GroupStore`，而它没被刷新）。
+   *
+   * 语义按「结构变更」处理：写库 → 刷真源 → 刷隐藏集合 → **发一次**事件。
+   * 防环/同名/合并等**业务校验仍留在调用方**（`FolderInfoDialog.doMoveGroupNode`），
+   * 本方法只负责"写 + 收尾一致性"。
+   */
+  static async moveGroupNode(groupId: number, targetParentId: number): Promise<void> {
+    if (groupId <= 0 || groupId === targetParentId) {
+      return
+    }
+    await GroupStore.ensure()
+    const me: BookGroups | undefined = GroupStore.find(groupId)
+    if (me === undefined) {
+      // 真源可能是旧的 ⇒ 重查一次再试；仍找不到就放弃（不瞎写）
+      await GroupStore.refresh()
+      const again: BookGroups | undefined = GroupStore.find(groupId)
+      if (again === undefined) {
+        console.error(`[GRP-MUTATION] moveGroupNode: 分组不存在 id=${groupId}`)
+        return
+      }
+      again.parentId = targetParentId
+      again.updateTime = Date.now()
+      await BookGroupsDao.updatePartialGroup(again)
+    } else {
+      me.parentId = targetParentId
+      me.updateTime = Date.now()
+      await BookGroupsDao.updatePartialGroup(me)
+    }
+    await GroupMutation.afterChange([], [], true)
   }
 
   /**

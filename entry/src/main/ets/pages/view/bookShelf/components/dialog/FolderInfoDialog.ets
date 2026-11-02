@@ -1004,10 +1004,13 @@ export default struct FolderInfoDialog{
       if (me === undefined) {
         return
       }
-      me.parentId = targetId
-      me.updateTime = Date.now()
-      await BookGroupsDao.updatePartialGroup(me)
+      // 2026-11-02 第 26 轮（B⑥）：改走唯一写入口 —— 它负责"写库 + 刷 GroupStore + 刷隐藏集合 +
+      //   发一次结构事件"。原来这里直接 `updatePartialGroup` 只 bump 旧 AppStorage 信号，
+      //   而根页（`USE_STORE_IN_FOLDER=true`）读的是 `GroupStore` ⇒ 真机出现"把 12 移回 1 后，
+      //   根页仍残留一张根级的 12 卡片，要重新进入才消失"（`2026-11-09-U3/50-restored-root.json`）。
+      await GroupMutation.moveGroupNode(gid, targetId)
       // 2026-11-01：先广播再关窗 —— 关窗会销毁本组件，广播放后面在部分路径上会丢
+      // （双轨期：旧信号继续发，供尚未迁移到 GroupEvents 的组件消费）
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       this.isBookRefreshing++
       console.log(`[GRP-MOVE] from=${gid} to=${targetId} ok groupsRefresh=${this.BOOK_IS_BOOK_GROUPS_REFRESHING}`)
