@@ -377,7 +377,17 @@ export default struct BookContentRefresh {
         GridCol() {
           this.childFolderCard(g)
         }
-      }, (g: BookGroups) => 'cf' + (g.groupId ?? 0))
+        // ── 2026-11-02 第 26 轮（U2b 修复）：key 必须带上**计数** ──────────────────
+        // 真机现象（dev-verify `2026-11-05-C-signoff/20-U2-after-confirm.json`）：
+        //   把「恶汉」从「1」移到「111」后，正在看的「1」里 **111 卡片仍是「共1本」**，
+        //   重新进入「1」才变「共2本」。
+        // 根因：数据其实刷新了（`onShelfRefresh → onFolderChanged → fillRealBookIds` 都跑过），
+        //   但 ForEach 只用 `groupId` 当 key ⇒ 行没被重建；而 `BookGroups` 是普通类
+        //   （字段变更不是 @State 可观测）⇒ 卡片停在旧文案。
+        // 工程内已有正确样板：`BookFolder.keyOf()` 的 key 里带了 `bookIds?.length`。
+        // 修法：把"可见性 + 计数"拼进 key ⇒ 数字一变就重建该行，其余行照常复用。
+      }, (g: BookGroups) => 'cf' + (g.groupId ?? 0) + '|' + (g.show ? 1 : 0)
+        + '|' + (g.bookIds?.length ?? 0))
     }
     .width('100%')
     .padding({
