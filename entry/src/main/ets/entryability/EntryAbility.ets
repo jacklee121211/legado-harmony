@@ -12,7 +12,7 @@ import { themeManager, ThemeManager } from '../common/utils/ThemeManager';
 import { AppUtil } from '@pura/harmony-utils';
 import { WindowAbility } from './WindowAbility';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import BrightnessUtil from '../../common/utils/BrightnessUtil';
+import BrightnessUtil from '../common/utils/BrightnessUtil';
 import { NightMode } from '../common/utils/NightMode';
 // 防窥两层（2026-10-08）：启动即按已存开关应用（全局生效，见 utils/AntiPeep.ets 文件头）
 import { AntiPeep } from '../common/utils/AntiPeep';

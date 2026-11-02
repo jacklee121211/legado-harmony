@@ -23,7 +23,7 @@ import { ReaderSettingDialog, SETTING_DIALOG_BOTTOM_GAP } from './ReaderSettingD
 import { ReaderSaveSchemeDialog } from './ReaderSaveSchemeDialog'
 import { showMessage } from '../../../componets/common/promptShow'
 import BasicDataSource from '../../../common/LazyIDataSource/BasicDataSource';
-import BrightnessUtil from '../../../../common/utils/BrightnessUtil';
+import BrightnessUtil from '../../../common/utils/BrightnessUtil';
 import { TtsEngine, TtsState, TtsSegmentPos } from '../../../tts/TtsEngine';
 import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao';
 // 双端同步 v2（2026-10-05）：槽/水位/键名的唯一登记处（见 SyncConfig 头注释 + 设计文档）
