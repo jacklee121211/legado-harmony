@@ -247,24 +247,26 @@ class BooksDao {
   }
 
   //获取书籍总数量
+  /**
+   * 2026-11-02 第 26 轮（**B① P1：合并两套 WHERE**）—— 本方法原来自己拼 `predicates`，
+   * 是 `BooksDao` 里**唯一**没走 `buildWhereClause` 的查询（另三处 `search` / `queryBookIds`
+   * / `searchPage` 都走它，见 `:201` `:334` `:404`）。两套规则实际不等价：
+   *   · 旧实现 `predicates.equalTo('bookType', type)` —— **恒**加 bookType（type 为 undefined 也加）；
+   *   · 旧实现只做 `equalTo('bookGroup', bookGroup)`，**不认** `buildWhereClause` 里
+   *     `bookGroup = 3` 的 `or (bookGroup = 4 and isLocalBook = true)` 并集规则，
+   *     也不认 `bookGroup = 4` 的 `or isLocalBook = true`。
+   * ⇒ 直接后果：**「共N本」与点进去的列表条数会分叉**（未分组/本地组尤其明显），
+   *   真源 §12 与 `docs/分组系统-未通过清单` 都记过这类"卡片共8本、进去只有3本"的坑。
+   *
+   * 现在统一委托 `queryBookIds()`（它内部就是 `buildWhereClause`）⇒ 计数与列表**同源同口径**。
+   * 代价只是把 `COUNT(*)` 换成取 id 再取长度（几十~几百行的量级，可忽略）。
+   */
   async getBookCount(param?: BooksTypeSearchParams) {
-    let type = param?.type;
-    let bookGroup = param?.bookGroup;
     try {
-      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
-      const predicates = DbUtil.getPredicates(this.TABLE_NAME);
-      predicates.equalTo('bookType', type)
-      if (bookGroup !== undefined && bookGroup !== 2) {
-        predicates.equalTo('bookGroup', bookGroup)
-      }
-      // 2026-11-02：计数与列表同口径 —— 隐藏分组（含子树）的书不计入
-      if (HiddenGroups.ids.length > 0) {
-        predicates.notIn('bookGroup', HiddenGroups.ids)
-      }
-      const count = await DbUtil.queryForCount(predicates, column)
-      return count
-    } catch (e){
-      console.log("TagInfo", JSON.stringify(e))
+      const ids: string[] = await this.queryBookIds(param)
+      return ids.length
+    } catch (e) {
+      console.log('TagInfo', JSON.stringify(e))
       return 0
     }
   }
