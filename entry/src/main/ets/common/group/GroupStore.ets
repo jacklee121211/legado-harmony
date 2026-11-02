@@ -39,6 +39,28 @@ export class GroupStore {
     }
   }
 
+  /**
+   * 2026-11-02 第 26 轮（B② 收敛"22 处自建树"）：**需要最新全量树时用这个**。
+   *
+   * 语义 = `refresh()` 之后再返回非空 `GroupTree`，等价于调用点原来那句
+   * `const all = await BookGroupsDao.search(); const tree = GroupTree.build(all)`，
+   * 但**不再各自建树**，且顺手把真源同步到最新（原来那 9 处查完就丢，GroupStore 反而变旧）。
+   *
+   * ⚠️ 只适用于"要全量树"的调用点；按 bookType 过滤过的视图（书架分组页、
+   *   移动至弹窗的 `this.groupList`）请继续用各自的列表建树 —— 那是筛选视图，不是真源。
+   */
+  static async reload(): Promise<GroupTree> {
+    await GroupStore.refresh()
+    const t: GroupTree | null = GroupStore._tree
+    if (t !== null) {
+      return t
+    }
+    // `refresh()` 内部一定会 build 出树；这里只是给类型系统一个兜底，正常不会走到
+    const fallback: GroupTree = GroupTree.build(GroupStore._groups)
+    GroupStore._tree = fallback
+    return fallback
+  }
+
   static isLoaded(): boolean {
     return GroupStore._loaded
   }

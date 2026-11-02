@@ -11,6 +11,8 @@ import { GroupTree } from '../group/GroupTree'
 import { HiddenGroups } from '../group/HiddenGroups'
 import { GroupEvents } from '../group/GroupEvents'
 import toolsUtils from './ToolsUtils'
+// 2026-11-02 第 26 轮（B②）：隐藏集合计算委托 GroupStore（唯一实现）
+import { GroupStore } from '../group/GroupStore'
 
 /** 2026-11-01：空分组是否自动解散（用户要求保留空目录 ⇒ 默认 false，可一键恢复） */
 export const EMPTY_AUTO_DISSOLVE: boolean = false
@@ -242,22 +244,12 @@ class bookGroupUtils{
    * 用于 `BooksDao.setHiddenGroupIds()`，实现"隐藏组的书与计数全部排除"。
    */
   async hiddenSubtreeIds(): Promise<number[]> {
-    const all: BookGroups[] = await BookGroupsDao.search()
-    const tree: GroupTree = GroupTree.build(all)
-    const out: number[] = []
-    // ⚠️ 2026-11-02 真机取证：RDB 读出来的 `show` 是 **number（0/1）**，不是 boolean
-    //   （日志原文 `5:1:show=0(number)`），所以这里必须用 `!g.show` 而不是 `g.show === false`，
-    //   否则隐藏分组永远进不了排除集合（曾导致"隐藏后书还在全部列表"）。
-    for (const g of all) {
-      if (!g.show && g.groupId !== undefined) {
-        for (const id of tree.subtreeIds(g.groupId)) {
-          if (out.indexOf(id) < 0) {
-            out.push(id)
-          }
-        }
-      }
-    }
-    return out
+    // 2026-11-02 第 26 轮（B②）：**完全委托 `GroupStore.hiddenIds()`**。
+    //   这里的实现原本与它逐字重复（父隐藏 ⇒ 整棵子树隐藏 + `!g.show` 的 number 判定），
+    //   两处改一处忘另一处就会分叉 —— 未通过清单 #20 那类"隐藏后书还在「全部」列表"
+    //   正是这种分叉的后果。`refresh()` 保证读到库里最新状态（本方法调用点都在写操作之后）。
+    await GroupStore.refresh()
+    return GroupStore.hiddenIds()
   }
 
   /**

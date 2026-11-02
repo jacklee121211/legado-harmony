@@ -11,6 +11,8 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 import { GroupMutation } from '../../../../../common/group/GroupMutation'
 import { DialogHost } from '../../../../../common/dialog/DialogHost'
+// 2026-11-02 第 26 轮（B②）：分组树唯一真源
+import { GroupStore } from '../../../../../common/group/GroupStore'
 import { GroupFlags } from '../../../../../common/group/GroupFlags'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
@@ -541,8 +543,8 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
       const ids: number[] = tree.subtreeIds(gid)
       let bookCount: number = 0
       for (const id of ids) {
@@ -610,8 +612,8 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
       const kids: BookGroups[] = tree.childrenOf(gid)
       if (kids.length === 0) {
         this.dialogTitle = this.dialogDisbandTitle
@@ -648,8 +650,9 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
+      const all: BookGroups[] = GroupStore.groups()
       const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
       const parentId: number = me?.parentId ?? 0
       const target: number = parentId > 0 ? parentId : 3
@@ -791,8 +794,8 @@ export default struct FolderInfoDialog{
         }
       }
       if (keepChildren) {
-        const all: BookGroups[] = await BookGroupsDao.search()
-        const tree: GroupTree = GroupTree.build(all)
+        // 2026-11-02 第 26 轮（B②）：唯一树真源（见 GroupStore.reload）
+        const tree: GroupTree = await GroupStore.reload()
         for (const c of tree.childrenOf(gid)) {
           snapChildId.push(c.groupId ?? -1)
           snapChildParent.push(c.parentId ?? 0)
@@ -852,8 +855,9 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
+      const all: BookGroups[] = GroupStore.groups()
       const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
       const parentId: number = me?.parentId ?? 0
       // ① 本组自己的书：真删
@@ -892,8 +896,8 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
       const ids: number[] = tree.subtreeIds(gid)
       let bookCount: number = 0
       for (const id of ids) {
@@ -933,8 +937,9 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
+      const all: BookGroups[] = GroupStore.groups()
       const disabled: number[] = tree.subtreeIds(gid)
       this.groupMoveGroup = new CustomDialogController({
         builder: BookSelectGroupDialog({
@@ -970,8 +975,9 @@ export default struct FolderInfoDialog{
   /** 真正写 parentId：防环 + 深度校验 + 同名拦截（合并/重命名在 S6 做） */
   private async doMoveGroupNode(gid: number, targetId: number, targetName: string): Promise<void> {
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
+      const all: BookGroups[] = GroupStore.groups()
       const chk = tree.canMoveTo(gid, targetId)
       if (!chk.ok) {
         showMessage(chk.reason)
@@ -1159,8 +1165,8 @@ export default struct FolderInfoDialog{
       return
     }
     try {
-      const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
+      const tree: GroupTree = await GroupStore.reload()
       let pid: number = this.itemData.parentId ?? 0
       let guard: number = 0
       while (pid > 0 && guard < 12) {
