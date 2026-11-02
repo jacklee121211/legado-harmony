@@ -15,7 +15,7 @@ export class GroupFlags {
   static USE_STORE_IN_MANAGE: boolean = false
 
   /** P2-1：分组弹窗的 隐藏/解散/删除 改走 GroupMutation（唯一写入口） */
-  static USE_MUTATION_IN_DIALOG: boolean = false
+  static USE_MUTATION_IN_DIALOG: boolean = true
 
   /** P4：分组页使用新渲染（分组+书籍同域滚动） */
   static USE_UNIFIED_SCROLL: boolean = false

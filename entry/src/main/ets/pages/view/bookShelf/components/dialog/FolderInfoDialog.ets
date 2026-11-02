@@ -9,6 +9,8 @@ import TitleContentDialog from '../../../../../componets/common/TitleContentDial
 import { buttonList } from '../../../../../componets/dataList/buttonList'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
+import { GroupMutation } from '../../../../../common/group/GroupMutation'
+import { GroupFlags } from '../../../../../common/group/GroupFlags'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
@@ -1185,7 +1187,15 @@ export default struct FolderInfoDialog{
   hideGroup(){
     this.itemData.show = this.itemData.show ? false : true
     if (this.itemData.groupId) {
-      bookGroupUtil.updateGroupShow(this.itemData.groupId)
+      if (GroupFlags.USE_MUTATION_IN_DIALOG) {
+        // 2026-11-02 架构收敛 P2-1：走唯一写入口（刷新真源 + 单次事件）；
+        //   旧信号仍保留在 setTimeout 里，供双轨期未迁移的组件消费。
+        GroupMutation.setVisible(this.itemData.groupId, this.itemData.show).catch((e: Error): void => {
+          console.error(`[GRP-MUTATION] setVisible failed: ${e.message}`)
+        })
+      } else {
+        bookGroupUtil.updateGroupShow(this.itemData.groupId)
+      }
     }
     setTimeout(()=>{
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++

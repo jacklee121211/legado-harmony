@@ -1193,7 +1193,7 @@ export default struct BookManagePage {
     // 2026-11-01：选中分组 = 选中该分组（含全部子孙分组）里的所有书籍
     const groupIds: number[] = []
     if (this.bookGroups.length > 0) {
-      const tree: GroupTree = GroupTree.build(this.bookGroups)
+      const tree: GroupTree = this.treeOf(this.bookGroups)
       for (const g of this.bookGroups) {
         const id: number = g.groupId ?? -1
         if (id > 0 && checked.has(id)) {
@@ -1572,7 +1572,7 @@ export default struct BookManagePage {
     //   用它算 `subtreeIds` 恒为 1 ⇒ 一律走"子组保留"，三级窗永远不出现。
     //   ⇒ 判定必须查**全量分组**（与弹窗内口径一致）。
     const all: BookGroups[] = await BookGroupsDao.search()
-    const tree: GroupTree = GroupTree.build(all)
+    const tree: GroupTree = this.treeOf(all)
     for (const id of this.checkListNumber) {
       for (const g of all) {
         if ((g.groupId ?? -1) === id) {
