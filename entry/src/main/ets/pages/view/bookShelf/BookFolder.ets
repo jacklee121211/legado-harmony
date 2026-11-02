@@ -20,6 +20,8 @@ import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 import { Books } from '../../../database/entities/Books'
 import BooksDao from '../../../database/dao/BooksDao'
 import { GroupTree } from '../../../common/group/GroupTree'
+import { GroupStore } from '../../../common/group/GroupStore'
+import { GroupFlags } from '../../../common/group/GroupFlags'
 
 /**
  * 文件夹
@@ -172,6 +174,22 @@ export default struct BookFolder {
 
   /** 查分组 + 现算每个分组的真实书籍数（两条刷新路径共用） */
   private async loadGroupList(): Promise<BookGroups[]> {
+    // ── 2026-11-02 架构收敛 P1-2（双轨开关）───────────────────────────────
+    //   true  ⇒ 走 GroupStore（唯一树真源），本页不再自建树；
+    //   false ⇒ 完全走旧实现（默认，行为零变化；真机对照一致后再切 true）。
+    if (GroupFlags.USE_STORE_IN_FOLDER) {
+      await GroupStore.refresh()
+      const all: BookGroups[] = GroupStore.groupsOfType(this.currentIndex)
+      await bookGroupUtil.fillRealBookIds(all, this.currentIndex)
+      this.tree = GroupStore.tree()
+      const keptByStore: BookGroups[] = []
+      for (const g of all) {
+        if (this.tree === null || !this.tree.isOrphan(g)) {
+          keptByStore.push(g)
+        }
+      }
+      return keptByStore
+    }
     const val: BookGroups[] = await BookGroupsDao.search({
       type: this.currentIndex
     })
