@@ -798,8 +798,6 @@ export default struct FolderInfoDialog{
         }
       }
       await bookGroupUtil.delGroupById(ids)
-      // 2026-11-02 P2-2：结构变更 → 只发一次事件（groupIds 空 = 全量，订阅方清空选中集）
-      GroupEvents.emit([], [])
       // 2026-11-02：分组结构已安全变更，最后才真正删除被覆盖的旧书文件
       for (const oldId of pendingDelete) {
         try {

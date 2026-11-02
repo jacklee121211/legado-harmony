@@ -9,6 +9,7 @@ import { BookGroups } from '../../database/entities/BookGroups'
 import { Books } from '../../database/entities/Books'
 import { GroupTree } from '../group/GroupTree'
 import { HiddenGroups } from '../group/HiddenGroups'
+import { GroupEvents } from '../group/GroupEvents'
 import toolsUtils from './ToolsUtils'
 
 /** 2026-11-01：空分组是否自动解散（用户要求保留空目录 ⇒ 默认 false，可一键恢复） */
@@ -87,6 +88,8 @@ class bookGroupUtils{
       await BooksDao.queryBookByGroup(alive, 3)
       //删除分组
       await BookGroupsDao.deleteBook(alive)
+      // 2026-11-02 P2-3（S8）：所有删除入口的统一收口 —— 结构变更只发一次事件
+      GroupEvents.emit([], [])
       await this.refreshHiddenGroupIds()
     } catch (e) {
       console.error(`[GRP-ROLLBACK] delGroupById 失败 ids=${alive.join(',')}：${JSON.stringify(e)}`)
