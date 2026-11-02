@@ -362,6 +362,13 @@ export default struct BookSelectGroupDialog{
   @Builder
   groupRow(row: GroupRow) {
     Row({ space: 6 }) {
+      // 2026-11-02 第 26 轮（「箭头不渲染」取证探针，纯日志）：builder 是否被子行执行到
+      if (row.depth > 0) {
+        Text('').fontSize(0).onAppear(() => {
+          console.log(`[GRP-ROW] built id=${row.group.groupId ?? -1} depth=${row.depth}`
+            + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
+        })
+      }
       Row().width(row.depth * 14)
       // 2026-11-01：左侧只留缩进；展开箭头移到**行尾**（独立热区），不再抢行点击
       Row().width(16)
