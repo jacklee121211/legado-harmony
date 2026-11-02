@@ -205,6 +205,8 @@ export default struct BookSelectGroupDialog{
 
   private toggleExpand(id: number): void {
     Haptics.tap()
+    const before: number = this.expandedIds.length
+    const rowsBefore: number = this.rows.length
     const i: number = this.expandedIds.indexOf(id)
     if (i >= 0) {
       this.expandedIds.splice(i, 1)
@@ -221,6 +223,14 @@ export default struct BookSelectGroupDialog{
     }
     this.expandedIds = this.expandedIds.slice()
     this.rebuildRows()
+    // ── 2026-11-02 第 26 轮（「行尾箭头不生效」取证探针，纯日志）──────────────────
+    // 真机现象（`2026-11-09-U3`）：移动分组弹窗里箭头渲染在、数据是全量，点它前后 dump 无子行。
+    // 本探针用来区分三种可能：
+    //   · 完全没打印        ⇒ **点击没进到 onClick**（命中区/被外层抢）
+    //   · 打印了但 rows 没变 ⇒ `toggleExpand` 逻辑/`groupList` 数据问题
+    //   · 打印了且 rows 变了 ⇒ 数据与状态都对，**渲染层**（List 虚拟化）没跟上
+    console.log(`[GRP-EXPAND] id=${id} expandLen=${before}->${this.expandedIds.length}`
+      + ` rowsLen=${rowsBefore}->${this.rows.length} mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
   }
 
   /** 把分组树按"已展开"拍平成可见行（递归 + 缩进） */
