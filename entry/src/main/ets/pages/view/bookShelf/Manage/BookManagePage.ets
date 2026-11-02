@@ -2,6 +2,7 @@ import bookListManage from './bookManage/bookListManage';
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import { GroupStore } from '../../../../common/group/GroupStore'
+import { GroupEvents, GroupChangedPayload } from '../../../../common/group/GroupEvents'
 import { gKey, bKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
@@ -274,6 +275,7 @@ export default struct BookManagePage {
     // 2026-11-01：入口态（最近/全部/分组/未分组）
     this.onRecentChip = this.routeParam.onRecentChip ?? false
     this.pageInit()
+    GroupEvents.subscribe(this.groupChangedListener)
     // ── 碰一碰 / 隔空传送（2026-10-25 收口到 BookShareBridge）──────────────────
     // 官方要求：进入可分享页面注册、离开页面（含退后台）注销。
     // 能力闸门在 bridge 内部按「设备类型 + sdkApiVersion」逐设备判定
@@ -289,9 +291,20 @@ export default struct BookManagePage {
   aboutToDisappear(): void {
     // 离开可分享页面必须注销监听，否则会出现"在别的页面碰一碰却发出本页选中的书"
     BookShareBridge.get().release(OWNER_MANAGE)
+    GroupEvents.unsubscribe(this.groupChangedListener)
   }
 
   //初始
+  /** 2026-11-02 P2-3（S6）：结构变更（groupIds 为空）⇒ 选中集立即清空，禁止用旧 id 写库 */
+  private groupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.changedGroupIds.length === 0) {
+      this.checkLists = {}
+      this.allCheck = false
+      bumpSelectionVersion()
+      console.log(`[GRP-EVENT] 结构变更 → 已清空选中集 (v=${p.version})`)
+    }
+  }
+
   pageInit(): void {
     // 2026-11-01：进入页面先清空上一页的勾选状态（否则子目录会沿用父页的全选，
     //   表现为"全选一直亮着"且分享范围被放大成整个父目录）
