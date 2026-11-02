@@ -362,13 +362,12 @@ export default struct BookSelectGroupDialog{
   @Builder
   groupRow(row: GroupRow) {
     Row({ space: 6 }) {
-      // 2026-11-02 第 26 轮（「箭头不渲染」取证探针，纯日志）：builder 是否被子行执行到
-      if (row.depth > 0) {
-        Text('').fontSize(0).onAppear(() => {
-          console.log(`[GRP-ROW] built id=${row.group.groupId ?? -1} depth=${row.depth}`
-            + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
-        })
-      }
+      // 2026-11-02 第 26 轮（「箭头不渲染」取证探针 v2）：**每一行**都记，用来区分
+      //   (a) build 根本没重建（一行都不打印）  (b) build 重建了但 ForEach 没把新 items 交给 builder
+      Text('').fontSize(0).onAppear(() => {
+        console.log(`[GRP-ROW] built id=${row.group.groupId ?? -1} depth=${row.depth} total=${this.rows.length}`
+          + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
+      })
       Row().width(row.depth * 14)
       // 2026-11-01：左侧只留缩进；展开箭头移到**行尾**（独立热区），不再抢行点击
       Row().width(16)
@@ -489,6 +488,13 @@ export default struct BookSelectGroupDialog{
       //   行数动态增长时新行会被裁掉（真机表现为"点展开看不到子目录"，数据侧探针已证明
       //   presetLen=10 数据正常）。List 自带滚动与行复用，对动态行数更稳。
       List({ space: 2 }) {
+        // 2026-11-02 第 26 轮（探针 v2）：List 头部的零尺寸标记 —— 每次 build 重建都会打一行
+        ListItem() {
+          Text('').fontSize(0).onAppear(() => {
+            console.log(`[GRP-BUILD] list rebuilt rows=${this.rows.length} expandLen=${this.expandedIds.length}`
+              + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
+          })
+        }.height(0)
         // 固定项：移动书籍 → 「未分组」；移动分组本身 → 「根目录」
         if (this.isMoveGroupNode) {
           ListItem() {
