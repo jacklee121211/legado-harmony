@@ -11,8 +11,11 @@ export class GroupFlags {
   /** P1-2：书架分组页改读 GroupStore（唯一树真源） */
   static USE_STORE_IN_FOLDER: boolean = true
 
-  /** P1-2：批量管理页改读 GroupStore */
-  static USE_STORE_IN_MANAGE: boolean = false
+  // ⚠️ 2026-11-02 第 26 轮（A③）：删掉了 `USE_STORE_IN_MANAGE`。
+  //   原因：它**全仓 0 处读取**（脚本核对 `GroupFlags.USE_STORE_IN_MANAGE` 只命中定义处），
+  //   写 true 不会有任何行为变化 —— 这种"看起来在切换、实际什么都不做"的开关比没有更危险：
+  //   文档/注释里还写着"批量管理页改读 GroupStore"，会误导后续判断（本项目已踩过一次）。
+  //   P1-2 真正接线时再加回来，且**必须同时给出读取点**。
 
   /** P2-1：分组弹窗的 隐藏/解散/删除 改走 GroupMutation（唯一写入口） */
   static USE_MUTATION_IN_DIALOG: boolean = true

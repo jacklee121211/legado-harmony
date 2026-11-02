@@ -138,13 +138,22 @@ export default struct BookSelectGroupDialog{
    */
   private surface: MaterialColumnModifier = new MaterialColumnModifier(NightMode.isDarkSurface() ? ShelfColors.card() : Color.White, true)
   aboutToAppear(): void {
-    // [PROBE-DLG 2026-11-01] 临时探针：确认单书移动时传入的分组数据是否为空 / currentIndex 含义
-    console.log(`[PROBE-DLG] presetNull=${this.presetGroups === null} presetLen=${this.presetGroups === null ? -1 : this.presetGroups.length} currentIndex=${this.currentIndex} oldGroupId=${this.oldGroupId} moveNode=${this.isMoveGroupNode} moveStatus=${this.isMoveStatus}`)
     // ★ 2026-10-12：优先用**父级预取好的列表**（首帧就有内容，不再"过一会儿才刷出来"）。
-    //   未传（null）才回落到异步现查 —— 保证这个弹窗被别处单独使用时行为不变。
+    // ★ 2026-11-02 第 26 轮（A④ **G5 根上加固**）：用 presets 铺完首帧后**再后台重查一次**。
+    //   为什么必须补这一步：`presetGroups` 是**创建瞬间的快照**，一旦这个弹窗被"重开/重建"
+    //   （同一个 controller 再 open、页面重建后重新 new），`aboutToAppear` 会再跑一遍，
+    //   但读到的仍是**那份旧快照** ⇒ 界面上永远缺上次之后新建的分组。
+    //   真机实证（`_dsh_shots/2026-11-04-g5-probe/g5-jsapp.log`）：
+    //     23:49:06.740 创建成功 → 23:49:06.745 又一条 `[PROBE-DLG] presetLen=20`
+    //     （同一条日志里书籍数已 20→21）⇒ 重建 + 旧快照 = G5。
+    //   那一版已把"重建"这条路堵掉（改走连续创建通道），但**快照模式本身还在**：
+    //   只要将来有任何新路径触发重建，同一个 bug 就会换个入口复发 ⇒ 这里一次性根治：
+    //   先出首帧（不闪），随后异步重查覆盖 → 旧快照最多活一帧。
     if (this.presetGroups !== null) {
       this.groupList = this.presetGroups
       this.rebuildRows()
+      // 后台重查（不 await、不改首帧体验）；失败只打日志，列表保持 presets 内容
+      this.getGroupList()
       return
     }
     this.getGroupList()
