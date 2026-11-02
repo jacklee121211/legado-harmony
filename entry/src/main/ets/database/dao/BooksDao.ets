@@ -200,26 +200,26 @@ class BooksDao {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       let sql = `SELECT * FROM ${this.TABLE_NAME}`;
       // 动态添加 WHERE 子句
-      let whereClause: string[] = [];
-      if (type !== undefined) {
-        whereClause.push(`bookType = ${type}`);
-      }
-      if (bookGroup !== undefined && bookGroup !== 2) {
-        whereClause.push(`bookGroup = ${bookGroup}`);
-      }
-      // 2026-11-02：**搜索也要排除隐藏分组**（本方法自带 where，不经过 buildWhereClause，
-      //   之前漏了 ⇒ 隐藏组里的书能被搜到）。
-      if (HiddenGroups.ids.length > 0) {
-        whereClause.push(`bookGroup NOT IN (${HiddenGroups.ids.join(',')})`);
-      }
-      if (searchKey) {
-        whereClause.push(`(
-        bookName LIKE '%${searchKey}%'
-        OR author LIKE '%${searchKey}%'
-        OR originName LIKE '%${searchKey}%'
-      )`);
+      // 2026-11-02（架构收敛 P1）：**唯一查询入口** —— 不再自拼 where，统一走 buildWhereClause
+      const whereClause: string[] = this.buildWhereClause(param);
 
-      }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       // 如果有 where 子句，添加 WHERE 关键字
       if (whereClause.length > 0) {
         sql += ` WHERE ${whereClause.join(' AND ')}`;
