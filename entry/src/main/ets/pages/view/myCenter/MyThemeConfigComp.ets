@@ -13,6 +13,8 @@ import { NightMode } from '../../../common/utils/NightMode'
 import { OfflineMode } from '../../../common/utils/OfflineMode'
 // ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
 import { PlugboardConfigDialog } from '../../../componets/plugboard/PlugboardConfigDialog'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 
 // 个性主题组件模块
 @Component
@@ -133,7 +135,7 @@ export struct MyThemeConfigComp {
         this.plugboardDialog = null
       }
     })
-    this.plugboardDialog?.open()
+    DialogHost.openIf(this.plugboardDialog)
   }
 
   private openVip(): void {
@@ -158,7 +160,7 @@ export struct MyThemeConfigComp {
         this.vipDialog = null
       }
     })
-    this.vipDialog?.open()
+    DialogHost.openIf(this.vipDialog)
   }
 
   /** 自定义主题入口（VIP 门控范式与导入字体/下载字体一致：非 VIP → VIP 弹窗） */
@@ -185,7 +187,7 @@ export struct MyThemeConfigComp {
         this.themeEditorDialog = null
       }
     })
-    this.themeEditorDialog?.open()
+    DialogHost.openIf(this.themeEditorDialog)
   }
 
   /** 「+ 自定义主题」入口瓦片（VIP 金标提示；样式与主题色板瓦片同构） */
@@ -404,7 +406,7 @@ export struct MyThemeConfigComp {
             LongPressGesture()
               .onAction(() => {
                 Haptics.tap();
-                this.dialog.open()
+                DialogHost.openIf(this.dialog)
                 this.longPressGestureIndex = index
               })
           )

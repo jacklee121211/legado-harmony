@@ -46,6 +46,8 @@ import { FirstRunMode } from '../../../common/utils/FirstRunMode'
 // ── 阅读里程碑推广（2026-10-28 新增）：本页只用到开发者暗门的 `debugReset()` ──
 import { ReadPromo } from '../../../common/utils/ReadPromo'
 import { VipDialog } from '../../../componets/myCenter/VipDialog'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 // 2026-10-19：「书架动画速度」滑块按用户要求**整项删除**（连 `shelfAnimSpeed` 读写一起去掉）
 // ⇒ 不再 import EntranceWave；书架入场波次回归 `EntranceWave` 内置默认档（level 3 = 0.75x）。
 
@@ -944,7 +946,7 @@ export default struct MySetPage{
         this.testAccountDialog = null
       }
     })
-    this.testAccountDialog.open()
+    DialogHost.openIf(this.testAccountDialog)
   }
 
   /** 彩蛋解锁成功弹窗（原「改名解锁」文案，2026-09-28 随入口迁入） */
@@ -1713,7 +1715,7 @@ export default struct MySetPage{
         this.vipDialog = null
       }
     })
-    this.vipDialog?.open()
+    DialogHost.openIf(this.vipDialog)
   }
 
   /** VIP 开通成功后补开用户刚点的那一层（未开通 / 用户取消 = 什么都不做） */

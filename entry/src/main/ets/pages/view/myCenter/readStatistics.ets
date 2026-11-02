@@ -13,6 +13,8 @@ import { ShelfColors } from '../../../common/utils/NightMode';
 import { resolveBookCover } from '../../../common/utils/CoverSource';
 import { ThemeStorageKey } from '../../../common/constants/Theme';
 import { ThemeItem } from '../../../common/model/Theme';
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 
 /**
  * 「读过 / 读完」两个统计的二级菜单（**同一个模板，两套数据源**）。
@@ -228,7 +230,7 @@ export default struct readStatistics {
 
   //删除列表
   deleteList() {
-    this.clearInfoDel?.open()
+    DialogHost.openIf(this.clearInfoDel)
   }
 
   onCancel() {

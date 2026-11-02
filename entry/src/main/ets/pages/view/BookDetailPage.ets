@@ -17,6 +17,8 @@ import { ThemeStorageKey } from '../../common/constants/Theme'
 import { ThemeItem } from '../../common/model/Theme'
 import { ShelfColors } from '../../common/utils/NightMode'
 import { bookParser } from '@kit.ReaderKit'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../common/dialog/DialogHost'
 
 /**
  * 标题图片样式（返回箭头 / 标题栏图标）
@@ -178,7 +180,7 @@ export default struct BookDetailPage {
   // 加入书架函数
   addBookShelf() {
     booksUtil.addBooks(this.bookData)
-    this.dialogController.open();
+    DialogHost.openIf(this.dialogController);
     this.isAddBookShelf = true; // 1s后关闭dialog
     setTimeout(() => {
       this.isBookRefreshing++

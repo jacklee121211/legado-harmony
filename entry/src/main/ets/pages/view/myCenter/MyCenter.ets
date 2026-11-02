@@ -31,6 +31,8 @@ import { WifiTransferDialog } from '../../../componets/myCenter/WifiTransferDial
 import { PlugboardZone } from '../../../componets/plugboard/PlugboardZone'
 import { PlugZone } from '../../../componets/plugboard/PlugboardTypes'
 import { PlugboardPrefs } from '../../../componets/plugboard/PlugboardPrefs'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 
 // T29-③（Round 40）：去掉 `@Entry`。
 // 编译器原文：`It's not a recommended way to export struct with '@Entry' decorator,
@@ -125,7 +127,7 @@ export default struct MyCenter {
         this.vipDialog = null
       }
     })
-    this.vipDialog.open()
+    DialogHost.openIf(this.vipDialog)
   }
 
   build() {
@@ -483,6 +485,6 @@ export default struct MyCenter {
         this.wifiDialog = null
       }
     })
-    this.wifiDialog.open()
+    DialogHost.openIf(this.wifiDialog)
   }
 }

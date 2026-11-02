@@ -107,6 +107,8 @@ import RatingPromptDialog from './view/myCenter/about/RatingPromptDialog'
 import AppGalleryUtil, { CommentResult } from '../common/utils/AppGalleryUtil'
 import { VipDialog } from '../componets/myCenter/VipDialog'
 import { VipManager } from '../common/utils/VipManager'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../common/dialog/DialogHost'
 
 @Entry
 @Component
@@ -1181,7 +1183,7 @@ struct Main {
         openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
         closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       })
-      this.firstRunDialog.open()
+      DialogHost.openIf(this.firstRunDialog)
     }, Main.FIRST_RUN_DELAY_MS)
   }
 
@@ -1321,7 +1323,7 @@ struct Main {
         }
       })
       this.promoRatingDialog = dialog
-      dialog.open()
+      DialogHost.openIf(dialog)
     } catch (e) {
       this.promoRatingDialog = null
       this.readPromoBusy = false
@@ -1454,7 +1456,7 @@ struct Main {
         }
       })
       this.promoVipDialog = dialog
-      dialog.open()
+      DialogHost.openIf(dialog)
     } catch (e) {
       this.promoVipDialog = null
       this.readPromoBusy = false

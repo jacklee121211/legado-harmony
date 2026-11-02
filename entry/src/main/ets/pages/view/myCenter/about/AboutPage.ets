@@ -14,6 +14,8 @@ import { APP_VERSION_FALLBACK } from './VersionLogData'
 import AppGalleryUtil, { StorePage, CommentResult } from '../../../../common/utils/AppGalleryUtil'
 import RatingPromptDialog from './RatingPromptDialog'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../common/dialog/DialogHost'
 
 // ── 关于我们（2026-09-30 回填，用户需求清单）────────────────────────────────
 // 基座（legado-harmony）的 aboutUsPage 为空壳参考：本页按喵阅现状全部重写。
@@ -289,7 +291,7 @@ export default struct AboutPage {
       this.toast('感谢你之前的评价')
       return
     }
-    this.ratingPromptDialog?.open()
+    DialogHost.openIf(this.ratingPromptDialog)
   }
 
   /**
