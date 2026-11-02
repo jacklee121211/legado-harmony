@@ -14,6 +14,7 @@ import { showMessage } from '../../../../../componets/common/promptShow'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
 // 三选项确认框（2026-10-22 新增）：分组管理模式下点分组 → 删除 / 解散 / 取消
 import ThreeActionDialog from '../../../../../componets/common/ThreeActionDialog'
+import { DialogHost } from '../../../../../common/dialog/DialogHost'
 import FourActionDialog from '../../../../../componets/common/FourActionDialog'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 // 2026-10-22 分组管理「删除」需要取组内书籍 id + 逐本删除（见 doDeleteGroup）
@@ -984,7 +985,7 @@ export default struct BookSelectGroupDialog{
         customStyle: false,
         cornerRadius: 25
       })
-      this.manageDialogHidden?.open()
+      if (this.manageDialogHidden !== null) { DialogHost.open(this.manageDialogHidden) }
       return
     }
     this.manageDialog = new CustomDialogController({
