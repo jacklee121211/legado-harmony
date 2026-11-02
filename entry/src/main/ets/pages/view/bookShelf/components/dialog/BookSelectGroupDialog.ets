@@ -158,17 +158,6 @@ export default struct BookSelectGroupDialog{
     } else {
       this.getGroupList()
     }
-    // ── 2026-11-02 第 26 轮（「当前」标记取证探针，纯日志）────────────────────────
-    // 起因：真机报"打开移动至时，「当前」标在**旧分组/祖先**上，且该行不可选"
-    //   （恶汉在 111 时「1」被标当前；移到 2 后仍标「1」；佣兵天下移到 2 后「13」被标当前）
-    //   ⇒ 这会让"把书移回上一级/原分组"在 UI 上不可直达（只能绕未分组两步）。
-    // 该标记只由这一处决定：`oldGroupId === row.group.groupId`。
-    // 而 `oldGroupId` 由调用方传入（BookInfoDialogs = bookData.bookGroup /
-    // FolderInfoDialog = itemData.groupId / IndexShelf = oldGroup / BookManagePage = bookTypeNumber）
-    // ⇒ 先取证：到底是谁传了旧值，还是标记逻辑把祖先当成了当前。
-    console.log(`[MOVE-DLG] oldGroupId=${this.oldGroupId ?? -1} moveGroupNode=${this.isMoveGroupNode}`
-      + ` moveStatus=${this.isMoveStatus} currentIndex=${this.currentIndex}`
-      + ` presetLen=${this.presetGroups === null ? -1 : this.presetGroups.length}`)
   }
 
   @State groupList:BookGroups[] = []
@@ -242,8 +231,6 @@ export default struct BookSelectGroupDialog{
 
   private toggleExpand(id: number): void {
     Haptics.tap()
-    const before: number = this.expandedIds.length
-    const rowsBefore: number = this.rows.length
     const i: number = this.expandedIds.indexOf(id)
     if (i >= 0) {
       this.expandedIds.splice(i, 1)
@@ -260,14 +247,6 @@ export default struct BookSelectGroupDialog{
     }
     this.expandedIds = this.expandedIds.slice()
     this.rebuildRows()
-    // ── 2026-11-02 第 26 轮（「行尾箭头不生效」取证探针，纯日志）──────────────────
-    // 真机现象（`2026-11-09-U3`）：移动分组弹窗里箭头渲染在、数据是全量，点它前后 dump 无子行。
-    // 本探针用来区分三种可能：
-    //   · 完全没打印        ⇒ **点击没进到 onClick**（命中区/被外层抢）
-    //   · 打印了但 rows 没变 ⇒ `toggleExpand` 逻辑/`groupList` 数据问题
-    //   · 打印了且 rows 变了 ⇒ 数据与状态都对，**渲染层**（List 虚拟化）没跟上
-    console.log(`[GRP-EXPAND] id=${id} expandLen=${before}->${this.expandedIds.length}`
-      + ` rowsLen=${rowsBefore}->${this.rows.length} mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
   }
 
   /** 把分组树按"已展开"拍平成可见行（递归 + 缩进） */
@@ -399,12 +378,6 @@ export default struct BookSelectGroupDialog{
   @Builder
   groupRow(row: GroupRow) {
     Row({ space: 6 }) {
-      // 2026-11-02 第 26 轮（「箭头不渲染」取证探针 v2）：**每一行**都记，用来区分
-      //   (a) build 根本没重建（一行都不打印）  (b) build 重建了但 ForEach 没把新 items 交给 builder
-      Text('').fontSize(0).onAppear(() => {
-        console.log(`[GRP-ROW] built id=${row.group.groupId ?? -1} depth=${row.depth} total=${this.rows.length}`
-          + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
-      })
       Row().width(row.depth * 14)
       // 2026-11-01：左侧只留缩进；展开箭头移到**行尾**（独立热区），不再抢行点击
       Row().width(16)
@@ -508,25 +481,8 @@ export default struct BookSelectGroupDialog{
     .margin({ bottom: PaddingConstants.PADDING_16 })
   }
 
-  /**
-   * 2026-11-02 第 26 轮（探针 v3）：build 每次重建时被**属性求值**调用一次，
-   * 用来判断"build 到底有没有重建"。
-   *
-   * 为什么不用别的写法：
-   *   · `build()` 顶层不能写裸语句 —— ArkTS 报 10905210「build 方法只能有一个根节点」；
-   *   · 零尺寸 `ListItem` 的 `onAppear` 不可靠 —— 真机证明两种模式都**不打印**（List 不创建高度 0 的项）。
-   * ⇒ 把日志放进一个**返回空串的方法**里，再由 `Text(this.probeBuildTag())` 的属性求值触发。
-   */
-  private probeBuildTag(): string {
-    console.log(`[GRP-BUILD] rows=${this.rows.length} expandLen=${this.expandedIds.length}`
-      + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
-    return ''
-  }
-
   build() {
     Column() {
-      // 2026-11-02 第 26 轮（探针 v3）：见 `probeBuildTag()` 注释
-      Text(this.probeBuildTag()).fontSize(0).height(0).width(0)
       Column(){
         // 2026-10-22：分组管理模式标题不同（其余结构完全一致）
         Text(this.isManageMode ? '分组管理' : '移动分组')

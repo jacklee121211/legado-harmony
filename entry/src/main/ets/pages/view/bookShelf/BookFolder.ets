@@ -160,23 +160,9 @@ export default struct BookFolder {
       const val = await this.loadGroupList()
       this.replayEntrance(val.length)
       this.groupList = val
-      // ── 2026-11-02 第 26 轮（B⑥ 取证探针，纯日志）──────────────────────────────
-      // 用于判断"根页残留旧卡片"到底是谁的数据：本页加载后的一级卡片 id、
-      // 以及测试分组 T1（groupId=31）在这次加载里的 parentId。
-      //   预期：T1 移进「1」后应为 parentId=5 且**不在** rootIds 里。
-      const rootIds: number[] = []
-      for (const g of val) {
-        if ((g.parentId ?? 0) === 0 && g.groupId !== undefined) {
-          rootIds.push(g.groupId)
-        }
-      }
-      let t31Parent: string = 'missing'
-      for (const g of val) {
-        if (g.groupId === 31) {
-          t31Parent = String(g.parentId ?? 0)
-        }
-      }
-      console.log(`[SHELF-FOLDER] n=${val.length} rootIds=[${rootIds.join(',')}] t31Parent=${t31Parent}`)
+      // 2026-11-02 第 26 轮：`[SHELF-FOLDER]` 取证探针已删除（B⑥ 已闭环）。
+      //   结论：本页加载时 `parentId` 数据一直是对的；残留卡片的根因是 ForEach key 漏了
+      //   `parentId`（见下方 keyGenerator 注释）——键值不变 ⇒ 复用旧组件 ⇒ 显示过滤不重算。
     } catch (e) {
       console.log('BookFolder getGroupList, Error, ', JSON.stringify(e))
     }
