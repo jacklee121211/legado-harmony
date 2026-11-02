@@ -75,6 +75,35 @@ export class GroupStore {
   }
 
   /**
+   * 2026-11-02（P1-2 预备）：按"书籍类型"过滤后的分组列表。
+   * 供书架/批量页替换各自 `BookGroupsDao.search({type})` 用（收敛后统一从这里取）。
+   */
+  static groupsOfType(type: number): BookGroups[] {
+    const out: BookGroups[] = []
+    for (const g of GroupStore._groups) {
+      if (g.groupType === undefined || g.groupType === type) {
+        out.push(g)
+      }
+    }
+    return out
+  }
+
+  /** 2026-11-02（P1-2 预备）：剔除孤儿分组（父级缺失/自环）后的列表 */
+  static keptGroups(): BookGroups[] {
+    const out: BookGroups[] = []
+    const tree: GroupTree | null = GroupStore._tree
+    if (tree === null) {
+      return GroupStore._groups
+    }
+    for (const g of GroupStore._groups) {
+      if (!tree.isOrphan(g)) {
+        out.push(g)
+      }
+    }
+    return out
+  }
+
+  /**
    * 需要从书籍查询里排除的分组（所有 `show=false` 分组的整棵子树）。
    * ⚠️ RDB 的 `show` 是 number(0/1)：判定必须用 `!g.show`。
    */
