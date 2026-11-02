@@ -5,6 +5,7 @@
  * 书籍浏览历史
  */
 import DbUtil from '../../common/utils/DbUtil';
+import { sqlEscape } from '../SqlSafe';
 import AppDatabaseUtil from '../AppDatabaseUtil';
 import { BookHistory } from '../entities/BookHistory';
 import { BookHistoryTypeParams } from '../types/BookHistoryType';
@@ -132,6 +133,28 @@ class BookHistoryDao {
       console.log('TagInfo, Error, ', JSON.stringify(err))
       return false
     }
+  }
+
+  /**
+   * 改名迁移（按书名）：`UPDATE book_history SET bookName = 新 WHERE bookName = 旧`。
+   * 返回 SQL 字符串是**刻意的** —— 调用方（`BookRename`）要把派生表迁移放进
+   * `DbUtil.runInTransaction(sqls: string[])`，事务只接受字符串数组。
+   */
+  renameBookSqls(oldName: string, newName: string): string[] {
+    const o: string = sqlEscape(oldName)
+    const n: string = sqlEscape(newName)
+    return [`UPDATE ${this.TABLE_NAME} SET bookName = '${n}' WHERE bookName = '${o}'`]
+  }
+
+  /** 删书清理：清掉该书名的全部浏览历史（谓词版，不拼 SQL、无需转义） */
+  async deleteByBookName(bookName: string): Promise<void> {
+    const n: string = (bookName ?? '').trim()
+    if (n === '') {
+      return
+    }
+    const predicates = DbUtil.getPredicates(this.TABLE_NAME)
+    predicates.equalTo('bookName', n)
+    await DbUtil.delete(predicates)
   }
 
   async deleteAllBookHistory() {

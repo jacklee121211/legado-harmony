@@ -564,6 +564,29 @@ class BooksDao {
       return false
     }
   }
+
+  /**
+   * 改名核心写：**只改** `books` 的 `bookName` + `updateTime`（2026-11-03 A1）。
+   *
+   * 为什么要这个专用方法：改造前 `BookRename.rename` 是手拼
+   * `` `UPDATE books SET bookName = '${esc(newN)}', updateTime = ${ts} WHERE id = ${bookId}` ``，
+   * 自己维护转义（`BookRename.esc`）、自己拼 SQL。现在走**谓词版** `DbUtil.update`
+   * （`RdbPredicates` 参数传递，天然免疫引号问题），SQL 只存在于数据层。
+   *
+   * ⚠️ 只改这两列：`BookRename` 那套"核心单独执行 / 派生表失败只记日志"的策略不变，
+   *   本方法失败会抛出，由调用方决定"改名失败"（见 `BookRename.rename` 注释）。
+   */
+  async renameBook(id: number, newName: string): Promise<void> {
+    const columns: ColumnInfo[] = AppDatabaseUtil.getAssignColumn(this.TABLE_NAME, ['bookName', 'updateTime'])
+    const predicates = DbUtil.getPredicates(this.TABLE_NAME)
+    predicates.equalTo('id', id)
+    // ArkTS 禁止无类型对象字面量（arkts-no-untyped-obj-literals）⇒ 用实体实例承载补丁
+    const patch: Books = new Books()
+    patch.bookName = newName
+    patch.updateTime = Date.now()
+    await DbUtil.update(predicates, patch, columns)
+  }
+
   //置顶
   // ⚠️ 逐本 await 写入（2026-09-29，审核问题②）：forEach 裸调 + 不等待 ⇒ 调用方
   // 拿到 resolve 时写库未完成，随即重查列表查到旧值（"置顶后不实时更新"根因之一）。

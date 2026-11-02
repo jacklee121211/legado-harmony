@@ -1,4 +1,5 @@
 import DbUtil from '../../common/utils/DbUtil'
+import { sqlEscape } from '../SqlSafe'
 import AppDatabaseUtil from '../AppDatabaseUtil'
 import { ColumnInfo } from '../types/ColumnInfo'
 
@@ -35,13 +36,38 @@ export interface BookmarkRow {
   content: string
 }
 
-/** SQL 单引号转义（书名/正文里出现 `'` 会让语句断裂） */
-function esc(s: string): string {
-  return (s ?? '').replace(/'/g, "''")
-}
+/**
+ * SQL 单引号转义 —— **实现只有一份**（`database/SqlSafe.ets`）。
+ *
+ * 2026-11-03（A1）：原来这里、`ReadRecordDao:46`、`BookRename:89` 各写了一遍，
+ * 三份语义靠人同步。现在统一引用；保留本地别名 `esc` 只为不扩大调用点改动面。
+ */
+const esc = sqlEscape
 
 class BookmarksDao {
   TABLE_NAME: string = 'bookmarks'
+
+  /**
+   * 改名迁移（按书名）：`UPDATE bookmarks SET bookName = 新 WHERE bookName = 旧`。
+   * 返回 SQL 字符串是**刻意的** —— 调用方（`BookRename`）要把派生表的迁移放进
+   * `DbUtil.runInTransaction(sqls: string[])`，而事务只接受字符串数组。
+   */
+  renameBookSqls(oldName: string, newName: string): string[] {
+    const o: string = esc(oldName)
+    const n: string = esc(newName)
+    return [`UPDATE ${this.TABLE_NAME} SET bookName = '${n}' WHERE bookName = '${o}'`]
+  }
+
+  /** 删书清理：清掉该书名的全部书签（谓词版，不拼 SQL、无需转义） */
+  async deleteByBookName(bookName: string): Promise<void> {
+    const n: string = (bookName ?? '').trim()
+    if (n === '') {
+      return
+    }
+    const predicates = DbUtil.getPredicates(this.TABLE_NAME)
+    predicates.equalTo('bookName', n)
+    await DbUtil.delete(predicates)
+  }
 
   /**
    * 建 `bookmarks` 表。

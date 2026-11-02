@@ -39,13 +39,15 @@
  *    避免把不可本地验证的业务改动混进 bug 修复。
  */
 import DbUtil from '../../common/utils/DbUtil'
+import { sqlEscape } from '../SqlSafe'
 import AppDatabaseUtil from '../AppDatabaseUtil'
 import { ColumnInfo } from '../types/ColumnInfo'
 
-/** SQL 单引号转义（与 `BookRename.esc` / `BookmarksDao.esc` 同款） */
-function esc(s: string): string {
-  return (s ?? '').replace(/'/g, "''")
-}
+/**
+ * SQL 单引号转义 —— **实现只有一份**（`database/SqlSafe.ets`）。
+ * 2026-11-03（A1）：原来这里与 `BookRename` / `BookmarksDao` 各写一遍，现统一引用。
+ */
+const esc = sqlEscape
 
 class ReadRecordDao {
   TABLE_NAME: string = 'readRecord'

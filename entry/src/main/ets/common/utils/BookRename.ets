@@ -35,6 +35,9 @@ import { ColumnInfo } from '../../database/types/ColumnInfo'
 import AppDatabaseUtil from '../../database/AppDatabaseUtil'
 import DbUtil from './DbUtil'
 import readRecordDao from '../../database/dao/ReadRecordDao'
+import booksDao from '../../database/dao/BooksDao'
+import bookmarksDao from '../../database/dao/BookmarksDao'
+import bookHistoryDao from '../../database/dao/BookHistoryDao'
 // 2026-10-12：改名后同步听书会话书名（迷你栏书名条）
 import { ListenSession } from '../../tts/ListenSession'
 import { Books } from '../../database/entities/Books'
@@ -84,11 +87,6 @@ class BookRename {
 
   /** 书名最大长度（见导出常量 `MAX_BOOK_NAME_LEN`） */
   static readonly MAX_NAME_LEN: number = MAX_BOOK_NAME_LEN
-
-  /** SQL 单引号转义（沿用 `BookmarksDao.esc` 的做法） */
-  private static esc(s: string): string {
-    return s.replace(/'/g, "''")
-  }
 
   /**
    * 名字冲突检查（返回空串 = 可用，否则返回给用户看的原因）。
@@ -161,8 +159,6 @@ class BookRename {
       return res
     }
 
-    const esc = BookRename.esc
-    const ts: number = Date.now()
     // ★ 核心书行**单独成一句、单独执行、只有它失败才算改名失败**（2026-10-12 加固）。
     //
     // 为什么拆开：原实现把 5 条 SQL（books + bookmarks + readRecord×2 + book_history）
@@ -175,9 +171,12 @@ class BookRename {
     //   · `books` 的 UPDATE 单独执行 → 失败 = 改名失败（返回 db 错误）；
     //   · 附属表的迁移放进事务 → 失败只记日志（书已改名，宁可留下派生数据没跟过来）；
     //   · 末尾兜底**再次**把 books 行写成新名（幂等），防止"派生表事务回滚把书也带回去"。
+    // ⚠️ 2026-11-03（A1）核对：**末尾那次兜底写并不存在**（本函数只有上面 `renameBook` 一次
+    //   `books` 写入）。该句子是历史描述遗留，保留原文以免丢失"当初为什么这样拆"的推理，
+    //   但请勿据此以为代码里有二次写入。
     try {
-      await DbUtil.executeSql(
-        `UPDATE books SET bookName = '${esc(newN)}', updateTime = ${ts} WHERE id = ${bookId}`)
+      // 2026-11-03（A1）：SQL 收回数据层 —— 谓词版更新（不拼字符串、无需转义）
+      await booksDao.renameBook(bookId, newN)
     } catch (err) {
       console.error('BookRename.rename core update failed: ' + JSON.stringify(err))
       res.reason = 'db'
@@ -186,13 +185,14 @@ class BookRename {
     }
 
     // 附属表迁移（书签 / 阅读时长 / 浏览历史）—— 失败**不**回滚书行，只记录
+    // 2026-11-03（A1）：SQL 由各 DAO 提供，本文件不再拼 SQL；事务语义不变。
     const derivedSqls: string[] = [
       // ② 书签
-      `UPDATE bookmarks SET bookName = '${esc(newN)}' WHERE bookName = '${esc(oldN)}'`,
+      ...bookmarksDao.renameBookSqls(oldN, newN),
       // ③④ 阅读时长（主键 (deviceId, bookName)：先删冲突行再改名，顺序不可换）
       ...readRecordDao.renameBookSqls(oldN, newN),
       // ⑤ 浏览历史
-      `UPDATE book_history SET bookName = '${esc(newN)}' WHERE bookName = '${esc(oldN)}'`
+      ...bookHistoryDao.renameBookSqls(oldN, newN)
     ]
     try {
       await DbUtil.runInTransaction(derivedSqls)
@@ -263,10 +263,11 @@ class BookRename {
     if (n === '') {
       return
     }
-    const esc = BookRename.esc
+    // 2026-11-03（A1）：删除派生数据也收回 DAO（谓词版，不拼 SQL）；语义不变：
+    //   失败只是"没清干净"，不影响书行已删除这件事。
     try {
-      await DbUtil.executeSql(`DELETE FROM bookmarks WHERE bookName = '${esc(n)}'`)
-      await DbUtil.executeSql(`DELETE FROM book_history WHERE bookName = '${esc(n)}'`)
+      await bookmarksDao.deleteByBookName(n)
+      await bookHistoryDao.deleteByBookName(n)
     } catch (err) {
       console.error('BookRename.purge db failed: ' + JSON.stringify(err))
     }
