@@ -151,6 +151,8 @@ export default struct BookSelectGroupDialog{
     if (this.presetGroups !== null) {
       this.groupList = this.presetGroups
       this.rebuildRows()
+      // 2026-11-02 第 26 轮（B⑦）：「移动分组本身」模式**默认全部展开**（见 expandAllForGroupMove 注释）
+      this.expandAllForGroupMove()
       // 后台重查（不 await、不改首帧体验）；失败只打日志，列表保持 presets 内容
       this.getGroupList()
     } else {
@@ -182,7 +184,42 @@ export default struct BookSelectGroupDialog{
     }).then((val)=>{
       this.groupList = val
       this.rebuildRows()
+      // 2026-11-02 第 26 轮（B⑦）：重查完成后同样保持"移动分组本身"的全展开
+      this.expandAllForGroupMove()
     })
+  }
+
+  /**
+   * 2026-11-02 第 26 轮（B⑦）：**「移动分组本身」模式默认把整棵树全部展开**。
+   *
+   * ── 为什么（真机证据 + 产品理由）────────────────────────────────────────────
+   * 真机（`2026-11-13-chevron-v3`，探针 v3）证明：在这个模式里点行尾箭头，
+   * `toggleExpand` 确实执行了（`[GRP-EXPAND] rowsLen=4->7`）、`build` 也重建了
+   * （`[GRP-BUILD] rows=7`），但 **`[GRP-ROW]` 一条都没打** ⇒ 子行没被交给 builder
+   * （而同一条 ForEach 在"书籍移动至"模式下同样操作会正常出子行）。
+   * 该渲染怪象定位成本很高（已悬置，见 docs `§19.2`），但它导致一个**实际功能不可达**：
+   * 「把一个子分组移进同级的另一个分组」必须先把父级展开才能看到目标。
+   *
+   * ⇒ 从产品角度更合理的做法：**这个模式本来就该显示完整层级**（用户是在选"层级目标"，
+   *   不是在看某一层），所以默认把所有「有子分组的分组」全部展开，
+   *   用户不需要点箭头也能看到全部候选。这样既绕开了该渲染怪象，也改善可发现性。
+   *
+   * ⚠️ 只对本模式生效；「移动书籍」「分组管理」保持原行为（默认收起，按需展开）。
+   */
+  private expandAllForGroupMove(): void {
+    if (!this.isMoveGroupNode) {
+      return
+    }
+    const tree: GroupTree = GroupTree.build(this.groupList)
+    const ids: number[] = []
+    for (const g of this.groupList) {
+      const gid: number = g.groupId ?? -1
+      if (gid > 0 && ids.indexOf(gid) < 0 && tree.childrenOf(gid).length > 0) {
+        ids.push(gid)
+      }
+    }
+    this.expandedIds = ids
+    this.rebuildRows()
   }
 
   /** 分组的来源路径（`分组/父/子`），与面包屑同源；用于行内第二行灰字 */
