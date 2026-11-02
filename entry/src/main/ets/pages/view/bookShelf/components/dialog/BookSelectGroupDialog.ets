@@ -741,11 +741,21 @@ export default struct BookSelectGroupDialog{
    *
    * 原 `getGroupList()` 是 fire-and-forget（`.then` 里赋值），调用方拿不到"已经刷新完"
    * 的时点；连续创建要求"创建完 ⇒ 列表立刻是最新的"，所以必须能 await。
+   *
+   * ⚠️ 2026-11-02 第 26 轮**真机实测修复（G5）**：本方法原来只写 `this.groupList`，
+   *   **忘了 `rebuildRows()`** —— 而本弹窗真正渲染的是 `@State rows`（`build()` 里
+   *   `ForEach(this.rows, …)`，见 `:464`），`groupList` 只是 `rebuildRows()` 的输入。
+   *   ⇒ 「移动至 → 新建分组」后：父弹窗活着、分组也真建了（书架能看到），
+   *     但**弹窗里的树列表不出现新分组**（连滚到底也没有），持续两个构建都复现。
+   *   同步版 `getGroupList()`（`:160-167`）里本来就有这一行，是这条异步版漏了
+   *   （异步版 2026-10-22 写、树形/`rows` 渲染 2026-11-01 才加 ⇒ 加渲染时没回头补这里）。
    */
   private async getGroupListAsync(): Promise<void> {
     try {
       const list: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
       this.groupList = list
+      // 列表必须从 groupList 重建可见行，否则新分组只进了 groupList、进不了 UI
+      this.rebuildRows()
     } catch (e) {
       console.error('getGroupListAsync failed: ' + JSON.stringify(e))
     }

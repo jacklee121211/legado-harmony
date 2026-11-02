@@ -937,6 +937,17 @@ export default struct ReaderPage3 {
   @State isShowContentSetting: boolean = false
   @State isLuminanceFollowSystem: boolean = false //亮度跟随系统
   @State isScreenState: boolean = true //屏幕是否常亮（2026-09-27 新用户默认开启）
+  /**
+   * 2026-11-02 第 26 轮（R5 修复）：**程序化回退开关值时的"消音"标记**。
+   *
+   * 这两个 Toggle 用的是 `isOn: $$this.xxx`（**双向绑定**）。用户点「取消」时我们要把值写回原值，
+   * 而这次**程序化赋值本身会再触发一次 onChange** ⇒ 又弹一次确认框（且文案按新值反向），
+   * 真机上表现为「取消」取消不掉、可无限循环（`82/87-R5-after-cancel.jpeg`、`91-R6-t1.json`）。
+   * ⇒ 回退前把"要回退到的值"记在这里，下一次 onChange 若等于它就**吞掉并清标记**。
+   * 用**值匹配**而不是时间窗，所以不依赖 onChange 是同步还是下一帧触发。
+   */
+  private lumRollbackTo: boolean | null = null
+  private screenRollbackTo: boolean | null = null
   // 朗读（TTS）状态
   @State ttsState: TtsState = 'stopped'
   @State ttsPrefs: TtsPrefs = loadTtsPrefs()
@@ -9628,12 +9639,24 @@ oAnimInitNode 配套） */
           .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
         Toggle({ type: ToggleType.Switch, isOn: $$this.isLuminanceFollowSystem })
           .onChange((value) => {
+            // ── 2026-11-02 第 26 轮修复（R5，真机实测）：**"取消"原来取消不掉** ───────────
+            // 现象（真机 `82-R5-lum-confirm.jpeg` vs `87-R5-after-cancel.jpeg`）：点「取消」后弹窗
+            //   不关，而是**以反向文案再弹一次**（"关闭后…" → "开启后…"），可无限循环 ⇒ 用户退不出去。
+            // 机制：`$$` 是**双向绑定**，取消时 `this.isLuminanceFollowSystem = prev` 这次**程序化赋值
+            //   会再次触发 onChange** ⇒ 又走一遍确认框（此时 value=prev ⇒ 文案反向）。
+            // 修法：记下"我刚程序化回退到的值"，下一次 onChange 若恰好等于它就**直接吞掉**；
+            //   按**值**匹配（不按时间窗），所以不依赖 onChange 是同步还是下一帧触发。
+            if (this.lumRollbackTo !== null && value === this.lumRollbackTo) {
+              this.lumRollbackTo = null
+              return
+            }
+            this.lumRollbackTo = null
             Haptics.tap();
             // 2026-10-31：防误触 —— 先弹确认，确定才生效；取消回退开关
             const prev: boolean = !value;
             // 2026-11-02 第 25 轮（P3 B3）：全局 `AlertDialog.show` 已废弃，改用 UIContext 作用域的同一套系统弹窗
-      // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`（外观/参数与原全局 API 一致）
-      this.getUIContext().showAlertDialog({
+            // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`（外观/参数与原全局 API 一致）
+            this.getUIContext().showAlertDialog({
               title: '亮度跟随系统',
               message: value ? '开启后，阅读亮度跟随系统设置。' : '关闭后，阅读亮度使用固定值。',
               primaryButton: {
@@ -9646,10 +9669,12 @@ oAnimInitNode 配套） */
               secondaryButton: {
                 value: '取消',
                 action: () => {
+                  this.lumRollbackTo = prev;
                   this.isLuminanceFollowSystem = prev;
                 }
               },
               cancel: () => {
+                this.lumRollbackTo = prev;
                 this.isLuminanceFollowSystem = prev;
               }
             });
@@ -9659,12 +9684,19 @@ oAnimInitNode 配套） */
           .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
         Toggle({ type: ToggleType.Switch, isOn: $$this.isScreenState })
           .onChange((value) => {
+            // 2026-11-02 第 26 轮修复（R5）：同「亮度跟随系统」—— 吞掉程序化回退引发的那次 onChange，
+            //   否则「取消」会以反向文案无限重弹（真机 `90-R6…` / `91-R6-t1.json` 复现）。
+            if (this.screenRollbackTo !== null && value === this.screenRollbackTo) {
+              this.screenRollbackTo = null
+              return
+            }
+            this.screenRollbackTo = null
             Haptics.tap();
             // 2026-10-31：防误触 —— 先弹确认，确定才生效；取消回退开关
             const prev: boolean = !value;
             // 2026-11-02 第 25 轮（P3 B3）：全局 `AlertDialog.show` 已废弃，改用 UIContext 作用域的同一套系统弹窗
-      // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`（外观/参数与原全局 API 一致）
-      this.getUIContext().showAlertDialog({
+            // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`（外观/参数与原全局 API 一致）
+            this.getUIContext().showAlertDialog({
               title: '屏幕常亮',
               message: value ? '开启后，阅读时屏幕保持常亮。' : '关闭后，屏幕按系统设置息屏。',
               primaryButton: {
@@ -9677,10 +9709,12 @@ oAnimInitNode 配套） */
               secondaryButton: {
                 value: '取消',
                 action: () => {
+                  this.screenRollbackTo = prev;
                   this.isScreenState = prev;
                 }
               },
               cancel: () => {
+                this.screenRollbackTo = prev;
                 this.isScreenState = prev;
               }
             });
