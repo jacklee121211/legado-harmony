@@ -54,7 +54,7 @@ class bookGroupUtils{
    * ⚠️ 顺序：**先搬书、再删分组行**（与 `BooksDao.queryBookByGroup` 的语义一致 ——
    *   它按 `bookGroup IN (…)` 找书，不依赖分组行是否存在，但先搬后删语义更清晰）。
    */
-  async delGroupById(id:number|number[]){
+  async delGroupById(id:number|number[], emitEvent: boolean = true){
     let Ids = toolsUtils.numberArrays(id)
     if (Ids.length === 0) return
     // ── 2026-11-02 预检：只对真实存在的分组动手，避免"删了不存在的 id"出现假成功 ──
@@ -88,9 +88,15 @@ class bookGroupUtils{
       await BooksDao.queryBookByGroup(alive, 3)
       //删除分组
       await BookGroupsDao.deleteBook(alive)
-      // 2026-11-02 P2-3（S8）：所有删除入口的统一收口 —— 结构变更只发一次事件
-      GroupEvents.emit([], [])
+      // ── 2026-11-02 第 24 轮（D2/S8）两处修正 ─────────────────────────────────
+      // ① 事件改到 `refreshHiddenGroupIds()` **之后**：旧写法在 try 内、刷新隐藏集合之前 emit，
+      //    万一刷新抛异常就会"事件已发出、随后回滚"，订阅方看到结构变了但数据没变。
+      // ② 新增 `emitEvent` 开关（默认 true = 行为不变）：批量场景由调用方传 **一次数组**
+      //    或传 false 后统一发一次，满足 S8「一次操作只发一次事件」。
       await this.refreshHiddenGroupIds()
+      if (emitEvent) {
+        GroupEvents.emit([], [])
+      }
     } catch (e) {
       console.error(`[GRP-ROLLBACK] delGroupById 失败 ids=${alive.join(',')}：${JSON.stringify(e)}`)
       let restored: number = 0
@@ -122,7 +128,7 @@ class bookGroupUtils{
    * ⚠️ 全部 `await`，保证调用方随后广播刷新时写库已提交
    *   （同 `delGroupById` 2026-10-22 的教训）。
    */
-  async dissolveGroup(id: number, mode: string = 'keepChildren'): Promise<void> {
+  async dissolveGroup(id: number, mode: string = 'keepChildren', emitEvent: boolean = true): Promise<void> {
     if (id <= 0) {
       return
     }
@@ -157,7 +163,12 @@ class bookGroupUtils{
         const ids: number[] = tree.subtreeIds(id)
         await BooksDao.queryBookByGroup(ids, target)
         await BookGroupsDao.deleteBook(ids)
-      await this.refreshHiddenGroupIds()
+        await this.refreshHiddenGroupIds()
+        // 2026-11-02 第 24 轮（D2）：解散原来**一次事件都不发** ⇒ 批量页的 S6 清空永远不触发、
+        //   真机上"解散后取不到 [GRP-EVENT]"就是这条导致的。放在最后一个 await 之后 = 成功才发。
+        if (emitEvent) {
+          GroupEvents.emit([], [])
+        }
         return
       }
       // ① 直属书归还父级
@@ -180,6 +191,10 @@ class bookGroupUtils{
       }
       // ③ 删本分组行
       await BookGroupsDao.deleteBook([id])
+      // 2026-11-02 第 24 轮（D2）：同上 —— 成功之后发**唯一一次**结构变更事件（最后一步，失败则不发）
+      if (emitEvent) {
+        GroupEvents.emit([], [])
+      }
     } catch (e) {
       // ── 失败回滚：把动过的书按快照写回原分组 ────────────────────────────────
       console.error(`[GRP-ROLLBACK] dissolveGroup 失败 id=${id} mode=${mode}，开始回滚：${JSON.stringify(e)}`)
@@ -197,6 +212,28 @@ class bookGroupUtils{
         }
       console.error(`[GRP-ROLLBACK] 已回滚 ${restored}/${bookSnap.length} 本`)
       throw e as Error
+    }
+  }
+
+  /**
+   * 2026-11-02 第 24 轮（D2 + S8）：**批量解散，只发一次事件**。
+   *
+   * 为什么不能由调用方 for 循环 `dissolveGroup(gid, mode)`：那样 N 个分组会发 N 次事件，
+   * 违反 S8「一次操作只发一次 `GroupChanged`」（真机已实测同类问题：批量删 2 个分组 = 2 条事件）。
+   * 这里逐个原子解散（每个都有自己的预检/回滚），最后统一 emit 一次。
+   *
+   * ⚠️ 失败语义：任一分组解散抛异常 ⇒ **不 emit**（异常原样抛给调用方去提示"解散失败"），
+   *   `refreshHiddenGroupIds()` 由各个 `dissolveGroup` 内部按需刷新。
+   */
+  async dissolveGroups(ids: number[], mode: string = 'keepChildren', emitEvent: boolean = true): Promise<void> {
+    if (ids.length === 0) {
+      return
+    }
+    for (const id of ids) {
+      await this.dissolveGroup(id, mode, false)
+    }
+    if (emitEvent) {
+      GroupEvents.emit([], [])
     }
   }
 

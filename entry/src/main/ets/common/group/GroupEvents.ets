@@ -64,6 +64,17 @@ export class GroupEvents {
     // 同步给仍用 @StorageProp 的旧组件（双轨期过渡，P4 后删除）
     AppStorage.setOrCreate<number>('GROUP_EVENT_VERSION', payload.version)
     const snapshot: GroupChangedListener[] = GroupEvents.listeners.slice(0)
+    // ── 2026-11-02 第 24 轮（D7）：**发端探针**，补上取证盲区 ─────────────────────
+    // 为什么必须有这行：`[GRP-EVENT] 结构变更 → 已清空选中集` 是在 `BookManagePage` 的
+    // **监听器**里打的（`BookManagePage.ets:300-307`），所以"JSAPP 里没有 GRP-EVENT"
+    // 有两种完全不同的原因：① emit 没执行；② emit 执行了但当时没有订阅者（批量页没挂载）。
+    // 有了本行就能三态区分：
+    //   · 连 `[GRP-EMIT]` 都没有        ⇒ 根本没发事件（写库路径没走到 emit）
+    //   · `[GRP-EMIT] … listeners=0`    ⇒ 发了，但没人订阅（页面没打开，属设计如此）
+    //   · `[GRP-EMIT] … listeners>0` 而没有 `[GRP-EVENT]` ⇒ 订阅者在，但判定条件没命中
+    // `listeners` 是**发事件那一刻**的订阅者数量。纯日志、零行为变化。
+    console.log(`[GRP-EMIT] v=${payload.version} groups=[${groupIds.join(',')}]`
+      + ` books=[${bookIds.join(',')}] listeners=${snapshot.length}`)
     for (const fn of snapshot) {
       try {
         fn(payload)

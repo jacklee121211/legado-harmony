@@ -3,6 +3,8 @@ import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUti
 import { GroupTree } from '../../../../common/group/GroupTree'
 import { GroupStore } from '../../../../common/group/GroupStore'
 import { GroupEvents, GroupChangedPayload } from '../../../../common/group/GroupEvents'
+// 2026-11-02 第 24 轮：批量隐藏改走唯一写入口（那条路才会发 GroupEvents）
+import { GroupMutation } from '../../../../common/group/GroupMutation'
 import { DialogHost } from '../../../../common/dialog/DialogHost'
 import { gKey, bKey, USE_SEPARATED_KEYS, isGroupKey, idOfKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
@@ -295,13 +297,23 @@ export default struct BookManagePage {
     GroupEvents.unsubscribe(this.groupChangedListener)
   }
 
-  //初始
-  /** 2026-11-02 P2-3（S6）：结构变更（groupIds 为空）⇒ 选中集立即清空，禁止用旧 id 写库 */
+  /**
+   * 2026-11-02 P2-3（S6）：结构变更（groupIds 为空）⇒ 选中集立即清空，禁止用旧 id 写库。
+   *
+   * ★ 2026-11-02 第 24 轮（D4）修补：原来只清 `checkLists / allCheck / bumpSelectionVersion()`，
+   *   **没清 `checkListNumber`** —— 而底部按钮（`:1131-1134`）、`manageTop`、`openMoveGroup`
+   *   读的正是 `checkListNumber`（它只由 `dataCheckList()` 从 `checkLists` 重新推导，`:1535-1544`）。
+   *   后果：事件到达后到 `refreshData()` 那 500ms 之间（`manageDelete` 的 `setTimeout`），
+   *   用户若点「移动至 / 置顶」，仍会拿**已删除的旧 id** 写库 —— 正是 S6 要禁止的事。
+   *   ⇒ 这里补一次 `dataCheckList()`：它是**选中集的唯一收敛点**（同时把 `checkListNumber`
+   *     置空、清 false 残留键、并同步分享快照 `syncShareSelection()`），不再各写各的。
+   */
   private groupChangedListener = (p: GroupChangedPayload): void => {
     if (p.changedGroupIds.length === 0) {
       this.checkLists = {}
       this.allCheck = false
       bumpSelectionVersion()
+      this.dataCheckList()
       console.log(`[GRP-EVENT] 结构变更 → 已清空选中集 (v=${p.version})`)
     }
   }
@@ -1438,8 +1450,13 @@ export default struct BookManagePage {
         }
       }
     }
-    for (const gid of groupIds) {
-      bookGroupUtil.delGroupById(gid)
+    // ── 2026-11-02 第 24 轮（D3/S8）：分组**一次批量调用**，不再 for 循环 ──────────
+    // 旧写法 `for (const gid of groupIds) { delGroupById(gid) }` ⇒ N 个分组发 N 次
+    // `GroupEvents.emit`（真机实测：一次批量删 2 个 = v=7/v=8 两条），违反 S8。
+    // `delGroupById` 本来就接受数组、内部是**批量的**（一次 `queryBookByGroup(alive,3)` +
+    // 一次 `deleteBook(alive)` + 一次 emit）⇒ 直接传数组即可，既少写 N-1 次库，也只发一次事件。
+    if (groupIds.length > 0) {
+      bookGroupUtil.delGroupById(groupIds)
     }
     if (bookIds.length > 0) {
       booksUtil.delBooksById(bookIds)
@@ -1462,8 +1479,17 @@ export default struct BookManagePage {
     cornerRadius: 25,
   })
   //隐藏操作
+  /**
+   * 批量「隐藏分组」。
+   *
+   * ⚠️ 2026-11-02 第 24 轮补漏：原来直接 `bookGroupUtil.updateGroupShow(this.checkListNumber)` ——
+   *   那条路**不发 `GroupEvents`**（与"恢复显示"同一个漏洞），书架/全部/最近收不到通知。
+   *   ⇒ 改走 `GroupMutation.setVisibleMany`：逐个写库、**只发一次**事件（满足 S8）。
+   */
   clickHideAccept() {
-   bookGroupUtil.updateGroupShow(this.checkListNumber)
+    GroupMutation.setVisibleMany(this.checkListNumber.slice(), false).catch((e: Error): void => {
+      console.error('[GRP-MUTATION] clickHideAccept failed: ' + e.message)
+    })
     setTimeout(()=>{
       this.refreshData()
       showMessage('已隐藏')
@@ -1685,9 +1711,12 @@ export default struct BookManagePage {
 
   private async runDissolve(gids: number[], mode: string): Promise<void> {
     try {
-      for (const gid of gids) {
-        await bookGroupUtil.dissolveGroup(gid, mode)
-      }
+      // ── 2026-11-02 第 24 轮（D2+D3）：批量解散走 `dissolveGroups` ────────────────
+      // 旧写法 for 循环 `dissolveGroup(gid, mode)` 有两个毛病：
+      //   ① `dissolveGroup` 以前完全不发事件 ⇒ 解散后 S6 的"选中集失效"永远不触发；
+      //   ② 现在它发事件了，若仍逐个调用就会 N 个分组发 N 次 ⇒ 违反 S8。
+      // `dissolveGroups` = 逐个原子解散（各自预检/回滚）+ **最后只 emit 一次**。
+      await bookGroupUtil.dissolveGroups(gids, mode)
       showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子文件夹已上提）')
       this.isBookRefreshing++
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++

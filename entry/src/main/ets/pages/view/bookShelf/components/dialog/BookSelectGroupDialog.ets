@@ -8,6 +8,8 @@ import CommonConstants from '../../../../../common/constants/CommonConstants'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import PaddingConstants from '../../../../../common/constants/PaddingConstants'
 import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
+// 2026-11-02 第 24 轮：隐藏/恢复显示改走唯一写入口（那条路才会发 GroupEvents）
+import { GroupMutation } from '../../../../../common/group/GroupMutation'
 import booksUtils from '../../../../../common/utils/booksUtils'
 import addBookTypeDialog, { AddGroupChannel } from '../../../../../componets/common/addBookTypeDialog'
 import { showMessage } from '../../../../../componets/common/promptShow'
@@ -1080,10 +1082,17 @@ export default struct BookSelectGroupDialog{
     }
   }
 
-  /** 恢复显示（隐藏分组）：反写 show=true，双广播后重查本列表 */
+  /**
+   * 恢复显示（隐藏分组）：反写 show=true，双广播后重查本列表。
+   *
+   * ⚠️ 2026-11-02 第 24 轮补漏：原来直接 `bookGroupUtils.updateGroupShow(groupId)` ——
+   *   那条路**不发 `GroupEvents`**（真机实证：同一次测试里"隐藏"打出
+   *   `[GRP-EMIT] v=5 groups=[31]`，而"恢复显示"0 条），于是书架/全部/最近收不到通知。
+   *   ⇒ 改走唯一写入口 `GroupMutation.setVisible`（刷真源 + 刷隐藏集合 + 发一次事件）。
+   */
   private async doRestoreShow(groupId: number, groupName: string): Promise<void> {
     try {
-      await bookGroupUtils.updateGroupShow(groupId)
+      await GroupMutation.setVisible(groupId, true)
       showMessage(`已恢复「${groupName}」`)
       this.afterGroupChanged()
     } catch (e) {
