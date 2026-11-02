@@ -31,6 +31,9 @@ import { importableExts } from '../../../common/format/FormatFlags'
 // ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
 import { PlugboardZone } from '../../../componets/plugboard/PlugboardZone'
 import { PlugZone } from '../../../componets/plugboard/PlugboardTypes'
+// 2026-11-02 第 26 轮（B⑤）：按 id 现查书籍（移动至需要"此刻"所在分组，不能依赖快照）
+import booksDao from '../../../database/dao/BooksDao'
+import { Books } from '../../../database/entities/Books'
 
 @Component
 export default struct IndexShelf {
@@ -1013,16 +1016,36 @@ export default struct IndexShelf {
     // 2026-11-01 修「单书弹窗偶发缺未分组」：默认值不能是 3（未分组）。
     //   冷启动时书数据可能还没就绪 ⇒ 读到 undefined，旧默认 3 会让弹窗误以为
     //   "书本来就在未分组里"从而隐藏该行。未知一律按 0 处理。
-    const oldGroup: number = AppStorage.get<number>('SHELF_MOVE_BOOK_GROUP') ?? 0
-    // 立即清空，保证下次同一个 id 也能再次触发
+    //
+    // ── 2026-11-02 第 26 轮（B⑤ 修复）：**不再从 AppStorage 读"当前分组"** ─────────
+    // 真机取证（dev-verify `2026-11-07-move-probe/s1..s4.log`，探针 `[MOVE-DLG]`）：
+    //   书实际所在 vs 传进弹窗的 oldGroupId —— 四次**没有一次对得上**：
+    //     恶汉在「1」(5)  → 传 0   ⇒ 弹窗无「当前」标记
+    //     恶汉在「111」(29)→ 传 5   ⇒ 「1」被标成当前、**不可点**（"移回上一级"被堵）
+    //     恶汉在「2」(6)   → 传 29  ⇒ 标记消失
+    //     佣兵天下在「13」(11) → 传 6 ← **上一本书的移动目标**（跨书污染）
+    //   根因：`BookInfoDialogs` 写的是 `this.bookData.bookGroup` —— 那是**创建瞬间的 book 快照**，
+    //   移动之后不刷新，于是"慢一拍"，还有可能串到别的书上。
+    //   ⇒ 改成**按 id 现查数据库**（`getBookByIds`），彻底不依赖任何快照。
+    //   同时删掉 `SHELF_MOVE_BOOK_GROUP` 这个 AppStorage 键的读（写侧也一并删，见 BookInfoDialogs）。
     AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_ID', 0)
     this.moveBookId = 0
-    this.openPageBookMoveDialog(bookId, oldGroup).catch((e: Error): void => {
+    this.openPageBookMoveDialog(bookId, 0).catch((e: Error): void => {
       console.error('openPageBookMoveDialog failed: ' + e.message)
     })
   }
 
-  private async openPageBookMoveDialog(bookId: number, oldGroup: number): Promise<void> {
+  private async openPageBookMoveDialog(bookId: number, oldGroupFallback: number): Promise<void> {
+    // 现查这本书**此刻**所在的分组（书可能刚被移动过；快照一律不可信）
+    let oldGroup: number = oldGroupFallback
+    try {
+      const fresh: Books[] = await booksDao.getBookByIds([bookId])
+      if (fresh.length > 0) {
+        oldGroup = fresh[0].bookGroup ?? oldGroupFallback
+      }
+    } catch (e) {
+      console.error('openPageBookMoveDialog: query bookGroup failed: ' + JSON.stringify(e))
+    }
     const groups: BookGroups[] = await bookGroupUtils.prefetchGroups(this.currentIndex)
     this.bookMoveDialog = new CustomDialogController({
       builder: BookSelectGroupDialog({

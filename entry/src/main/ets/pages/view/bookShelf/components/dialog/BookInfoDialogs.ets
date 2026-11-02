@@ -557,8 +557,11 @@ export default struct BookInfoDialogs{
     //   @State 绑定会失效：数据/点击都正常，但展开、重绘不生效（用户：单书移动至"死了"，
     //   分组/批量的移动至正常，唯一差别就是中间多一层弹窗）。
     AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_ID', this.bookData.id ?? 0)
-    // 2026-11-01：书数据可能还没就绪 ⇒ 未知 grup 用 0，不要默认 3（会误隐藏「未分组」行）
-    AppStorage.setOrCreate<number>('SHELF_MOVE_BOOK_GROUP', this.bookData.bookGroup ?? 0)
+    // 2026-11-02 第 26 轮（B⑤）：**删掉 `SHELF_MOVE_BOOK_GROUP` 这个通道**。
+    //   它传的是 `this.bookData.bookGroup` —— 创建瞬间的**书快照**，移动后不刷新，
+    //   真机四场景里没有一次等于书实际所在组（还会跨书串值：另一本书拿到上一本的目标组）。
+    //   现在 `IndexShelf.openPageBookMoveDialog` 按 bookId **现查数据库**取当前分组，
+    //   这个键既没人读，也不该再写（留着只会让人以为"它会生效"）。
     this.controller?.close()
     return
     // ① 预取（失败返回空数组，弹窗退回自己的异步兜底路径，不会卡住打开动作）
