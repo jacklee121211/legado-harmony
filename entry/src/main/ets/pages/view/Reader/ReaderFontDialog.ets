@@ -68,6 +68,8 @@ import UiMotion from '../../../common/utils/UiMotion';
 import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
 import { STORAGE_KEY_OFFLINE_MODE } from '../../../common/utils/OfflineMode';
+// 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 
 /** 与原面板一致的快捷档位（字号） */
 const FONT_PRESETS: number[] = [12, 18, 24, 32, 40, 48];
@@ -218,7 +220,7 @@ export struct ReaderFontDialog {
         this.vipDialog = null
       }
     })
-    this.vipDialog.open()
+    DialogHost.openIf(this.vipDialog)
   }
 
   /** 读库 + 预注册（导入/下载字体的预览与测量通道都要注册，串行幂等） */

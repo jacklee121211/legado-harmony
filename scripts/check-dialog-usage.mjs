@@ -41,16 +41,27 @@ const ALLOW_BARE_OPEN = [
   'pages/view/Reader/PdfViewerPage.ets',
 ];
 
-/** 允许出现旧弹窗 API 的文件（目标：这个数组最终为空） */
-const ALLOW_LEGACY_API = [
-  // 第 25 轮摸底：UnsupportedDoc 的 AlertDialog.show、ReaderPage3 的 2 处 AlertDialog.show
-  // 会在「阅读器域」批次统一迁走，迁完就把这几条删掉（闸门会因此变严）
-  'common/utils/UnsupportedDoc.ets',
-  'pages/view/Reader/ReaderPage3.ets',
-];
+/**
+ * 允许出现旧弹窗 API 的文件（目标：这个数组最终为空）
+ *
+ * 2026-11-02 已清空 ✅ —— 3 处全局 `AlertDialog.show`（ReaderPage3 ×2、UnsupportedDoc ×1）
+ * 全部改成 **UIContext 作用域**的 `getUIContext().showAlertDialog()` / `ui.showAlertDialog()`
+ * （SDK 证据：`api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`，外观参数一致）。
+ *
+ * ── 边界说明（为什么"系统弹窗"不算绕过 DialogHost）──────────────────────────
+ * `DialogHost` 管的是 **`CustomDialogController` 的生命周期**（一次性实例/父先真关/子退重建父）。
+ * 系统弹窗（alert）没有 controller 可托管，靠 UIContext 作用域即可保证"在哪个窗口上弹"。
+ * ⇒ 硬性要求只有一条：**禁止再出现全局 `AlertDialog.show` / `promptAction.showDialog`**（已废弃）。
+ */
+const ALLOW_LEGACY_API = [];
 
-/** `new CustomDialogController` 的总预算（只许降不许升） */
-const CTRL_BUDGET = 79;
+/**
+ * `new CustomDialogController` 的总预算（只许降不许升）。
+ * 2026-11-02 全项目收口完成时的实测值 = 70。
+ * ⚠️ 这个数**不会**变成 0：`DialogHost.open/openIf` 的入参就是 controller 实例
+ *   （`common/dialog/DialogHost.ets`），构造动作必须留在调用方。它只用于防"新增弹窗又各自 new 一堆"。
+ */
+const CTRL_BUDGET = 70;
 
 const args = process.argv.slice(2);
 const REPORT_ONLY = args.includes('--report');

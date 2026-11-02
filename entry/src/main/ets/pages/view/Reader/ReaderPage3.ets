@@ -96,6 +96,8 @@ import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent
 // 不自己判断形态；`true` 时按用户口径裁掉：听书 / 上一章下一章进度条 / 顶栏 / 设置 / 系统状态栏，
 // 保留：目录 / 书签 / 日间夜间自由 / 信息窗（顶部信息窗 + 底部 3 个 dock 图标）。
 import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
+// 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 
 interface ParamsObj {
   bookData: Books,
@@ -1680,12 +1682,12 @@ oAnimInitNode 配套） */
         this.reopenListenDialog();
       }
     });
-    this.sleepDialog?.open();
+    DialogHost.openIf(this.sleepDialog);
   }
 
   /** 子弹窗（定时）关闭后重新拉起父窗（听书面板） */
   private reopenListenDialog(): void {
-    this.listenDialog.open()
+    DialogHost.openIf(this.listenDialog)
   }
 
   /** 把选择结果写进引擎（真正实现"到点暂停"），并刷新文案 */
@@ -3217,7 +3219,7 @@ oAnimInitNode 配套） */
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
     this.saveSchemeDialog = dlg
-    dlg.open()
+    DialogHost.openIf(dlg)
   }
 
   /** 每次新建的控制器（与 `sleepDialog` 同理：弹窗参数不支持动态更新） */
@@ -3268,7 +3270,7 @@ oAnimInitNode 配套） */
         this.reopenSettings()
       }
     })
-    this.texDialog?.open()
+    DialogHost.openIf(this.texDialog)
   }
 
   /** 「更多方案」弹窗控制器（2026-09-25 新增，每次打开新建，参数不支持动态更新） */
@@ -3304,7 +3306,7 @@ oAnimInitNode 配套） */
         this.reopenSettings()
       }
     })
-    this.schemeDialog?.open()
+    DialogHost.openIf(this.schemeDialog)
   }
 
   /** 「VIP 购买」弹窗控制器（2026-09-28 会员化：免费点锁定功能 → 本弹窗） */
@@ -3338,7 +3340,7 @@ oAnimInitNode 配套） */
         this.reopenSettings()
       }
     })
-    this.vipDialog.open()
+    DialogHost.openIf(this.vipDialog)
   }
 
   /** 「保存方案」确认后落盘（数据取 `openSaveSchemeDialog` 的快照，见 V3 说明） */
@@ -3624,7 +3626,7 @@ oAnimInitNode 配套） */
    * 节奏里交接（独立 dialog controller 做不到逐帧 30% 对齐，这是框架边界，观感已协调）。
    */
   private reopenSettings(): void {
-    this.settingDialog.open()
+    DialogHost.openIf(this.settingDialog)
   }
 
   /** 字体管理弹窗：controller 每次新建（与「更多材质/保存方案」同款，参数不支持动态更新） */
@@ -3662,7 +3664,7 @@ oAnimInitNode 配套） */
         this.reopenSettings()
       }
     })
-    this.fontDialog.open()
+    DialogHost.openIf(this.fontDialog)
   }
 
   /**
@@ -9629,7 +9631,9 @@ oAnimInitNode 配套） */
             Haptics.tap();
             // 2026-10-31：防误触 —— 先弹确认，确定才生效；取消回退开关
             const prev: boolean = !value;
-            AlertDialog.show({
+            // 2026-11-02 第 25 轮（P3 B3）：全局 `AlertDialog.show` 已废弃，改用 UIContext 作用域的同一套系统弹窗
+      // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`（外观/参数与原全局 API 一致）
+      this.getUIContext().showAlertDialog({
               title: '亮度跟随系统',
               message: value ? '开启后，阅读亮度跟随系统设置。' : '关闭后，阅读亮度使用固定值。',
               primaryButton: {
@@ -9658,7 +9662,9 @@ oAnimInitNode 配套） */
             Haptics.tap();
             // 2026-10-31：防误触 —— 先弹确认，确定才生效；取消回退开关
             const prev: boolean = !value;
-            AlertDialog.show({
+            // 2026-11-02 第 25 轮（P3 B3）：全局 `AlertDialog.show` 已废弃，改用 UIContext 作用域的同一套系统弹窗
+      // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`（外观/参数与原全局 API 一致）
+      this.getUIContext().showAlertDialog({
               title: '屏幕常亮',
               message: value ? '开启后，阅读时屏幕保持常亮。' : '关闭后，屏幕按系统设置息屏。',
               primaryButton: {
@@ -10424,7 +10430,7 @@ oAnimInitNode 配套） */
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
-    this.readerCatalogDialog?.open()
+    DialogHost.openIf(this.readerCatalogDialog)
   }
 
   /**
@@ -10464,7 +10470,7 @@ oAnimInitNode 配套） */
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
-    this.readerBookmarkDialog?.open()
+    DialogHost.openIf(this.readerBookmarkDialog)
   }
 
   /**
@@ -10481,7 +10487,7 @@ oAnimInitNode 配套） */
       return
     }
     this.isShowListen = true
-    this.listenDialog.open()
+    DialogHost.openIf(this.listenDialog)
   }
 
   /**
@@ -10715,7 +10721,7 @@ oAnimInitNode 配套） */
     } else {
       this.isShowContentSetting = true
       this.logThemeProbe('open-setting');
-      this.settingDialog?.open()
+      DialogHost.openIf(this.settingDialog)
     }
   }
 

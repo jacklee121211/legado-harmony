@@ -30,7 +30,9 @@ export class UnsupportedDoc {
 
   /** 书架点击这类书：弹「不再支持」，给导出/删除两个出口 */
   static show(book: Books, ctx: common.UIAbilityContext, ui: UIContext): void {
-    AlertDialog.show({
+    // 2026-11-02 第 25 轮（P3 B5）：全局 `AlertDialog.show` 已废弃，改用传入的 UIContext 作用域版本
+    // 证据：SDK `api/@ohos.arkui.UIContext.d.ts:4715` `showAlertDialog(options): void`
+    ui.showAlertDialog({
       title: '格式不再支持',
       message: `${book.bookName}\n\nDOC/DOCX 格式已取消支持。\n可以导出原文件备份，或从书架删除。`,
       primaryButton: {
