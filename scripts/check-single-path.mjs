@@ -1,0 +1,182 @@
+#!/usr/bin/env node
+/**
+ * scripts/check-single-path.mjs —— **单一通路闸门**（2026-11-03 A4 新增）
+ *
+ * ── 为什么需要它 ────────────────────────────────────────────────────────────
+ * 真源 §17「单一通路」：同一语义只允许**一处实现**（写入口 / 树真源 / 计数 / 弹窗出口）。
+ * 但纪律靠人记就会漂：本工程历史上出现过 22 处各自 `GroupTree.build` 建树、8 处绕过
+ * `GroupMutation` 直写分组、3 份重复的 SQL 转义。弹窗那条已经有
+ * `check-dialog-usage.mjs` 守着；本脚本补另外三类。
+ *
+ * ── 判据（两层）──────────────────────────────────────────────────────────────
+ * ① **HARD（必须为 0）**
+ *    · `BooksDao.queryBookByGroup(` —— 旧名，2026-11-03 A3 已改名 `moveBooksToGroup`
+ *      （它是**写**操作，旧名诱导人当查询用）；
+ *    · `DbUtil.executeSql(` 出现在 `database/` 之外 —— SQL 只允许存在于数据层
+ *      （A1 已把 `BookRename` 那几处收进来；`DbUtil.ets` 自身是实现，不算）。
+ *
+ * ② **RATCHET（只许降，不许升）**
+ *    · `GroupTree.build(` —— 自建树次数，当前预算 12；
+ *    · `bookGroupUtil(s).<写方法>(` —— 绕过 `GroupMutation` 的写直连，当前预算 1。
+ *
+ * ── 关于这两个预算值 ────────────────────────────────────────────────────────
+ * 沿革（每次下调必须在这里写清原因，否则等于自己骗自己）：
+ *   · 2026-11-03 A2 收口前：写直连 **8 处**（4 删 + 1 批删 + 1 批解散 + 2 封面）；
+ *   · 2026-11-03 A2b 再收口：新建分组 1 处 + 分组改名 1 处 ⇒ 合计 **10 处已收口**；
+ *   · 2026-11-03 建闸门时实测：写直连 **1**（只剩白名单那处）⇒ 预算先设 1；
+ *   · 2026-11-03 同日收紧：白名单内的不计入 ⇒ 实测 **0** ⇒ 预算降到 **0**
+ *     （白名单仍保留：它允许"双轨回退分支"存在而不被判违规）。
+ *   · `GroupTree.build`：建闸门时实测 **12**；把 `BookSelectGroupDialog` 里 4 处重复建树
+ *     收敛为 1 处 `treeNow()`（带指纹缓存）后实测 **9** ⇒ 预算从 12 降到 **9**（只许降）。
+ *     剩余 9 = `GroupStore` 2（真源自身）+ `bookGroupUtils` 2（解散/回滚）+ 页面/组件 5。
+ *     目标是把页面/组件那 5 处逐步降到 0（多为"按类型过滤的视图树"，需逐个确认能否改用 GroupStore）。
+ *   · `GroupTree.build` 当前 9 处：`GroupStore` 2 + `bookGroupUtils` 2 + 弹窗 1 + 书架 4 处待查。
+ *
+ * ── 明确"允许"的写，不在这里判违规 ──────────────────────────────────────────
+ * `booksUtils` 里的 `updateAddBookIds` / `updateMoveBookIdsByGroupId` 写的是
+ * **历史冗余列 `book_groups.bookIds`**（B④ 决议：保留写入、只保证无人依赖）。
+ * 它不是"结构写入口旁路"，故本闸门不统计；若将来决定删列，再把它加入 HARD=0。
+ *
+ * 用法：
+ *   node scripts/check-single-path.mjs            # 检查，违规 → 非零退出
+ *   node scripts/check-single-path.mjs --json     # 机器可读
+ */
+
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+
+const ROOT = process.cwd();
+const SRC_DIR = join(ROOT, 'entry', 'src', 'main', 'ets');
+
+/** 只许降的预算（每下调一次都要在文件头写沿革） */
+const GROUP_TREE_BUILD_BUDGET = 9;
+const WRITE_BYPASS_BUDGET = 0;
+
+/** 写直连白名单：双轨回退分支（不可达但刻意保留） */
+const WRITE_BYPASS_ALLOW = [
+  { file: 'pages/view/bookShelf/components/dialog/FolderInfoDialog.ets', method: 'updateGroupShow' },
+];
+
+const WRITE_METHODS = [
+  'delGroupById', 'dissolveGroup', 'dissolveGroups',
+  'updateGroupShow', 'updatePartialGroup', 'addGroup', 'onlyGroupUpdateName',
+];
+
+function walk(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    if (name === 'build' || name === 'oh_modules' || name === 'node_modules') continue;
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) walk(p, out);
+    else if (name.endsWith('.ets')) out.push(p);
+  }
+  return out;
+}
+
+const files = walk(SRC_DIR);
+const hits = {
+  groupTreeBuild: [],
+  writeBypass: [],
+  legacyQueryName: [],
+  uiSql: [],
+};
+const allowedBypass = [];
+
+for (const abs of files) {
+  const rel = relative(SRC_DIR, abs).split(sep).join('/');
+  const lines = readFileSync(abs, 'utf8').split(/\r?\n/);
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (!t || /^(\/\/|\*|\/\*)/.test(t)) return;   // 注释不算
+    const lineNo = i + 1;
+
+    if (/GroupTree\.build\(/.test(t)) hits.groupTreeBuild.push({ file: rel, line: lineNo, text: t });
+
+    const m = t.match(/bookGroupUtil(s)?\.(\w+)\(/);
+    // ⚠️ `GroupMutation.ets` 就是**唯一写入口本身**，它委托 bookGroupUtils 是设计的核心，
+    //    不能算"绕过入口"（否则闸门会把实现自己判成违规）。
+    const isEntryItself = rel === 'common/group/GroupMutation.ets';
+    if (m && WRITE_METHODS.includes(m[2]) && !isEntryItself) {
+      const isAllowed = WRITE_BYPASS_ALLOW.some((a) => a.file === rel && a.method === m[2]);
+      if (isAllowed) allowedBypass.push({ file: rel, line: lineNo, method: m[2] });
+      else hits.writeBypass.push({ file: rel, line: lineNo, text: t, method: m[2] });
+    }
+
+    if (/BooksDao\.queryBookByGroup\s*\(/.test(t)) hits.legacyQueryName.push({ file: rel, line: lineNo, text: t });
+
+    // SQL 只许在数据层：database/ 目录内 + DbUtil 自身（它是唯一执行器）
+    const inDataLayer = rel.startsWith('database/') || rel.endsWith('common/utils/DbUtil.ets');
+    if (/DbUtil\.executeSql\s*\(/.test(t) && !inDataLayer) {
+      hits.uiSql.push({ file: rel, line: lineNo, text: t });
+    }
+  });
+}
+
+const violations = [];
+for (const h of hits.legacyQueryName) {
+  violations.push({ kind: 'hard-legacy-name', ...h, msg: '旧名 BooksDao.queryBookByGroup（写操作）已改名为 moveBooksToGroup' });
+}
+for (const h of hits.uiSql) {
+  violations.push({ kind: 'hard-ui-sql', ...h, msg: 'SQL 只允许存在于数据层（database/）' });
+}
+if (hits.groupTreeBuild.length > GROUP_TREE_BUILD_BUDGET) {
+  violations.push({
+    kind: 'ratchet-group-tree', file: '(全仓)', line: 0,
+    msg: `GroupTree.build = ${hits.groupTreeBuild.length} > 预算 ${GROUP_TREE_BUILD_BUDGET}（只许降）`,
+  });
+}
+if (hits.writeBypass.length > WRITE_BYPASS_BUDGET) {
+  violations.push({
+    kind: 'ratchet-write-bypass', file: '(全仓)', line: 0,
+    msg: `bookGroupUtils 写直连 = ${hits.writeBypass.length} > 预算 ${WRITE_BYPASS_BUDGET}（只许降）`,
+  });
+}
+
+const summary = {
+  scannedFiles: files.length,
+  groupTreeBuild: hits.groupTreeBuild.length,
+  groupTreeBuildBudget: GROUP_TREE_BUILD_BUDGET,
+  writeBypass: hits.writeBypass.length,
+  writeBypassBudget: WRITE_BYPASS_BUDGET,
+  writeBypassAllowed: allowedBypass.length,
+  legacyQueryName: hits.legacyQueryName.length,
+  uiSql: hits.uiSql.length,
+  violations,
+};
+
+if (process.argv.includes('--json')) {
+  console.log(JSON.stringify(summary, null, 2));
+  process.exit(violations.length ? 1 : 0);
+}
+
+console.log('=== 单一通路闸门 (scripts/check-single-path.mjs) ===');
+console.log(`扫描真实源码: ${summary.scannedFiles} 个 .ets`);
+console.log(`GroupTree.build       : ${summary.groupTreeBuild} / 预算 ${summary.groupTreeBuildBudget}（只许降）`);
+console.log(`分组写直连(绕过入口)   : ${summary.writeBypass} / 预算 ${summary.writeBypassBudget}（只许降；白名单 ${summary.writeBypassAllowed} 处）`);
+console.log(`旧名 queryBookByGroup  : ${summary.legacyQueryName}（必须 0）`);
+console.log(`UI 层 SQL              : ${summary.uiSql}（必须 0）`);
+console.log('');
+
+if (hits.groupTreeBuild.length) {
+  console.log('--- GroupTree.build 明细（自建树）---');
+  const byFile = {};
+  for (const h of hits.groupTreeBuild) byFile[h.file] = (byFile[h.file] ?? 0) + 1;
+  for (const [f, n] of Object.entries(byFile).sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(n).padStart(2)}  ${f}`);
+  }
+  console.log('');
+}
+for (const a of allowedBypass) {
+  console.log(`  [白名单] ${a.file}:${a.line}  ${a.method}(…)  —— 双轨回退分支，开关 true 时不可达`);
+}
+
+if (violations.length === 0) {
+  console.log('✅ 通过：没有绕过单一通路的写法，预算未被突破。');
+  process.exit(0);
+}
+console.log(`❌ 违规 ${violations.length} 处：`);
+for (const v of violations) {
+  console.log(`  [${v.kind}] ${v.file}:${v.line}  ${v.msg ?? ''}`);
+  if (v.text) console.log(`      ${v.text}`);
+}
+process.exit(1);

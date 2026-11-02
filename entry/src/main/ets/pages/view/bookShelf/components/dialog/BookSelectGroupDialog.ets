@@ -167,6 +167,13 @@ export default struct BookSelectGroupDialog{
   /** 当前可见行（已按展开状态拍平，带缩进 depth） */
   @State rows: GroupRow[] = []
 
+  /**
+   * 树缓存（2026-11-03 A4）：**不是** `@State` —— 它只服务渲染期的同步计算，
+   * 不需要触发重绘；`treeFp` 是它的失效指纹（见 `treeNow()`）。
+   */
+  private treeCache: GroupTree | null = null
+  private treeFp: string = ''
+
   getGroupList(){
     BookGroupsDao.search({
       type:this.currentIndex
@@ -199,7 +206,7 @@ export default struct BookSelectGroupDialog{
     if (!this.isMoveGroupNode) {
       return
     }
-    const tree: GroupTree = GroupTree.build(this.groupList)
+    const tree: GroupTree = this.treeNow(this.groupList)
     const ids: number[] = []
     for (const g of this.groupList) {
       const gid: number = g.groupId ?? -1
@@ -211,12 +218,35 @@ export default struct BookSelectGroupDialog{
     this.rebuildRows()
   }
 
+  /**
+   * 统一取树（2026-11-03 A4）：**本文件内只保留一个 `GroupTree.build` 调用点**。
+   *
+   * 改造前本文件有 4 处各自 `GroupTree.build(this.groupList)`
+   * （`expandAllForGroupMove` / `pathLabel` / `toggleExpand` / `rebuildRows`），
+   * 而 `pathLabel` 是**每行渲染都调**的 ⇒ 一次列表渲染会重复建树 N 次。
+   *
+   * 缓存判据用"指纹"而不是数组引用：`GroupStore` 的分组对象可能在**引用不变**的情况下被就地改
+   * （例如移动分组时改 `parentId`），只比对引用会拿到过期树。指纹 = 影响树形与路径的字段
+   * （`groupId` / `parentId` / `groupName`）——21 个分组的字符串拼接成本远低于重建整棵树。
+   */
+  private treeNow(list: BookGroups[]): GroupTree {
+    let fp: string = ''
+    for (const g of list) {
+      fp += (g.groupId ?? 0) + ':' + (g.parentId ?? 0) + ':' + (g.groupName ?? '') + ';'
+    }
+    if (this.treeCache === null || fp !== this.treeFp) {
+      this.treeCache = GroupTree.build(list)
+      this.treeFp = fp
+    }
+    return this.treeCache
+  }
+
   /** 分组的来源路径（`分组/父/子`），与面包屑同源；用于行内第二行灰字 */
   private pathLabel(id: number): string {
     if (id <= 1) {
       return ''
     }
-    const tree: GroupTree = GroupTree.build(this.groupList)
+    const tree: GroupTree = this.treeNow(this.groupList)
     const path: BookGroups[] = tree.pathOf(id)
     const names: string[] = ['根目录']
     for (const g of path) {
@@ -238,7 +268,7 @@ export default struct BookSelectGroupDialog{
       // 2026-11-01 修「点展开后整条消失」：嵌套分组只有在**所有祖先都展开**时才可达；
       // 只把自身加入 expandedIds，重建时从根走不到它 ⇒ 该行从弹窗里消失。
       // 展开时把祖先链一并展开（`pathOf` 已含自身）。
-      const tree: GroupTree = GroupTree.build(this.groupList)
+      const tree: GroupTree = this.treeNow(this.groupList)
       for (const a of tree.pathOf(id)) {
         if (a.groupId !== undefined && this.expandedIds.indexOf(a.groupId) < 0) {
           this.expandedIds.push(a.groupId)
@@ -251,7 +281,7 @@ export default struct BookSelectGroupDialog{
 
   /** 把分组树按"已展开"拍平成可见行（递归 + 缩进） */
   private rebuildRows(): void {
-    const tree: GroupTree = GroupTree.build(this.groupList)
+    const tree: GroupTree = this.treeNow(this.groupList)
     const out: GroupRow[] = []
     // 2026-11-01：孤儿行过滤 —— 父分组不在本次列表里（被隐藏/已删）时，
     //   GroupTree 会把它当根级返回，导致"移动至"里凭空多出一个同名根分组（真机 212 现象）。
@@ -982,14 +1012,14 @@ export default struct BookSelectGroupDialog{
    *     封面文件等派生数据的清理（见该方法注释），比裸删行安全得多。
    *   · **解散** = 分组行删掉、组内书籍**保留**并落到「未分组」（`bookGroup = 3`）
    *     ⇒ 与工程既有「解散分组」**完全同一条实现**：`bookGroupUtils.delGroupById`
-   *     内部就是「删分组行 + `BooksDao.queryBookByGroup(Ids, 3)`」
+   *     内部就是「删分组行 + `BooksDao.moveBooksToGroup(Ids, 3)`」（2026-11-03 改名，原名 queryBookByGroup）
    *     （`bookGroupUtils.ets:35-42`，即 `FolderInfoDialog.disbandGroup()` 用的同一个方法）。
    *
    * ── 为什么必须等写库提交完再广播 ────────────────────────────────────────────
    * 规范第 5 节第 2 条「广播必须发生在 DB 提交之后」。
    * 本次一并把底层两处**裸调**修成 `await`（不 await 就会"删了分组还在 / 书没进未分组"）：
    *   · `bookGroupUtils.delGroupById` —— 原来两行 DAO 调用全裸调；
-   *   · `BooksDao.queryBookByGroup` —— 原来 `forEach` 里裸调 `this.update(item)`。
+   *   · `BooksDao.moveBooksToGroup`（原名 `queryBookByGroup`，2026-11-03 改名）—— 原来 `forEach` 里裸调 `this.update(item)`。
    * ⇒ 现在 `await bookGroupUtils.delGroupById(...)` 返回时，写库**确实已提交**。
    */
   /**
