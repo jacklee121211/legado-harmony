@@ -1,7 +1,6 @@
 import { ThemeStorageKey } from '../../common/constants/Theme'
 import { Haptics } from '../../common/utils/Haptics';
 import { ThemeItem } from '../../common/model/Theme'
-import bookGroupUtil from '../../common/utils/bookGroupUtils'
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
@@ -11,6 +10,8 @@ import { NightMode } from '../../common/utils/NightMode'
 import ShelfPrefs, { SortDir, SortKey } from '../../common/utils/ShelfPrefs'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B1b）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../common/dialog/DialogHost'
+// 2026-11-02 第 26 轮（B③b）：隐藏/恢复改走唯一写入口
+import { GroupMutation } from '../../common/group/GroupMutation'
 
 /** 排序区块的一行（档位 + 显示名） */
 interface SortOptionVo {
@@ -357,9 +358,14 @@ export default struct groupTypePanel {
     item.show = next
     this.allGroups = this.allGroups.slice()
     // ② 落库 → 重查 → 广播
-    bookGroupUtil.updateGroupShow(id, next).then(() => {
+    // 2026-11-02 第 26 轮（B③b）：原来直接 `bookGroupUtil.updateGroupShow(...)` ——
+    //   那条**不发 GroupEvents**（只有旧 AppStorage 信号），等于绕过了 P2「唯一写入口」。
+    //   真机后果同 D2/D5：别的页面（书架/全部/最近）收不到结构通知，要等下一次手动刷新。
+    GroupMutation.setVisible(id, next).then(() => {
       this.reload()
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    }).catch((e: Error): void => {
+      console.error(`[GRP-MUTATION] panel setVisible failed: ${e.message}`)
     })
   }
 
