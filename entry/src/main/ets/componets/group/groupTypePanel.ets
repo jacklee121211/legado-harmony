@@ -9,6 +9,8 @@ import UiMotion, { runJellyClick } from '../../common/utils/UiMotion'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../common/utils/ImmersiveMaterialUtil'
 import { NightMode } from '../../common/utils/NightMode'
 import ShelfPrefs, { SortDir, SortKey } from '../../common/utils/ShelfPrefs'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B1b）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../common/dialog/DialogHost'
 
 /** 排序区块的一行（档位 + 显示名） */
 interface SortOptionVo {
@@ -365,7 +367,7 @@ export default struct groupTypePanel {
   private editGroup(item: BookGroups): void {
     Haptics.tap()
     this.dialogGroupData = item
-    this.groupInfoDialog?.open()
+    DialogHost.openIf(this.groupInfoDialog)
   }
 
   groupInfoDialog: CustomDialogController | null = new CustomDialogController({
@@ -413,7 +415,7 @@ export default struct groupTypePanel {
         this.dialogGroupData = fresh
       }
     }
-    this.groupInfoDialog?.open()
+    DialogHost.openIf(this.groupInfoDialog)
   }
 
   build() {

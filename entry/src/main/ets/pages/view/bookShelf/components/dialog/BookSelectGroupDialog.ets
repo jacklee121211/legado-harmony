@@ -696,7 +696,7 @@ export default struct BookSelectGroupDialog{
         this.bookType = ''
       }
     })
-    this.manageAddTypeDialog.open()
+    DialogHost.openNested(this.manageAddTypeDialog)
   }
 
   /**
@@ -987,7 +987,7 @@ export default struct BookSelectGroupDialog{
         customStyle: false,
         cornerRadius: 25
       })
-      if (this.manageDialogHidden !== null) { DialogHost.open(this.manageDialogHidden) }
+      DialogHost.openNested(this.manageDialogHidden)
       return
     }
     this.manageDialog = new CustomDialogController({
@@ -1027,7 +1027,7 @@ export default struct BookSelectGroupDialog{
         this.manageDialog = null
       }
     })
-    this.manageDialog.open()
+    DialogHost.openNested(this.manageDialog)
   }
 
   /** 删除：组内书籍全删 + 分组行删除（await 到底后再广播） */
@@ -1113,15 +1113,15 @@ export default struct BookSelectGroupDialog{
           hintPrimary: '子文件夹内的书全部上提到上级分组',
           hintSecondary: '子文件夹上提一级，书籍不受影响',
           onPrimary: (): void => {
-            ctrl.close()
+            DialogHost.closeNested(ctrl)
             resolve('collapse')
           },
           onSecondary: (): void => {
-            ctrl.close()
+            DialogHost.closeNested(ctrl)
             resolve('keepChildren')
           },
           onCancel: (): void => {
-            ctrl.close()
+            DialogHost.closeNested(ctrl)
             resolve('cancel')
           }
         }),
@@ -1131,7 +1131,7 @@ export default struct BookSelectGroupDialog{
         customStyle: false,
         cornerRadius: 25
       })
-      ctrl.open()
+      DialogHost.openNested(ctrl)
     })
   }
 

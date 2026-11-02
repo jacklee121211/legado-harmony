@@ -187,8 +187,12 @@ export default struct FolderInfoDialog{
   //   · 移动至：分组已搬走；· 隐藏/解散/删除：分组已不存在。
   reopen: (() => void) | null = null
   private openChildDialog(controller: CustomDialogController | null): void {
-    this.controller?.close()
-    controller?.open()
+    // ── 2026-11-02 第 25 轮（P3 B1b）──────────────────────────────────────
+    // 原来是「`this.controller?.close()` + `controller?.open()`」两步手写。
+    // `DialogHost.openIf()` 内部就是"先 closeCurrent 再 open" ⇒ 语义完全等价，
+    // 但"当前谁开着"由宿主统一记账（不再每个组件各自 close 自己的 controller，
+    // 否则宿主账本会和实际状态分叉 —— 正是 S7 那类"父窗没真关"的病根）。
+    DialogHost.openIf(controller)
   }
 
   /**
