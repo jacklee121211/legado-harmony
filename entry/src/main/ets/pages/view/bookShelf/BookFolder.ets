@@ -600,6 +600,16 @@ export default struct BookFolder {
           + '|' + (item.groupName ?? '')
           + '|' + (item.isTop ? 'T' : 'F')
           + '|' + (item.show ? '1' : '0')
+          // ── 2026-11-02 第 26 轮（B⑥ 真根因）：**必须带 parentId** ─────────────────
+          // 本 ForEach 的 itemGenerator 里有一条 `(item.parentId ?? 0) === 0` 的**显示过滤**，
+          // 所以 parentId 是"影响显示"的字段；漏了它 ⇒ 键值不变 ⇒ 复用旧组件 ⇒ 那个 `if`
+          // 根本不重新求值 ⇒ 卡片停在旧状态。
+          // 真机 + 数据库双证据（`2026-11-10-chevron`）：把 T1 从根页移进「1」后，
+          // DB 里 `groupId 31 parentId=5` **已正确落库**，但根页**一直残留** T1 卡片
+          // （等 2 秒、切 tab 回来都不消失）——正是这条 key 缺字段导致的。
+          // 与上面那段注释的规则同源（2026-10-06 的"共0本"就是同一个坑），
+          // 多级文件夹（2026-11-01）新增 parentId 过滤时漏了同步补 key。
+          + '|p' + (item.parentId ?? 0)
           + '|' + (item.coverUrl ?? '')
           + '|' + item.coverType
           + '|' + (item.bookIds?.length ?? 0)
