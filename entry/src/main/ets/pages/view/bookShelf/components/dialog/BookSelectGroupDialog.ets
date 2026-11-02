@@ -913,6 +913,16 @@ export default struct BookSelectGroupDialog{
   private manageDialog: CustomDialogController | null = null
   /** 2026-11-02：隐藏分组专用四按钮动作窗（恢复显示/解散/删除/取消） */
   private manageDialogHidden: CustomDialogController | null = null
+  /**
+   * 2026-11-02 第 26 轮（**E1 修复**）：删除分组的**二次确认**窗。
+   *
+   * 缺陷原状（真机取证 `2026-11-04-dialogs-all/E1-T8-menu.json`）：分组管理 → 长按分组 →
+   * 「删除」**点下去就直接删**，而它删的是「分组 + 组内全部书籍」且**不可恢复**；
+   * 书架那条删除路径有二次确认，两条路径口径不一致 ⇒ 误触即丢数据（本项目已因此误删过 6 本书）。
+   * 现在在动作窗之上再叠一层两键确认（`TitleContentDialog`，取消/确认），
+   * 文案把"组内书籍会一起删除"写清。层级：分组管理 → 动作窗 → 删除确认（均为 `openNested` 叠放）。
+   */
+  private deleteConfirmDialog: CustomDialogController | null = null
 
   /**
    * 打开「删除 / 解散 / 取消」三选一。
@@ -994,10 +1004,9 @@ export default struct BookSelectGroupDialog{
               console.error('dissolveGroup in manage mode failed: ' + e.message)
             })
           },
+          // 2026-11-02 第 26 轮（E1）：删除不可恢复（连书一起删）⇒ 必须二次确认
           onOption3: (): void => {
-            this.doDeleteGroup(gid, gname).catch((e: Error): void => {
-              console.error('deleteGroup in manage mode failed: ' + e.message)
-            })
+            this.askDeleteGroup(gid, gname)
           },
           onCancel: (): void => {
             this.manageDialogHidden = null
@@ -1021,10 +1030,9 @@ export default struct BookSelectGroupDialog{
         primaryText: '删除',
         secondaryText: '解散',
         cancelText: '取消',
+        // 2026-11-02 第 26 轮（E1）：删除不可恢复（连书一起删）⇒ 必须二次确认
         onPrimary: (): void => {
-          this.doDeleteGroup(gid, gname).catch((e: Error): void => {
-            console.error('deleteGroup in manage mode failed: ' + e.message)
-          })
+          this.askDeleteGroup(gid, gname)
         },
         onSecondary: (): void => {
           this.doDissolveGroup(gid, gname).catch((e: Error): void => {
@@ -1050,6 +1058,71 @@ export default struct BookSelectGroupDialog{
       }
     })
     DialogHost.openNested(this.manageDialog)
+  }
+
+  /**
+   * 2026-11-02 第 26 轮（**E1 修复**）：删除分组前先弹一次二次确认。
+   *
+   * 为什么必须加：`doDeleteGroup` 是「**分组 + 组内全部书籍**一起删、不可恢复」，
+   * 而动作窗里「删除」和「解散」「取消」并排 —— 真机上误触一次就丢数据。
+   * 书架路径本来就有二次确认，这里对齐（口径统一）。
+   *
+   * 层级与收尾：动作窗（三/四按钮，`openNested`）点「删除」时**它自己已经 close**，
+   * 这里再叠一层确认窗（同样 `openNested`）；确认/取消后把动作窗从宿主账本里摘掉
+   * （`closeNested` 幂等：已关的再关一次无害），避免 nested 栈里留死引用。
+   */
+  private askDeleteGroup(groupId: number, groupName: string): void {
+    // 记下是哪个动作窗发起的（两者必有其一）
+    let sheet: CustomDialogController | null = null
+    if (this.manageDialogHidden !== null) {
+      sheet = this.manageDialogHidden
+    } else if (this.manageDialog !== null) {
+      sheet = this.manageDialog
+    }
+    this.deleteConfirmDialog = new CustomDialogController({
+      builder: TitleContentDialog({
+        title: `删除「${groupName}」`,
+        content: '分组和组内书籍会一起删除，不可恢复',
+        confirm: (): void => {
+          this.deleteConfirmDialog = null
+          this.manageDialog = null
+          this.manageDialogHidden = null
+          if (sheet !== null) {
+            DialogHost.closeNested(sheet)
+          }
+          this.doDeleteGroup(groupId, groupName).catch((e: Error): void => {
+            console.error('deleteGroup in manage mode failed: ' + e.message)
+          })
+        },
+        cancel: (): void => {
+          // 取消 = 什么都不做，回到分组管理（动作窗已自关）
+          this.deleteConfirmDialog = null
+          this.manageDialog = null
+          this.manageDialogHidden = null
+          if (sheet !== null) {
+            DialogHost.closeNested(sheet)
+          }
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      // 遮罩/返回键 = 取消
+      cancel: (): void => {
+        this.deleteConfirmDialog = null
+        this.manageDialog = null
+        this.manageDialogHidden = null
+        if (sheet !== null) {
+          DialogHost.closeNested(sheet)
+        }
+      }
+    })
+    DialogHost.openNested(this.deleteConfirmDialog)
   }
 
   /** 删除：组内书籍全删 + 分组行删除（await 到底后再广播） */

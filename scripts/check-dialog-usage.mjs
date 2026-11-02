@@ -61,7 +61,19 @@ const ALLOW_LEGACY_API = [];
  * ⚠️ 这个数**不会**变成 0：`DialogHost.open/openIf` 的入参就是 controller 实例
  *   （`common/dialog/DialogHost.ets`），构造动作必须留在调用方。它只用于防"新增弹窗又各自 new 一堆"。
  */
-const CTRL_BUDGET = 70;
+/**
+ * `new CustomDialogController` 的总预算（只许降不许升）。
+ *
+ * 沿革（每次变动都必须在这里写清原因，否则等于自己骗自己）：
+ *   · 2026-11-02 收口完成时实测 = 70；
+ *   · 2026-11-02 第 26 轮 **70 → 71**：E1 修复给「分组管理 → 长按 → 删除」补二次确认，
+ *     新增一个 `TitleContentDialog` 的 controller（`BookSelectGroupDialog.askDeleteGroup`）。
+ *     这是**加防护**而非加弹窗面：原动作窗保留，只是删除动作多一道确认。
+ *
+ * ⚠️ 这个数**不会**变成 0：`DialogHost.open/openIf` 的入参就是 controller 实例
+ *   （`common/dialog/DialogHost.ets`），构造动作必须留在调用方。它只用于防"新增弹窗又各自 new 一堆"。
+ */
+const CTRL_BUDGET = 71;
 
 const args = process.argv.slice(2);
 const REPORT_ONLY = args.includes('--report');
