@@ -10,6 +10,7 @@ import { buttonList } from '../../../../../componets/dataList/buttonList'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 import { GroupMutation } from '../../../../../common/group/GroupMutation'
+import { GroupEvents } from '../../../../../common/group/GroupEvents'
 import { GroupFlags } from '../../../../../common/group/GroupFlags'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
@@ -797,6 +798,8 @@ export default struct FolderInfoDialog{
         }
       }
       await bookGroupUtil.delGroupById(ids)
+      // 2026-11-02 P2-2：结构变更 → 只发一次事件（groupIds 空 = 全量，订阅方清空选中集）
+      GroupEvents.emit([], [])
       // 2026-11-02：分组结构已安全变更，最后才真正删除被覆盖的旧书文件
       for (const oldId of pendingDelete) {
         try {
