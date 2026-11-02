@@ -52,6 +52,21 @@ const SRC_DIR = join(ROOT, 'entry', 'src', 'main', 'ets');
 const GROUP_TREE_BUILD_BUDGET = 9;
 const WRITE_BYPASS_BUDGET = 0;
 
+/**
+ * 刷新信号的**写点**预算（2026-11-03 B 线准备）：
+ * 这三个全局键是书架域最大的"多路喊刷新"来源 —— 任一页面都可能自增它们，
+ * 于是"改了 A 忘了 B"（U2b / B⑥ 的土壤）。B1 要把结构变更收敛到 `GroupEvents` 单一路，
+ * 在此之前**先上 ratchet**：允许存量存在，但**不许再新增写点**。
+ *
+ * 实测（2026-11-03，非注释行）：
+ *   · `BOOK_IS_BOOK_GROUPS_REFRESHING` 23 处
+ *   · `isBookRefreshing`              29 处
+ *   · `BOOK_IS_BOOK_REFRESHING`        0 处（自增形式；它可能走 AppStorage.setOrCreate，本闸门同时统计那种写法）
+ *   ⇒ 合计 52
+ */
+const REFRESH_SIGNAL_BUDGET = 56;
+const REFRESH_SIGNALS = ['BOOK_IS_BOOK_REFRESHING', 'BOOK_IS_BOOK_GROUPS_REFRESHING', 'isBookRefreshing'];
+
 /** 写直连白名单：双轨回退分支（不可达但刻意保留） */
 const WRITE_BYPASS_ALLOW = [
   { file: 'pages/view/bookShelf/components/dialog/FolderInfoDialog.ets', method: 'updateGroupShow' },
@@ -79,6 +94,7 @@ const hits = {
   writeBypass: [],
   legacyQueryName: [],
   uiSql: [],
+  refreshWrites: [],
 };
 const allowedBypass = [];
 
@@ -109,6 +125,12 @@ for (const abs of files) {
     if (/DbUtil\.executeSql\s*\(/.test(t) && !inDataLayer) {
       hits.uiSql.push({ file: rel, line: lineNo, text: t });
     }
+
+    // 刷新信号写点（自增 / AppStorage 写）
+    for (const sig of REFRESH_SIGNALS) {
+      const re = new RegExp('(?:' + sig + '\\s*(?:\\+\\+|\\+=))|(?:AppStorage\\.setOrCreate\\(\\s*[\'"]' + sig + '[\'"])');
+      if (re.test(t)) hits.refreshWrites.push({ file: rel, line: lineNo, sig, text: t });
+    }
   });
 }
 
@@ -131,6 +153,12 @@ if (hits.writeBypass.length > WRITE_BYPASS_BUDGET) {
     msg: `bookGroupUtils 写直连 = ${hits.writeBypass.length} > 预算 ${WRITE_BYPASS_BUDGET}（只许降）`,
   });
 }
+if (hits.refreshWrites.length > REFRESH_SIGNAL_BUDGET) {
+  violations.push({
+    kind: 'ratchet-refresh-signal', file: '(全仓)', line: 0,
+    msg: `刷新信号写点 = ${hits.refreshWrites.length} > 预算 ${REFRESH_SIGNAL_BUDGET}（只许降；B1 目标是收敛到 GroupEvents 单一路）`,
+  });
+}
 
 const summary = {
   scannedFiles: files.length,
@@ -141,6 +169,8 @@ const summary = {
   writeBypassAllowed: allowedBypass.length,
   legacyQueryName: hits.legacyQueryName.length,
   uiSql: hits.uiSql.length,
+  refreshWrites: hits.refreshWrites.length,
+  refreshSignalBudget: REFRESH_SIGNAL_BUDGET,
   violations,
 };
 
@@ -155,6 +185,7 @@ console.log(`GroupTree.build       : ${summary.groupTreeBuild} / 预算 ${summar
 console.log(`分组写直连(绕过入口)   : ${summary.writeBypass} / 预算 ${summary.writeBypassBudget}（只许降；白名单 ${summary.writeBypassAllowed} 处）`);
 console.log(`旧名 queryBookByGroup  : ${summary.legacyQueryName}（必须 0）`);
 console.log(`UI 层 SQL              : ${summary.uiSql}（必须 0）`);
+console.log(`刷新信号写点           : ${summary.refreshWrites} / 预算 ${summary.refreshSignalBudget}（只许降）`);
 console.log('');
 
 if (hits.groupTreeBuild.length) {
