@@ -109,6 +109,32 @@ export class GroupMutation {
   }
 
   /**
+   * 把若干个分组下的**全部书籍**并入目标分组（= 界面上「移动至 → 选分组」在
+   * 「分组」节点上的那一步；底层 `bookGroupUtils.moveBookByGroupId` 做的是
+   * "把这些分组里的书 bookGroup 改成目标值"，**不改树的 parentId**）。
+   *
+   * ⚠️ 2026-11-02 第 26 轮（B③）新增，修掉两个真实缺陷（原来调用点直接裸调底层）：
+   *   1. **没有 await**（`BookSelectGroupDialog.ets` 原 `bookGroupUtils.moveBookByGroupId(...)` 一行）
+   *      ⇒ `showMessage('已移动到…')` 会在写库完成**之前**弹出，失败也照样提示成功；
+   *   2. **完全不发 `GroupEvents`** ⇒ 书架/管理页收不到通知，要等下次手动刷新才看到书换了组
+   *      （与 D2「恢复显示不发事件」是同一类坑，见 `setVisibleMany` 注释）。
+   * 这里补齐：await 到底 → 刷真源/隐藏集合 → 发**一次**非结构事件（书变了、树没变）。
+   */
+  static async moveBooksOfGroups(groupIds: number | number[], targetGroupId: number): Promise<void> {
+    // 入参与底层一致（`moveBookByGroupId(oldGroup: number | number[], newGroup: number)`）：
+    // 调用点 `this.Ids` 就是 `number | number[]`，这里统一成数组再过滤掉目标自身。
+    const raw: number[] = typeof groupIds === 'number' ? [groupIds] : groupIds
+    const ids: number[] = raw.filter((g: number): boolean => g !== targetGroupId && g > 0)
+    if (ids.length === 0) {
+      return
+    }
+    // 受影响书籍：与底层查询同源（`moveBookByGroupId` 内部就是 queryBooksByGroupId(ids)）
+    const bookIds: number[] = await BooksDao.queryBooksByGroupId(ids)
+    await bookGroupUtils.moveBookByGroupId(ids, targetGroupId)
+    await GroupMutation.afterChange([targetGroupId], bookIds, false)
+  }
+
+  /**
    * 变更收尾：刷新真源、刷新隐藏集合、发**唯一一次**事件。
    * @param changedGroupIds 受影响分组（空数组 = 结构变更，订阅方按"全量"处理）
    * @param changedBookIds  受影响书籍

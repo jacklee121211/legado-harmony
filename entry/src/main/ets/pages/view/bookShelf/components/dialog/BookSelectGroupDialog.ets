@@ -7,7 +7,6 @@
 import CommonConstants from '../../../../../common/constants/CommonConstants'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import PaddingConstants from '../../../../../common/constants/PaddingConstants'
-import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
 // 2026-11-02 第 24 轮：隐藏/恢复显示改走唯一写入口（那条路才会发 GroupEvents）
 import { GroupMutation } from '../../../../../common/group/GroupMutation'
 import booksUtils from '../../../../../common/utils/booksUtils'
@@ -901,7 +900,9 @@ export default struct BookSelectGroupDialog{
         break
       //1标识分组
       case 1:
-        bookGroupUtils.moveBookByGroupId(this.Ids,this.moveGroupId)
+        // 2026-11-02 第 26 轮（B③）：原来这行**没有 await** ⇒ 提示先弹、失败被吞、且不发事件。
+        //   改走唯一写入口（内部 await 到底 + 发一次事件）。
+        await GroupMutation.moveBooksOfGroups(this.Ids, this.moveGroupId)
         break
     }
     showMessage(`已移动到${this.moveTitle}`)
@@ -1145,7 +1146,10 @@ export default struct BookSelectGroupDialog{
         await booksUtils.delBooksById(bookIds)
       }
       // ③ 再删分组行（此时组内已无书，内部"书置 3"是幂等的空操作）
-      await bookGroupUtils.delGroupById(groupId)
+      // 2026-11-02 第 26 轮（B③）：改走**唯一写入口** GroupMutation（它内部 emitEvent=false +
+      //   收尾只 emit 一次，满足 S8「一次操作一次事件」；原来直连 bookGroupUtils 也发一次，但
+      //   "写入口"绕过了 GroupStore 刷新/隐藏集合刷新的一致性收尾）
+      await GroupMutation.remove(groupId)
       showMessage(bookIds.length > 0
         ? `已删除「${groupName}」及 ${bookIds.length} 本书`
         : `已删除「${groupName}」`)
@@ -1170,13 +1174,13 @@ export default struct BookSelectGroupDialog{
         if (mode === 'cancel') {
           return
         }
-        await bookGroupUtils.dissolveGroup(groupId, mode)
+        await GroupMutation.dissolve(groupId, mode)
         showMessage(mode === 'collapse'
           ? `已解散「${groupName}」，全部书籍已归还上级分组`
           : `已解散「${groupName}」，子文件夹已上提一级`)
         return
       }
-      await bookGroupUtils.dissolveGroup(groupId, 'keepChildren')
+      await GroupMutation.dissolve(groupId, 'keepChildren')
       showMessage(`已解散「${groupName}」，书籍已归还上级分组`)
     } catch (e) {
       console.error('doDissolveGroup failed: ' + JSON.stringify(e))
