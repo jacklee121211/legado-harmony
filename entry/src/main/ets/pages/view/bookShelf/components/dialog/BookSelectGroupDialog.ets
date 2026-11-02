@@ -730,6 +730,17 @@ export default struct BookSelectGroupDialog{
     showMessage(`已添加${newName}分组`)
     // ① 当场重查父弹窗列表（父实例仍存活 ⇒ 这次写入**是有效的**）
     await this.getGroupListAsync()
+    // ── 2026-11-02 第 26 轮（G5 诊断探针，真机取证用；纯日志、无行为变化）────────────
+    // 用来区分三种可能（本轮 G5 修了一版仍复现，必须靠这行定位）：
+    //   · hit=false                 ⇒ **重查读到的仍是旧数据**（写库提交与查询有竞态）
+    //   · hit=true 但界面没有        ⇒ **列表/实例问题**（rows 写到死实例，或 UI 没绑 rows）
+    //   · 日志里出现**第二条** `[PROBE-DLG]`（`:142`，只在 aboutToAppear 打）
+    //                                ⇒ 父弹窗**被重建过一次**，本次写入落在废弃实例上
+    const hit: BookGroups | undefined =
+      this.groupList.find((g: BookGroups): boolean => g.groupName === newName)
+    console.log(`[GRP-CREATE] name=${newName} listLen=${this.groupList.length}`
+      + ` hit=${hit !== undefined} rowsLen=${this.rows.length}`
+      + ` presetLen=${this.presetGroups === null ? -1 : this.presetGroups.length}`)
     // ② 广播：书架分组行 / 分组卡片重查（规范第 5 节）
     this.BOOK_IS_BOOK_GROUPS_REFRESHING++
     // ③ 告诉子弹窗"这次真的成功了" ⇒ placeholder 切到「创建成功，可继续输入创建」
