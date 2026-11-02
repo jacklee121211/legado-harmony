@@ -11,6 +11,7 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 import { GroupMutation } from '../../../../../common/group/GroupMutation'
 import { GroupEvents } from '../../../../../common/group/GroupEvents'
+import { DialogHost } from '../../../../../common/dialog/DialogHost'
 import { GroupFlags } from '../../../../../common/group/GroupFlags'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
@@ -250,7 +251,7 @@ export default struct FolderInfoDialog{
         await this.refreshBookCount()
       }
     }
-    this.controller?.open()
+    DialogHost.openIf(this.controller)
   }
 
   // 2026-10-25：`catalogAddShelfDialog`（加入书单弹窗）整块删除，书单功能下线。
@@ -596,7 +597,7 @@ export default struct FolderInfoDialog{
         this.groupActionDialog?.close()
       }
     })
-    this.groupActionDialog?.open()
+    DialogHost.openIf(this.groupActionDialog)
   }
 
   /** 解散入口：含子分组时让用户选「一起解散 / 子组保留」；没有子分组则沿用旧确认框 */
@@ -680,7 +681,7 @@ export default struct FolderInfoDialog{
             this.mergeDialog?.close()
           }
         })
-        this.mergeDialog?.open()
+        DialogHost.openIf(this.mergeDialog)
         return
       }
       await this.applyDissolve(gid, ids, keepChildren, parentId, moving, target, [], [])
@@ -956,7 +957,7 @@ export default struct FolderInfoDialog{
           this.groupMoveGroup?.close()
         }
       })
-      this.groupMoveGroup?.open()
+      DialogHost.openIf(this.groupMoveGroup)
     } catch (e) {
       showMessage('打开移动弹窗失败')
       console.error('openGroupMoveDialog failed: ' + JSON.stringify(e))
@@ -1041,7 +1042,7 @@ export default struct FolderInfoDialog{
             this.mergeDialog?.close()
           }
         })
-        this.mergeDialog?.open()
+        DialogHost.openIf(this.mergeDialog)
         return
       }
       await this.applyMergeMove(gid, targetGid, moving, [], [])

@@ -30,6 +30,14 @@ export class DialogHost {
     }
   }
 
+  /** 可空版本：null 时什么都不做（页面里 xxx?.open() 的无痛替换） */
+  static openIf(controller: CustomDialogController | null | undefined): void {
+    if (controller === null) {
+      return
+    }
+    DialogHost.open(controller as CustomDialogController)
+  }
+
   /** 真关当前弹窗并释放（不保留实例，满足铁律 1/2） */
   static closeCurrent(): void {
     const c: CustomDialogController | null = DialogHost.current
