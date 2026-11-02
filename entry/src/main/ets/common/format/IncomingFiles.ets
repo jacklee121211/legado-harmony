@@ -1,3 +1,4 @@
+import { ShelfRefresh } from '../shelf/ShelfRefresh';
 /**
  * 外部文件接收队列（2026-10-19 双响炮）。
  *
@@ -29,8 +30,7 @@ export class IncomingFiles {
       }
     }
     AppStorage.setOrCreate(INCOMING_LIST, merged);
-    const tick: number = (AppStorage.get<number>(INCOMING_TICK) ?? 0) + 1;
-    AppStorage.setOrCreate(INCOMING_TICK, tick);
+    const tick: number = ShelfRefresh.books();
   }
 
   /** 只读当前队列（不清空） */

@@ -34,6 +34,7 @@ import { PlugZone } from '../../../componets/plugboard/PlugboardTypes'
 // 2026-11-02 第 26 轮（B⑤）：按 id 现查书籍（移动至需要"此刻"所在分组，不能依赖快照）
 import booksDao from '../../../database/dao/BooksDao'
 import { Books } from '../../../database/entities/Books'
+import { ShelfRefresh } from '../../../common/shelf/ShelfRefresh';
 
 @Component
 export default struct IndexShelf {
@@ -349,7 +350,7 @@ export default struct IndexShelf {
       }
     })
     setTimeout(() => {
-      this.isBookRefreshing++
+      ShelfRefresh.books()
     }, 500)
   }
   /** 书架搜索浮窗（2026-09-22 新增，见搜索按钮处的说明） */
@@ -760,7 +761,7 @@ export default struct IndexShelf {
             }
           })
           setTimeout(() => {
-            this.isBookRefreshing++
+            ShelfRefresh.books()
           }, 500)
           break
       }
@@ -1057,8 +1058,8 @@ export default struct IndexShelf {
         moveGroup: (): void => {
           this.bookMoveDialog?.close()
           this.bookMoveDialog = null
-          this.isBookRefreshing++
-          this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+          ShelfRefresh.books()
+          ShelfRefresh.groups()
         },
         onClose: (): void => {
           this.bookMoveDialog?.close()
@@ -1155,7 +1156,7 @@ export default struct IndexShelf {
       if (okCount > 0) {
         showMessage(`已导入 ${okCount} 本书籍`)
         // 写库已在上面 await 完成，这里可以**立即**刷新，不再需要延时。
-        this.isBookRefreshing++
+        ShelfRefresh.books()
       }
     } catch (e) {
       showMessage('导入失败：' + (e instanceof Error ? e.message : String(e)))

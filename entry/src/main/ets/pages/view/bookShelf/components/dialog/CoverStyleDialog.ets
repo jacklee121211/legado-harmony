@@ -8,6 +8,7 @@ import booksDao from '../../../../../database/dao/BooksDao'
 import { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { COVER_DEFAULT_FILES, defaultCoverIndex, coverPathToUri } from '../../../../../common/utils/CoverSource'
 import bookCover from '../../../../../common/utils/BookCover'
+import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 /**
  * 单本封面样式弹窗（v3.21，用户需求"自定义封面真实功能"）。
@@ -181,7 +182,7 @@ export default struct CoverStyleDialog {
     booksUtil.addBooks(b).then((): void => {
       this.saving = false
       // 广播书架刷新（依据见本字段注释；与删除/置顶同一条公共信号）
-      this.isBookRefreshing++
+      ShelfRefresh.books()
       showMessage(this.resetRequested ? '已恢复自带封面' : '封面已更新')
       this.closeDialog()
     }).catch((): void => {

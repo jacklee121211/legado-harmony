@@ -12,6 +12,7 @@ import ShelfPrefs, { SortDir, SortKey } from '../../common/utils/ShelfPrefs'
 import { DialogHost } from '../../common/dialog/DialogHost'
 // 2026-11-02 第 26 轮（B③b）：隐藏/恢复改走唯一写入口
 import { GroupMutation } from '../../common/group/GroupMutation'
+import { ShelfRefresh } from '../../common/shelf/ShelfRefresh';
 
 /** 排序区块的一行（档位 + 显示名） */
 interface SortOptionVo {
@@ -363,7 +364,7 @@ export default struct groupTypePanel {
     //   真机后果同 D2/D5：别的页面（书架/全部/最近）收不到结构通知，要等下一次手动刷新。
     GroupMutation.setVisible(id, next).then(() => {
       this.reload()
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
     }).catch((e: Error): void => {
       console.error(`[GRP-MUTATION] panel setVisible failed: ${e.message}`)
     })
@@ -408,7 +409,7 @@ export default struct groupTypePanel {
     // 改名 / 删除 / 改隐藏态都会影响两栏归属 ⇒ 关子弹窗后重查
     this.dialogGroupData = new BookGroups()
     this.reload()
-    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    ShelfRefresh.groups()
   }
 
   /** 真开真关（2026-10-01 用户方案）：重查该分组 → 更新 dialogGroupData → open。 */

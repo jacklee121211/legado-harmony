@@ -53,19 +53,25 @@ const GROUP_TREE_BUILD_BUDGET = 9;
 const WRITE_BYPASS_BUDGET = 0;
 
 /**
- * 刷新信号的**写点**预算（2026-11-03 B 线准备）：
+ * 刷新信号的**写点**预算（2026-11-03 B1）：
  * 这三个全局键是书架域最大的"多路喊刷新"来源 —— 任一页面都可能自增它们，
- * 于是"改了 A 忘了 B"（U2b / B⑥ 的土壤）。B1 要把结构变更收敛到 `GroupEvents` 单一路，
- * 在此之前**先上 ratchet**：允许存量存在，但**不许再新增写点**。
+ * 于是"改了 A 忘了 B"（U2b / B⑥ 的土壤）。
  *
- * 实测（2026-11-03，非注释行）：
- *   · `BOOK_IS_BOOK_GROUPS_REFRESHING` 23 处
- *   · `isBookRefreshing`              29 处
- *   · `BOOK_IS_BOOK_REFRESHING`        0 处（自增形式；它可能走 AppStorage.setOrCreate，本闸门同时统计那种写法）
- *   ⇒ 合计 52
+ * 沿革：
+ *   · 建闸门时（B1 之前）实测 **56** 处写点；
+ *   · B1a 引入 `common/shelf/ShelfRefresh.ets` 门面后，56 → **0**（门面内部用变量 key 写法，
+ *     不匹配本闸门的字面量规则）⇒ 预算降到 **0**。
+ *   · **允许的例外**：`storage/bookListData.ets` 里把三个键**初始化为 0**
+ *     （`AppStorage.setOrCreate(KEY, 0)`）—— 那是启动初始化，不是"喊刷新"，
+ *     换算成门面会变成"加一到 1"，属行为变更，故明确允许并在下面登记。
  */
-const REFRESH_SIGNAL_BUDGET = 56;
+const REFRESH_SIGNAL_BUDGET = 0;
 const REFRESH_SIGNALS = ['BOOK_IS_BOOK_REFRESHING', 'BOOK_IS_BOOK_GROUPS_REFRESHING', 'isBookRefreshing'];
+
+/** 刷新信号写点的允许清单：只允许"初始化"语义，且只能在启动路径 */
+const REFRESH_WRITE_ALLOW = [
+  { file: 'storage/bookListData.ets', why: '启动时把三个全局键初始化为 0（不是喊刷新）' },
+];
 
 /** 写直连白名单：双轨回退分支（不可达但刻意保留） */
 const WRITE_BYPASS_ALLOW = [
@@ -97,6 +103,7 @@ const hits = {
   refreshWrites: [],
 };
 const allowedBypass = [];
+const allowedRefresh = [];
 
 for (const abs of files) {
   const rel = relative(SRC_DIR, abs).split(sep).join('/');
@@ -129,7 +136,11 @@ for (const abs of files) {
     // 刷新信号写点（自增 / AppStorage 写）
     for (const sig of REFRESH_SIGNALS) {
       const re = new RegExp('(?:' + sig + '\\s*(?:\\+\\+|\\+=))|(?:AppStorage\\.setOrCreate\\(\\s*[\'"]' + sig + '[\'"])');
-      if (re.test(t)) hits.refreshWrites.push({ file: rel, line: lineNo, sig, text: t });
+      if (re.test(t)) {
+        const allowIt = REFRESH_WRITE_ALLOW.some((a) => a.file === rel);
+        if (!allowIt) hits.refreshWrites.push({ file: rel, line: lineNo, sig, text: t });
+        else allowedRefresh.push({ file: rel, line: lineNo, sig });
+      }
     }
   });
 }

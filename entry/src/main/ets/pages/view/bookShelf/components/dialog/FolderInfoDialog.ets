@@ -28,6 +28,7 @@ import { common } from '@kit.AbilityKit'
 import coverInfoDialog from './coverInfoDialog'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
+import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 /** 分享游标（持久化 + 生命周期，2026-11-01）：按分组隔离，30 分钟内有效 */
 interface ShareCursorData {
@@ -413,7 +414,7 @@ export default struct FolderInfoDialog{
     setTimeout(() => {
       showMessage(this.itemData.isTop? '置顶成功' : '取消置顶成功')
       this.topTitle = this.itemData.isTop?'取消置顶':'置顶'
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
     },500)
   }
   //重命名弹窗
@@ -460,7 +461,7 @@ export default struct FolderInfoDialog{
       this.itemData.groupName = this.inputValue
       showMessage('重命名成功')
       setTimeout(() => {
-        this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+        ShelfRefresh.groups()
       },500)
     } else {
       showMessage('已存在其它相同分组名')
@@ -475,8 +476,8 @@ export default struct FolderInfoDialog{
     builder: BookSelectGroupDialog({
       moveGroup: ()=> {
         setTimeout(()=>{
-          this.isBookRefreshing++
-          this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+          ShelfRefresh.books()
+          ShelfRefresh.groups()
         },500)
         this.bookMoveGroup?.close()
       },
@@ -844,8 +845,8 @@ export default struct FolderInfoDialog{
       showMessage('解散失败')
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.isBookRefreshing++
+      ShelfRefresh.groups()
+      ShelfRefresh.books()
       this.cancel()
     }
   }
@@ -886,8 +887,8 @@ export default struct FolderInfoDialog{
       console.error('deleteGroupKeepChildFolders failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.isBookRefreshing++
+      ShelfRefresh.groups()
+      ShelfRefresh.books()
       this.cancel()
     }
   }
@@ -920,8 +921,8 @@ export default struct FolderInfoDialog{
       console.error('deleteGroup failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.isBookRefreshing++
+      ShelfRefresh.groups()
+      ShelfRefresh.books()
       this.cancel()
     }
   }
@@ -1015,8 +1016,8 @@ export default struct FolderInfoDialog{
       await GroupMutation.moveGroupNode(gid, targetId)
       // 2026-11-01：先广播再关窗 —— 关窗会销毁本组件，广播放后面在部分路径上会丢
       // （双轨期：旧信号继续发，供尚未迁移到 GroupEvents 的组件消费）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.isBookRefreshing++
+      ShelfRefresh.groups()
+      ShelfRefresh.books()
       console.log(`[GRP-MOVE] from=${gid} to=${targetId} ok groupsRefresh=${this.BOOK_IS_BOOK_GROUPS_REFRESHING}`)
       this.groupMoveGroup?.close()
       this.cancel()
@@ -1099,8 +1100,8 @@ export default struct FolderInfoDialog{
       console.error('applyMergeMove failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.isBookRefreshing++
+      ShelfRefresh.groups()
+      ShelfRefresh.books()
       this.cancel()
     }
   }
@@ -1123,8 +1124,8 @@ export default struct FolderInfoDialog{
       console.error('renameGroupAndMove failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-      this.isBookRefreshing++
+      ShelfRefresh.groups()
+      ShelfRefresh.books()
       this.cancel()
     }
   }
@@ -1217,10 +1218,10 @@ export default struct FolderInfoDialog{
       }
     }
     setTimeout(()=>{
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
       // 2026-11-02：**必须同时广播书籍刷新** —— 隐藏/恢复会改变"哪些书可见"，
       //   只刷分组列表的话「全部/最近」还留着该组的书（真机：隐藏 1 后猛龙过江仍在第一位）。
-      this.isBookRefreshing++
+      ShelfRefresh.books()
       this.cancel()
       // 切换后 show=false 表示刚被隐藏 ⇒ 文案要与结果一致
       showMessage(this.itemData.show ? '已恢复显示' : '隐藏成功')

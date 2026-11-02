@@ -18,6 +18,7 @@ import AppRouter, { PdfRouteParam, RouteName, ReaderRouteParam } from '../../../
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
+import { ShelfRefresh } from '../../../../common/shelf/ShelfRefresh';
 
 @Component
   /**
@@ -193,7 +194,7 @@ export default struct BookInfos {
         this.book.bookName = fresh[0].bookName
       }
     }
-    this.isBookRefreshing++
+    ShelfRefresh.books()
     console.info('BookRename', `renamed -> ${newName}, broadcast BOOK_IS_BOOK_REFRESHING`)
   }
 

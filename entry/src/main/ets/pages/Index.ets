@@ -109,6 +109,7 @@ import { VipDialog } from '../componets/myCenter/VipDialog'
 import { VipManager } from '../common/utils/VipManager'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../common/dialog/DialogHost'
+import { ShelfRefresh } from '../common/shelf/ShelfRefresh';
 
 @Entry
 @Component
@@ -1042,8 +1043,7 @@ struct Main {
     //   重查就看不到新书。后台标记见 `onPageHide`。
     if (this.backgroundedSinceLastShow) {
       this.backgroundedSinceLastShow = false
-      const tick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1
-      AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, tick)
+      const tick: number = ShelfRefresh.books()
     }
   }
 

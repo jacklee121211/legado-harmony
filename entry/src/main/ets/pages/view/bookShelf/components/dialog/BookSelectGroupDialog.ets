@@ -25,6 +25,7 @@ import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../co
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
 import { GroupTree } from '../../../../../common/group/GroupTree'
+import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 /** 树形列表的一行（2026-11-01 多级文件夹） */
 interface GroupRow {
@@ -819,7 +820,7 @@ export default struct BookSelectGroupDialog{
       + ` hit=${hit !== undefined} rowsLen=${this.rows.length}`
       + ` presetLen=${this.presetGroups === null ? -1 : this.presetGroups.length}`)
     // ② 广播：书架分组行 / 分组卡片重查（规范第 5 节）
-    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+    ShelfRefresh.groups()
     // ③ 告诉子弹窗"这次真的成功了" ⇒ placeholder 切到「创建成功，可继续输入创建」
     AppStorage.setOrCreate<boolean>(AddGroupChannel.KEY_OK, true)
   }
@@ -921,7 +922,7 @@ export default struct BookSelectGroupDialog{
       //    不等待提交就会漏掉刚建的这一组（前端表现仍是"看不到新分组"）
       await BookGroupsDao.insert(bookGroups)
       showMessage(`已添加${newName}分组`)
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
       if (this.onGroupCreated !== null) {
         // 真开真关：本弹窗已被关闭 ⇒ 交给调用方重开（它会重新预取分组）。
         // 绝不能再在这里 `getGroupList()`：实例已销毁，写了也不会显示（见字段注释）。
@@ -1325,8 +1326,8 @@ export default struct BookSelectGroupDialog{
    *   「close → 重新预取分组 → new controller → open」这件事，语义完全吻合）。
    */
   private afterGroupChanged(): void {
-    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-    this.isBookRefreshing++
+    ShelfRefresh.groups()
+    ShelfRefresh.books()
     if (this.onGroupCreated !== null) {
       this.onGroupCreated()
       return
@@ -1357,8 +1358,8 @@ export default struct BookSelectGroupDialog{
     // const dissolved: boolean = await bookGroupUtils.dissolveIfEmpty([oldGid])
     // if (dissolved) { … }
     // 现在只做广播：书已经移到别处，分组卡片与书列表都要重查
-    this.BOOK_IS_BOOK_GROUPS_REFRESHING++
-    this.isBookRefreshing++
+    ShelfRefresh.groups()
+    ShelfRefresh.books()
   }
 
 }

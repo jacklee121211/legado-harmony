@@ -98,6 +98,7 @@ import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent
 import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
 // 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../common/dialog/DialogHost'
+import { ShelfRefresh } from '../../../common/shelf/ShelfRefresh';
 
 interface ParamsObj {
   bookData: Books,
@@ -802,8 +803,7 @@ export default struct ReaderPage3 {
       // 落库失败不得阻塞退出流程
     }
     // 广播语义与 WifiBookServer.registerImportedBook（传书入库后）一致：自增刷新键
-    const tick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1;
-    AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, tick);
+    const tick: number = ShelfRefresh.books();
   }
 
   /** 待跳转的书签目标（-1 = 无）。来自 `readStatistics` 二级菜单点击书签时的 params。 */

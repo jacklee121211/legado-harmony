@@ -19,6 +19,7 @@ import { ShelfColors } from '../../common/utils/NightMode'
 import { bookParser } from '@kit.ReaderKit'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../common/dialog/DialogHost'
+import { ShelfRefresh } from '../../common/shelf/ShelfRefresh';
 
 /**
  * 标题图片样式（返回箭头 / 标题栏图标）
@@ -183,7 +184,7 @@ export default struct BookDetailPage {
     DialogHost.openIf(this.dialogController);
     this.isAddBookShelf = true; // 1s后关闭dialog
     setTimeout(() => {
-      this.isBookRefreshing++
+      ShelfRefresh.books()
       this.dialogController.close();
     }, 1000);
   }

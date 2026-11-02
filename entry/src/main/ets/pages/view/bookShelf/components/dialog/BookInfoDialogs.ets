@@ -28,6 +28,7 @@ import RenameBookDialog from './RenameBookDialog'
 import MarkToolButton from '../../../../../componets/common/MarkToolButton'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../../common/dialog/DialogHost'
+import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 /** 本弹窗在 `BookShareBridge` 里的宿主标识（碰一碰/隔空传送监听持有权） */
 const OWNER_BOOK_INFO: string = 'BookInfoDialogs'
@@ -500,7 +501,7 @@ export default struct BookInfoDialogs{
     // let index = this.booksDataSource.getIndex(this.bookData)
     // this.booksDataSource.deleteData(index)
     setTimeout(()=>{
-      this.isBookRefreshing++
+      ShelfRefresh.books()
       this.controller?.close()
     },200)
     showMessage('删除成功')
@@ -525,7 +526,7 @@ export default struct BookInfoDialogs{
     //   this.booksDataSource.changeData(newIndex > 1?newIndex - 1:index,this.bookData)
     // }
     setTimeout(()=>{
-      this.isBookRefreshing++
+      ShelfRefresh.books()
       this.controller?.close()
     },200)
 
@@ -573,7 +574,7 @@ export default struct BookInfoDialogs{
             this.bookMoveGroup?.close()
             this.bookMoveGroup = null
             this.controller?.close()
-            this.isBookRefreshing++
+            ShelfRefresh.books()
           }, 200)
         },
         // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ 本弹窗恢复

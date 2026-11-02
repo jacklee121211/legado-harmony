@@ -33,6 +33,7 @@ import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/C
 import { GroupFlags } from '../../../../common/group/GroupFlags'
 // 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
+import { ShelfRefresh } from '../../../../common/shelf/ShelfRefresh';
 
 /** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
 interface PathChip {
@@ -154,11 +155,11 @@ export default struct BookContentRefresh {
     if (this.isRefreshing) {
       switch (this.bookTypeNumber){
         case 1:
-          this.isGroupRefreshing++
+          ShelfRefresh.groups()
           break;
         // 2026-10-25：`case 5`（书单）随书单功能一起删除
         default:
-          this.isBookRefreshing++
+          ShelfRefresh.books()
           break
       }
     }
@@ -244,7 +245,7 @@ export default struct BookContentRefresh {
     // 原来裸调 addGroup 只写库，读真源的页面要重进才看得到新分组
     await GroupMutation.createGroup(ng)
     this.newGroupName = ''
-    this.isGroupRefreshing++
+    ShelfRefresh.groups()
     await this.onFolderChanged()
     showMessage(`已添加${name}分组`)
   }

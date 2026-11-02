@@ -6,6 +6,7 @@ import { Haptics } from '../../../../../common/utils/Haptics'
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../../common/model/Theme'
 import { ShelfColors } from '../../../../../common/utils/NightMode'
+import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 /**
  * 单本书「重命名」弹窗（2026-10-05 新增，用户需求：长按弹窗里作者行换成重命名入口）
@@ -151,7 +152,7 @@ export default struct RenameBookDialog {
       return
     }
     // DB 事务已提交（BookRename 内部 await 过）⇒ 现在广播，列表重查才读到新名字（规范 §5.2）
-    this.isBookRefreshing++
+    ShelfRefresh.books()
     showMessage('已重命名为「' + newName + '」')
     // ⚠️ 不自己关（无效）：只回调父级，由父级关弹窗
     this.onRenamed(newName)

@@ -27,6 +27,7 @@ import { Books } from '../database/entities/Books';
 import DataBase from '../database';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { ShelfRefresh } from '../common/shelf/ShelfRefresh';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'PdfProbe';
@@ -411,8 +412,7 @@ struct PdfProbePage {
         return;
       }
       await booksDao.deleteBook(ids);
-      const tick: number = (AppStorage.get<number>('BOOK_IS_BOOK_REFRESHING') ?? 0) + 1;
-      AppStorage.setOrCreate('BOOK_IS_BOOK_REFRESHING', tick);
+      const tick: number = ShelfRefresh.books();
       this.note('已删除 ' + ids.length + ' 本测试书');
     } catch (e) {
       this.note('清理失败 ' + JSON.stringify(e));

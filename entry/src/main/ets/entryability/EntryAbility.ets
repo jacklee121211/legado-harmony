@@ -34,6 +34,7 @@ import { ContinueBridge } from '../common/utils/ContinueBridge';
 import ShelfPrefs from '../common/utils/ShelfPrefs';
 // PuraX 外屏「极简阅读」形态判定（2026-10-24）：全工程唯一的形态判断入口
 import { OuterScreen } from '../common/utils/OuterScreen';
+import { ShelfRefresh } from '../common/shelf/ShelfRefresh';
 
 /**
  * ── T13/D-16：避让区 / 屏幕尺寸换算改用 `UIContext` 开关 ─────────────────────
@@ -470,8 +471,8 @@ export default class EntryAbility extends UIAbility {
     // 建表先于首屏完成时该信号也无害（挂载后首次查询本就能查到）。
     DbUtil.initDB(this.context).then(async () => {
       await DataBase.initAllTable()
-      const t = (AppStorage.get<number>('BOOK_IS_BOOK_GROUPS_REFRESHING') ?? 0) + 1
-      AppStorage.setOrCreate('BOOK_IS_BOOK_GROUPS_REFRESHING', t)
+      // 2026-11-03（B1）：刷新信号统一走门面（唯一写点），行为等价（仍是加一）
+      ShelfRefresh.groups()
     })
     // ★ 2026-10-20 闪退修复（必读）：**先把"就绪等待者"登记上**，再让 UI 继续加载。
     //   书架 `BookContent.aboutToAppear` 会 `await DataBase.whenReady()`（见那边注释），

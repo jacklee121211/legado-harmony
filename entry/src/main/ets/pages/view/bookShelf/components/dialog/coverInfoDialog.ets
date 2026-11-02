@@ -20,6 +20,7 @@ import CommonConstants from '../../../../../common/constants/CommonConstants'
 import bookCover from '../../../../../common/utils/BookCover'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../../common/dialog/DialogHost'
+import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 @CustomDialog
 /**
@@ -403,14 +404,14 @@ export default struct coverInfoDialog{
         await booksUtil.addBooks(b)
       }
       // 覆盖改写了书行 ⇒ 书架列表也要重查（LazyForEach 键值含 customCoverUrl）
-      this.isBookRefreshing++
+      ShelfRefresh.books()
     }
     // await：工具层已补 await（bookGroupUtils.updatePartialGroup）⇒ 提交完成后才广播，
     // 避免"确定后刷新读到旧值"（与 BooksDao.insert 同款时序修复）
     // 2026-11-03（A2）：改走唯一写入口（刷真源 + 发一次非结构事件）；原来只写库，别处要手动刷新才看到
     await GroupMutation.setGroupCover(this.itemData)
     setTimeout(()=>{
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
       // 先关自己再回调父级（cancel ⇒ 子退父进，长按分组弹窗恢复）
       this.controller?.close()
       this.cancel()
@@ -555,9 +556,9 @@ export default struct coverInfoDialog{
     this.selectedType = 0
     this.coverImages = ''
     // 书行被改写 ⇒ 书架列表重查（LazyForEach 键值含 customCoverUrl）
-    this.isBookRefreshing++
+    ShelfRefresh.books()
     setTimeout((): void => {
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
       this.controller?.close()
       this.cancel()
       showMessage(count > 0 ? `已恢复 ${count} 本书的封面` : '封面已恢复')

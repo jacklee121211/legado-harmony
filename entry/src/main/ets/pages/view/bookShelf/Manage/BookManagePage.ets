@@ -66,6 +66,7 @@ import ThreeActionDialog from '../../../../componets/common/ThreeActionDialog';
 import { deviceInfo } from '@kit.BasicServicesKit';
 // 页签栏目标宽度要按屏宽算（`manageBarWidth()`）⇒ 需要 `display`。
 import { display } from '@kit.ArkUI';
+import { ShelfRefresh } from '../../../../common/shelf/ShelfRefresh';
 
 /**
  * 管理跳转页面
@@ -1011,9 +1012,9 @@ export default struct BookManagePage {
       // @StorageLink 不再回写 AppStorage ⇒ 书架不刷新（"置顶/删除后书架还是旧排序"）。
       // 组件还活着时写，保证书架（BookContent / GroupType / BookFolder）收到信号。
       if (this.bookTypeNumber === 1) {
-        this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+        ShelfRefresh.groups()
       } else {
-        this.isBookRefreshing++
+        ShelfRefresh.books()
       }
       // 迁 Navigation 第 4 期：本页现在是 NavDestination ⇒ 必须走门面返回。
       AppRouter.back()
@@ -1290,7 +1291,7 @@ export default struct BookManagePage {
    *
    * ── 本次修掉的 3 个问题 ────────────────────────────────────────────────────
    *  【A】分组置顶**不广播** ⇒ 书架分组卡片不刷新
-   *      旧代码 `if (this.bookTypeNumber !== 1) { this.isBookRefreshing++ }`
+   *      旧代码 `if (this.bookTypeNumber !== 1) { ShelfRefresh.books() }`
    *      ⇒ 分组（`bookTypeNumber === 1`）那条**一个信号都没发**。
    *      而书架侧监听是两个**不同**的键（`grep` 实证）：
    *        · `BOOK_IS_BOOK_REFRESHING`        → 书列表（`BookContent.ets:55`）
@@ -1329,10 +1330,10 @@ export default struct BookManagePage {
     // ① 广播给身后的书架 —— 按类型发**对应**的键（十修 A）
     if (this.bookTypeNumber === 1) {
       // 分组：书架看的是 BOOK_IS_BOOK_GROUPS_REFRESHING（BookFolder / GroupType）
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.groups()
     } else {
       // 书籍 / 书单：书架看的是 BOOK_IS_BOOK_REFRESHING（BookContent）
-      this.isBookRefreshing++
+      ShelfRefresh.books()
     }
     // ③ 不清空勾选 ⇒ 按钮文字按选中项的真实状态**重新判定**（十修 B/C）
     //    ⚠️ 必须在 `await reloadListKeepSelection()` **之后**，否则判的是旧数据。
@@ -1604,14 +1605,14 @@ export default struct BookManagePage {
    switch (this.bookTypeNumber){
      case 1:
        await this.getGroupList();
-       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+       ShelfRefresh.groups()
        break;
        // 2026-10-25：`case 5`（书单）随书单功能删除
        default:
          await this.getBookList();
          // 2026-11-01：恢复广播（原来被注释）—— 删除/移动/隐藏后书架必须立即刷新，
          //   否则要退出重进甚至重启才看得到（用户反复反馈过的问题）。
-         this.isBookRefreshing++
+         ShelfRefresh.books()
          break;
    }
    this.dataMoveCheckList(false)
@@ -1724,8 +1725,8 @@ export default struct BookManagePage {
       // 2026-11-03（A2）：走唯一写入口 dissolveMany（关掉底层 emit，由 afterChange 刷真源 + 只发一次）
       await GroupMutation.dissolveMany(gids, mode)
       showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子文件夹已上提）')
-      this.isBookRefreshing++
-      this.BOOK_IS_BOOK_GROUPS_REFRESHING++
+      ShelfRefresh.books()
+      ShelfRefresh.groups()
       this.pageInit()
     } catch (e) {
       console.error('runDissolve failed: ' + JSON.stringify(e))

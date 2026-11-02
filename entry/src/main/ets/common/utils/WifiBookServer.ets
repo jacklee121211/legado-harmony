@@ -17,6 +17,7 @@ import uploadSessions, { UploadInitResult, UploadSessionMeta, MAX_FILE_BYTES } f
 import CommonConstants from '../../common/constants/CommonConstants'
 import bookCover from './BookCover'
 import { importableExts } from '../format/FormatFlags'
+import { ShelfRefresh } from '../shelf/ShelfRefresh';
 /**
  * wifi传书 / 电脑阅读 · 内置 HTTP 服务（2026-09-30 回填，端口 1122）。
  *
@@ -2524,8 +2525,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             // 传书入库后**广播书架刷新**（2026-10-06 用户反馈"传完要手下滑才刷新"）：
             // `BOOK_IS_BOOK_REFRESHING` 是书架全组件的公共刷新信号（BookContent
             // `@StorageLink+@Watch` ⇒ 重查数据库）。与 BookInfos 改名广播同款语义：自增。
-            const refreshTick: number = (AppStorage.get<number>(CommonConstants.BOOK_IS_BOOK_REFRESHING) ?? 0) + 1;
-            AppStorage.setOrCreate(CommonConstants.BOOK_IS_BOOK_REFRESHING, refreshTick);
+            const refreshTick: number = ShelfRefresh.books();
             WifiBookServer.notify();
             console.info(`${TAG} imported: ${safeName} (${size} bytes), shelfRefresh=${refreshTick}`);
             return { ok: true, reason: 'ok', msg: '', existingId: -1 };

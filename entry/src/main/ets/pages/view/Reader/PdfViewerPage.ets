@@ -42,6 +42,7 @@ import MySetConstants from '../../../common/constants/MySetConstants';
 import { OfflineMode } from '../../../common/utils/OfflineMode';
 import { VipManager } from '../../../common/utils/VipManager';
 import { WindowAbility } from '../../../entryability/WindowAbility';
+import { ShelfRefresh } from '../../../common/shelf/ShelfRefresh';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'PdfViewer';
@@ -346,8 +347,7 @@ export default struct PdfViewerPage {
     // ReaderPage3 的做法是 `stampReadProgress(...)` 落库 + `BOOK_IS_BOOK_REFRESHING` 自增触发
     // `BookContent` 的 `@StorageLink@Watch` 重查 —— 这里完全对齐。
     BooksDao.stampReadProgress(id, idx, this.pageTitle(idx), this.pageCount).then((): void => {
-      const tick: number = (AppStorage.get<number>('BOOK_IS_BOOK_REFRESHING') ?? 0) + 1;
-      AppStorage.setOrCreate('BOOK_IS_BOOK_REFRESHING', tick);
+      const tick: number = ShelfRefresh.books();
     }).catch((e: Error): void => {
       hilog.warn(DOMAIN, TAG, 'save progress failed %{public}s', e.message);
     });

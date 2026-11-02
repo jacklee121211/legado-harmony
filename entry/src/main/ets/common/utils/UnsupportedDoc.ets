@@ -20,6 +20,7 @@ import { UIContext } from '@kit.ArkUI';
 import { Books } from '../../database/entities/Books';
 import { extOf } from '../format/FormatFlags';
 import booksUtil from './booksUtils';
+import { ShelfRefresh } from '../shelf/ShelfRefresh';
 
 export class UnsupportedDoc {
   /** 是否是已取消支持的 DOC/DOCX（只看原始 bookUrl 后缀） */
@@ -87,8 +88,8 @@ export class UnsupportedDoc {
       if (book.id !== undefined && book.id !== null) {
         await booksUtil.delBooksById(book.id);
       }
-      AppStorage.setOrCreate('BOOK_IS_BOOK_REFRESHING',
-        (AppStorage.get<number>('BOOK_IS_BOOK_REFRESHING') ?? 0) + 1);
+      // 2026-11-03（B1）：刷新信号统一走门面（唯一写点），行为等价（仍是加一）
+      ShelfRefresh.books();
       ui.getPromptAction().showToast({ message: '已删除' });
     } catch (e) {
       ui.getPromptAction().showToast({ message: '删除失败，请重试' });
