@@ -18,6 +18,8 @@ import { showMessage } from '../../../../componets/common/promptShow'
 // 外部文件接收（2026-10-19 双响炮）：EntryAbility 只登记，这里（DB 已就绪）才真正导入
 import { IncomingFiles, INCOMING_TICK } from '../../../../common/format/IncomingFiles'
 import { intl } from '@kit.LocalizationKit'
+// P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
+import { GroupFlags } from '../../../../common/group/GroupFlags'
 
 /** 2026-11-01：进出分组时复用列表缓存（改 false 即完全回到"每次重查"的旧行为） */
 const REUSE_LIST_CACHE: boolean = true
@@ -521,6 +523,117 @@ export default struct BookContent {
     const key: string = item.id !== undefined && item.id !== null ? String(item.id) : ('i' + index);
     return prefix + key;
   }
+
+  // ══ P4-U1（2026-11-02 第 23 轮）：**列表头能力** —— 分组网格与书籍同域滚动 ═══════
+  //
+  // 问题（真源文档第 7 节「P4 根因取证」）：`BookContentRefresh` 里子分组网格是书籍列表的
+  // **兄弟节点**，网格本身不自带滚动（`GridRow` 只排版），而书籍在自己的 `List` 里滚
+  // ⇒ 分组卡片死死钉在顶部、书单独滑动 = 用户说的「割裂」。
+  //
+  // 解法：把网格做成**同一个 List 的 header**，共享同一个滚动偏移。
+  //
+  // 为什么必须是 `ListItemGroup` 而不是普通 `ListItem`（SDK 原文）：
+  //   `component/list.d.ts:928-929`：
+  //     「Each list item group occupies one row in multi-column mode. Its child list items
+  //       are arranged based on the **lanes** attribute of the list.」
+  //   ⇒ `lanes(3)` 下只有 ListItemGroup 能**占满一整行**；普通 ListItem 会被塞进一个格子。
+  //   `component/list_item_group.d.ts:207-208`：
+  //     「Unless specified otherwise, it spans the **entire width** of the **List** component.」
+  //   ⇒ header 天然全宽，宫格列数只作用于 group 内的书籍条目。
+  //   行距不会丢：`list_item_group.d.ts:137-150` 的 `space` 选项
+  //     「Spacing between list items. This parameter only affects the spacing between list items,
+  //       but not spacing between the header and list items」⇒ 与 List 的 `space:10` 同值传入即可。
+  //
+  // 默认空实现 + `!==` 判等：与 `componets/common/Header.ets:17-25` 完全同款写法
+  //（`@Builder leftBuilder() {}` + `@BuilderParam customLeftBuilder = this.leftBuilder`），
+  // 是**本工程已编译通过**的既有模式，不是新发明的语法。
+  @Builder emptyHeader() {}
+  @BuilderParam header: () => void = this.emptyHeader
+  /**
+   * 调用方是否真的提供了头。
+   *
+   * 由父级算好传进来（`GroupFlags.USE_UNIFIED_SCROLL && 本页确实有子分组宫格`）。
+   * 为什么要这个额外参数、而不是只看开关：`BookContentRefresh` 一共有两条 `BookContent` 分支
+   * （「最近」/ 具体分组），「最近」页**没有**分组网格 ⇒ 它必须**逐字节保持旧结构**，
+   * 否则开关一开，「最近」也会被套进 ListItemGroup（多一层容器 = 多一份回归风险）。
+   */
+  @Prop useHeaderInList: boolean = false
+
+  /** header 的转发壳：`ListItemGroupOptions.header` 是 `CustomBuilder`，
+   *  用本组件的 @Builder 方法转发最稳（`ReaderSettingDialog` 也是这么调 @BuilderParam 的）。 */
+  @Builder headerSlot() {
+    this.header()
+  }
+
+  /**
+   * 书籍条目（**唯一一份**，双轨两条分支都调它 —— 避免同一段 LazyForEach 抄两遍）。
+   *
+   * ── ForEach → LazyForEach（2026-09-24，需求第 7 点）的使用限制（官方原文）──────────
+   *   ·「LazyForEach 必须在容器组件内使用，仅有 List、ListItemGroup、Grid、Swiper
+   *      以及 WaterFlow 组件支持数据懒加载（可配置 cachedCount 属性，即只加载可视部分
+   *      以及其前后少量数据用于缓冲）」
+   *     ⇒ 本 @Builder 被放在 `List` 里、或被放在 `ListItemGroup` 里，**两者都是合法容器**。
+   *   ·「LazyForEach 在每次迭代中，必须创建且只允许创建一个子组件；即 LazyForEach 的
+   *      子组件生成函数**有且只有一个根组件**」⇒ 下面 ListItem 是唯一根，if/else 在其内部。
+   *   ·「键值生成器必须针对每个数据生成唯一的值，如果键值相同，将导致键值相同的 UI
+   *      组件渲染出现问题」⇒ 沿用原来的 id 优先策略，并在**兜底分支**追加下标，
+   *      彻底杜绝"无 id 且无 bookUrl"的书互相撞键。
+   *   · `ListItemGroup` 与 LazyForEach + `cachedCount` 组合的预加载行为有官方说明
+   *     （`component/list_item_group.d.ts:240-243`）⇒ 包一层 group **不会**丢掉懒加载与预取。
+   */
+  @Builder bookItems() {
+    LazyForEach(this.booksDataSource, (item: Books, index: number) => {
+      ListItem(){
+        if (this.EXHIBIT === '宫格') {
+          BookInfoGrids({
+            book: item,
+            // 渐次入场：下标决定错峰延迟，waveId 决定"要不要重播"
+            itemIndex: index,
+            waveId: this.entranceWaveId,
+            // 一镜到底（2026-09-23）：封面节点 id（点击时按它拍几何）。
+            // 列表/宫格前缀不同 ⇒ 切形态瞬间新旧两份组件共存也不会撞 id。
+            // ★ 2026-10-09 三个问题之一的正解：**id 必须用稳定的"书身份"，不能用下标**
+            //   旧实现是 `'ltCoverG' + index` / `'ltCoverL' + index`。而书架会因为
+            //   「读完一本 / 置顶」而**重排**（用户原话：「进入某一本书，退出，这个书会到最上方」）
+            //   ⇒ 同一个 `ltCoverL2` 在重排前后指向**不同的书**
+            //   ⇒ 一镜到底的起飞/回落几何落到别人身上（用户实测：「回落甚至都变到第二本书的位置」）。
+            //   改用 `Books.id`（数据库主键，永远跟着书走）后，重排只会让同一个 id
+            //   换个屏幕位置 —— 那正是我们要的"实时更新书真实所在的位置"。
+            longtakeId: this.longtakeIdFor('ltCoverG', item, index)
+          })
+        } else {
+          BookInfos({
+            book: item,
+            itemIndex: index,
+            waveId: this.entranceWaveId,
+            longtakeId: this.longtakeIdFor('ltCoverL', item, index)
+          })
+        }
+      }
+    }, (item: Books, index: number): string => {
+      // ⚠️ 键值必须带上**会变、且影响封面显示**的字段（2026-09-29 修"置顶角标/弹窗字样不联动"）：
+      // LazyForEach 对键值相同的项**复用旧组件、不重绑数据** —— 旧键 `'b'+id` 在置顶前后
+      // 不变 ⇒ 复用组件里的 Books 还是旧对象：封面"置顶"角标不出现、长按弹窗（捕获的
+      // 正是这个旧对象）永远显示"置顶"。管理页是普通 ForEach + 全量重查 + 重排重建，
+      // 所以那边一直正常 —— 以它为准，把变化特征并进键值：
+      //   · isTop：置顶/取消置顶 ⇒ 角标与弹窗字样立即同步（重建就一条，开销可忽略）；
+      //   · durChapterTime：读书回来"读到第X章"文案同理会停留旧值，一并修掉。
+      //   · customCoverUrl（2026-10-01 修"换封面必须重启才生效"）：封面样式弹窗保存后
+      //     广播 BOOK_IS_BOOK_REFRESHING ⇒ BookContent 重查数据库，但键值若不含封面
+      //     字段，LazyForEach 对键值相同的项**复用旧组件、不重绑数据** ⇒ 封面停在旧值。
+      //     与 CoverStyleDialog 的广播是同一条链的两半，缺一不可。
+      //   · bookName（2026-10-05 修"改名后列表还是旧名"）：改名是**级联改名**
+      //     （见 common/utils/BookRename.ets 的唯一清单），但 LazyForEach 不认数据变了，
+      //     只认键值变了 ⇒ 键值必须带上书名；规范 §5.3/§6 已把这条列为硬要求
+      //     （`docs/标准-弹窗与按钮统一规范.md:201,212`「改名/换封面不刷新」）。
+      const flag: string = (item.isTop ? 'T' : 'F') + (item.durChapterTime ?? 0)
+        + (item.customCoverUrl ?? '') + (item.bookName ?? '')
+      return item.id !== undefined ? 'b' + item.id + flag
+        : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl + flag
+          : 'n' + item.bookName + '#' + index)
+    })
+  }
+
   build() {
     // ★★ 2026-10-21：**只在"首次加载"时显示 loading，切换档位时不闪** ★★
     // 用户反馈：「三段切换，会有一个巨大的加载中一闪而过，有点难受。」
@@ -560,66 +673,18 @@ export default struct BookContent {
         space:10,
         scroller:this.scroller
       }){
-        // ── ForEach → LazyForEach（2026-09-24，需求第 7 点）──────────────────
-        // 官方《LazyForEach：数据懒加载》使用限制原文：
-        //   ·「LazyForEach 必须在容器组件内使用，仅有 List、ListItemGroup、Grid、Swiper
-        //      以及 WaterFlow 组件支持数据懒加载（可配置 cachedCount 属性，即只加载可视部分
-        //      以及其前后少量数据用于缓冲）」
-        //   ·「LazyForEach 在每次迭代中，必须创建且只允许创建一个子组件；即 LazyForEach 的
-        //      子组件生成函数**有且只有一个根组件**」⇒ 下面 ListItem 是唯一根，if/else 在其内部。
-        //   ·「键值生成器必须针对每个数据生成唯一的值，如果键值相同，将导致键值相同的 UI
-        //      组件渲染出现问题」⇒ 沿用原来的 id 优先策略，并在**兜底分支**追加下标，
-        //      彻底杜绝"无 id 且无 bookUrl"的书互相撞键。
-        LazyForEach(this.booksDataSource, (item: Books, index: number) => {
-          ListItem(){
-            if (this.EXHIBIT === '宫格') {
-              BookInfoGrids({
-                book: item,
-                // 渐次入场：下标决定错峰延迟，waveId 决定"要不要重播"
-                itemIndex: index,
-                waveId: this.entranceWaveId,
-                // 一镜到底（2026-09-23）：封面节点 id（点击时按它拍几何）。
-                // 列表/宫格前缀不同 ⇒ 切形态瞬间新旧两份组件共存也不会撞 id。
-                // ★ 2026-10-09 三个问题之一的正解：**id 必须用稳定的"书身份"，不能用下标**
-                //   旧实现是 `'ltCoverG' + index` / `'ltCoverL' + index`。而书架会因为
-                //   「读完一本 / 置顶」而**重排**（用户原话：「进入某一本书，退出，这个书会到最上方」）
-                //   ⇒ 同一个 `ltCoverL2` 在重排前后指向**不同的书**
-                //   ⇒ 一镜到底的起飞/回落几何落到别人身上（用户实测：「回落甚至都变到第二本书的位置」）。
-                //   改用 `Books.id`（数据库主键，永远跟着书走）后，重排只会让同一个 id
-                //   换个屏幕位置 —— 那正是我们要的"实时更新书真实所在的位置"。
-                longtakeId: this.longtakeIdFor('ltCoverG', item, index)
-              })
-            } else {
-              BookInfos({
-                book: item,
-                itemIndex: index,
-                waveId: this.entranceWaveId,
-                longtakeId: this.longtakeIdFor('ltCoverL', item, index)
-              })
-            }
+        // ── 双轨（P4-U1，2026-11-02）：分组网格作为**列表头** ⇒ 与书籍同域滚动 ──────
+        //   · 开（`USE_UNIFIED_SCROLL=true` 且本页确实有头）：网格进 `ListItemGroup.header`，
+        //     全宽（`list_item_group.d.ts:207-208`），书籍仍按 `lanes` 排（`list.d.ts:928-929`）；
+        //   · 关（默认）：**逐字节回到旧结构** —— LazyForEach 直接是 List 的子节点。
+        if (GroupFlags.USE_UNIFIED_SCROLL && this.useHeaderInList) {
+          ListItemGroup({ header: this.headerSlot, space: 10 }) {
+            this.bookItems()
           }
-        }, (item: Books, index: number): string => {
-          // ⚠️ 键值必须带上**会变、且影响封面显示**的字段（2026-09-29 修"置顶角标/弹窗字样不联动"）：
-          // LazyForEach 对键值相同的项**复用旧组件、不重绑数据** —— 旧键 `'b'+id` 在置顶前后
-          // 不变 ⇒ 复用组件里的 Books 还是旧对象：封面"置顶"角标不出现、长按弹窗（捕获的
-          // 正是这个旧对象）永远显示"置顶"。管理页是普通 ForEach + 全量重查 + 重排重建，
-          // 所以那边一直正常 —— 以它为准，把变化特征并进键值：
-          //   · isTop：置顶/取消置顶 ⇒ 角标与弹窗字样立即同步（重建就一条，开销可忽略）；
-          //   · durChapterTime：读书回来"读到第X章"文案同理会停留旧值，一并修掉。
-          //   · customCoverUrl（2026-10-01 修"换封面必须重启才生效"）：封面样式弹窗保存后
-          //     广播 BOOK_IS_BOOK_REFRESHING ⇒ BookContent 重查数据库，但键值若不含封面
-          //     字段，LazyForEach 对键值相同的项**复用旧组件、不重绑数据** ⇒ 封面停在旧值。
-          //     与 CoverStyleDialog 的广播是同一条链的两半，缺一不可。
-          //   · bookName（2026-10-05 修"改名后列表还是旧名"）：改名是**级联改名**
-          //     （见 common/utils/BookRename.ets 的唯一清单），但 LazyForEach 不认数据变了，
-          //     只认键值变了 ⇒ 键值必须带上书名；规范 §5.3/§6 已把这条列为硬要求
-          //     （`docs/标准-弹窗与按钮统一规范.md:201,212`「改名/换封面不刷新」）。
-          const flag: string = (item.isTop ? 'T' : 'F') + (item.durChapterTime ?? 0)
-            + (item.customCoverUrl ?? '') + (item.bookName ?? '')
-          return item.id !== undefined ? 'b' + item.id + flag
-            : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl + flag
-              : 'n' + item.bookName + '#' + index)
-        })
+          .width('100%')
+        } else {
+          this.bookItems()
+        }
       }
       .alignListItem(ListItemAlign.Center)
       .layoutWeight(1)

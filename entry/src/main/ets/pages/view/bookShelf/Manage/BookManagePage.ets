@@ -4,7 +4,7 @@ import { GroupTree } from '../../../../common/group/GroupTree'
 import { GroupStore } from '../../../../common/group/GroupStore'
 import { GroupEvents, GroupChangedPayload } from '../../../../common/group/GroupEvents'
 import { DialogHost } from '../../../../common/dialog/DialogHost'
-import { gKey, bKey } from '../../../../common/manage/SelectionKeys'
+import { gKey, bKey, USE_SEPARATED_KEYS, isGroupKey, idOfKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import {showMessage} from '../../../../componets/common/promptShow'
@@ -1378,16 +1378,72 @@ export default struct BookManagePage {
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
   })
   //删除功能
+  /**
+   * 批量删除（2026-11-02 第 23 轮 **事故修复**，务必先读这段再改）。
+   *
+   * ── 旧实现（已废弃）────────────────────────────────────────────────────────
+   * ```ts
+   * this.checkListNumber.forEach((item:number)=>{
+   *   switch (this.bookTypeNumber){
+   *     case 1:  bookGroupUtil.delGroupById(item); break;   // 只有根目录页才当分组删
+   *     default: booksUtil.delBooksById(item); break;       // 其余页面一律当"书"删
+   *   }
+   * })
+   * ```
+   * 它是**按"当前停在哪个页面"猜选中项的类型**，而 `checkListNumber` 早已在
+   * `dataCheckList()`（`:1535-1544`）里把两种 id 拍平成一个裸 id 数组、**类型信息丢失**。
+   * 子分组批量页（`bookTypeNumber > 2`）上**分组和书都能勾** ⇒ 选中分组会命中 default 分支：
+   *   · 分组**删不掉**（静默失败，且 `delGroupById` 没被调用 ⇒ 不发任何 `GroupEvents`）；
+   *   · 若有某本书的 `books.id` 恰好等于该分组 id ⇒ **那本书的 DB 行被真删掉**。
+   *
+   * **2026-11-02 真机已发生**：在「1」的批量页勾 6 个空分组 → 确认删除 ⇒
+   *   6 个分组一个没删、`未分组` 48→**42**（6 本书的行被删；dump 证据
+   *   `_dsh_shots/2026-11-02-arch/after/H6-root-counts.json` 的 `"共42本"`）。
+   *   `common/manage/SelectionKeys.ets:12-16` 的注释 2026-11-01 就写明这类撞号是
+   *   「随时会炸的隐患」，本轮真炸了。
+   *
+   * ── 修法 ───────────────────────────────────────────────────────────────────
+   * **不再猜页面，直接按键的正负号判断类型**（分段键空间的原始定义：
+   * `gKey(id)=+id` 分组 / `bKey(id)=-id` 书，见 `SelectionKeys.ets:38-45`；
+   * 全仓写键处都用 `gKey/bKey`，已核对 `BookFolderGridManage.ets:107/113`、
+   * `BookInfoGridManage.ets:74`、`BookFolderManages.ets:86/105` 等）。
+   *
+   * ── 回退 ───────────────────────────────────────────────────────────────────
+   * `USE_SEPARATED_KEYS=false`（键空间退回"分组与书共用裸 id"）时**物理上无法**区分类型，
+   * 只能退回旧的"按页面猜"逻辑 —— 保留在 else 分支，行为与旧版逐字一致。也就是说：
+   * **一旦把该开关关掉，这个事故会原地复活**，不要关。
+   */
   manageDelete(){
-    this.checkListNumber.forEach((item:number)=>{
-      switch (this.bookTypeNumber){
-        case 1:
-          bookGroupUtil.delGroupById(item); break;
-        // 2026-10-25：`case 5`（书单）随书单功能删除
-        default:
-          booksUtil.delBooksById(item);break;
+    const groupIds: number[] = []
+    const bookIds: number[] = []
+    if (USE_SEPARATED_KEYS) {
+      for (const keyStr of Object.keys(this.checkLists)) {
+        const key: number = Number(keyStr)
+        if (!this.checkLists[key]) {
+          continue
+        }
+        if (isGroupKey(key)) {
+          groupIds.push(idOfKey(key))
+        } else {
+          bookIds.push(idOfKey(key))
+        }
       }
-    })
+    } else {
+      // 旧行为（仅 USE_SEPARATED_KEYS=false 的回退路径）
+      for (const item of this.checkListNumber) {
+        if (this.bookTypeNumber === 1) {
+          groupIds.push(item)
+        } else {
+          bookIds.push(item)
+        }
+      }
+    }
+    for (const gid of groupIds) {
+      bookGroupUtil.delGroupById(gid)
+    }
+    if (bookIds.length > 0) {
+      booksUtil.delBooksById(bookIds)
+    }
     setTimeout(()=>{
       this.refreshData()
       showMessage('已删除')

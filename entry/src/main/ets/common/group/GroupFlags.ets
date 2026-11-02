@@ -17,6 +17,13 @@ export class GroupFlags {
   /** P2-1：分组弹窗的 隐藏/解散/删除 改走 GroupMutation（唯一写入口） */
   static USE_MUTATION_IN_DIALOG: boolean = true
 
-  /** P4：分组页使用新渲染（分组+书籍同域滚动） */
-  static USE_UNIFIED_SCROLL: boolean = false
+  /**
+   * P4：分组页使用新渲染（分组+书籍同域滚动）。
+   *
+   * 接线点（2026-11-02 第 23 轮，全仓只有这两处读它）：
+   *   · `BookContent.ets` 的 `List` 内容分支：开 ⇒ `ListItemGroup({header, space:10})`；
+   *   · `BookContentRefresh.ets`：开 ⇒ 子分组宫格**不再**单独渲染，改为 `header` 传给 `BookContent`。
+   * 回退 = 把本开关改回 false（两处同时回旧结构，无需改别的代码）。
+   */
+  static USE_UNIFIED_SCROLL: boolean = true
 }

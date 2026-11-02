@@ -28,6 +28,8 @@ import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
+// P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
+import { GroupFlags } from '../../../../common/group/GroupFlags'
 
 /** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
 interface PathChip {
@@ -349,6 +351,40 @@ export default struct BookContentRefresh {
     return ShelfPrefs.effectiveColumns(this.userGridColumns, this.currentBreakpoint)
   }
 
+  // ══ P4-U1（2026-11-02 第 23 轮）：分组网格 → 书籍列表的**头** ═════════════════
+  /** 本页是否有子分组宫格（= 要不要把它当列表头）。
+   *  条件与旧实现逐字一致（2026-11-01 那条 `if`），只是提成方法给两处复用：
+   *  "是否单独渲染" 与 "是否作为 header 传下去" 必须是**同一个布尔**，否则开关切换时会两份都渲染/都不渲染。 */
+  private hasChildGrid(): boolean {
+    return !this.onRecentChip && this.bookTypeNumber > 2 && this.childGroups.length > 0
+  }
+
+  /**
+   * 子分组宫格（2026-11-01 布局：子分组在前、书籍在后；列数与书籍宫格同源）。
+   *
+   * @param inListHeader true = 作为书籍 `List` 的 `ListItemGroup.header` 渲染。
+   *   此时左右内边距必须归 0：`BookContent` 的 `List` 自带 `.margin({left:20,right:20})`
+   *   （`BookContent.ets:754-757`），若再叠旧的 10 ⇒ 分组卡片比书籍多缩进 10vp。
+   *   归 0 后分组卡片与书籍格子**左右边界严格对齐**（这是 header 方案能取到的最小偏差：
+   *   header 永远住在 List 的内容盒里，物理上不可能比 List 的 margin 更靠外）。
+   */
+  @Builder childGroupGrid(inListHeader: boolean) {
+    GridRow({ columns: this.folderColumns() }) {
+      ForEach(this.childGroups, (g: BookGroups) => {
+        GridCol() {
+          this.childFolderCard(g)
+        }
+      }, (g: BookGroups) => 'cf' + (g.groupId ?? 0))
+    }
+    .width('100%')
+    .padding({
+      left: inListHeader ? 0 : 10,
+      right: inListHeader ? 0 : 10,
+      top: 8,
+      bottom: 4
+    })
+  }
+
   /** 当前分组的树快照（供子卡片算格子） */
   private allGroups: BookGroups[] = []
   private tree: GroupTree | null = null
@@ -597,16 +633,11 @@ export default struct BookContentRefresh {
       //   ⇒ Stack 对齐改成 `BottomEnd`，按钮只给 `right` 外边距。
         Column() {
           // ── 2026-11-01 多层级排版：子分组宫格在前（左对齐、与书籍同列数），书在后 ──
-          if (!this.onRecentChip && this.bookTypeNumber > 2 && this.childGroups.length > 0) {
-            GridRow({ columns: this.folderColumns() }) {
-              ForEach(this.childGroups, (g: BookGroups) => {
-                GridCol() {
-                  this.childFolderCard(g)
-                }
-              }, (g: BookGroups) => 'cf' + (g.groupId ?? 0))
-            }
-            .width('100%')
-            .padding({ left: 10, right: 10, top: 8, bottom: 4 })
+          // ★ P4-U1（2026-11-02 第 23 轮）双轨：开关打开时这块**不再**当兄弟节点排版，
+          //   而是作为书籍 List 的 header 传下去（`childGroupGrid(true)`）——
+          //   否则网格不自带滚动、书在自己的 List 里滚 ⇒ 分组钉死、书单独滑（U1 割裂）。
+          if (!GroupFlags.USE_UNIFIED_SCROLL && this.hasChildGrid()) {
+            this.childGroupGrid(false)
           }
 
           if (this.onRecentChip) {
@@ -628,7 +659,14 @@ export default struct BookContentRefresh {
               EXHIBIT: this.EXHIBIT,
               searchValue: this.searchValue,
               // 2026-11-01：本分组有子文件夹时（哪怕空的），不显示"暂无书籍"空态
-              hasChildGroups: this.childGroups.length > 0
+              hasChildGroups: this.childGroups.length > 0,
+              // ── P4-U1 双轨（2026-11-02）：分组网格作为列表头 ⇒ 与书籍同域滚动 ──
+              // ⚠️ 父级侧**必须**是箭头函数闭包，不能写 `header: this.childGroupGrid`
+              //   （`ReaderPage3.ets:1051` 与 `ReaderSettingDialog.ets:23` 都记了这条）。
+              useHeaderInList: GroupFlags.USE_UNIFIED_SCROLL && this.hasChildGrid(),
+              header: (): void => {
+                this.childGroupGrid(true)
+              }
             })
           } else {
             Scroll() {
