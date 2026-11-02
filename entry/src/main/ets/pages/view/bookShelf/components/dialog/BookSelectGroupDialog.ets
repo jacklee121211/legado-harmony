@@ -471,8 +471,25 @@ export default struct BookSelectGroupDialog{
     .margin({ bottom: PaddingConstants.PADDING_16 })
   }
 
+  /**
+   * 2026-11-02 第 26 轮（探针 v3）：build 每次重建时被**属性求值**调用一次，
+   * 用来判断"build 到底有没有重建"。
+   *
+   * 为什么不用别的写法：
+   *   · `build()` 顶层不能写裸语句 —— ArkTS 报 10905210「build 方法只能有一个根节点」；
+   *   · 零尺寸 `ListItem` 的 `onAppear` 不可靠 —— 真机证明两种模式都**不打印**（List 不创建高度 0 的项）。
+   * ⇒ 把日志放进一个**返回空串的方法**里，再由 `Text(this.probeBuildTag())` 的属性求值触发。
+   */
+  private probeBuildTag(): string {
+    console.log(`[GRP-BUILD] rows=${this.rows.length} expandLen=${this.expandedIds.length}`
+      + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
+    return ''
+  }
+
   build() {
     Column() {
+      // 2026-11-02 第 26 轮（探针 v3）：见 `probeBuildTag()` 注释
+      Text(this.probeBuildTag()).fontSize(0).height(0).width(0)
       Column(){
         // 2026-10-22：分组管理模式标题不同（其余结构完全一致）
         Text(this.isManageMode ? '分组管理' : '移动分组')
@@ -488,13 +505,7 @@ export default struct BookSelectGroupDialog{
       //   行数动态增长时新行会被裁掉（真机表现为"点展开看不到子目录"，数据侧探针已证明
       //   presetLen=10 数据正常）。List 自带滚动与行复用，对动态行数更稳。
       List({ space: 2 }) {
-        // 2026-11-02 第 26 轮（探针 v2）：List 头部的零尺寸标记 —— 每次 build 重建都会打一行
-        ListItem() {
-          Text('').fontSize(0).onAppear(() => {
-            console.log(`[GRP-BUILD] list rebuilt rows=${this.rows.length} expandLen=${this.expandedIds.length}`
-              + ` mode=${this.isManageMode ? 'manage' : (this.isMoveGroupNode ? 'groupMove' : 'bookMove')}`)
-          })
-        }.height(0)
+        // 2026-11-02 第 26 轮：原来的零尺寸标记探针不可靠（List 不建 height(0) 的项），已挪到 build() 入口
         // 固定项：移动书籍 → 「未分组」；移动分组本身 → 「根目录」
         if (this.isMoveGroupNode) {
           ListItem() {
