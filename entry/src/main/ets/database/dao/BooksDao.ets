@@ -745,17 +745,23 @@ class BooksDao {
    *   ⇒ 表现为"解散了分组，书却不在未分组里 / 要手动刷新才对"。
    *   这与 `docs/标准-弹窗与按钮统一规范.md` 第 5 节第 2 条
    *   「广播必须发生在 DB 提交之后」是同一个坑（同类修法见 `isTopBook` 2026-09-29）。
+   * ⚠️ 2026-11-03（A3）**改名**：原名 `queryBookByGroup(groupId[], updateGroupId)` 是**写操作**
+   *   （把一批分组里的书 `bookGroup` 改成目标值），却起了一个"查询"的名字 ——
+   *   与 `BookGroupsDao.queryBookByGroup(ids)`（**读**：按分组 id 收集 bookIds）同名不同义，
+   *   极易被后人当查询调用。现改名为 `moveBooksToGroup(bookGroupIds, targetGroupId)`，
+   *   `bookGroupIds` 是"按哪些分组 id 取书"，`targetGroupId` 是目标分组。
+   *   调用点：`bookGroupUtils.delGroupById / dissolveGroup`（3 处）。
    */
-  async queryBookByGroup(groupId: number[],updateGroupId: number) {
+  async moveBooksToGroup(bookGroupIds: number[], targetGroupId: number) {
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       const predicates = DbUtil.getPredicates(this.TABLE_NAME);
-      predicates.in('bookGroup', groupId)
+      predicates.in('bookGroup', bookGroupIds)
       const bookDbList = await DbUtil.queryForList<Books>(predicates, column)
       if (bookDbList.length > 0) {
         // for-of + await（不用 forEach：回调里的 await 不会被外层等待）
         for (const item of bookDbList) {
-          item.bookGroup = updateGroupId
+          item.bookGroup = targetGroupId
           await this.update(item)
         }
       }

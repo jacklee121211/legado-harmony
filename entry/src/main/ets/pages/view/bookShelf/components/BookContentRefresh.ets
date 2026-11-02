@@ -25,6 +25,7 @@ import FolderInfoDialog from './dialog/FolderInfoDialog'
 import FolderCard, { FolderCell } from './FolderCard'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
+import { GroupMutation } from '../../../../common/group/GroupMutation'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
@@ -239,7 +240,9 @@ export default struct BookContentRefresh {
     ng.groupName = name
     ng.groupType = this.currentIndex
     ng.parentId = parentId
-    await bookGroupUtils.addGroup(ng)
+    // 2026-11-03（A2b）：走唯一写入口（刷真源 + 发一次结构事件）；
+    // 原来裸调 addGroup 只写库，读真源的页面要重进才看得到新分组
+    await GroupMutation.createGroup(ng)
     this.newGroupName = ''
     this.isGroupRefreshing++
     await this.onFolderChanged()

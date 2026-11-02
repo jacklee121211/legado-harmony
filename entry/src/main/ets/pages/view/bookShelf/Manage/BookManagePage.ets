@@ -1453,7 +1453,7 @@ export default struct BookManagePage {
     // ── 2026-11-02 第 24 轮（D3/S8）：分组**一次批量调用**，不再 for 循环 ──────────
     // 旧写法 `for (const gid of groupIds) { delGroupById(gid) }` ⇒ N 个分组发 N 次
     // `GroupEvents.emit`（真机实测：一次批量删 2 个 = v=7/v=8 两条），违反 S8。
-    // `delGroupById` 本来就接受数组、内部是**批量的**（一次 `queryBookByGroup(alive,3)` +
+    // `delGroupById` 本来就接受数组、内部是**批量的**（一次 `moveBooksToGroup(alive,3)` +
     // 一次 `deleteBook(alive)` + 一次 emit）⇒ 直接传数组即可，既少写 N-1 次库，也只发一次事件。
     if (groupIds.length > 0) {
       // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）；原来裸调 delGroupById 只发事件不刷真源。

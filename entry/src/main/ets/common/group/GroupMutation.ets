@@ -207,6 +207,39 @@ export class GroupMutation {
   }
 
   /**
+   * 新建分组（2026-11-03 A2b 新增）。
+   *
+   * 原调用点：`BookContentRefresh:242` 直接 `bookGroupUtils.addGroup(ng)` —— 只写库，
+   * 然后自己 bump 旧信号 + `onFolderChanged()`。按 `USE_STORE_IN_FOLDER=true` 读真源的
+   * 页面拿到的仍是旧树（同 moveGroupNode 那类"要重进才看到"）。
+   *
+   * 语义按**结构变更**处理（新增节点 ⇒ S6 选中集失效）。
+   */
+  static async createGroup(group: BookGroups): Promise<void> {
+    await bookGroupUtils.addGroup(group)
+    await GroupMutation.afterChange([], [], true)
+  }
+
+  /**
+   * 分组改名（2026-11-03 A2b 新增）。
+   *
+   * 原调用点：`FolderInfoDialog.restTitleConfirm` 直接 `bookGroupUtil.onlyGroupUpdateName(...)`，
+   * 只写库 + bump 旧信号 ⇒ 真源不刷新、不发事件。
+   * 返回底层结果（false = 同名冲突），保持调用方原有的"已存在其它相同分组名"提示逻辑。
+   * 语义按**非结构变更**（改名不动树），发 `changedGroupIds=[groupId]`。
+   */
+  static async renameGroup(groupId: number, newName: string): Promise<boolean> {
+    if (groupId <= 0) {
+      return false
+    }
+    const ok: boolean = await bookGroupUtils.onlyGroupUpdateName(newName, groupId)
+    if (ok) {
+      await GroupMutation.afterChange([groupId], [], false)
+    }
+    return ok
+  }
+
+  /**
    * 变更收尾：刷新真源、刷新隐藏集合、发**唯一一次**事件。
    * @param changedGroupIds 受影响分组（空数组 = 结构变更，订阅方按"全量"处理）
    * @param changedBookIds  受影响书籍

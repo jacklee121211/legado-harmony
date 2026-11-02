@@ -454,7 +454,8 @@ export default struct FolderInfoDialog{
   }
 
   async restTitleConfirm(){
-    let result = await bookGroupUtil.onlyGroupUpdateName(this.inputValue, this.itemData.groupId ?? 0)
+    // 2026-11-03（A2b）：走唯一写入口（刷真源 + 发一次非结构事件），返回 false = 同名冲突
+    const result: boolean = await GroupMutation.renameGroup(this.itemData.groupId ?? 0, this.inputValue)
     if (result) {
       this.itemData.groupName = this.inputValue
       showMessage('重命名成功')
