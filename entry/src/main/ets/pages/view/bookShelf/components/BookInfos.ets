@@ -16,6 +16,8 @@ import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import AppRouter, { PdfRouteParam, RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../common/dialog/DialogHost'
 
 @Component
   /**
@@ -172,7 +174,7 @@ export default struct BookInfos {
         this.book.isTop = fresh[0].isTop
       }
     }
-    this.bookInfoDialog?.open()
+    DialogHost.openIf(this.bookInfoDialog)
   }
 
   /**
@@ -356,7 +358,7 @@ export default struct BookInfos {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction((event: GestureEvent) => {
           Haptics.tap();
-          this.bookInfoDialog?.open()
+          DialogHost.openIf(this.bookInfoDialog)
         })).padding(10).borderRadius(10)
       // 点击按压反馈（2026-09-21）。依据见 `UiMotion` 的注释：
       // `clickEffect(value: ClickEffect|null)`（common.d.ts:20575，@since 10）。

@@ -12,6 +12,8 @@ import AppRouter, { RouteName } from '../../../../common/router/AppRouter'
 import bookHistoryUtils from '../../../../common/utils/BookHistoryUtils'
 import clickUtil from '../../../../common/utils/ClickUtils'
 import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../common/dialog/DialogHost'
 
 @Component
   /**
@@ -110,9 +112,7 @@ export default struct BookHistoryInfo {
         }
         .onClick(() => {
           Haptics.tap();
-          if (this.bookInfoDel != null) {
-            this.bookInfoDel.open()
-          }
+          DialogHost.openIf(this.bookInfoDel)
         })
         .padding({ right: 5 })
 

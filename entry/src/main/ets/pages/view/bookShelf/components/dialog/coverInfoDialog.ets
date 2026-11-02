@@ -18,6 +18,8 @@ import TitleContentDialog from '../../../../../componets/common/TitleContentDial
 import { COVER_DEFAULT_FILES, coverCorners } from '../../../../../common/utils/CoverSource'
 import CommonConstants from '../../../../../common/constants/CommonConstants'
 import bookCover from '../../../../../common/utils/BookCover'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../../common/dialog/DialogHost'
 
 @CustomDialog
 /**
@@ -324,7 +326,8 @@ export default struct coverInfoDialog{
                     (b.customCoverUrl ?? '') !== '')
                   if (customized.length > 0) {
                     this.conflictCount = customized.length
-                    this.conflictDialog?.open()
+                    // 冲突提醒是**叠在封面弹窗之上**的二级确认框（原实现父窗不关）=> 走 openNested 保持原状
+                    DialogHost.openNested(this.conflictDialog)
                     return
                   }
                   // 2026-10-01 修"普通分组改封面没效果"：范围内没有手动封面时**直接全部
@@ -498,8 +501,8 @@ export default struct coverInfoDialog{
         })
       },
       cancel: (): void => {
-        // 入规则：取消重置 ⇒ 把封面弹窗开回来
-        this.controller?.open()
+        // 入规则：取消重置 ⇒ 把封面弹窗开回来（走宿主，父窗重新 open）
+        DialogHost.openIf(this.controller)
       }
     }),
     autoCancel: true,
@@ -512,15 +515,15 @@ export default struct coverInfoDialog{
     closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     cancel: (): void => {
       // 遮罩/返回键：与取消按钮同一条收尾路径
-      this.controller?.open()
+      DialogHost.openIf(this.controller)
     }
   })
 
   private openResetConfirm(): void {
     // 子进父出：先关自己（关闭权在**持有 controller 的宿主**这一侧 —— 本弹窗的
     // controller 正是父级创建后传进来的那个，所以这里 close 有效）
-    this.controller?.close()
-    this.resetConfirmDialog?.open()
+    // 父先真关 + 开重确认框：一次宿主调用
+    DialogHost.openIf(this.resetConfirmDialog)
   }
 
   /**

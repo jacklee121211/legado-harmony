@@ -26,6 +26,8 @@ import { resolveBookCover } from '../../../../../common/utils/CoverSource'
 import CoverStyleDialog from './CoverStyleDialog'
 import RenameBookDialog from './RenameBookDialog'
 import MarkToolButton from '../../../../../componets/common/MarkToolButton'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../../common/dialog/DialogHost'
 
 /** 本弹窗在 `BookShareBridge` 里的宿主标识（碰一碰/隔空传送监听持有权） */
 const OWNER_BOOK_INFO: string = 'BookInfoDialogs'
@@ -82,11 +84,13 @@ export default struct BookInfoDialogs{
   // 出规则：子弹窗打开前先关掉本弹窗；入规则：子弹窗取消/遮罩关闭后把本弹窗开回来。
   // 例外（确认后父弹窗**不**恢复）：移动至（书已搬走）、删除（书已不存在）。
   private openChildDialog(controller: CustomDialogController | null): void {
-    this.controller?.close()
-    controller?.open()
+    // 2026-11-02 第 25 轮（P3 B2）：父先真关 + 开子窗，合并成一次宿主调用（语义等价，
+    //   但「当前谁开着」改由 DialogHost 统一记账，不再各组件自己 close 自己的 controller）
+    DialogHost.openIf(controller)
   }
   private childDialogClosed(): void {
-    this.controller?.open()
+    // 子退父进：把父弹窗重新打开（走宿主，保证 closeCurrent 的账本是准的）
+    DialogHost.openIf(this.controller)
   }
   /** 父弹窗恢复前重查本书（2026-10-01 修"换封面后长按弹窗头部预览还是旧封面"）：
    *  CustomDialog 的 @Prop 是**创建瞬间的快照**（SDK NOTE「Custom dialog box parameters
@@ -107,7 +111,7 @@ export default struct BookInfoDialogs{
       return
     }
     this.refreshSelfBook()
-    this.controller?.open()
+    DialogHost.openIf(this.controller)
   }
 
   /**
@@ -317,7 +321,8 @@ export default struct BookInfoDialogs{
                 this.reopenSelf()
               }
             })
-            this.coverStyleDialog?.open()
+            // 父窗已在上面 this.controller?.close() 真关；这里只负责把子窗交给宿主打开
+            DialogHost.openIf(this.coverStyleDialog)
           })
           // ── 「书籍详情」入口（2026-10-18 改为**独立子组**）──────────────────
           // 真机问题：旧实现把 `onClick`（跳详情）挂在**外层 Row** 上，而「封面」是它的

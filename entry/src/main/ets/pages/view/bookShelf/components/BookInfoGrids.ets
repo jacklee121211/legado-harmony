@@ -18,6 +18,8 @@ import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 import { resolveBookCover, coverCorners, stripBookExt } from '../../../../common/utils/CoverSource'
+// 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../common/dialog/DialogHost'
 
 @Component
 /**
@@ -310,7 +312,7 @@ export default struct BookInfoGrids{
       LongPressGesture({ repeat: false,duration:500 })
         .onAction((event: GestureEvent) => {
             Haptics.tap();
-            this.bookInfoDialog?.open()
+            DialogHost.openIf(this.bookInfoDialog)
         }))
     // 点击按压反馈（2026-09-21）。依据见 `UiMotion` 注释；缩放收紧到 0.96 以规避
     // 官方 NOTE 的「触摸点可能落到控件外」风险。
@@ -372,7 +374,7 @@ export default struct BookInfoGrids{
         this.book.isTop = fresh[0].isTop
       }
     }
-    this.bookInfoDialog?.open()
+    DialogHost.openIf(this.bookInfoDialog)
   }
 
   /**
