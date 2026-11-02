@@ -314,16 +314,18 @@ export default struct BookSelectGroupDialog{
     .backgroundColor(ShelfColors.chip())
     .onClick(() => {
       Haptics.tap()
-      if (this.isManageMode) {
-        // 管理模式：连续创建（父弹窗不关）
-        this.openManageAddTypeDialog()
-        return
-      }
-      // 2026-11-01：移动模式改为「不关自己，直接叠加新建弹窗」——
-      //   `@CustomDialog` 内部的 `this.controller?.close()` 不可靠（本项目已多次实测），
-      //   先关自身再开子弹窗 ⇒ 子弹窗经常根本不出现（用户：移动至里新建分组失败）。
-      //   管理模式的 keepOpen 方式已验证可用，这里对齐它。
-      DialogHost.openIf(this.addBookType)
+      // ── 2026-11-02 第 26 轮（G5 修复）：**两种模式统一走「连续创建 + 当场重查」** ─────
+      // 旧行为分两条路：
+      //   · 管理模式 ⇒ `openManageAddTypeDialog()`（父窗不关 + 建完 `getGroupListAsync()` 重查）
+      //   · 移动模式 ⇒ `this.addBookType`（子进父退；确定后 `onAccept()` 再重开父弹窗）
+      // 移动模式那条是 G5 的病根：重开的父窗带的是**打开时的 `presetGroups` 旧快照**，
+      // 里面没有刚建的分组 ⇒ 列表永远不显示新组（滚到底也没有），关掉重开才出现。
+      // 真机探针证据（PID 4603，`2026-11-04-g5-probe/g5-jsapp.log`）：
+      //   23:49:06.740 `TagInfo 创建成功`
+      //   23:49:06.745 `[PROBE-DLG] presetNull=false presetLen=20 …`  ← 建组后 3ms **又创建了一次父弹窗**，快照仍是 20 条
+      //   且全程没有 `[GRP-CREATE]` ⇒ 走的不是 `createGroupKeepOpen`
+      // ⇒ 对齐管理模式（注释 2026-11-01 就想对齐，当时只把 `close+open` 换成 `openIf`，没换 controller）。
+      this.openManageAddTypeDialog()
     })
   }
 
@@ -592,14 +594,13 @@ export default struct BookSelectGroupDialog{
         // 用户要求：「每次创建后底部的父弹窗需要实时更新，不然用户不清楚是否真正创建成功」
         // ⇒ 父弹窗必须**留在屏幕上**，所以不能走下面的"子开父退"（那会把父弹窗关掉，
         //   实例一销毁就再也刷不了列表）。这里改成规范 §4.3 的"二级短确认框"叠加方式。
-        if (this.isManageMode) {
-          this.openManageAddTypeDialog()
-          return
-        }
-        // v3.21 出规则：子弹窗（新建分组）出现 ⇒ 父弹窗（移动分组）退出；
-        // 子关闭/确定后由 onCancel/onAccept 重开父弹窗
-        this.controller?.close()
-        DialogHost.openIf(this.addBookType)
+        // ── 2026-11-02 第 26 轮（G5）：**移动至模式也走同一条路** ────────────────────
+        // 原来移动模式走的是「`this.controller?.close()` + `openIf(this.addBookType)`」，
+        // 即"子进父退、确定后 onAccept 重开父窗"，而重开的实例带的是**创建时的旧 presetGroups**
+        // （真机日志 `2026-11-04-g5-probe/g5-jsapp.log`：建组后 5ms 又出现一条
+        //   `[PROBE-DLG] presetLen=20`，而同期书籍数已 20→21）⇒ 新建的分组永远不出现在列表里。
+        // 和管理模式这条路一样处理即可（父窗不关 + 建完当场重查 + rebuildRows）。
+        this.openManageAddTypeDialog()
         return
       }
       if (item.groupId) {
