@@ -183,9 +183,6 @@ class BooksDao {
   }
 
   async search(param?:BooksTypeSearchParams) {
-    let searchKey = param?.searchKey ?? '';
-    let type = param?.type;
-    let bookGroup = param?.bookGroup;
     let order = param?.order;
     // ── 2026-10-13 清理死代码：「更新排序 / 手动排序」已无 UI 入口 ──────────────
     // 证据：`IndexSearchType.ets:28-29` 原文
