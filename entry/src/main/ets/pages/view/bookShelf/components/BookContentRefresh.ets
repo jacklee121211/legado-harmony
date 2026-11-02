@@ -30,6 +30,8 @@ import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
 // P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
 import { GroupFlags } from '../../../../common/group/GroupFlags'
+// 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../../common/dialog/DialogHost'
 
 /** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
 interface PathChip {
@@ -117,7 +119,7 @@ export default struct BookContentRefresh {
         this.groupInfoDialog?.close()
       }
     })
-    this.groupInfoDialog?.open()
+    DialogHost.openIf(this.groupInfoDialog)
   }
   /** 新建分组时的父级（0 = 根级；分组内新建 = 当前分组 id） */
   private newGroupParentId: number = 0
@@ -127,28 +129,10 @@ export default struct BookContentRefresh {
   /** 底部安全区实测高（悬浮按钮让位用，见 dockContentEndOffset） */
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
 
-  /**
-   * 是否应该显示「返回分组列表」按钮（2026-10-21 新增）。
-   *
-   * 用户原话：「在分组中点击一个分组进入这个分组，此时我该如何返回上一级呢？貌似没有什么办法？
-   *   并且我们也不知道我所在分组是什么名字…底部 minibar 上方多一个按钮，
-   *   叫做返回分组列表，点击后返回分组列表。」
-   *
-   * 判定条件（三条同时满足）：
-   *   ① 不在「最近」态（`onRecentChip === false`）；
-   *   ② 不在「分组列表页」本身（`bookTypeNumber !== 1`，1 = 「分组」系统单元）；
-   *   ③ 书单功能已下线（2026-11-01 删除 `=== 5` 哨兵：真实分组 id 可能正好是 5）
-   *   ④ 能查到分组名（`currentGroupName` 非空 ⇒ 确实在某个具体分组里）。
-   */
-  private shouldShowBackToGroups(): boolean {
-    if (this.onRecentChip) {
-      return false
-    }
-    if (this.bookTypeNumber === 1) {
-      return false
-    }
-    return this.currentGroupName.length > 0
-  }
+  // ⚠️ 2026-11-02 第 25 轮（D9 清理）：删掉了 `shouldShowBackToGroups()`（+ 上方 12 行判定注释）。
+  //   它是 2026-10-21「返回分组列表」悬浮按钮的显示条件，2026-11-01 面包屑上线后
+  //   **再没有任何调用点**（MCP `check` 一直报 `6133: declared but never read`）。
+  //   判定条件本身已由面包屑的渲染条件承担（`bookTypeNumber > 2 && !onRecentChip`，见 build()）。
 
   /**
    * 返回分组列表。
@@ -233,7 +217,7 @@ export default struct BookContentRefresh {
       this.addScale = v
     })
     this.newGroupName = ''
-    this.addGroupDialog?.open()
+    DialogHost.openIf(this.addGroupDialog)
   }
 
   /** 确认新建：空名/同级重名拦截 → `addGroup(parentId)` → 广播刷新 + 重算路径 */
@@ -289,8 +273,9 @@ export default struct BookContentRefresh {
         return
       }
       const tree: GroupTree = GroupTree.build(all)
-      // 2026-11-01：统一父子框架 —— 当前树留一份，供子卡片算"子分组在前、书在后"的格子
-      this.allGroups = all
+      // ⚠️ 2026-11-02 第 25 轮（D9 清理）：删掉 `this.allGroups = all` 与字段 `allGroups`。
+      //   它当年是给「子分组卡片算 2×2 格子」留的树快照，2026-11-01 之后实际算格子用的是
+      //   下面的 `this.tree`（`cellsOf()` 读 `this.tree`），该字段只写不读（MCP `check` 报 6133）。
       this.tree = tree
       const path: BookGroups[] = tree.pathOf(id)
       const chips: PathChip[] = [{ id: 1, name: '分组' }]
@@ -385,8 +370,7 @@ export default struct BookContentRefresh {
     })
   }
 
-  /** 当前分组的树快照（供子卡片算格子） */
-  private allGroups: BookGroups[] = []
+  /** 当前分组的树快照（供子卡片算格子 / 面包屑 `pathOf` 用） */
   private tree: GroupTree | null = null
 
   /** 子分组卡片的 2×2 格子：子分组在前（三层叠）、书在后（真实封面），最多 4 格 */

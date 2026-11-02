@@ -18,6 +18,8 @@ import { ThemeStorageKey } from '../../common/constants/Theme'
 import ShelfPrefs from '../../common/utils/ShelfPrefs'
 // 顶栏分段控件（2026-10-20：官方 SegmentButton 封装，带沉浸光感材质）
 import { GlassSegment } from '../common/GlassSegment'
+// 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../common/dialog/DialogHost'
 
 /**
  * 分组管理弹窗「停在分组行下面」的位置修正量（vp，**唯一可调点**）。
@@ -114,7 +116,7 @@ export default struct groupTypeComponent {
         this.getGroupList()
       },
     })
-    this.chipEditDialog?.open()
+    DialogHost.openIf(this.chipEditDialog)
   }
 
   /** 真开真关：重查该分组 → 更新 editChipGroup → **新建 controller** 全新实例打开 */
@@ -159,7 +161,7 @@ export default struct groupTypeComponent {
         this.worksCoverDialog = null
       }
     })
-    this.worksCoverDialog?.open()
+    DialogHost.openIf(this.worksCoverDialog)
   }
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`），理由见 `IndexShelf` 同名字段 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
@@ -390,7 +392,7 @@ export default struct groupTypeComponent {
         this.groupCoverShow = false
       },
     })
-    this.groupPanelDialog.open()
+    DialogHost.open(this.groupPanelDialog)
   }
 
   /**

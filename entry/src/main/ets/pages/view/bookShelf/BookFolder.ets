@@ -22,6 +22,8 @@ import BooksDao from '../../../database/dao/BooksDao'
 import { GroupTree } from '../../../common/group/GroupTree'
 import { GroupStore } from '../../../common/group/GroupStore'
 import { GroupFlags } from '../../../common/group/GroupFlags'
+// 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
+import { DialogHost } from '../../../common/dialog/DialogHost'
 
 /**
  * 文件夹
@@ -547,7 +549,7 @@ export default struct BookFolder {
                   return
                 }
                 this.dialogGroupData = item
-                this.groupInfoDialog?.open()
+                DialogHost.openIf(this.groupInfoDialog)
               }))
           .onClick(() => {
             // 2026-10-13 用户：「点击哪个分组，直接切换到对应分组去」⇒ 不再开半屏 sheet
@@ -664,7 +666,7 @@ export default struct BookFolder {
             return
           }
           this.dialogGroupData = item
-          this.groupInfoDialog?.open()
+          DialogHost.openIf(this.groupInfoDialog)
         }
       })
 
@@ -816,7 +818,7 @@ export default struct BookFolder {
         this.dialogGroupData = fresh
       }
     }
-    this.groupInfoDialog?.open()
+    DialogHost.openIf(this.groupInfoDialog)
   }
 
   /** 「书单」（系统单元）长按 → 直达封面样式弹窗（与 GroupType 同款，2026-10-01） */
@@ -846,6 +848,6 @@ export default struct BookFolder {
         this.worksCoverDialog = null
       }
     })
-    this.worksCoverDialog?.open()
+    DialogHost.openIf(this.worksCoverDialog)
   }
 }

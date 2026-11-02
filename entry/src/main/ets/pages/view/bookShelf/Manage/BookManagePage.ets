@@ -1584,7 +1584,7 @@ export default struct BookManagePage {
       }
     })
     this.bookMoveGroup = dlg
-    dlg.open()
+    DialogHost.open(dlg)
   }
 
   //刷新数据方法

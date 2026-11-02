@@ -1098,7 +1098,7 @@ export default struct IndexShelf {
       }
     })
     this.groupManageDialog = dlg
-    dlg.open()
+    DialogHost.open(dlg)
   }
 
   /**
