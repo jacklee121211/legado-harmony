@@ -3,6 +3,7 @@ import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUti
 import { GroupTree } from '../../../../common/group/GroupTree'
 import { GroupStore } from '../../../../common/group/GroupStore'
 import { GroupEvents, GroupChangedPayload } from '../../../../common/group/GroupEvents'
+import { DialogHost } from '../../../../common/dialog/DialogHost'
 import { gKey, bKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
@@ -1144,10 +1145,10 @@ export default struct BookManagePage {
         // 2026-10-25：「加入书单」入口与弹窗已随书单功能删除 ⇒ 本分支不再可达
         break;
       case 4 :
-        this.clickHideDialog?.open()
+        DialogHost.openIf(this.clickHideDialog)
         break
       case 5 :
-        this.delDialog?.open(); break;
+        DialogHost.openIf(this.delDialog); break;
       case 7 :
         // 2026-11-02：批量解散（书保留、归还上级；有后代分组时先问模式）
         this.manageDissolve().catch((e: Error): void => {
@@ -1623,7 +1624,7 @@ export default struct BookManagePage {
       customStyle: false,
       cornerRadius: 25
     })
-    this.dissolveModeDialog?.open()
+    DialogHost.openIf(this.dissolveModeDialog)
   }
 
   private async runDissolve(gids: number[], mode: string): Promise<void> {

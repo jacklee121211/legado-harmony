@@ -292,7 +292,7 @@ export default struct BookSelectGroupDialog{
       Haptics.tap()
       this.moveGroupId = 3
       this.moveTitle = '未分组'
-      this.clickBookTypeDialog?.open()
+      DialogHost.openIf(this.clickBookTypeDialog)
     })
     .margin({ bottom: PaddingConstants.PADDING_16 })
   }
@@ -321,7 +321,7 @@ export default struct BookSelectGroupDialog{
       //   `@CustomDialog` 内部的 `this.controller?.close()` 不可靠（本项目已多次实测），
       //   先关自身再开子弹窗 ⇒ 子弹窗经常根本不出现（用户：移动至里新建分组失败）。
       //   管理模式的 keepOpen 方式已验证可用，这里对齐它。
-      this.addBookType?.open()
+      DialogHost.openIf(this.addBookType)
     })
   }
 
@@ -395,7 +395,7 @@ export default struct BookSelectGroupDialog{
             customStyle: false,
             cornerRadius: 25
           })
-          this.nodeMoveConfirm?.open()
+          DialogHost.openIf(this.nodeMoveConfirm)
           return
         }
         if (this.isManageMode) {
@@ -405,7 +405,7 @@ export default struct BookSelectGroupDialog{
         Haptics.tap()
         this.moveGroupId = id
         this.moveTitle = row.group.groupName
-        this.clickBookTypeDialog?.open()
+        DialogHost.openIf(this.clickBookTypeDialog)
       })
       // 行尾展开/收起：独立 36vp 热区，物理上与行内容不重叠
       Row() {
@@ -559,7 +559,7 @@ export default struct BookSelectGroupDialog{
       Haptics.tap();
       this.moveGroupId = 3
       this.moveTitle = '未分组'
-      this.clickBookTypeDialog?.open()
+      DialogHost.openIf(this.clickBookTypeDialog)
     })
     .margin({
       bottom:PaddingConstants.PADDING_16
@@ -597,7 +597,7 @@ export default struct BookSelectGroupDialog{
         // v3.21 出规则：子弹窗（新建分组）出现 ⇒ 父弹窗（移动分组）退出；
         // 子关闭/确定后由 onCancel/onAccept 重开父弹窗
         this.controller?.close()
-        this.addBookType?.open()
+        DialogHost.openIf(this.addBookType)
         return
       }
       if (item.groupId) {
@@ -609,7 +609,7 @@ export default struct BookSelectGroupDialog{
         }
         this.moveGroupId = item.groupId
         this.moveTitle = item.groupName
-        this.clickBookTypeDialog?.open()
+        DialogHost.openIf(this.clickBookTypeDialog)
       }
     })
     .margin({
@@ -778,7 +778,7 @@ export default struct BookSelectGroupDialog{
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
     // ── 子开父退 / 子关父回（统一联动规范，2026-10-01 修）───────────────────────
     // 出/入规则全部由**人肉回调**驱动：点 + 时父弹窗已 close（见 title() builder）、
-    // 取消走 onCancel、确定走 onAccept —— 三条路径各自 `this.controller?.open()` 收尾。
+    // 取消走 onCancel、确定走 onAccept —— 三条路径各自 `DialogHost.openIf(this.controller)` 收尾。
     // ⚠️ 不要再加 options 级 `onDidAppear` 重开父弹窗：那是在子弹窗**出现时**就把父弹窗
     // 顶回顶层（真机复测："点击新建后父窗口关闭又弹出，出现在了顶层，多了这一个"）。
     // （当初想要的 options.onDisappear 在 CustomDialogControllerOptions 里不存在，
@@ -789,7 +789,7 @@ export default struct BookSelectGroupDialog{
   //取消
   onCancel(){
     this.bookType = ''
-    this.controller?.open()
+    DialogHost.openIf(this.controller)
   }
   //确定
   async onAccept(): Promise<void> {
@@ -798,7 +798,7 @@ export default struct BookSelectGroupDialog{
     // （空名/重名）会让屏幕上两层弹窗全消失。
     if (this.bookType.length === 0) {
       showMessage('分组名称不能为空')
-      this.controller?.open()
+      DialogHost.openIf(this.controller)
       return
     }
     let isInsert = true
@@ -834,7 +834,7 @@ export default struct BookSelectGroupDialog{
       },500)
     }
     // 入规则：建组完成（或重名放弃）⇒ 父弹窗（移动分组）恢复
-    this.controller?.open()
+    DialogHost.openIf(this.controller)
   }
 
   //是否确认移动分组

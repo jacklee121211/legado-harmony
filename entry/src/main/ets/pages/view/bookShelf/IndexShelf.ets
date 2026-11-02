@@ -20,6 +20,7 @@ import { GroupManageDialog } from '../../../componets/group/GroupManageDialog'
 // 分组管理弹窗（2026-10-22 新增）：复用「移动至分组」组件 + 打开前预取分组
 import BookSelectGroupDialog from './components/dialog/BookSelectGroupDialog'
 import bookGroupUtils from '../../../common/utils/bookGroupUtils'
+import { DialogHost } from '../../../common/dialog/DialogHost'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import { LengthMetrics } from '@kit.ArkUI'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
@@ -268,7 +269,7 @@ export default struct IndexShelf {
         this.sortPanelDialog?.close()
       },
     })
-    this.sortPanelDialog?.open()
+    DialogHost.openIf(this.sortPanelDialog)
   }
 
   /**
@@ -327,7 +328,7 @@ export default struct IndexShelf {
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
     })
-    this.importListDialog?.open()
+    DialogHost.openIf(this.importListDialog)
   }
 
   /**
@@ -609,7 +610,7 @@ export default struct IndexShelf {
           //   对"找我自己书架上的书"来说是假的（`SearchBook` 页面本身保留 ——
           //   它的在线搜书能力另有用途，本次只是不再从书架入口进它）。
           this.isShowShelfSearch = true
-          this.shelfSearchDialog?.open()
+          DialogHost.openIf(this.shelfSearchDialog)
         })
         .clickEffect(UiMotion.CLICK)
         // ★★ 2026-09-22 改为 @CustomDialog（用户拍板「既然能统一，那就全 @CustomDialog」）★★
@@ -1054,7 +1055,7 @@ export default struct IndexShelf {
         this.bookMoveDialog = null
       }
     })
-    this.bookMoveDialog?.open()
+    DialogHost.openIf(this.bookMoveDialog)
   }
 
   private async openGroupManageDialog(): Promise<void> {
