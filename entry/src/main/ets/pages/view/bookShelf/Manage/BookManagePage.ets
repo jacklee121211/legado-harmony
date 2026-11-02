@@ -1456,7 +1456,12 @@ export default struct BookManagePage {
     // `delGroupById` 本来就接受数组、内部是**批量的**（一次 `queryBookByGroup(alive,3)` +
     // 一次 `deleteBook(alive)` + 一次 emit）⇒ 直接传数组即可，既少写 N-1 次库，也只发一次事件。
     if (groupIds.length > 0) {
-      bookGroupUtil.delGroupById(groupIds)
+      // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）；原来裸调 delGroupById 只发事件不刷真源。
+      // 本方法保持**同步签名**（调用方是点击处理，不依赖返回值）⇒ 用 catch 兜住异步失败，
+      // 不要在同步函数里加 await（ArkTS 编译期就报错：await 只能在 async 函数内）。
+      GroupMutation.remove(groupIds).catch((e: Error): void => {
+        console.error(`[GRP-MUTATION] manageDelete remove failed: ${e.message}`)
+      })
     }
     if (bookIds.length > 0) {
       booksUtil.delBooksById(bookIds)
@@ -1716,7 +1721,8 @@ export default struct BookManagePage {
       //   ① `dissolveGroup` 以前完全不发事件 ⇒ 解散后 S6 的"选中集失效"永远不触发；
       //   ② 现在它发事件了，若仍逐个调用就会 N 个分组发 N 次 ⇒ 违反 S8。
       // `dissolveGroups` = 逐个原子解散（各自预检/回滚）+ **最后只 emit 一次**。
-      await bookGroupUtil.dissolveGroups(gids, mode)
+      // 2026-11-03（A2）：走唯一写入口 dissolveMany（关掉底层 emit，由 afterChange 刷真源 + 只发一次）
+      await GroupMutation.dissolveMany(gids, mode)
       showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子文件夹已上提）')
       this.isBookRefreshing++
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++

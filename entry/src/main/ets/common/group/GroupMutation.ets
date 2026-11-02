@@ -176,6 +176,37 @@ export class GroupMutation {
   }
 
   /**
+   * **批量**解散，只发一次事件（2026-11-03 A2 新增）。
+   *
+   * 为什么需要它：`BookManagePage` 的批量「解散」原来直接调
+   * `bookGroupUtils.dissolveGroups(gids, mode)` —— 那条路**底层自己 emit**，
+   * 但**不刷 `GroupStore`**（与 `delGroupById` 同类）。批量页随后靠旧信号
+   * `pageInit()` 兜底，而按 `USE_STORE_IN_FOLDER=true` 读真源的页面会看到旧树。
+   * 这里关掉底层 emit，由 `afterChange` 统一"刷真源 + 刷隐藏集合 + 发一次事件"。
+   */
+  static async dissolveMany(groupIds: number[], mode: string = 'keepChildren'): Promise<void> {
+    if (groupIds.length === 0) {
+      return
+    }
+    await bookGroupUtils.dissolveGroups(groupIds, mode, false)
+    await GroupMutation.afterChange([], [], true)
+  }
+
+  /**
+   * 写分组自身的非结构性字段（封面等），2026-11-03 A2 新增。
+   *
+   * 原调用点：`coverInfoDialog.applyGroupCover / resetGroupCover` 直接调
+   * `bookGroupUtil.updatePartialGroup(itemData)` —— 写库成功但**不刷真源、不发事件**，
+   * 别的页面（分组管理 / 书架根页）要等下一次手动刷新才看到新封面。
+   * 语义按「非结构变更」处理：发 `changedGroupIds=[groupId]`，不清选中集（S6 只针对结构变更）。
+   */
+  static async setGroupCover(group: BookGroups): Promise<void> {
+    await bookGroupUtils.updatePartialGroup(group)
+    const gid: number = group.groupId ?? -1
+    await GroupMutation.afterChange(gid > 0 ? [gid] : [], [], false)
+  }
+
+  /**
    * 变更收尾：刷新真源、刷新隐藏集合、发**唯一一次**事件。
    * @param changedGroupIds 受影响分组（空数组 = 结构变更，订阅方按"全量"处理）
    * @param changedBookIds  受影响书籍

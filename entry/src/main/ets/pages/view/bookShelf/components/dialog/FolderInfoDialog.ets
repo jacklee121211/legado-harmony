@@ -804,7 +804,8 @@ export default struct FolderInfoDialog{
           await BookGroupsDao.updatePartialGroup(c)
         }
       }
-      await bookGroupUtil.delGroupById(ids)
+      // 2026-11-03（A2）：走唯一写入口 —— 底层 emit 关掉，由 afterChange 刷真源 + 只发一次
+      await GroupMutation.remove(ids)
       // 2026-11-02：分组结构已安全变更，最后才真正删除被覆盖的旧书文件
       for (const oldId of pendingDelete) {
         try {
@@ -876,7 +877,8 @@ export default struct FolderInfoDialog{
         c.updateTime = Date.now()
         await BookGroupsDao.updatePartialGroup(c)
       }
-      await bookGroupUtil.delGroupById(gid)
+      // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）
+      await GroupMutation.remove(gid)
       showMessage(`已删除「${this.itemData.groupName ?? ''}」`)
     } catch (e) {
       showMessage('删除失败')
@@ -907,7 +909,8 @@ export default struct FolderInfoDialog{
           bookCount += bookIds.length
         }
       }
-      await bookGroupUtil.delGroupById(ids)
+      // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）
+      await GroupMutation.remove(ids)
       showMessage(bookCount > 0
         ? `已删除「${this.itemData.groupName ?? ''}」及 ${bookCount} 本书`
         : `已删除「${this.itemData.groupName ?? ''}」`)
@@ -1087,7 +1090,8 @@ export default struct FolderInfoDialog{
           await booksDao.updateBookGroup(b.id, targetGid)
         }
       }
-      await bookGroupUtil.delGroupById(gid)
+      // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）
+      await GroupMutation.remove(gid)
       showMessage('已合并')
     } catch (e) {
       showMessage('合并失败')

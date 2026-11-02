@@ -4,7 +4,7 @@ import { NightMode } from '../../../../../common/utils/NightMode'
 import coverInfoImageShow from '../../../coverInfoImageShow'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { showMessage } from '../../../../../componets/common/promptShow'
-import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
+import { GroupMutation } from '../../../../../common/group/GroupMutation'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookGroupsDao from '../../../../../database/dao/BookGroupsDao'
 // 2026-10-25：`worksListsDao` 随书单功能删除（书单聚合封面分支已移除）
@@ -407,7 +407,8 @@ export default struct coverInfoDialog{
     }
     // await：工具层已补 await（bookGroupUtils.updatePartialGroup）⇒ 提交完成后才广播，
     // 避免"确定后刷新读到旧值"（与 BooksDao.insert 同款时序修复）
-    await bookGroupUtil.updatePartialGroup(this.itemData)
+    // 2026-11-03（A2）：改走唯一写入口（刷真源 + 发一次非结构事件）；原来只写库，别处要手动刷新才看到
+    await GroupMutation.setGroupCover(this.itemData)
     setTimeout(()=>{
       this.BOOK_IS_BOOK_GROUPS_REFRESHING++
       // 先关自己再回调父级（cancel ⇒ 子退父进，长按分组弹窗恢复）
@@ -546,7 +547,8 @@ export default struct coverInfoDialog{
     // 分组自身的封面（分组卡片上那张）也恢复默认；聚合条目（分组/书单/全部）没有实体分组，跳过
     if (!this.itemData.isSystem) {
       this.itemData.coverUrl = ''
-      await bookGroupUtil.updatePartialGroup(this.itemData)
+      // 2026-11-03（A2）：唯一写入口（刷真源 + 单次非结构事件）
+      await GroupMutation.setGroupCover(this.itemData)
     }
     // 弹窗自身的选择态一并清掉
     this.pickDefault = -1
