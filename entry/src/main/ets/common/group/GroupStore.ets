@@ -81,6 +81,13 @@ export class GroupStore {
   static groupsOfType(type: number): BookGroups[] {
     const out: BookGroups[] = []
     for (const g of GroupStore._groups) {
+      // 2026-11-02 真机对照修正：**系统分组（未分组等）必须保留** ——
+      //   真机上「未分组」的 groupType 是 123，若只按 `groupType === type` 过滤，
+      //   未分组卡片会整块消失（s4 截图已证）。系统分组一律放行。
+      if (g.isSystem) {
+        out.push(g)
+        continue
+      }
       if (g.groupType === undefined || g.groupType === type) {
         out.push(g)
       }
