@@ -188,9 +188,24 @@ export default struct BookFolder {
           keptByStore.push(g)
         }
       }
+      // 2026-11-02 真机对照修复（s6 未分组预览空白）：新通路**必须补齐 2×2 预览预取**，
+      //   否则早退会跳过下面旧路径里那段 previewBooks 查询。
+      const storeVisibleIds: number[] = []
+      for (const g of keptByStore) {
+        if (g.groupId === undefined || !g.show) {
+          continue
+        }
+        if (g.isSystem && g.groupName !== '未分组') {
+          continue
+        }
+        storeVisibleIds.push(g.groupId)
+      }
+      this.previewBooks = storeVisibleIds.length > 0
+        ? await BooksDao.queryPreviewByGroups(storeVisibleIds, 4, ShelfPrefs.getSortKey(),
+          ShelfPrefs.getSortDir() === 1)
+        : []
       return keptByStore
-    }
-    const val: BookGroups[] = await BookGroupsDao.search({
+    }    const val: BookGroups[] = await BookGroupsDao.search({
       type: this.currentIndex
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)

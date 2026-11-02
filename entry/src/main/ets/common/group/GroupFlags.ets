@@ -9,7 +9,7 @@
  */
 export class GroupFlags {
   /** P1-2：书架分组页改读 GroupStore（唯一树真源） */
-  static USE_STORE_IN_FOLDER: boolean = false
+  static USE_STORE_IN_FOLDER: boolean = true
 
   /** P1-2：批量管理页改读 GroupStore */
   static USE_STORE_IN_MANAGE: boolean = false
