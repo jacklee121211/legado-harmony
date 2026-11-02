@@ -153,9 +153,20 @@ export default struct BookSelectGroupDialog{
       this.rebuildRows()
       // 后台重查（不 await、不改首帧体验）；失败只打日志，列表保持 presets 内容
       this.getGroupList()
-      return
+    } else {
+      this.getGroupList()
     }
-    this.getGroupList()
+    // ── 2026-11-02 第 26 轮（「当前」标记取证探针，纯日志）────────────────────────
+    // 起因：真机报"打开移动至时，「当前」标在**旧分组/祖先**上，且该行不可选"
+    //   （恶汉在 111 时「1」被标当前；移到 2 后仍标「1」；佣兵天下移到 2 后「13」被标当前）
+    //   ⇒ 这会让"把书移回上一级/原分组"在 UI 上不可直达（只能绕未分组两步）。
+    // 该标记只由这一处决定：`oldGroupId === row.group.groupId`。
+    // 而 `oldGroupId` 由调用方传入（BookInfoDialogs = bookData.bookGroup /
+    // FolderInfoDialog = itemData.groupId / IndexShelf = oldGroup / BookManagePage = bookTypeNumber）
+    // ⇒ 先取证：到底是谁传了旧值，还是标记逻辑把祖先当成了当前。
+    console.log(`[MOVE-DLG] oldGroupId=${this.oldGroupId ?? -1} moveGroupNode=${this.isMoveGroupNode}`
+      + ` moveStatus=${this.isMoveStatus} currentIndex=${this.currentIndex}`
+      + ` presetLen=${this.presetGroups === null ? -1 : this.presetGroups.length}`)
   }
 
   @State groupList:BookGroups[] = []
