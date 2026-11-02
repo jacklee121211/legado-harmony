@@ -1,6 +1,7 @@
 import bookListManage from './bookManage/bookListManage';
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
+import { GroupStore } from '../../../../common/group/GroupStore'
 import { gKey, bKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
@@ -227,7 +228,7 @@ export default struct BookManagePage {
     }
     // 2026-11-01：自定义分组内只保留该组子树（区块展示用）
     if (this.bookTypeNumber >= 5) {
-      const t0: GroupTree = GroupTree.build(val)
+      const t0: GroupTree = this.treeOf(val)
       const ids: number[] = t0.subtreeIds(this.bookTypeNumber)
       const sub: BookGroups[] = []
       for (const g of val) {
@@ -241,7 +242,7 @@ export default struct BookManagePage {
       }
     }
     // 2026-11-01：按「父 → 其子 → 孙 → 下一个父」的 DFS 顺序展开（原来平铺，层级看不出来）
-    const tree: GroupTree = GroupTree.build(val)
+    const tree: GroupTree = this.treeOf(val)
     const out: BookGroups[] = []
     const walk = (pid: number): void => {
       for (const g of tree.childrenOf(pid)) {
@@ -1557,6 +1558,13 @@ export default struct BookManagePage {
    * 规则（用户拍板）：所选分组里**任意一个有后代分组** ⇒ 先问「一起解散 / 子组保留」；
    * 全都无后代 ⇒ 直接按"保留子目录"（等价于只删本行、书升父级）。
    */
+  /** 2026-11-02 架构收敛 P1-3：**统一建树出口** —— 先灌入 GroupStore 再取树，
+   *  本页不再散落 `GroupTree.build(...)`（22 处待逐一收敛）。 */
+  private treeOf(list: BookGroups[]): GroupTree {
+    GroupStore.apply(list)
+    const t: GroupTree | null = GroupStore.tree()
+    return t !== null ? t : GroupTree.build(list)
+  }
   private async manageDissolve(): Promise<void> {
     const gids: number[] = []
     let hasDescendant: boolean = false
