@@ -303,6 +303,24 @@ export default struct BookContentRefresh {
       }
       const previews: Books[] = childIds.length > 0
         ? await BooksDao.queryPreviewByGroups(childIds, 2, ShelfPrefs.getSortKey(), ShelfPrefs.getSortDir() === 1) : []
+      // ── 2026-11-02 第 26 轮（真机取证修）：**子分组卡片的「共N本」必须现算** ─────────────
+      // 缺陷（dev-verify 真机 dump `2026-11-04-A-verify/50-verify-1-cards.json`）：
+      //   分组「1」里的子文件夹「12」卡片写 `共1本 · 1个文件夹`，点进去实际 **3 本**
+      //   （龙域 / 天王 / 战国福星大事记）。
+      // 数据库取证（拉 device novel.db + WAL，`node:sqlite` 直查）：
+      //   `SELECT COUNT(*) FROM books WHERE bookGroup=10` = **3**；
+      //   而 `book_groups.bookIds`（历史冗余列）对 groupId=10 只有 `'70'` 一个 id
+      //   ⇒ 卡片数字正好等于**陈旧列**的长度。
+      // 根因：`childCountLabel()` 读 `g.bookIds?.length`，而 `fillRealBookIds()`（按
+      //   `books.bookGroup` 现算 + 与列表同 WHERE）只对**当前层级列表**跑过，**子层从未跑**。
+      //   `bookIds` 列只在「移动分组」时追加（`updateAddBookIds`），导入/删除都不同步
+      //   ⇒ 凡是"书是导入进去或别的路径加进去的"子分组，计数都会偏小。
+      // 修法：子分组集合在赋值前也过一遍 `fillRealBookIds` —— 计数真源全工程只剩一个实现。
+      try {
+        await bookGroupUtils.fillRealBookIds(childGroups, this.currentIndex)
+      } catch (e) {
+        console.error('fillRealBookIds(childGroups) failed: ' + JSON.stringify(e))
+      }
       if (token !== this.folderToken) {
         return
       }
