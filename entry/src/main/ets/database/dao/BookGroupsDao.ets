@@ -327,26 +327,81 @@ class BookGroupsDao{
       console.log('updateMoveBookIdsByGroupId, Error, ', JSON.stringify(e));
     }
   }
-  //校验唯一性,同时进行更新
-  async onlyGroupUpdateName(groupId: number, newGroupName: string) {
+  /**
+   * **同级同名判定**（2026-11-03 分级唯一口径的唯一实现）。
+   *
+   * 为什么放在 DAO：创建 / 改名 / 「同名重命名再移动」三条路径都要用它，
+   * 各写一份必然漂（历史上就是"改名全表查、创建按列表查、移动按同级查"三套口径）。
+   * @param parentId 目标父级（0 = 根级）
+   * @param groupName 待判定的分组名（自动 trim）
+   * @param excludeId 排除自身（移动/改名时传本组 id）
+   */
+  async hasSiblingNamed(parentId: number, groupName: string, excludeId?: number): Promise<boolean> {
+    const name: string = (groupName ?? '').trim()
+    if (name === '') {
+      return false
+    }
     try {
       const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
       const predicates = DbUtil.getPredicates(this.TABLE_NAME);
-      predicates.equalTo('groupName', newGroupName)
-      const groups = await DbUtil.queryForList<BookGroupDb>(predicates, column);
-      if (groups.length > 1) return false
-      if (groups.length === 0){
-        const predicates = DbUtil.getPredicates(this.TABLE_NAME);
-        predicates.equalTo('groupId', groupId)
-        const groupDate = await DbUtil.queryForList<BookGroupDb>(predicates, column);
-        groupDate[0].groupName = newGroupName
-        return await this.update(ToBookGroups(groupDate[0]))
-      }
-      if ((groups.length === 1 && groups[0].groupId && groups[0].groupId === groupId)) {
-        groups[0].groupName = newGroupName
-        return await this.update(ToBookGroups(groups[0]))
+      predicates.equalTo('groupName', name)
+      predicates.equalTo('parentId', parentId > 0 ? parentId : 0)
+      const rows = await DbUtil.queryForList<BookGroupDb>(predicates, column);
+      for (const r of rows) {
+        if (excludeId !== undefined && r.groupId === excludeId) {
+          continue
+        }
+        return true
       }
       return false
+    } catch (e) {
+      console.log('hasSiblingNamed, Error, ', JSON.stringify(e))
+      // 查库失败按"不重名"放行：唯一性不是安全边界，宁可让用户改名成功也不能卡死
+      return false
+    }
+  }
+  /**
+   * 校验唯一性 + 改名（**分级唯一**，2026-11-03 改口径）。
+   *
+   * ── 旧口径（已废弃）───────────────────────────────────────────────────────
+   * 原先按 `groupName = newName` **全表**查重：只要别的分组（哪怕挂在不同父级下）
+   * 叫这个名字就拒绝。真机上表现为「`1/33` 存在时，把 `2/331` 改名成 `33` 被拒」
+   * —— 明明两者不是同级兄弟，却被当成重名。
+   *
+   * ── 新口径（**分级唯一**）──────────────────────────────────────────────────
+   * 只和**同一父级下的兄弟**比较：先取本分组的 `parentId`，再查
+   * `groupName = newName AND parentId = 本组.parentId`；命中非自身 ⇒ 拒绝。
+   * 与本工程既有的「移动分组」口径对齐（`FolderInfoDialog.doMoveGroupNode` 用的就是
+   * `GroupTree.hasSiblingNamed(targetParentId, name, excludeId)` 这套同级判定）。
+   *
+   * @returns true = 已改名；false = 同级已有同名（或分组不存在/异常）
+   */
+  async onlyGroupUpdateName(groupId: number, newGroupName: string) {
+    try {
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+      // ① 先取本分组自己（拿 parentId 决定"同级"范围；顺手确认它存在）
+      const selfPred = DbUtil.getPredicates(this.TABLE_NAME);
+      selfPred.equalTo('groupId', groupId)
+      const selfRows = await DbUtil.queryForList<BookGroupDb>(selfPred, column);
+      if (selfRows.length !== 1) {
+        return false
+      }
+      const self: BookGroupDb = selfRows[0]
+      const pid: number = self.parentId ?? 0
+      // ② 同级唯一：同一 parentId 下不允许同名（排除自己）
+      const dupPred = DbUtil.getPredicates(this.TABLE_NAME);
+      dupPred.equalTo('groupName', newGroupName)
+      dupPred.equalTo('parentId', pid)
+      const dups = await DbUtil.queryForList<BookGroupDb>(dupPred, column);
+      for (const d of dups) {
+        if (d.groupId !== groupId) {
+          return false
+        }
+      }
+      // ③ 通过 ⇒ 写回（整行写，`update` 内部按 groupId 定位）
+      self.groupName = newGroupName
+      self.updateTime = Date.now()
+      return await this.update(ToBookGroups(self))
     } catch (e){
       console.log('onlyGroupName, Error, ', JSON.stringify(e))
       return false

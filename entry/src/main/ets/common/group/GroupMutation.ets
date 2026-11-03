@@ -129,13 +129,30 @@ export class GroupMutation {
     if (groupId <= 0) {
       return
     }
+    // 2026-11-03（分级唯一）：传进来的名字（通常是原名）在**目标父级**下可能仍重名
+    //   （比如目标下已有「33」和「33 (2)」）⇒ 顺延到第一个空闲后缀，绝不造出同名兄弟。
+    let finalName: string = (newName ?? '').trim()
+    if (finalName === '') {
+      return
+    }
+    if (await BookGroupsDao.hasSiblingNamed(targetParentId, finalName, groupId)) {
+      let n: number = 2
+      while (n <= 99) {
+        const candidate: string = finalName + ' (' + n + ')';
+        if (!(await BookGroupsDao.hasSiblingNamed(targetParentId, candidate, groupId))) {
+          finalName = candidate
+          break
+        }
+        n++
+      }
+    }
     // ⚠️ 同 remove：必须拿**完整实体**再写（`updatePartialGroup` 写全部 9 列，空实体会清空封面等）
     const all: BookGroups[] = await BookGroupsDao.search()
     const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === groupId)
     if (me === undefined) {
       return
     }
-    me.groupName = newName
+    me.groupName = finalName
     me.parentId = targetParentId
     me.updateTime = Date.now()
     await BookGroupsDao.updatePartialGroup(me)

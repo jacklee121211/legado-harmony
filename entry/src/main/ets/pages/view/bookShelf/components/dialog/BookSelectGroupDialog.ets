@@ -4,13 +4,12 @@
  * @className: BookSelectGroupDialog
  * 移动分组弹窗
  */
-import CommonConstants from '../../../../../common/constants/CommonConstants'
+import CommonConstants from '../../../../../common/constants/CommonConstants'
 import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import PaddingConstants from '../../../../../common/constants/PaddingConstants'
 // 2026-11-02 第 24 轮：隐藏/恢复显示改走唯一写入口（那条路才会发 GroupEvents）
 import { GroupMutation } from '../../../../../common/group/GroupMutation'
-import booksUtils from '../../../../../common/utils/booksUtils'
 import addBookTypeDialog, { AddGroupChannel } from '../../../../../componets/common/addBookTypeDialog'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
@@ -25,7 +24,7 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
-import { GroupTree } from '../../../../../common/group/GroupTree'
+import { GroupTree } from '../../../../../common/group/GroupTree'
 import { FilteredTree } from '../../../../../common/group/FilteredTree'
 import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
@@ -812,10 +811,10 @@ export default struct BookSelectGroupDialog{
       showMessage('分组名称不能为空')
       return
     }
-    // 重名判据用**当前列表**（`groupList` 每次创建后都会重查，所以是最新的）
-    const dup: BookGroups | undefined =
-      this.groupList.find((g: BookGroups): boolean => g.groupName === newName)
-    if (dup !== undefined) {
+    // 2026-11-03（分级唯一）：判重从"当前列表里有没有同名"改成**同级判定**（查库），
+    //   与「改名」「移动」两条路径同一口径；本弹窗新建的分组一律挂根级（parentId=0）。
+    const dup: boolean = await BookGroupsDao.hasSiblingNamed(0, newName)
+    if (dup) {
       AppStorage.setOrCreate<boolean>(AddGroupChannel.KEY_OK, false)
       showMessage(`已存${newName}分组`)
       return
@@ -927,12 +926,12 @@ export default struct BookSelectGroupDialog{
     // 先留名字再清输入（2026-10-01 修：原来先 `this.bookType=''` 再拼提示语，
     // toast 永远是"已添加分组"，丢了组名）
     const newName: string = this.bookType
-    this.groupList.forEach((element:BookGroups) => {
-      if (element.groupName === newName) {
-        showMessage(`已存${newName}分组`)
-        isInsert = false
-      }
-    })
+    // 2026-11-03（分级唯一）：改走 DAO 的**同级判定**（本处新建同样挂根级），
+    //   不再用「当前列表里有没有同名」这种口径不同的判据。
+    if (await BookGroupsDao.hasSiblingNamed(0, newName)) {
+      showMessage(`已存${newName}分组`)
+      isInsert = false
+    }
     this.bookType= ''
     if(isInsert){
       let bookGroups = new BookGroups()
