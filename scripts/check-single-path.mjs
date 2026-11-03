@@ -176,6 +176,15 @@ const INVENTORY = [
     note: '2026-11-03（Ⅲ-2 审计）：实测 5 处全在 FolderInfoDialog（合并/解散的移书与回滚）—— 书籍域还没有 BooksMutation，先 ratchet 锁住不许增长',
   },
   {
+    id: 'boundary-dao-write',
+    label: '边界 lane 直写事实（导入/传书/分享/碰一碰）',
+    pattern: /\b(booksDao|bookGroupsDao|bookmarksDao)\.(insert|partialUpdate|update|updateBookGroup|add|remove|delete)\s*\(/,
+    scope: /(FileHandler|WifiBookServer|BookShareBridge|UnsupportedDoc)\.ets$/,
+    allow: () => false,
+    budget: 2,
+    note: '2026-11-03（Ⅳ-1）：FileHandler 已改走适配器；剩 WifiBookServer 的 bookmarksDao.add/remove 2 处（书签还没有适配器，属下一批）',
+  },
+  {
     id: 'hidden-state-owner',
     label: '隐藏集合写入点（第二份状态的回归闸门）',
     pattern: /GroupStore\.setHiddenIds\s*\(/,

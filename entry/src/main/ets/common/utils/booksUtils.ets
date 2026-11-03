@@ -34,8 +34,10 @@ class booksUtils{
     return books.length > 0
   }
   //更新部分书籍信息
+  // 2026-11-03（Ⅳ-1）：必须 await —— 适配器不等待，调用方就无法知道提交完成的时点
+  //   （与 addBooks 的 2026-09-24 导入竞态同一类问题）。
   async partialUpdate(books: Books){
-    BooksDao.partialUpdate(books)
+    await BooksDao.partialUpdate(books)
   }
   //批量添加
   async batchAdd(books: bookShelfImport[], bookType:number){

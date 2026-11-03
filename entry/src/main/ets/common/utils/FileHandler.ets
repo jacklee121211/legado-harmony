@@ -210,7 +210,8 @@ export class FileHandler {
           const row = existed[0];
           if (row.bookType !== 0) {
             row.bookType = 0;
-            await booksDao.partialUpdate(row);
+            // 2026-11-03（Ⅳ-1）：边界 lane 不直写事实 —— 走书籍适配器（它现在会 await 到提交完）
+            await booksUtil.partialUpdate(row);
             console.info('seedDefaultBook: legacy row fixed, bookType -> 0');
           }
           PreferencesUtil.putSync('defaultBookSeededV3', true);
