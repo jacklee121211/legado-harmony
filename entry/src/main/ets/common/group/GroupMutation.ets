@@ -458,6 +458,16 @@ export class GroupMutation {
     // 2026-11-03（P6/B1）：树一律取真源（GroupStore.reload 会先刷库再返回），
     //   不再用调用方传进来的 list 自建树（那会把"筛选视图"和"真源"混为一谈）。
     const truthTree: GroupTree = await GroupStore.reload()
+    // ── 2026-11-04（G1 后续 · 环预检）──────────────────────────────────────────
+    // G1 把 `subtreeIds` 改成"遇环即停"（不再抛栈溢出）⇒ 环上只能拿到**部分** id。
+    // 对展示无害；但下面紧接着就 `moveBooksToGroup(ids)` + `deleteBook(ids)` 真写库，
+    // 拿部分 id 去写 = "静默半成功"（漏删/漏移一个节点还不报错）。
+    // ⇒ 有环时**拒绝执行、不写库**，把"静默半成功"改回"显式失败"。
+    // 脏数据来源：本文件 :96/:182/:278/:282/:495 等处有 `parentId` 直写，可绕过 `canMoveTo`。
+    if (truthTree.hasCycle()) {
+      console.error(`[GRP-CYCLE] dissolveGroup: 检出互指环脏数据 ⇒ 拒绝执行（未写库） id=${id} mode=${mode}`)
+      return
+    }
     const idsPreview: number[] = mode === 'collapse' ? truthTree.subtreeIds(id) : [id]
     const allBooks: Books[] = await BooksDao.search()
     const bookSnap: Books[] = []

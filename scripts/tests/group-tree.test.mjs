@@ -255,4 +255,21 @@ const tOrphanDup = GroupTree.build([g(1, '文学', 0), g(301, '玄幻', 999)])
 t.eq('已知缺陷：与"根级孤儿"同名 ⇒ false（漏判重复）', tOrphanDup.hasSiblingNamed(0, '玄幻'), false,
   '证据：GroupTree.ets:333 → :102-110（childrenOf(0) 已剔孤儿）—— 已在报告登记，未改源码')
 
+// ═══ 9. hasCycle：互指环预检（2026-11-04 G1 后续）════════════════════════════
+// 用途：GroupMutation.dissolveGroup 写库前用它拒绝环数据（避免 subtreeIds 只拿到部分 id 就真写库）
+t.group('9. hasCycle：互指环预检')
+const c1 = GroupTree.build([g(1, 'A', 0), g(2, 'B', 1), g(3, 'C', 2)])
+t.eq('正常三层链 ⇒ 无环', c1.hasCycle(), false, '证据：GroupTree.ets hasCycle() 沿父链回不到起点')
+const c2 = GroupTree.build([g(101, 'A', 102), g(102, 'B', 101)])
+t.eq('互指环 101↔102 ⇒ 有环', c2.hasCycle(), true, '证据：GroupTree.ets hasCycle()')
+const c3 = GroupTree.build([g(11, 'A', 13), g(12, 'B', 11), g(13, 'C', 12)])
+t.eq('三节点环 11→13→12→11 ⇒ 有环', c3.hasCycle(), true, '证据：GroupTree.ets hasCycle()')
+const c4 = GroupTree.build([g(7, '自环', 7), g(8, '正常', 0)])
+t.eq('自环 parentId===自己 ⇒ **不算**环（parentKey 已归一为根级）', c4.hasCycle(), false,
+  '证据：GroupTree.ets parentKey() 对 pid===groupId 返回 0')
+const c5 = GroupTree.build([g(21, '环A', 22), g(22, '环B', 21), g(23, '干净根', 0)])
+t.eq('环与正常节点共存 ⇒ 仍判有环（不能被正常子树掩盖）', c5.hasCycle(), true, '证据：GroupTree.ets hasCycle() 遍历全部节点')
+t.eq('hasCycle 不改变其它查询：环上 subtreeIds 仍是部分集合（遇环即停）', c5.subtreeIds(21).length, 2,
+  '证据：G1 语义——subtreeIds(21)=[21,22]')
+
 t.done()

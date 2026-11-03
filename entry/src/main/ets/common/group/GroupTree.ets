@@ -77,6 +77,44 @@ export class GroupTree {
     return !this.byId.has(pid)
   }
 
+  /**
+   * 是否存在**互指环脏数据**（A.parent=B 且 B.parent=A 这一类）。
+   *
+   * 为什么要这个判定（2026-11-04，G1 后续）：
+   *   G1 把 `descendantIds/subtreeIds/subtreeHeight` 从"环上栈溢出"改成"遇环即停"，
+   *   代价是**环上只返回能收集到的那部分 id**。对展示无害，但对**破坏性写操作**（解散子树 /
+   *   级联删除 / 移动子树）就是"静默部分成功"——按部分 id 真写库、还不报错。
+   *   ⇒ 写库前必须先问这个：有环就拒绝并报错，把"静默半成功"改回"显式失败"。
+   *
+   * 自环（parentId === 自己）**不算**：`parentKey()` 已把它归一成根级，不会造成无限递归。
+   *
+   * 实现：对每个节点沿父链向上走，若回到起点即成环；步数受 `MAX_GROUP_DEPTH + 1` 限制，
+   *   所以即使数据再脏也只走有限步（分组量级 < 1000，成本可忽略）。
+   */
+  hasCycle(): boolean {
+    const ids: number[] = Array.from(this.byId.keys())
+    for (const start of ids) {
+      const self: BookGroups | undefined = this.byId.get(start)
+      if (self === undefined) {
+        continue
+      }
+      let cur: number = this.parentKey(self)
+      let steps: number = 0
+      while (cur !== 0 && steps <= MAX_GROUP_DEPTH + 1) {
+        if (cur === start) {
+          return true
+        }
+        const up: BookGroups | undefined = this.byId.get(cur)
+        if (up === undefined) {
+          break
+        }
+        cur = this.parentKey(up)
+        steps++
+      }
+    }
+    return false
+  }
+
   private parentKey(g: BookGroups): number {
     const pid: number = g.parentId ?? 0
     if (pid <= 0) {
