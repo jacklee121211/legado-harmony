@@ -94,8 +94,10 @@ export const SHARE_TEXT_UTD_AS_FILE: boolean = true
 /** 官方硬上限：单次分享最多 500 条记录（超了直接拒绝，不截断） */
 export const MAX_SHARE_RECORDS: number = 500
 
-/** AppStorage 键：当前是否存在可分享的选定内容（引导动画/UI 用它做反应式判断） */
-export const SHARE_HAS_CONTENT_KEY: string = 'shareHasContent'
+// 2026-11-04（P2 批次 2）：`SHARE_HAS_CONTENT_KEY`（AppStorage 键 `shareHasContent`）已删除 ——
+//   它只有一个写点（`setSelection()`），全仓 **0 个读取方**（无 `AppStorage.get` / `@StorageProp` /
+//   `@StorageLink`），注释里许诺的"引导动画/UI 反应式判断"从未落地 ⇒ 属于只写不读的死键。
+//   需要"是否有可分享内容"时请直接读 `BookShareBridge.currentSelection()`（同一份内存真相）。
 
 /**
  * 设备 + 版本能力。
@@ -378,8 +380,8 @@ export class BookShareBridge {
    */
   setSelection(sel: ShareSelection | null): void {
     this.selection = sel
-    const has: boolean = sel !== null && sel.books.length > 0
-    AppStorage.setOrCreate(SHARE_HAS_CONTENT_KEY, has)
+    // 2026-11-04（P2 批次 2）：原来这里 `AppStorage.setOrCreate(SHARE_HAS_CONTENT_KEY, has)`，
+    //   而 `has` 只服务那一次写入（键零读取）⇒ 键、写点、`has` 计算一并删除。
     this.warmThumbs(sel)
   }
 

@@ -33,39 +33,25 @@ export class WindowAbility {
   }
 
   /**
-   * 初始化避开区域参数
-   * @param - mainWindow windows
+   * 初始化避开区域参数。
+   *
+   * ⚠️ 2026-11-04（P2 批次 2）：本方法原来只写 4 个 AppStorage 避让键 ——
+   *   `statusBarHeight` / `navigationAiBarHeight`（2026-11-03 已删）与
+   *   `Paf.TopHeight` / `NavigationBarHeight`（本次删）。
+   *   后两个键的旧注释断言「读取方在 `common/ezlt` 转场库，属外部契约」，**该断言已被证伪**：
+   *   全仓 2714 个文件（含 `common/ezlt/**`、`web/`、所有 `.d.ts`）grep
+   *   `Paf.TopHeight` / `NavigationBarHeight` / `Paf` / `TopHeight` / `NavigationBar`
+   *   ⇒ 命中 9 处**全部是本文件的写点** + 注释/文档，**0 处读取**
+   *   （ezlt 自己只用 `ezCustomTransition_*` 与 `UiMotion.LT_*` 键）。
+   *   ⇒ 9 个写点全部删除。
+   *
+   * 方法体保留为空壳 + 日志：它是 **public 且被 `EntryAbility.initWindowProcess()` 调用**，
+   * 整链删除要跨文件动启动路径；本批次只做"删死写"，壳子留待后续统一清理（已在交付报告里登记）。
+   * 形参 `mainWindow` 已随之去掉（唯一用途就是取避让区给那两个死键）。
    * @returns void
    */
-  async initAvoidArea(mainWindow: window.Window): Promise<void> {
+  async initAvoidArea(): Promise<void> {
     hilog.info(0x0000, TAG, 'initAvoidArea start');
-    // 2026-11-03（P2）：`statusBarHeight` / `navigationAiBarHeight` 两个键零读取方，写入删掉后
-    //   `defaultDisplay` / `scaledDensity` 也不再被用到（它们只服务那两个除法），一并删除。
-    const systemArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-    const navArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
-
-    // 2026-11-03（P2）：只保留**仍被读取**的避让键。
-    //   `statusBarHeight` / `navigationAiBarHeight` 两个键全仓零读取方（P2 审计），写入已删；
-    //   注意**不能**顺便删 `Paf.TopHeight` / `NavigationBarHeight` —— 它们来自 ezCustomTransition
-    //   那一侧（`common/ezlt`），读取方在转场库里，属"外部契约"。
-    if (systemArea) {
-      if (deviceInfo.deviceType === 'tablet') {
-        AppStorage.setOrCreate<number>("Paf.TopHeight", 56);
-      } else if (deviceInfo.deviceType === '2in1') {
-        AppStorage.setOrCreate<number>("Paf.TopHeight", 0);
-      } else {
-        AppStorage.setOrCreate<number>("Paf.TopHeight", systemArea.topRect.height);
-      }
-    }
-    if (navArea) {
-      if (deviceInfo.deviceType === 'tablet') {
-        AppStorage.setOrCreate<number>("NavigationBarHeight", navArea.bottomRect.height);
-      } else if (deviceInfo.deviceType === '2in1') {
-        AppStorage.setOrCreate<number>("NavigationBarHeight", 0);
-      } else {
-        AppStorage.setOrCreate<number>("NavigationBarHeight", navArea.bottomRect.height);
-      }
-    }
     hilog.info(0x0000, TAG, 'initAvoidArea end');
   }
 
@@ -92,10 +78,9 @@ export class WindowAbility {
     this.windowClass.on('windowStatusChange', (type: window.WindowStatusType) => {
       this.windowType = type;
       hilog.info(0x0000, TAG, 'onWindowStatusChange type: ', JSON.stringify(type));
-      this.initAvoidArea(this.windowClass!);
-      if (type === window.WindowStatusType.FLOATING) {
-        AppStorage.setOrCreate<number>("NavigationBarHeight", 0);
-      }
+      this.initAvoidArea();
+      // 2026-11-04（P2 批次 2）：这里原来在 FLOATING 时把 `NavigationBarHeight` 写 0。
+      //   该键全仓 0 读取，写入已删（证据见 initAvoidArea 注释）。
     })
   }
 
@@ -118,9 +103,8 @@ export class WindowAbility {
     }
     const nav: window.AvoidArea = this.windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
     hilog.info(0x0000, TAG, 'setNavigationBar avoidArea: ', JSON.stringify(nav));
-    if (nav) {
-      AppStorage.setOrCreate<number>("NavigationBarHeight", nav.bottomRect.height);
-    }
+    // 2026-11-04（P2 批次 2）：原来这里把 `nav.bottomRect.height` 写进 `NavigationBarHeight`。
+    //   该键全仓 0 读取（含 `common/ezlt/**`），写入已删 —— 保留这行日志供避让区排查。
   }
 
   async setWindowLayoutFullScreen(isFullScreen: boolean): Promise<void> {
@@ -143,6 +127,11 @@ export class WindowAbility {
    *      只在启动时调过一次 ⇒ `statusBarHeight` / `Paf.TopHeight` /
    *      `NavigationBarHeight` 仍是旋转前的值 ⇒ 页面按错的避让值排版 = 「被挤压」。
    *      转一圈横屏再回来能恢复，是因为那一圈里又走了一次重新测量。
+   *      ⚠️ 2026-11-04（P2 批次 2）：上面的 `statusBarHeight` / `navigationAiBarHeight` /
+   *      `Paf.TopHeight` / `NavigationBarHeight` **四个键全部零读取，写入已删** ⇒
+   *      "安全区不重算"这条历史问题在数据面上已无消费方（真正被读的
+   *      `topRectHeight` / `bottomRectHeight` 由 `EntryAbility` 的 `avoidAreaChange` 维护）。
+   *      `initAvoidArea()` 调用点保留，行为为空。
    *
    * ── 现在的做法 ────────────────────────────────────────────────────────────
    *   · 监听器**只注册一次**（`sizeListenerBound` 闸门），回调集中存在 `sizeCallbacks`；
@@ -179,9 +168,10 @@ export class WindowAbility {
         this.sizeChangeTimer = setTimeout(() => {
           this.sizeChangeTimer = -1;
           // ★ 关键：安全区随方向变化 ⇒ 必须重算（旧实现漏了这一步）
-          if (this.windowClass) {
-            this.initAvoidArea(this.windowClass);
-          }
+          //   2026-11-04（P2 批次 2）：四个 AppStorage 避让键全部零读取、写入已删 ⇒
+          //   这里现在只是空调用（`initAvoidArea()` 只打日志）；真正被读的
+          //   `topRectHeight` / `bottomRectHeight` 由 `EntryAbility` 的 `avoidAreaChange` 维护。
+          this.initAvoidArea();
           // 通知全 App「尺寸已稳定」（非阅读页可 @StorageLink 它触发重建）
           const tick = (AppStorage.get<number>('windowSizeTick') ?? 0) as number;
           AppStorage.setOrCreate<number>('windowSizeTick', tick + 1);
@@ -366,7 +356,10 @@ export class WindowAbility {
         }
         let windowClass = data;
         if (names.length === 0) {
-          AppStorage.setOrCreate('Grid.tabPro.enableAvoidAreaListener', false);
+          // 2026-11-04（P2 批次 2）：原来这里写 `Grid.tabPro.enableAvoidAreaListener = false/true`
+          //   两个写点（见下方 names.length > 0 分支）。该键是 `Grid.tabPro` 组件库时代的遗留，
+          //   全仓 0 读取（含 `common/ezlt/**`、`web/`、所有 `.d.ts`）⇒ 两个写点已删。
+          hilog.info(0x0000, TAG, 'toggleWindowSystemBar: system bars hidden');
         }
         windowClass.setWindowSystemBarEnable(names).then(() => {
           hilog.info(0x0000, TAG, 'toggleWindowSystemBar setWindowSystemBarEnable succeeded');
@@ -377,7 +370,7 @@ export class WindowAbility {
           }
         })
         if (names.length > 0) {
-          AppStorage.setOrCreate('Grid.tabPro.enableAvoidAreaListener', true);
+          hilog.info(0x0000, TAG, 'toggleWindowSystemBar: system bars shown');
         }
         hilog.info(0x0000, TAG, 'toggleWindowSystemBar Succeeded in setting the system bar to be invisible.');
       } catch (exception) {

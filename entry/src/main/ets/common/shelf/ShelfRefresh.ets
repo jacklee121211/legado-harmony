@@ -75,7 +75,8 @@ export class ShelfRefresh {
     return next
   }
 }
+// 2026-11-04（P2 批次 2）：文件末尾原有两个「与 CommonConstants 同值」的字面量
+//   `KEY_GROUPS = 'BOOK_IS_BOOK_GROUPS_REFRESHING'` / `KEY_BOOKS = 'BOOK_IS_BOOK_REFRESHING'`。
+//   两个都**从未被引用**（2026-11-03 双轨收口后 groups()/books() 只发事件、不再写计数器），
+//   且 `BOOK_IS_BOOK_GROUPS_REFRESHING` 键本身已按"只写不读"删除 ⇒ 两行一并删除。
 
-/** 与 `CommonConstants` 同值；这里写字面量是为了不引入额外依赖（值是协议的一部分，改动须同步） */
-const KEY_GROUPS: string = 'BOOK_IS_BOOK_GROUPS_REFRESHING'
-const KEY_BOOKS: string = 'BOOK_IS_BOOK_REFRESHING'

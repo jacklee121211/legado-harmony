@@ -3,7 +3,8 @@ import hilog from '@ohos.hilog';
 import window from '@ohos.window';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AbilityConstant, Configuration, Want, common } from '@kit.AbilityKit';
-import display from '@ohos.display';
+// 2026-11-04（P2 批次 2）：`@ohos.display` 的唯一用途是给已删的 `WindowHeight` / `WindowWidth`
+//   两个死键取默认屏尺寸 ⇒ import 一并删除（全文件已无 `display.` 调用）。
 import { ezCustomTransition } from '../common/ezlt';
 import DbUtil from '../common/utils/DbUtil';
 import DataBase from '../database'
@@ -53,10 +54,12 @@ import { ShelfRefresh } from '../common/shelf/ShelfRefresh';
  *      `@useinstead ohos.arkui.UIContext.UIContext#px2vp`
  *  · SDK `…\ets\api\@ohos.window.d.ts:5196-5208`：`Window.getUIContext(): UIContext`
  *    `@since 10` `@stagemodelonly`，`@throws { BusinessError } 1300002 - This window state is abnormal.`
- *  · 本项目这 7 处恰好都在 **`onWindowStageCreate` 的 `windowStage.getMainWindow` 回调里**
+ *  · 本项目这 5 处恰好都在 **`onWindowStageCreate` 的 `windowStage.getMainWindow` 回调里**
  *    —— 正是官方点名"**应用启动阶段…UI 实例不明确**"的场景；算出来的值又是
- *    `topRectHeight` / `bottomRectHeight` / `WindowHeight` / `WindowWidth` / `stateHeight`
- *    这 5 个**避让区与屏幕尺寸预算**，一旦用了默认屏密度，沉浸排版会整片偏移。
+ *    `topRectHeight` / `bottomRectHeight` / `stateHeight`
+ *    这 3 个**仍被读取的避让区预算**，一旦用了默认屏密度，沉浸排版会整片偏移。
+ *    （2026-11-04 P2 批次 2：原第 4/5 个值 `WindowHeight` / `WindowWidth` 零读取、写入已删，
+ *      换算点由 7 处降到 5 处。）
  *
  * 验证点（翻 true 之后必须做的真机验证）：
  *  1. 视觉：状态栏 / 导航条避让与旧行为**一致**（顶部/底部不留白、不压字）；
@@ -612,13 +615,12 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('topRectHeight', this.toVp(windowClass, topRectHeight));
 
       //手机屏幕高度和宽度
-      let defaultDisplay = display.getDefaultDisplaySync()
-      let WindowHeight = defaultDisplay.height
-      let WindowWidth = defaultDisplay.width
-
-
-      AppStorage.setOrCreate('WindowHeight', this.toVp(windowClass, WindowHeight));
-      AppStorage.setOrCreate('WindowWidth', this.toVp(windowClass, WindowWidth));
+      // 2026-11-04（P2 批次 2）：这里原来写 `WindowHeight` / `WindowWidth` 两个 AppStorage 键
+      //   （大写开头，与真被读取的 `windowHeight` / `windowWidth` **不是同一个键**）。
+      //   自证零读取：全仓 2714 个文件 grep `WindowHeight` / `WindowWidth` ⇒ 命中全部是本文件这两行写点
+      //   + 注释/文档，0 处 `AppStorage.get` / `@StorageProp` / `@StorageLink` 读取
+      //   ⇒ 两个写点连同只服务它们的 `display.getDefaultDisplaySync()` 与 `display` import 一并删除。
+      //   （真正在用的 `windowWidth` / `windowHeight` 由 `WindowAbility` 写入，未受影响。）
 
       // 2026-11-03（P2）：`avoidHeight` 是只写不读的死键（全仓零读取），已删；
       //   这里只保留 `stateHeight`（仍有读取方）所需的实测避让高度。
@@ -693,7 +695,10 @@ export default class EntryAbility extends UIAbility {
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
-    AppStorage.setOrCreate('colorMode', newConfig.colorMode);
+    // 2026-11-04（P2 批次 2）：原来这里还把系统深浅色写进 AppStorage 的 `'colorMode'` 键。
+    //   该键的消费方（`ReaderPage3` 的 `@StorageLink('colorMode')` + `colorModeChange` Watch）
+    //   已于 2026-09-23 删除（见 `ReaderPage3.ets` 的「[已删除 2026-09-23] colorModeChange() Watch」）
+    //   ⇒ 全仓 0 读取 ⇒ 写入已删。系统深浅色真相现在只走 `NightMode.SYS_KEY`（`sysColorMode`）。
     // 亮暗色重构（2026-09-23）：把系统深浅色真相记进 NightMode（自动档跟随它），
     // 并立即重下发 —— "自动"档下用户在系统里切深浅色，App 内所有页面即时跟翻。
     // ⚠️ onSystemColorModeChange 内部用 `applied` 过滤 setColorMode 自己触发的回声。
@@ -703,7 +708,7 @@ export default class EntryAbility extends UIAbility {
 
   initWindowProcess(windowStage: window.WindowStage): void {
     windowStage.getMainWindow((err, windowClass: window.Window) => {
-      WindowAbility.getInstance().initAvoidArea(windowClass);
+      WindowAbility.getInstance().initAvoidArea();
       let systemBarProperties: window.SystemBarProperties = {
         statusBarContentColor: this.context.config.colorMode ? '#000000' : '#FFFFFF'
       };

@@ -234,7 +234,8 @@ export default class CommonConstants {
   static readonly GROUP_LIST_DATA:string = 'GROUP_LIST_DATA'
   static readonly SHELF_LIST_DATA:string = 'SHELF_LIST_DATA'
   static readonly BOOK_IS_BOOK_REFRESHING:string = 'BOOK_IS_BOOK_REFRESHING'
-  static readonly BOOK_IS_BOOK_GROUPS_REFRESHING:string = 'BOOK_IS_BOOK_GROUPS_REFRESHING'
+  // 2026-11-04（P2 批次 2）：BOOK_IS_BOOK_GROUPS_REFRESHING 已删除 —— 分组刷新走 GroupEvents，
+  //   该计数器全仓 0 读取（只余 `bookListData.initBookListData` 一处初始化写），属只写不读的死键。
   // 2026-11-03（P8/L2）：RSS_SOURCES_GROUP_INIT / RSS_SOURCES_GROUP_LIST_DATA_KEY 已删除 ——
   //   订阅源（RSS）域在本工程从未落地（无表/无页面），这两个键只被启动时写一次、零读取。
   // 2026-11-03（顺路发现收尾）：SYSTEM_UA 已整链删除 —— 书源 WebView 时代的遗留，只写不读，
