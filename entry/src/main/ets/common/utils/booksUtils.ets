@@ -1,5 +1,5 @@
 import BooksDao from '../../database/dao/BooksDao'
-import { Books, bookShelfImport } from '../../database/entities/Books'
+import { Books } from '../../database/entities/Books'
 import bookGroupUtils from './bookGroupUtils'
 import toolsUtils from './ToolsUtils'
 import bookRename from './BookRename'
@@ -40,31 +40,9 @@ class booksUtils{
     await BooksDao.partialUpdate(books)
   }
   //批量添加
-  async batchAdd(books: bookShelfImport[], bookType:number){
-    books.forEach((item:bookShelfImport)=>{
-      let book:Books = {
-        bookName: item.name,
-        bookUrl: item.bookUrl,
-        author: item.author,
-        intro: item.intro,
-        bookGroup: 3,
-        latestChapterTime: 0,
-        totalChapterNum: 0,
-        durChapterIndex: 0,
-        durChapterPos: 0,
-        durChapterTime: 0,
-        canUpdate: false,
-        sort: 0,
-        originOrder: 0,
-        syncTime: 0,
-        bookType: bookType,
-        isTop: false,
-        isJoin: true,
-        isLocalBook: false
-      }
-      BooksDao.insert(book)
-    })
-  }
+  // 2026-11-04（P4 批 C-12）：`batchAdd` 已删除 —— 全仓零调用点（唯一调用方 `pasteBookImport`
+  //   在 P4b 批 C-6 随「导入书单」链一起删掉了）。它本身也是必须消掉的适配器：
+  //   直接 `BooksDao.insert()` 直写，绕开 `BooksMutation` 单一写入口。
   /**
    * @author 2008
    * @param id 需要移动的书籍Id
