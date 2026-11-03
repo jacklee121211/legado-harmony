@@ -1,0 +1,35 @@
+# 质量闸门（CI）—— 单一通路 / 弹窗统一 / 逻辑测试
+#
+# 2026-11-03 新增（P1 工程能力）：
+#   · 这些闸门以前只在开发者本地手动跑，等于"靠人记得住"；
+#   · 现在 push / PR 自动跑，绕过单一通路会直接红。
+#
+# ⚠️ 这里**不跑** `devecocli build` 与 MCP check：
+#   GitHub runner 没有 DevEco SDK / HarmonyOS 工具链；构建与真机验证仍在本地开发流程里
+#   （见 AGENTS.md「工具调用义务」一节：改代码必须 build + MCP check + 两道闸门）。
+name: Quality Gates
+
+on:
+  push:
+    branches: [main, master, "base/**"]
+  pull_request:
+    branches: [main, master, "base/**"]
+  workflow_dispatch:
+
+jobs:
+  gates:
+    name: Static gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run all gates (single-path / dialog / logic tests)
+        run: node scripts/check-all.mjs

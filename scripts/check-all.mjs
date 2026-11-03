@@ -1,0 +1,52 @@
+// 一键跑全部**可本地验证**的质量闸门（2026-11-03 新增，P1 工程能力）。
+//
+// 设计原则：
+//   · 只跑"纯静态/纯逻辑"的检查 —— 不依赖 DevEco SDK、不依赖真机，因此能在 CI（ubuntu）跑；
+//   · `devecocli build` 与 `MCP check` 不在本脚本内（本地开发必跑，CI 无 SDK 跑不了）；
+//   · 任一检查非 0 退出 ⇒ 本脚本非 0 退出（CI 直接红）。
+//
+// 用法：node scripts/check-all.mjs
+import { spawnSync } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+
+const CHECKS = [
+  // 单一通路闸门（零预算规则 + ratchet 存量账）
+  { script: 'check-single-path.mjs', name: '单一通路（写入口/树/计数/事件出口…）' },
+  // 弹窗闸门（禁裸 open / 旧 API / controller 预算）
+  { script: 'check-dialog-usage.mjs', name: '弹窗统一（DialogHost）' },
+  // 事件合并语义的逻辑测试（复刻 GroupEvents.emitFromBump 算法，4 条断言）
+  { script: 'verify-group-event-coalescing.mjs', name: '事件合并逻辑（4 断言）' },
+]
+
+let failed = 0
+const results = []
+
+for (const c of CHECKS) {
+  const abs = path.join(HERE, c.script)
+  const r = spawnSync(process.execPath, [abs], { encoding: 'utf8' })
+  const ok = r.status === 0
+  if (!ok) {
+    failed++
+  }
+  results.push({ name: c.name, script: c.script, ok, code: r.status })
+  // 失败时把子进程输出原样打出来，方便定位（成功时只打一行摘要）
+  if (!ok) {
+    console.log(`\n──── ✗ ${c.script} ────`)
+    if (r.stdout) console.log(r.stdout.trimEnd())
+    if (r.stderr) console.error(r.stderr.trimEnd())
+  }
+}
+
+console.log('\n═══ 质量闸门汇总 ═══')
+for (const r of results) {
+  console.log(`  ${r.ok ? '✅' : '❌'} ${r.name.padEnd(34)} ${r.script}（exit ${r.code}）`)
+}
+if (failed === 0) {
+  console.log(`\n✅ 全部通过（${results.length}/${results.length}）`)
+  process.exit(0)
+}
+console.log(`\n❌ 失败 ${failed} 项（共 ${results.length} 项）`)
+process.exit(1)
