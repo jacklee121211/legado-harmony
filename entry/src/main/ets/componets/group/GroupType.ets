@@ -622,7 +622,7 @@ export default struct groupTypeComponent {
     }
     this.onRecentChip = false
     // 2026-11-03（Ⅱ-5）：`GROUP` 是**运行期哨兵**（只在 `IndexShelf:172` 比一次，不持久化）。
-    // 用户要求"以后没有文件夹表述"，故哨兵值由 `'文件夹'` 改为 `'分组'`；
+    // 用户要求"以后统一叫分组"，故哨兵值由旧称改为 `'分组'`；
     // 语义仍等价「分组视图 / 标签视图」，非"文件系统目录"。
     this.GROUP = (name === '分组') ? '分组' : '标签'
     this.bookTypeNumber = hit.groupId
