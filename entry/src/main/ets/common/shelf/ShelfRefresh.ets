@@ -63,9 +63,9 @@ export class ShelfRefresh {
    *
    * 唯一性由闸门保证：`group-event-exit`（禁止在 ShelfRefresh 之外调 `GroupEvents.emitFromBump`）。
    */
-  private static notifyGroupEvent(kind: string): void {
-    GroupEvents.emitFromBump(kind)
-  }
+  // 2026-11-04（P2 收尾）：原 `private static notifyGroupEvent(kind: string)` 已删 ——
+  //   它只是 `GroupEvents.emitFromBump(kind)` 的一行包装，且**零调用**
+  //   （双轨收口后 groups()/books() 直接调 `GroupEvents.emitFromBump`）。
 
   /** 加一（计数器语义，与原来的 `this.xxx++` 完全一致）；返回新值 */
   private static bump(key: string): number {

@@ -1,6 +1,8 @@
 import { window } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { display } from '@kit.ArkUI';
+// 2026-11-04（P2 收尾）：原 `import { display } from '@kit.ArkUI'` 已删 ——
+//   P2 批次 1 删掉 statusBarHeight / navigationAiBarHeight 的死写与 defaultDisplay/scaledDensity 之后，
+//   本文件再无 any `display.*` 使用（MCP check 6133 已确认）。
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
