@@ -10,6 +10,8 @@ import ShelfPrefs from '../../../../../common/utils/ShelfPrefs'
 // 手势划选（2026-10-25 新增）：与书籍管理同一套几何/会话逻辑
 import ManageBrush, { BrushRect, bumpSelectionVersion } from './ManageBrush'
 import { Haptics } from '../../../../../common/utils/Haptics'
+// 2026-11-03（双轨收口）：分组卡片 ForEach 键的唯一实现（本文件原有的第 4 份副本已删）
+import { groupCardKeyOf } from '../../../../../common/group/GroupCardKey';
 
 @Component
 export default struct BookFolderManages {
@@ -244,7 +246,7 @@ export default struct BookFolderManages {
                this.recordRect(item, newValue)
              })
            }
-         }, (item: BookGroups): string => groupCardKey(item))
+         }, (item: BookGroups): string => groupCardKeyOf(item))
        } else {
          ForEach(this.blocks(), (block: BookGroups[], bi: number) => {
            // 2026-11-01：每个顶层分组一个圆角底板区块（块内 DFS，块间 16 间距）
@@ -273,7 +275,7 @@ export default struct BookFolderManages {
                  .onAreaChange((oldValue: Area, newValue: Area): void => {
                    this.recordRect(item, newValue)
                  })
-               }, (item: BookGroups): string => groupCardKey(item))
+               }, (item: BookGroups): string => groupCardKeyOf(item))
              }
              .gesture(
                GestureGroup(GestureMode.Sequence,
@@ -340,13 +342,7 @@ export default struct BookFolderManages {
  * 该键值所对应的组件**。」⇒ 只写 `'g'+groupId` 时，换封面 / 改名 / 置顶 / "共N本"变化
  * 都不会重建卡片（本项目规范 `docs/标准-弹窗与按钮统一规范.md:201,212` 同款要求）。
  */
-function groupCardKey(item: BookGroups): string {
-  return (item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
-    + '|' + (item.groupName ?? '')
-    + '|' + (item.isTop ? 'T' : 'F')
-    + '|' + (item.show ? '1' : '0')
-    + '|' + (item.coverUrl ?? '')
-    + '|' + item.coverType
-    + '|' + (item.bookIds?.length ?? 0)
-}
+// 2026-11-03（双轨收口）：本文件原有的 groupCardKey() 是**第 4 份**实现（且缺 parentId / isSystem，
+//   移动分组后卡片不会重建）—— 已删，统一用 common/group/GroupCardKey.groupCardKeyOf()。
+
 

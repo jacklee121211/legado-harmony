@@ -205,6 +205,64 @@ const INVENTORY = [
     allow: (rel) => rel === 'common/shelf/CountLabel.ets',
     budget: 0,
     note: '2026-11-03（P6/B2）：分组卡片/批量顶部/详情小字统一走 CountLabel.groupCard/selected/books',
+  },  // 2026-11-03（双轨收口）：**旧计数器订阅方**存量账。
+  //   两个计数器（`BOOK_IS_BOOK_GROUPS_REFRESHING` / `BOOK_IS_BOOK_REFRESHING`）仍是当前渲染广播的
+  //   主通道：25 处 `@StorageProp/@StorageLink`、16 个文件。事件轨（`GroupEvents.subscribe`）今天只有
+  //   `BookManagePage` 一个订阅者，且没有任何地方用 payload 的精确 id 做选择性刷新。
+  //   ⇒ 先把"事件出口"接成唯一（上面那条），订阅方迁移留到有真机可验时再逐文件做；
+  //   本阈值只许降，防止双轨继续扩大。
+  {
+    id: 'legacy-refresh-consumers',
+    label: '旧计数器订阅方（@StorageProp/@StorageLink 两个刷新键）',
+    pattern: /@Storage(Prop|Link)\(['"](BOOK_IS_BOOK_GROUPS_REFRESHING|BOOK_IS_BOOK_REFRESHING)['"]\)/,
+    budget: 25,
+    note: '2026-11-03（双轨收口）：25 处存量，只许降；迁移到 GroupEvents.subscribe 需要真机验每个页面的重渲染',
+  },
+  // 2026-11-03（双轨收口）：**事件出口唯一性**闸门。
+  //   双轨的根因是"计数器广播"和"领域事件"各自为政：只有 GroupMutation 发事件，
+  //   UI 里直接 bump 计数器的路径不会通知事件订阅方 ⇒ 新订阅者静默漏刷新。
+  //   现在 `ShelfRefresh` 在 bump 的同时补发（微任务合并），所以：
+  //     · `GroupEvents.emit` 只许出现在 GroupEvents（实现）/ GroupMutation（精确 payload）/ ShelfRefresh（补发）三处；
+  //     · `emitFromBump` 只许 ShelfRefresh 调。
+  {
+    id: 'group-event-exit',
+    label: '事件广播绕过唯一出口（GroupEvents 只许三个出口文件）',
+    pattern: /GroupEvents\.(emit|emitFromBump)\s*\(/,
+    allow: (rel) => rel === 'common/group/GroupEvents.ets'
+      || rel === 'common/group/GroupMutation.ets'
+      || rel === 'common/shelf/ShelfRefresh.ets',
+    budget: 0,
+    note: '2026-11-03（双轨收口）：计数器与事件由 ShelfRefresh 同一出口发出（微任务合并，已有精确事件则不补发）',
+  },
+  // 2026-11-03（双轨收口）：分组卡片 ForEach 键的**唯一实现**闸门。
+  //   `GroupCardKey.groupCardKeyOf` 是唯一实现；历史上有 4 份副本，其中 `BookFolderManages` 那份
+  //   缺 `parentId` / `isSystem` ⇒「移动分组后管理页卡片不重建」（键里少字段 = 不重绘）。
+  {
+    id: 'group-card-key-fork',
+    label: '分组卡片键自己拼（绕过 GroupCardKey）',
+    pattern: /\bfunction\s+groupCardKey\s*\(/,
+    allow: (rel) => rel === 'common/group/GroupCardKey.ets',
+    budget: 0,
+    note: '2026-11-03（双轨收口）：第 4 份副本（BookFolderManages）已删，统一 groupCardKeyOf()',
+  },
+  // 2026-11-03（双轨收口）：计数**取数**（不是文案）的闸门。
+  //   「共N本」必须按事实 `books.bookGroup` 现算（`bookGroupUtils.directBookCount` / `fillRealBookIds`），
+  //   不许再读冗余列 `book_groups.bookIds.length`（它只在移动分组时追加、导入/删除都不同步 ⇒ 恒「共0本」）。
+  //   存量允许：bookGroupUtils 内部（填充/子树求和）、GroupCardKey（键需要计数）、
+  //   已在 `fillRealBookIds` 之后的显示路径（BookFolder / BookContentRefresh / BookFolderManages）、
+  //   以及两个弹窗的**首帧占位**（随即被 directBookCount 覆盖）。预算只许降。
+  {
+    id: 'bookids-count-read',
+    label: '用冗余列 bookIds.length 当"共N本"',
+    pattern: /bookIds\?\.length/,
+    allow: (rel) => rel === 'common/utils/bookGroupUtils.ets'
+      || rel === 'common/group/GroupCardKey.ets'
+      || rel.startsWith('database/')
+      || rel.endsWith('/BookFolder.ets')
+      || rel.endsWith('/BookContentRefresh.ets')
+      || rel.endsWith('/BookFolderManages.ets'),
+    budget: 2,
+    note: '2026-11-03（双轨收口）：只剩两个弹窗的首帧占位（coverInfoDialog / FolderInfoDialog），实际显示走 directBookCount',
   },  {
     id: 'boundary-dao-write',
     label: '边界 lane 直写事实（导入/传书/分享/碰一碰）',

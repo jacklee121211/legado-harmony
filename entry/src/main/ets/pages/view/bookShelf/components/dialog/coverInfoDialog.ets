@@ -1,6 +1,7 @@
 import { pickerAvatar } from '../../../../../common/utils/photoViewPicker'
 import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import { CountLabel } from '../../../../../common/shelf/CountLabel'
+import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import { NightMode } from '../../../../../common/utils/NightMode'
 import coverInfoImageShow from '../../../coverInfoImageShow'
@@ -15,7 +16,6 @@ import { ThemeItem } from '../../../../../common/model/Theme'
 import { ThemeStorageKey } from '../../../../../common/constants/Theme'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../../../common/utils/UiMotion'
-import booksUtil from '../../../../../common/utils/booksUtils'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
 import { COVER_DEFAULT_FILES, coverCorners } from '../../../../../common/utils/CoverSource'
 import CommonConstants from '../../../../../common/constants/CommonConstants'
@@ -56,6 +56,8 @@ export default struct coverInfoDialog{
   //推送提醒
   @Prop itemData:BookGroups
   @State coverImages:string = ''
+  /** 「共N本」的事实值（现算 books.bookGroup；itemData.bookIds 是不同步的冗余列，只作首帧占位） */
+  @State realBookCount: number = this.itemData.bookIds?.length ?? 0
   /** v3.21：默认样式网格选中项（0-based；-1=未选）；存量 default:// 反解 */
   @State pickDefault: number = -1
   /** 当前选中的样式单选（0=默认样式 1=自定义；驱动缩略图网格显隐） */
@@ -64,7 +66,14 @@ export default struct coverInfoDialog{
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   cancel: () => void = () => {
   }
+  /** 2026-11-03（双轨收口）：本数一律现算（bookGroupUtils.directBookCount 是唯一取数实现） */
+  private async loadRealBookCount(): Promise<void> {
+    const id: number = this.itemData.groupId ?? -1
+    this.realBookCount = await bookGroupUtils.directBookCount(id, this.itemData.groupType)
+  }
+
   aboutToAppear(): void {
+    this.loadRealBookCount()
     this.coverImages = this.itemData.coverUrl??''
     const cu: string = String(this.itemData.coverUrl ?? '')
     if (cu.startsWith('default://cover_defaults/c')) {
@@ -185,7 +194,7 @@ export default struct coverInfoDialog{
       }){
         Column(){
           Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
-          Text(CountLabel.books(this.itemData.bookIds?.length ?? 0)).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
+          Text(CountLabel.books(this.realBookCount)).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
         }
         // ── 批量「重置」（2026-10-13，用户要求）──────────────────────────────
         // 语义（用户口径）：范围内**每本书各自**恢复到自己"导入时的那张封面"——
@@ -621,3 +630,4 @@ export default struct coverInfoDialog{
     showMessage('分组封面已恢复默认')
   }
 }
+

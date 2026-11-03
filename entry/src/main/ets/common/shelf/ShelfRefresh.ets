@@ -25,10 +25,14 @@
  *    `@StorageLink` 是双向绑定，组件里 `this.x++` 与这里写 AppStorage 对**所有订阅方**等价；
  *    但只有集中写才能被闸门（`scripts/check-single-path.mjs`）机械地守住"不许再有第 57 处"。
  */
+import { GroupEvents } from '../group/GroupEvents'
+
 export class ShelfRefresh {
   /** 分组结构 / 树（`BOOK_IS_BOOK_GROUPS_REFRESHING`）；返回自增后的值，便于调用方保留原有日志 */
   static groups(): number {
-    return ShelfRefresh.bump(KEY_GROUPS)
+    const v: number = ShelfRefresh.bump(KEY_GROUPS)
+    ShelfRefresh.notifyGroupEvent()
+    return v
   }
 
   /** 书籍数据 / 计数（`BOOK_IS_BOOK_REFRESHING`；`isBookRefreshing` 是它的本地别名）；返回自增后的值 */
@@ -40,11 +44,27 @@ export class ShelfRefresh {
   static structure(): void {
     ShelfRefresh.bump(KEY_GROUPS)
     ShelfRefresh.bump(KEY_BOOKS)
+    ShelfRefresh.notifyGroupEvent()
   }
 
   /** 书架排序 / 宫格列表切换（`SHELF_SORT_TICK`） */
   static sort(): void {
     ShelfRefresh.bump('SHELF_SORT_TICK')
+  }
+
+  /**
+   * 2026-11-03（双轨收口）：**把"只 bump 计数器"的写路径也接上领域事件**。
+   *
+   * 为什么必须补这一步：`GroupEvents` 的唯一写入方原本只有 `GroupMutation`，而 UI 里存在大量
+   * 「删/改完直接 `ShelfRefresh.groups()`」的路径（不进 GroupMutation）⇒ 事件订阅方收不到通知。
+   * 补发后：**计数器（渲染广播）与事件（领域广播）由同一个出口同时发出**，
+   * 新增的订阅者不会再"静默漏刷新"；同一次操作重复触发由 `GroupEvents.emitFromBump()` 的
+   * "同一微任务只补一次 + 已有精确事件就不补发"两重规则压掉。
+   *
+   * 唯一性由闸门保证：`group-event-exit`（禁止在 ShelfRefresh 之外调 `GroupEvents.emitFromBump`）。
+   */
+  private static notifyGroupEvent(): void {
+    GroupEvents.emitFromBump()
   }
 
   /** 加一（计数器语义，与原来的 `this.xxx++` 完全一致）；返回新值 */

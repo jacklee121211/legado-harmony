@@ -40,6 +40,23 @@ export class GroupEvents {
 
   private static listeners: GroupChangedListener[] = []
 
+  /**
+   * 「渲染广播已入队」标志（2026-11-03 双轨收口）。
+   *
+   * ── 背景：为什么需要这条补发通道 ──────────────────────────────────────────
+   * 本工程现在有**两种订阅形态**：
+   *   · 新：`GroupEvents.subscribe(fn)` —— 带 payload（精确 groupIds/bookIds）；
+   *   · 旧：`ShelfRefresh` 的两个 AppStorage 计数器 + `@StorageProp(@Watch)` —— 无 payload，
+   *     "加一就整片重查"。今天仍有 ~28 个组件在用旧形态（清单见 `docs/待办-统一清单-2026-11-03.md` §27）。
+   * 问题：**只有 `GroupMutation` 会 emit**。凡是"绕过 GroupMutation 直接 bump 计数器"的写路径
+   * （UI 里 `ShelfRefresh.groups()` 之后没有领域事件），事件订阅方就**永远收不到通知** ⇒
+   * 这正是双轨最危险的一面：新增的事件订阅者会静默漏刷新。
+   *
+   * 解法：让 `ShelfRefresh` 在 bump 计数器的同时也**补发一次事件**，且同一微任务内只补一次，
+   * 并在这期间已经有精确事件时不补（避免同一次操作触发两轮监听器）。
+   */
+  private static bumpPending: boolean = false
+
   static subscribe(fn: GroupChangedListener): void {
     if (GroupEvents.listeners.indexOf(fn) < 0) {
       GroupEvents.listeners.push(fn)
@@ -61,8 +78,10 @@ export class GroupEvents {
   static emit(groupIds: number[], bookIds: number[] = []): void {
     GroupEvents.version++
     const payload: GroupChangedPayload = new GroupChangedPayload(GroupEvents.version, groupIds, bookIds)
-    // 同步给仍用 @StorageProp 的旧组件（双轨期过渡，P4 后删除）
-    AppStorage.setOrCreate<number>('GROUP_EVENT_VERSION', payload.version)
+    // 2026-11-03（双轨收口）：这里原来还有一行把版本号镜像到 AppStorage 的 `GROUP_EVENT_VERSION`
+    //   —— 注释写的是"同步给仍用 @StorageProp 的旧组件（双轨期过渡，P4 后删除）"。
+    //   实测全仓**只有这一行写、没有任何一处读**（`@StorageProp/@StorageLink/AppStorage.get` 全 0），
+    //   ⇒ 空转的桥，已删。旧组件走的是 `ShelfRefresh` 的两个计数器（见该文件），不是这个键。
     const snapshot: GroupChangedListener[] = GroupEvents.listeners.slice(0)
     // ── 2026-11-02 第 24 轮（D7）：**发端探针**，补上取证盲区 ─────────────────────
     // 为什么必须有这行：`[GRP-EVENT] 结构变更 → 已清空选中集` 是在 `BookManagePage` 的
@@ -82,5 +101,32 @@ export class GroupEvents {
         console.error(`[GROUP-EVENT] listener failed: ${JSON.stringify(e)}`)
       }
     }
+  }
+
+  /**
+   * `ShelfRefresh` 专用：**从"只 bump 了计数器"的写路径补发一次结构变更事件**。
+   *
+   * 语义：
+   *   · 同一微任务内多次调用只补发一次（`bumpPending`）；
+   *   · 若这段时间内已经有精确事件（`GroupMutation.emit` 把 version 推高了），**不再补发**
+   *     —— 避免同一次用户操作让监听器跑两遍（选择集清空是幂等的，但重复重查没有意义）；
+   *   · payload 一律是 `([], [])` = 结构变更（接收方按"全量"处理），因为旧计数器本来就不带信息。
+   *
+   * ⚠️ 不要从 UI 直接调本方法 —— 唯一调用点是 `common/shelf/ShelfRefresh.ets`（闸门 `group-event-exit` 守着）。
+   */
+  static emitFromBump(): void {
+    if (GroupEvents.bumpPending) {
+      return
+    }
+    const versionAtSchedule: number = GroupEvents.version
+    GroupEvents.bumpPending = true
+    Promise.resolve().then(() => {
+      GroupEvents.bumpPending = false
+      if (GroupEvents.version !== versionAtSchedule) {
+        // 期间已有精确事件（例如 GroupMutation 的 afterChange）⇒ 精确的优先，不补发
+        return
+      }
+      GroupEvents.emit([], [])
+    })
   }
 }

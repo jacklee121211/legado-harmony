@@ -1,4 +1,5 @@
-import { Haptics } from '../../../../../common/utils/Haptics';
+import { Haptics } from '../../../../../common/utils/Haptics';
+import bookGroupUtils from '../../../../../common/utils/bookGroupUtils'
 import { CountLabel } from '../../../../../common/shelf/CountLabel'
 import { NightMode } from '../../../../../common/utils/NightMode'
 import commonInputDialog from '../../../../../componets/common/commonInputDialog'
@@ -165,15 +166,8 @@ export default struct FolderInfoDialog{
     if (id === undefined) {
       return
     }
-    try {
-      const ids: string[] = await booksDao.queryBookIds({
-        type: this.itemData.groupType,
-        bookGroup: id
-      })
-      this.realBookCount = ids.length
-    } catch (e) {
-      console.log('FolderInfoDialog refreshBookCount, Error, ', JSON.stringify(e))
-    }
+    // 2026-11-03（双轨收口）：取数走唯一实现（现算 books.bookGroup），不再在本文件手写查询
+    this.realBookCount = await bookGroupUtils.directBookCount(id, this.itemData.groupType)
   }
   cancel: () => void = () => {
 

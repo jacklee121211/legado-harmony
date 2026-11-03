@@ -261,6 +261,31 @@ class bookGroupUtils{
   }
 
   /**
+   * **某个分组的直属书数（现算）** —— 「共N本」的唯一取数实现（2026-11-03 双轨收口）。
+   *
+   * ── 为什么不能再读 `book_groups.bookIds.length` ─────────────────────────────
+   * `bookIds` 是 Legado 老模型的**冗余列**，只在"移动分组"时追加、导入/删除都不同步
+   * （`FolderInfoDialog` 头注释里的真机实测：自建分组名下 8 本书而该列是空串，
+   *  再叠加 `DbUtil.parseResultSet` 把空串读成 undefined ⇒ 恒显示「共0本」）。
+   * 事实源只有 `books.bookGroup`；列表/计数都必须按它现算，且 WHERE 与"点进去看到的列表"同源。
+   *
+   * ⚠️ 逐条查库（每个分组一次）；只给"要显示共N本"的弹窗/卡片用，别放进高频渲染路径。
+   * ⚠️ 需要批量填充列表时用 `fillRealBookIds(groups, type)`（内部同一个查询）。
+   */
+  async directBookCount(groupId: number, type?: number): Promise<number> {
+    if (groupId === undefined || groupId === null || groupId <= 0) {
+      return 0
+    }
+    try {
+      const ids: string[] = await BooksDao.queryBookIds({ type: type, bookGroup: groupId })
+      return ids.length
+    } catch (e) {
+      console.error(`[GRP-COUNT] directBookCount failed groupId=${groupId}: ${JSON.stringify(e)}`)
+      return 0
+    }
+  }
+
+  /**
    * **子树书籍总数**（自身 + 全部后代分组的 `bookIds` 之和）—— 单实现（2026-11-03）。
    *
    * 用途（用户 2026-11-03 定义的口径）：
