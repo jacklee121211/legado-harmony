@@ -1,6 +1,7 @@
 import { showMessage } from '../componets/common/promptShow'
+// 2026-11-04（C-9）：ListenDock 仍在用，ListenTitleBar 从未使用（MCP 6133）⇒ 只 import 前者。
+import { ListenDock } from '../components/tts/ListenDock'
 import { ezCustomTransition, LongTakeSession, LongTakeTransitionDelegate } from '../common/ezlt'
-import { hostContext } from '../common/utils/HostContextUtil'
 import { NavItem } from '../componets/dataList/type'
 import { initAppData } from '../storage/appData'
 import BookShelf from './view/BookShelf'
@@ -14,7 +15,6 @@ import { ThemeStorageKey } from '../common/constants/Theme'
 import { ThemeItem } from '../common/model/Theme'
 import { WindowAbility } from '../entryability/WindowAbility'
 import BrightnessUtil from '../common/utils/BrightnessUtil'
-import { router } from '@kit.ArkUI'
 import BooksDao from '../database/dao/BooksDao'
 import { Books } from '../database/entities/Books'
 import ImmersiveMaterialUtil from '../common/utils/ImmersiveMaterialUtil'
@@ -28,7 +28,6 @@ import PdfViewerPage from './view/Reader/PdfViewerPage'
 import { ContinueBridge, ContinuePayload } from '../common/utils/ContinueBridge'
 // 2026-10-25：碰一碰/隔空传送的"退后台清空选定"（见 onPageHide）
 import { BookShareBridge } from '../common/share/BookShareBridge'
-import { PreferencesUtil } from '@pura/harmony-utils'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 // 全量路线：复用生产导入管线（拷进沙箱 + 写库 + 抽封面）
 import { FileHandler } from '../common/utils/FileHandler'
@@ -58,7 +57,6 @@ import LicensePage from './view/myCenter/about/LicensePage'
 import ContactPage from './view/myCenter/about/ContactPage'
 import { common } from '@kit.AbilityKit'
 import { NightMode, ShelfColors } from '../common/utils/NightMode'
-import CommonConstants from '../common/constants/CommonConstants'
 // ── PuraX 外屏「极简阅读」（2026-10-24）──────────────────────────────────────
 // 判定收口在 `common/utils/OuterScreen.ets`（文件头有完整 SDK 取证）；
 // 本页只订阅 AppStorage 广播键，**不自己判断形态**。
@@ -84,7 +82,6 @@ import {
 } from '@kit.UIDesignKit'
 // 2026-10-23 向下兼容鸿蒙6（API 20）：HDS 悬浮页签能力的运行时版本闸门
 import HdsCompat, { HdsFloatingStyleModifier } from '../common/utils/HdsCompat'
-import { ListenDock, ListenTitleBar } from '../components/tts/ListenDock'
 // 小喵入口悬浮按钮（2026-10-26，临时验证用；回退见该文件头注释）
 import { AgentEntryFab } from '../components/agent/AgentEntryFab'
 import { ListenSession } from '../tts/ListenSession'
@@ -1049,7 +1046,6 @@ struct Main {
     //   重查就看不到新书。后台标记见 `onPageHide`。
     if (this.backgroundedSinceLastShow) {
       this.backgroundedSinceLastShow = false
-      const tick: number = ShelfRefresh.books()
     }
   }
 

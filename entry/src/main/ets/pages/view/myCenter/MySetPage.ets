@@ -1,5 +1,4 @@
 import MySetConstants from '../../../common/constants/MySetConstants'
-import { Attribute } from '../../../common/utils/Attribute'
 // ── 加入 QQ 群（2026-10-21 新增）：跳转走系统 openLink ────────────────────────
 import { common } from '@kit.AbilityKit'
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
