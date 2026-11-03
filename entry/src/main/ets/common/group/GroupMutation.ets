@@ -5,7 +5,6 @@ import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../utils/bookGroupUtils'
 import { GroupStore } from './GroupStore'
 import { GroupEvents } from './GroupEvents'
-import { HiddenGroups } from './HiddenGroups'
 
 /**
  * 2026-11-02 新增（架构收敛 P2 骨架）：**唯一写入口**。
@@ -341,8 +340,9 @@ export class GroupMutation {
   private static async afterChange(changedGroupIds: number[], changedBookIds: number[],
     structural: boolean): Promise<void> {
     await GroupStore.refresh()
-    HiddenGroups.set(GroupStore.hiddenIds())
+    // 2026-11-03（Ⅱ-2）：隐藏集合已并入真源 `GroupStore.apply()`，这里不再二次写入
     GroupEvents.emit(structural ? [] : changedGroupIds, changedBookIds)
     // S6：结构变更后选中集立即失效（由订阅方清空；这里只保证事件里标记为"全量"）
   }
 }
+

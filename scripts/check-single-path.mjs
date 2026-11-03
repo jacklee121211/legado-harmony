@@ -129,6 +129,15 @@ const INVENTORY = [
     budget: 5,
     note: '开关是安全网；删一处旧分支就把 budget 降一（实测 5 处读取点）',
   },
+  {
+    id: 'hidden-state-owner',
+    label: '隐藏集合写入点（第二份状态的回归闸门）',
+    pattern: /GroupStore\.setHiddenIds\s*\(/,
+    // 唯一允许的写法：真源自身（apply 内部）与遗留兼容壳（BooksDao.setHiddenGroupIds）
+    allow: (rel) => rel === 'common/group/GroupStore.ets' || rel === 'database/dao/BooksDao.ets',
+    budget: 0,
+    note: '2026-11-03（Ⅱ-2）：HiddenGroups 已删除，真源唯一所有者是 GroupStore；遗留壳只许 1 处，删掉后降 0',
+  },
 ];
 
 /** 写直连白名单：双轨回退分支（不可达但刻意保留） */
@@ -316,3 +325,4 @@ for (const v of violations) {
   if (v.text) console.log(`      ${v.text}`);
 }
 process.exit(1);
+

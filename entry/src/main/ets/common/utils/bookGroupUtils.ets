@@ -8,7 +8,6 @@ import BooksDao from '../../database/dao/BooksDao'
 import { BookGroups } from '../../database/entities/BookGroups'
 import { Books } from '../../database/entities/Books'
 import { GroupTree } from '../group/GroupTree'
-import { HiddenGroups } from '../group/HiddenGroups'
 import { GroupEvents } from '../group/GroupEvents'
 import toolsUtils from './ToolsUtils'
 // 2026-11-02 第 26 轮（B②）：隐藏集合计算委托 GroupStore（唯一实现）
@@ -382,13 +381,14 @@ class bookGroupUtils{
   }
 
   /**
-   * 2026-11-02：**刷新全局隐藏分组集合**（`HiddenGroups.ids`）。
-   * 分组结构/可见性变化后必须调用，否则搜索页等调用方会漏过滤。
+   * 2026-11-02：**刷新全局隐藏分组集合**。
+   *
+   * 2026-11-03（Ⅱ-2）：真相已并入 `GroupStore`（`apply()` 整体重算 `_hiddenIds`），
+   * 本方法退化为"刷真源 + 取现值"，**自己不持有状态**。
+   * 分组结构/可见性变化后仍应调用（保证读到库里最新值）。
    */
   async refreshHiddenGroupIds(): Promise<number[]> {
-    const ids: number[] = await this.hiddenSubtreeIds()
-    HiddenGroups.set(ids)
-    return ids
+    return await this.hiddenSubtreeIds()
   }
 
   //更新分组的bookIds
@@ -509,3 +509,4 @@ class bookGroupUtils{
 }
 let bookGroupUtil = new bookGroupUtils();
 export default bookGroupUtil as bookGroupUtils;
+

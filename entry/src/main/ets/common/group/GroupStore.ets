@@ -19,6 +19,14 @@ export class GroupStore {
   private static _groups: BookGroups[] = []
   private static _tree: GroupTree | null = null
   private static _loaded: boolean = false
+  /**
+   * 2026-11-03（Ⅱ-2）：隐藏分组的**整棵子树 id**，并入真源，随 `apply()` 整体重算。
+   *
+   * 原来是独立模块 `HiddenGroups.ids`（第二份状态），由 `GroupMutation.afterChange` 与
+   * `bookGroupUtils.refreshHiddenGroupIds()` 各写一次 —— 任一处漏写，隐藏组的书就会漏进
+   * 书架/搜索/计数（真机踩过）。现在唯一所有者是本类，`BooksDao` 只读不写。
+   */
+  private static _hiddenIds: number[] = []
 
   /** 从数据库整取并重建树（唯一写入口：GroupMutation 成功后调用） */
   static async refresh(): Promise<void> {
@@ -31,6 +39,7 @@ export class GroupStore {
     GroupStore._groups = list
     GroupStore._tree = GroupTree.build(list)
     GroupStore._loaded = true
+    GroupStore._hiddenIds = GroupStore.computeHiddenIds()
   }
 
   static async ensure(): Promise<void> {
@@ -134,9 +143,27 @@ export class GroupStore {
 
   /**
    * 需要从书籍查询里排除的分组（所有 `show=false` 分组的整棵子树）。
+   * 只读缓存：由 `apply()` 整体重算，调用方**不要**各自再算一遍。
    * ⚠️ RDB 的 `show` 是 number(0/1)：判定必须用 `!g.show`。
    */
   static hiddenIds(): number[] {
+    return GroupStore._hiddenIds
+  }
+
+  /**
+   * 2026-11-03（Ⅱ-2）：**遗留直写口**（旧 `BooksDao.setHiddenGroupIds` 迁到这里）。
+   *
+   * 为什么保留：`BookContent` 在查询前会显式传一次"当前页应排除的分组"；它拿到的值和
+   * `apply()` 算的是同一套口径，但顺序上可能早于 GroupStore 刷新。保留这一条**单点**写入，
+   * 语义与旧 `HiddenGroups.set()` 完全一致，行为零变化。
+   * 计划：确认 `BookContent` 两处调用（:157 / :360）可由真源覆盖后，删除本条 → 闸门降到 0。
+   */
+  static setHiddenIds(ids: number[]): void {
+    GroupStore._hiddenIds = ids
+  }
+
+  /** 重算逻辑（私有）：`apply()` 内部调用 */
+  private static computeHiddenIds(): number[] {
     const out: number[] = []
     if (GroupStore._tree === null) {
       return out

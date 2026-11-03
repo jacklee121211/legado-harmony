@@ -10,7 +10,7 @@ import { PreferencesUtil } from '@pura/harmony-utils';
 import fs from '@ohos.file.fs';
 // 诊断打点（2026-10-12）：`getLastReadBook()` 的书名键/命中行
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { HiddenGroups } from '../../common/group/HiddenGroups';
+import { GroupStore } from '../../common/group/GroupStore';
 
 /**
  * 「分类页签合并」迁移的一次性标志（Preferences 键）。
@@ -46,9 +46,11 @@ const COUNT_COLUMN: ColumnInfo[] = [
 ]
 
 class BooksDao {
-  /** 兼容旧调用点：写入**全局**隐藏集合（真相在 `HiddenGroups.ids`，所有查询共用） */
+  /**
+   * 2026-11-03（Ⅱ-2）：写入迁到 `GroupStore.setHiddenIds()`（唯一所有者），本方法保留签名以免改动调用点。
+   */
   setHiddenGroupIds(ids: number[]): void {
-    HiddenGroups.set(ids)
+    GroupStore.setHiddenIds(ids)
   }
 
   TABLE_NAME: string = 'books'
@@ -292,8 +294,10 @@ class BooksDao {
 
     // 2026-11-02：**隐藏分组里的书一律不出现在列表/计数里**（用户：隐藏组的书与计数全部排除）。
     //   由调用方在查询前用 `BooksDao.setHiddenGroupIds(子树id)` 设置；空数组＝不过滤。
-    if (HiddenGroups.ids.length > 0) {
-      whereClause.push(`bookGroup NOT IN (${HiddenGroups.ids.join(',')})`);
+    // 2026-11-03（Ⅱ-2）：隐藏集合的**唯一所有者**是 GroupStore（本类只读）
+    const hiddenIds: number[] = GroupStore.hiddenIds();
+    if (hiddenIds.length > 0) {
+      whereClause.push(`bookGroup NOT IN (${hiddenIds.join(',')})`);
     }
 
     if (type !== undefined) {
