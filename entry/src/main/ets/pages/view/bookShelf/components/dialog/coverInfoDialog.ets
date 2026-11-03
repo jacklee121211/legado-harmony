@@ -410,13 +410,12 @@ export default struct coverInfoDialog{
     // 避免"确定后刷新读到旧值"（与 BooksDao.insert 同款时序修复）
     // 2026-11-03（A2）：改走唯一写入口（刷真源 + 发一次非结构事件）；原来只写库，别处要手动刷新才看到
     await GroupMutation.setGroupCover(this.itemData)
-    setTimeout(()=>{
-      ShelfRefresh.groups()
-      // 先关自己再回调父级（cancel ⇒ 子退父进，长按分组弹窗恢复）
-      this.controller?.close()
-      this.cancel()
-      showMessage('修改成功!')
-    },100)
+    // 2026-11-03（Ⅱ-4）：去掉 100ms 延时 —— 写入口 await 即提交完成，立即刷新+关窗
+    ShelfRefresh.groups()
+    // 先关自己再回调父级（cancel ⇒ 子退父进，长按分组弹窗恢复）
+    this.controller?.close()
+    this.cancel()
+    showMessage('修改成功!')
   }
 
   /**
@@ -557,11 +556,10 @@ export default struct coverInfoDialog{
     this.coverImages = ''
     // 书行被改写 ⇒ 书架列表重查（LazyForEach 键值含 customCoverUrl）
     ShelfRefresh.books()
-    setTimeout((): void => {
-      ShelfRefresh.groups()
-      this.controller?.close()
-      this.cancel()
-      showMessage(count > 0 ? `已恢复 ${count} 本书的封面` : '封面已恢复')
-    }, 100)
+    // 2026-11-03（Ⅱ-4）：去掉 100ms 延时（上面的写入口都已 await 提交）
+    ShelfRefresh.groups()
+    this.controller?.close()
+    this.cancel()
+    showMessage(count > 0 ? `已恢复 ${count} 本书的封面` : '封面已恢复')
   }
 }

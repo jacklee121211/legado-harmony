@@ -1,4 +1,3 @@
-import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import { NightMode } from '../../../../../common/utils/NightMode'
 import commonInputDialog from '../../../../../componets/common/commonInputDialog'
@@ -403,18 +402,20 @@ export default struct FolderInfoDialog{
     this.openChildDialog(this.restTitleDialog)
     this.inputValue = this.itemData.groupName
   }
-  //置顶/取消置顶
-  isFolderTop(){
+  // 2026-11-03（Ⅱ-4）：去掉 500ms 延时 —— await 写入口后立即出提示 + 刷新
+  async isFolderTop(){
     if (this.itemData.groupId) {
-      GroupMutation.setTop(this.itemData.groupId, !this.itemData.isTop).catch((e: Error): void => { console.error('[GRP] setTop failed: ' + e.message) })
+      try {
+        await GroupMutation.setTop(this.itemData.groupId, !this.itemData.isTop)
+      } catch (e) {
+        const err = e as Error
+        console.error('[GRP] setTop failed: ' + err.message)
+      }
       this.itemData.isTop = !this.itemData.isTop
     }
-
-    setTimeout(() => {
-      showMessage(this.itemData.isTop? '置顶成功' : '取消置顶成功')
-      this.topTitle = this.itemData.isTop?'取消置顶':'置顶'
-      ShelfRefresh.groups()
-    },500)
+    showMessage(this.itemData.isTop? '置顶成功' : '取消置顶成功')
+    this.topTitle = this.itemData.isTop?'取消置顶':'置顶'
+    ShelfRefresh.groups()
   }
   //重命名弹窗
   @State inputValue:string = ''
@@ -459,9 +460,8 @@ export default struct FolderInfoDialog{
     if (result) {
       this.itemData.groupName = this.inputValue
       showMessage('重命名成功')
-      setTimeout(() => {
-        ShelfRefresh.groups()
-      },500)
+      // 2026-11-03（Ⅱ-4）：写入口已 await 提交 ⇒ 立即刷（原 500ms 延时）
+      ShelfRefresh.groups()
     } else {
       showMessage('已存在其它相同分组名')
     }
@@ -474,10 +474,9 @@ export default struct FolderInfoDialog{
   bookMoveGroup: CustomDialogController | null = new CustomDialogController({
     builder: BookSelectGroupDialog({
       moveGroup: ()=> {
-        setTimeout(()=>{
-          ShelfRefresh.books()
-          ShelfRefresh.groups()
-        },500)
+        // 2026-11-03（Ⅱ-4）：移动已在弹窗内 await 提交 ⇒ 立即刷（原 500ms 延时）
+        ShelfRefresh.books()
+        ShelfRefresh.groups()
         this.bookMoveGroup?.close()
       },
       // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ **关闭子弹窗** + 本弹窗恢复
@@ -1195,25 +1194,26 @@ export default struct FolderInfoDialog{
   }
 
   //隐藏分组
-  hideGroup(){
+  // 2026-11-03（Ⅱ-4）：去掉 500ms 延时 —— 写入口 await 完成后立即刷新+关窗
+  async hideGroup(){
     this.itemData.show = this.itemData.show ? false : true
     if (this.itemData.groupId) {
       // 2026-11-03（Ⅱ-3）：双轨开关已删 —— 隐藏固定走唯一写入口
         // 2026-11-02 架构收敛 P2-1：走唯一写入口（刷新真源 + 单次事件）；
         //   旧信号仍保留在 setTimeout 里，供双轨期未迁移的组件消费。
-        GroupMutation.setVisible(this.itemData.groupId, this.itemData.show).catch((e: Error): void => {
-          console.error(`[GRP-MUTATION] setVisible failed: ${e.message}`)
-        })
+      try {
+        await GroupMutation.setVisible(this.itemData.groupId, this.itemData.show)
+      } catch (e) {
+        const err = e as Error
+        console.error(`[GRP-MUTATION] setVisible failed: ${err.message}`)
+      }
     }
-    setTimeout(()=>{
       ShelfRefresh.groups()
       // 2026-11-02：**必须同时广播书籍刷新** —— 隐藏/恢复会改变"哪些书可见"，
       //   只刷分组列表的话「全部/最近」还留着该组的书（真机：隐藏 1 后猛龙过江仍在第一位）。
       ShelfRefresh.books()
       this.cancel()
-      // 切换后 show=false 表示刚被隐藏 ⇒ 文案要与结果一致
       showMessage(this.itemData.show ? '已恢复显示' : '隐藏成功')
-    },500)
   }
 
   coverDialog: CustomDialogController | null = new CustomDialogController({
@@ -1238,6 +1238,8 @@ export default struct FolderInfoDialog{
   })
 
 }
+
+
 
 
 

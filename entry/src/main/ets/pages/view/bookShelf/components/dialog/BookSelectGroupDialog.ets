@@ -929,10 +929,8 @@ export default struct BookSelectGroupDialog{
         this.onGroupCreated()
         return
       }
-      // 兜底（未传 onGroupCreated 的宿主）：保持旧的自刷新行为
-      setTimeout(()=>{
-        this.getGroupList()
-      },500)
+      // 2026-11-03（Ⅱ-4）：兜底自刷新去掉 500ms 延时 —— 上面 createGroup 已 await 提交，立即重查
+      await this.getGroupListAsync()
     }
     // 入规则：建组完成（或重名放弃）⇒ 父弹窗（移动分组）恢复
     DialogHost.openIf(this.controller)
@@ -946,9 +944,8 @@ export default struct BookSelectGroupDialog{
     builder: TitleContentDialog({
       confirm: async ()=> {
         await this.clickBookAccept()
-        setTimeout(()=>{
-          this.moveGroup()
-        },500)
+        // 2026-11-03（Ⅱ-4）：移书已 await 提交 ⇒ 立即回调（原 500ms 延时）
+        this.moveGroup()
       },
       title:`移动分组至${this.moveTitle}`
     }),

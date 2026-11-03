@@ -84,6 +84,18 @@ const REFRESH_WRITE_ALLOW = [
  * 处理方式沿用 ratchet：**先把存量钉住（budget = 实测值），再逐批降**。
  * budget = null 表示"本次只统计、不判违规"（第一轮跑出来的数字用于定价）。
  */
+/**
+ * 2026-11-03（Ⅱ-4）：**纯 UI 计时**白名单（不触发数据刷新）。
+ * 与"写完等 500ms 再刷新"是两回事，混在一起会让闸门数字失去意义。
+ */
+const UI_TIMING_ALLOW = [
+  { file: 'pages/view/bookShelf/BookFolder.ets', match: /this\.enterTimers\.push\(setTimeout/ },
+  { file: 'pages/view/bookShelf/components/BookContentRefresh.ets', match: /^setTimeout\(\(\) => \{$/ },
+];
+function isUiTiming(rel, text) {
+  return UI_TIMING_ALLOW.some((a) => a.file === rel && a.match.test(text));
+}
+
 const INVENTORY = [
   {
     id: 'dao-write-in-ui',
@@ -117,9 +129,22 @@ const INVENTORY = [
     label: '分组域 setTimeout 延时刷',
     pattern: /setTimeout\s*\(/,
     scope: /(FolderInfoDialog|BookSelectGroupDialog|coverInfoDialog|BookFolder|BookContentRefresh|groupTypePanel|GroupType)\.ets$/,
-    allow: () => false,
-    budget: 10,
-    note: '时序应靠"事件后重查"，不靠 500ms 延时（实测 10 处）',
+    // 2026-11-03（Ⅱ-4）：8 处"写完 500ms 再刷新"已全部改成 await 后立即刷 ⇒ 预算 10→0。
+    //   剩下 2 处是**纯 UI 计时**（不是数据刷新），单独记在 `ui-timing-setTimeout`：
+    //     · BookFolder 卡片入场错峰（enteredFlags 置真）
+    //     · BookContentRefresh 下拉刷新转圈的最短展示时长
+    allow: (rel, text) => isUiTiming(rel, text),
+    budget: 0,
+    note: '2026-11-03（Ⅱ-4）：延时刷已归零；UI 计时另立 `ui-timing-setTimeout`',
+  },
+  {
+    id: 'ui-timing-setTimeout',
+    label: 'UI 计时的 setTimeout（允许，但只许这 2 处）',
+    pattern: /setTimeout\s*\(/,
+    scope: /(BookFolder|BookContentRefresh)\.ets$/,
+    allow: (rel, text) => !isUiTiming(rel, text),
+    budget: 2,
+    note: '入场动画错峰 + 下拉刷新最短转圈时长；它们不触发数据刷新，若换成"写完再刷"请改回 group-setTimeout 账号',
   },
   {
     id: 'group-flags-old-branch',
@@ -217,7 +242,7 @@ for (const abs of files) {
     for (const r of INVENTORY) {
       if (r.scope && !r.scope.test(rel)) continue;
       if (!r.pattern.test(t)) continue;
-      if (r.allow && r.allow(rel)) continue;
+      if (r.allow && r.allow(rel, t)) continue;
       inventoryHits.get(r.id).push({ file: rel, line: lineNo, text: t });
     }
   });
