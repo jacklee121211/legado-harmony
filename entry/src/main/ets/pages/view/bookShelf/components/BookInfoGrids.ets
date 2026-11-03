@@ -54,7 +54,6 @@ export default struct BookInfoGrids{
    */
   @Prop longtakeId: string = ''
   /** 数据变更广播（规范 §5.1）：改名完成后自增 ⇒ 书架列表重查重建 */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   /** 是否已经入场（false = 停在初态：scale 0.5 + opacity 0） */
   @State private entered: boolean = false
   /** 入场定时器句柄 */
@@ -322,6 +321,7 @@ export default struct BookInfoGrids{
     console.info('BookRename', `renamed -> ${newName}, broadcast BOOK_IS_BOOK_REFRESHING`)
   }
 }
+
 
 
 

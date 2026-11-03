@@ -391,7 +391,6 @@ export default struct IndexShelf {
    * 两者必须同时存在。规则见 `common/utils/NightMode.ets`。
    */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @State bookImport: bookShelfImport[] = []
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
@@ -762,7 +761,6 @@ export default struct IndexShelf {
 
   // ── 2026-11-01：单书「移动至」改为页面级打开（避免二级弹窗状态绑定失效）────────
   @StorageLink('SHELF_MOVE_BOOK_ID') @Watch('onMoveBookRequest') moveBookId: number = 0
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   private bookMoveDialog: CustomDialogController | null = null
 
   private onMoveBookRequest(): void {
@@ -944,6 +942,8 @@ export default struct IndexShelf {
     }
   }
 }
+
+
 
 
 

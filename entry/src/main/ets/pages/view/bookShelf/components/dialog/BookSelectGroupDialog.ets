@@ -100,9 +100,7 @@ export default struct BookSelectGroupDialog{
    * 未传（null）时保持旧行为（自刷新 + 自己 open），不影响其它宿主。
    */
   onGroupCreated: (() => void) | null = null
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   /** 书架书列表重查信号（2026-10-12）：自动解散分组时同时广播，让书的 bookGroup 变化落到界面 */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   /**
    * **父级预取好的分组列表**（2026-10-12 新增，修用户反馈的"未分组过一会儿才刷新出来"）。
    *
@@ -1379,4 +1377,6 @@ export default struct BookSelectGroupDialog{
   }
 
 }
+
+
 

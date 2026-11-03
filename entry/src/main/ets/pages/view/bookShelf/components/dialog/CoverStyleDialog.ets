@@ -74,7 +74,6 @@ export default struct CoverStyleDialog {
    * ⚠️ 只广播还不够 —— LazyForEach 键值不含封面字段时照样复用旧组件，
    * 见 `BookContent.ets` 键值生成函数里的 `customCoverUrl`（两处必须同时存在）。
    */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
 
   aboutToAppear(): void {
     const cur: string = this.bookData.customCoverUrl ?? ''

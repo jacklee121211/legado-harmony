@@ -16,11 +16,24 @@ export class GroupChangedPayload {
   version: number
   changedGroupIds: number[]
   changedBookIds: number[]
+  /**
+   * 2026-11-03（双轨收口）：**渲染刷新意图**，用来取代原来的两个 AppStorage 计数器
+   * （`BOOK_IS_BOOK_GROUPS_REFRESHING` / `BOOK_IS_BOOK_REFRESHING`）。
+   *   · `refreshGroups` —— 需要重查"分组列表 / 树 / 分组卡片"；
+   *   · `refreshBooks`  —— 需要重查"书籍列表 / 计数 / 详情条"。
+   * 语义与原计数器一一对应：`ShelfRefresh.groups()→refreshGroups`、`books()→refreshBooks`、
+   * `structure()→两个都为 true`；`GroupMutation` 的结构变更两个都为 true，非结构变更只刷分组。
+   */
+  refreshGroups: boolean
+  refreshBooks: boolean
 
-  constructor(version: number, groupIds: number[], bookIds: number[]) {
+  constructor(version: number, groupIds: number[], bookIds: number[],
+    refreshGroups: boolean = true, refreshBooks: boolean = false) {
     this.version = version
     this.changedGroupIds = groupIds
     this.changedBookIds = bookIds
+    this.refreshGroups = refreshGroups
+    this.refreshBooks = refreshBooks
   }
 
   /** 是否涉及某个分组（含"全量变更"约定：changedGroupIds 为空表示结构变更） */
@@ -55,7 +68,8 @@ export class GroupEvents {
    * 解法：让 `ShelfRefresh` 在 bump 计数器的同时也**补发一次事件**，且同一微任务内只补一次，
    * 并在这期间已经有精确事件时不补（避免同一次操作触发两轮监听器）。
    */
-  private static bumpPending: boolean = false
+  private static bumpPendingGroups: boolean = false
+  private static bumpPendingBooks: boolean = false
 
   static subscribe(fn: GroupChangedListener): void {
     if (GroupEvents.listeners.indexOf(fn) < 0) {
@@ -75,9 +89,11 @@ export class GroupEvents {
    * @param groupIds 受影响分组 id；**结构变更（增删/移动整棵）传空数组表示"全量"**
    * @param bookIds  受影响书籍 id（可选）
    */
-  static emit(groupIds: number[], bookIds: number[] = []): void {
+  static emit(groupIds: number[], bookIds: number[] = [],
+    refreshBooks: boolean = (groupIds.length === 0 || bookIds.length > 0)): void {
     GroupEvents.version++
-    const payload: GroupChangedPayload = new GroupChangedPayload(GroupEvents.version, groupIds, bookIds)
+    const payload: GroupChangedPayload =
+      new GroupChangedPayload(GroupEvents.version, groupIds, bookIds, true, refreshBooks)
     // 2026-11-03（双轨收口）：这里原来还有一行把版本号镜像到 AppStorage 的 `GROUP_EVENT_VERSION`
     //   —— 注释写的是"同步给仍用 @StorageProp 的旧组件（双轨期过渡，P4 后删除）"。
     //   实测全仓**只有这一行写、没有任何一处读**（`@StorageProp/@StorageLink/AppStorage.get` 全 0），
@@ -104,29 +120,41 @@ export class GroupEvents {
   }
 
   /**
-   * `ShelfRefresh` 专用：**从"只 bump 了计数器"的写路径补发一次结构变更事件**。
+   * `ShelfRefresh` 专用：**从"只 bump 了刷新意图"的写路径补发一次事件**。
    *
    * 语义：
-   *   · 同一微任务内多次调用只补发一次（`bumpPending`）；
+   *   · 同一微任务内同一类意图只补发一次（`bumpPending` 分别记账）；
    *   · 若这段时间内已经有精确事件（`GroupMutation.emit` 把 version 推高了），**不再补发**
-   *     —— 避免同一次用户操作让监听器跑两遍（选择集清空是幂等的，但重复重查没有意义）；
-   *   · payload 一律是 `([], [])` = 结构变更（接收方按"全量"处理），因为旧计数器本来就不带信息。
+   *     —— 避免同一次用户操作让监听器跑两遍；
+   *   · `kind` 决定 payload 的刷新意图：`groups` / `books` / `both`
+   *     （对应原来的 `ShelfRefresh.groups()` / `books()` / `structure()`）。
    *
    * ⚠️ 不要从 UI 直接调本方法 —— 唯一调用点是 `common/shelf/ShelfRefresh.ets`（闸门 `group-event-exit` 守着）。
    */
-  static emitFromBump(): void {
-    if (GroupEvents.bumpPending) {
+  static emitFromBump(kind: string = 'groups'): void {
+    const wantGroups: boolean = kind !== 'books'
+    const wantBooks: boolean = kind !== 'groups'
+    if (wantGroups && GroupEvents.bumpPendingGroups) {
+      return
+    }
+    if (wantBooks && GroupEvents.bumpPendingBooks) {
       return
     }
     const versionAtSchedule: number = GroupEvents.version
-    GroupEvents.bumpPending = true
+    if (wantGroups) {
+      GroupEvents.bumpPendingGroups = true
+    }
+    if (wantBooks) {
+      GroupEvents.bumpPendingBooks = true
+    }
     Promise.resolve().then(() => {
-      GroupEvents.bumpPending = false
+      GroupEvents.bumpPendingGroups = false
+      GroupEvents.bumpPendingBooks = false
       if (GroupEvents.version !== versionAtSchedule) {
         // 期间已有精确事件（例如 GroupMutation 的 afterChange）⇒ 精确的优先，不补发
         return
       }
-      GroupEvents.emit([], [])
+      GroupEvents.emit([], [], wantBooks)
     })
   }
 }

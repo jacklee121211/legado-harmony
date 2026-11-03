@@ -46,8 +46,6 @@ interface PathChip {
 @Component
 export default struct BookContentRefresh {
   @State @Watch('changeRefreshing')isRefreshing: boolean = false
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') isGroupRefreshing: number = 0
   // 2026-10-25：`BOOK_IS_BOOK_WORKS_BOOK_LIST`（书单刷新键）随书单功能删除
   /** 「分组 / 全部 / 未分组 / 本地」那一栏的**实测高度**（`GroupType` 上报）——用于给列表让位 */
   @StorageLink('shelfGroupRowH') shelfGroupRowH: number = 0
@@ -817,6 +815,8 @@ export default struct BookContentRefresh {
     })
   }
 }
+
+
 
 
 

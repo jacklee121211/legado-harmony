@@ -62,8 +62,6 @@ export default struct coverInfoDialog{
   @State pickDefault: number = -1
   /** 当前选中的样式单选（0=默认样式 1=自定义；驱动缩略图网格显隐） */
   @State selectedType: number = 0
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   cancel: () => void = () => {
   }
   /** 2026-11-03（双轨收口）：本数一律现算（bookGroupUtils.directBookCount 是唯一取数实现） */
@@ -630,4 +628,6 @@ export default struct coverInfoDialog{
     showMessage('分组封面已恢复默认')
   }
 }
+
+
 

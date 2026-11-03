@@ -30,7 +30,6 @@ export default struct BookInfos {
   /** 书架书名是否显示文件拓展名（我的-设置；默认关=隐藏 .txt 等后缀） */
   @StorageLink('setExtName') showFileExt: boolean = false
   /** 数据变更广播（规范 §5.1）：改名完成后自增 ⇒ 书架列表重查重建 */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
 
   /**
    * 书名显示：开关关闭时剥掉末尾拓展名（.txt/.epub 等，最多 5 位字母数字）。
@@ -318,5 +317,6 @@ export default struct BookInfos {
     this.bookInfoDialog?.close()
   }
 }
+
 
 

@@ -31,20 +31,22 @@ export class ShelfRefresh {
   /** 分组结构 / 树（`BOOK_IS_BOOK_GROUPS_REFRESHING`）；返回自增后的值，便于调用方保留原有日志 */
   static groups(): number {
     const v: number = ShelfRefresh.bump(KEY_GROUPS)
-    ShelfRefresh.notifyGroupEvent()
+    ShelfRefresh.notifyGroupEvent('groups')
     return v
   }
 
   /** 书籍数据 / 计数（`BOOK_IS_BOOK_REFRESHING`；`isBookRefreshing` 是它的本地别名）；返回自增后的值 */
   static books(): number {
-    return ShelfRefresh.bump(KEY_BOOKS)
+    const v: number = ShelfRefresh.bump(KEY_BOOKS)
+    ShelfRefresh.notifyGroupEvent('books')
+    return v
   }
 
   /** 结构变更：分组树 + 书籍可见性都要刷（等价于原来连着两行自增） */
   static structure(): void {
     ShelfRefresh.bump(KEY_GROUPS)
     ShelfRefresh.bump(KEY_BOOKS)
-    ShelfRefresh.notifyGroupEvent()
+    ShelfRefresh.notifyGroupEvent('both')
   }
 
   /** 书架排序 / 宫格列表切换（`SHELF_SORT_TICK`） */
@@ -63,8 +65,8 @@ export class ShelfRefresh {
    *
    * 唯一性由闸门保证：`group-event-exit`（禁止在 ShelfRefresh 之外调 `GroupEvents.emitFromBump`）。
    */
-  private static notifyGroupEvent(): void {
-    GroupEvents.emitFromBump()
+  private static notifyGroupEvent(kind: string): void {
+    GroupEvents.emitFromBump(kind)
   }
 
   /** 加一（计数器语义，与原来的 `this.xxx++` 完全一致）；返回新值 */

@@ -111,7 +111,6 @@ export default struct BookManagePage {
   /** 2026-11-01：是否从「最近」进入（批量管理按页初始化） */
   @State onRecentChip: boolean = false
   // 2026-10-25：`worksLists`（书单）随书单功能删除
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem

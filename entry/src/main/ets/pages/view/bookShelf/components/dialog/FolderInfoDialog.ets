@@ -259,8 +259,6 @@ export default struct FolderInfoDialog{
   //   （FolderInfoDialog.ets:52:14 "TypeError: class constructor cannot called without 'new'"）。
   //   组件本身也已随书单一起删除。
 
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
   @State topTitle:string = this.itemData.isTop?'取消置顶':'置顶'
   build() {
     Column(){
@@ -782,7 +780,7 @@ export default struct FolderInfoDialog{
       showMessage('解散失败')
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      ShelfRefresh.groups()
+      const groupsTick: number = ShelfRefresh.groups()
       ShelfRefresh.books()
       this.cancel()
     }
@@ -817,7 +815,7 @@ export default struct FolderInfoDialog{
       console.error('deleteGroupKeepChildFolders failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      ShelfRefresh.groups()
+      const groupsTick: number = ShelfRefresh.groups()
       ShelfRefresh.books()
       this.cancel()
     }
@@ -851,7 +849,7 @@ export default struct FolderInfoDialog{
       console.error('deleteGroup failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      ShelfRefresh.groups()
+      const groupsTick: number = ShelfRefresh.groups()
       ShelfRefresh.books()
       this.cancel()
     }
@@ -946,9 +944,9 @@ export default struct FolderInfoDialog{
       await GroupMutation.moveGroupNode(gid, targetId)
       // 2026-11-01：先广播再关窗 —— 关窗会销毁本组件，广播放后面在部分路径上会丢
       // （双轨期：旧信号继续发，供尚未迁移到 GroupEvents 的组件消费）
-      ShelfRefresh.groups()
+      const groupsTick: number = ShelfRefresh.groups()
       ShelfRefresh.books()
-      console.log(`[GRP-MOVE] from=${gid} to=${targetId} ok groupsRefresh=${this.BOOK_IS_BOOK_GROUPS_REFRESHING}`)
+      console.log(`[GRP-MOVE] from=${gid} to=${targetId} ok groupsRefresh=${groupsTick}`)
       this.groupMoveGroup?.close()
       this.cancel()
       showMessage(`已移动到「${targetName}」`)
@@ -1030,7 +1028,7 @@ export default struct FolderInfoDialog{
       console.error('applyMergeMove failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      ShelfRefresh.groups()
+      const groupsTick: number = ShelfRefresh.groups()
       ShelfRefresh.books()
       this.cancel()
     }
@@ -1054,7 +1052,7 @@ export default struct FolderInfoDialog{
       console.error('renameGroupAndMove failed: ' + JSON.stringify(e))
     } finally {
       // 2026-11-01：先广播再关窗（同 doMoveGroupNode）
-      ShelfRefresh.groups()
+      const groupsTick: number = ShelfRefresh.groups()
       ShelfRefresh.books()
       this.cancel()
     }
@@ -1178,6 +1176,7 @@ export default struct FolderInfoDialog{
   })
 
 }
+
 
 
 

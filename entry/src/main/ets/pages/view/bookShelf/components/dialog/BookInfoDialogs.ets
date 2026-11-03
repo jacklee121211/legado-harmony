@@ -493,7 +493,6 @@ export default struct BookInfoDialogs{
     this.cancel()
   }
 
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
 
   async deleteBook(){
     if (this.bookData.id){
@@ -643,3 +642,4 @@ export default struct BookInfoDialogs{
   }
 
 }
+

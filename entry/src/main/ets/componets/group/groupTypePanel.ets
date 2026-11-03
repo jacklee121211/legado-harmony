@@ -113,7 +113,6 @@ export default struct groupTypePanel {
   /** App 级夜间开关：只为触发重绘（取色走下面的 `fgMain/fgSub/chipBg`），理由见 `IndexShelf` 同名字段 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   /** 分组变更广播键（规范第 5 节：改完必须广播，书架分组行 `GroupType` 在听） */
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
 
   // ══════════════════════════════════════════════════════════════════════════
   // 书籍排序区块（2026-10-19 需求第 6 条）
@@ -677,3 +676,4 @@ export default struct groupTypePanel {
     }
   }
 }
+

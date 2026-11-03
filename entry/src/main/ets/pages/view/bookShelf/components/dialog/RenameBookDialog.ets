@@ -51,7 +51,6 @@ export default struct RenameBookDialog {
   /** 提交中：防连点（改名是异步事务） */
   @State busy: boolean = false
   /** 数据变更广播（规范 §5.1，书架列表监听到后重查） */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') isBookRefreshing: number = 0
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** 原始拓展名（改名时保留） */
   private origExt: string = ''

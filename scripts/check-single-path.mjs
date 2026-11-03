@@ -215,8 +215,8 @@ const INVENTORY = [
     id: 'legacy-refresh-consumers',
     label: '旧计数器订阅方（@StorageProp/@StorageLink 两个刷新键）',
     pattern: /@Storage(Prop|Link)\(['"](BOOK_IS_BOOK_GROUPS_REFRESHING|BOOK_IS_BOOK_REFRESHING)['"]\)/,
-    budget: 25,
-    note: '2026-11-03（双轨收口）：25 处存量，只许降；迁移到 GroupEvents.subscribe 需要真机验每个页面的重渲染',
+    budget: 8,
+    note: '2026-11-03（双轨收口·二）：25 → 8。删掉的 17 处全是「只声明不读」的死订阅；剩下 8 处都带 @Watch 回调（真行为），需逐文件迁移并真机验刷新',
   },
   // 2026-11-03（双轨收口）：**事件出口唯一性**闸门。
   //   双轨的根因是"计数器广播"和"领域事件"各自为政：只有 GroupMutation 发事件，
