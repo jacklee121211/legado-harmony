@@ -12,7 +12,6 @@ import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { IconTitleVo } from '../../../componetsmodel/IconTitleVo'
 import dialogTitleFuction from '../../../componets/common/dialogTitleFuction'
 import { ShelfSearchPanel } from './components/dialog/ShelfSearchPanel'
-import { ImportBookListDialog } from './components/dialog/ImportBookListDialog'
 import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 // 三横面板（排序 + 列表/宫格）：2026-10-20 三横从 GroupType 搬到本组件后由这里打开
 import { GroupManageDialog } from '../../../componets/group/GroupManageDialog'
@@ -301,53 +300,9 @@ export default struct IndexShelf {
     }
   }
 
-  // 「导入书单」弹窗（2026-09-25 从贴底 bindSheet 升级为标准居中 @CustomDialog，
-  //   见 components/dialog/ImportBookListDialog.ets；控制器每次打开新建）
-  // 2026-11-04（P4b 批 C-4）：原 importListDialog 字段已删 —— 宿主化后打开时 new
-
-  private openImportListDialog(): void {
-    DialogHost.open(new CustomDialogController({
-      builder: ImportBookListDialog({
-        onPaste: (): void => {
-          this.pasteBookImport()
-        },
-        onLocal: (): void => {
-          this.pickBookListLocal()
-        },
-        onClose: (): void => {
-          // 关闭权在页面侧（全工程 2026-09-25 统一约定）
-          DialogHost.closeCurrent()
-        }
-      }),
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      width: '80%',
-      cornerRadius: 20,
-      customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    }))
-  }
-
-  /**
-   * 书单本地导入：选 JSON 文件 → 解析 → 批量入架。
-   * （逻辑自原 `ImportClickBox` case 4 原样搬移，供新弹窗回调调用。）
-   */
-  private async pickBookListLocal(): Promise<void> {
-    const res = await FileHandler.documentPickerFile(1, ['.json'])
-    FileHandler.ReadJSONFile(res[0]).then(async result => {
-      if (result.length > 0) {
-        this.bookImport = JSON.parse(result) as bookShelfImport[]
-        this.bookImport.length > 0 ? await booksUtil.batchAdd(this.bookImport, this.currentIndex) : ''
-        showMessage(this.bookImport.length > 0 ? `相关书单书籍内容导入${this.bookImport.length}本` :
-          '未找到相关书单书籍内容')
-      }
-    })
-    setTimeout(() => {
-      ShelfRefresh.books()
-    }, 500)
-  }
+  // 2026-11-04（P4b 批 C-6）：整条「导入书单」链已删除 —— `openImportListDialog`（零调用方）、
+  //   `pickBookListLocal` 与 `pasteBookImport`（只被它回调）；组件 `ImportBookListDialog` 一并删文件。
+  //   判据：`node scripts/audit-dead-open-methods.mjs` 报它零调用 + 全仓 grep 复核。
   /** 书架搜索浮窗（2026-09-22 新增，见搜索按钮处的说明） */
   @State isShowShelfSearch: boolean = false
   /** 顶部搜索/更多图标的 Q弹缩放值（2026-09-25，`runJellyClick` 自驱 `.scale()`） */
@@ -906,34 +861,8 @@ export default struct IndexShelf {
     }
   }
 
-  //书单粘贴导入
-  async pasteBookImport() {
-    try {
-      let url = getPasteDataSync()
-      if (!url) {
-        showMessage('未获取到粘贴信息，请求默认数据')
-        await sleep()
-        return
-      }
-      if (!isNetworkUrl(url ?? '')) {
-        showMessage('复制的链接不正确')
-        await sleep()
-        url = undefined
-        return
-      }
-      const res: AxiosResponse = await axios
-        .get(url);
-      this.bookImport = res.data as bookShelfImport[]
-      showMessage(this.bookImport.length > 0 ? `相关书单书籍内容导入${this.bookImport.length}本` :
-        '未找到相关书单书籍内容')
-      this.bookImport.length > 0 ? booksUtil.batchAdd(this.bookImport, this.currentIndex) : ''
-    } catch (err) {
-      console.error('错误 ' + err);
-    }
-  }
+  // 2026-11-04（P4b 批 C-6）：`pasteBookImport` 已删除 —— 唯一调用方是死方法 `openImportListDialog`。
 }
-
-
 
 
 
