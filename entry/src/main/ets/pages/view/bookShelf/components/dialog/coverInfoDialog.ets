@@ -191,23 +191,55 @@ export default struct coverInfoDialog{
         //   · 没有自带封面的书（txt 等）⇒ 恢复为默认封面（同样只是清空 customCoverUrl）
         // 所以这是**一次清空、两种效果**，不需要按书分支写逻辑。
         // 符号名已核实：`sysResource.js` 中 `arrow_counterclockwise: 125832702`。
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
-            .fontSize(15)
-            .fontColor([NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)'])
-          Text('重置')
-            .fontSize(12)
-            .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)')
+        Row({ space: 8 }) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+              .fontSize(15)
+              .fontColor([NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)'])
+            Text('重置')
+              .fontSize(12)
+              .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)')
+          }
+          .height(30)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(15)
+          .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.06)')
+          .clickEffect(UiMotion.CLICK)
+          .onClick((): void => {
+            Haptics.tap()
+            this.openResetConfirm()
+          })
+          // ── 2026-11-03（P5/A5）：**分组封面**「恢复默认」────────────────────────
+          // 缺口：上面那个「重置」语义是"把范围内**书籍**的封面恢复成自带封面"（用户 2026-10-13 口径），
+          //   分组卡片自己那张封面（`book_groups.coverUrl`）此前**没有单独入口** ——
+          //   只有批量重置的副作用里会顺带清空（`resetGroupCover()` 末尾那段）。
+          // ⇒ 这里补一个只作用于**实体分组自身**的入口：
+          //   · 仅当 `!isSystem`（"全部/本地"这类聚合条目没有实体行）且当前确实设过封面时出现；
+          //   · 写入走唯一入口 `GroupMutation.setGroupCover`（刷真源 + 单次非结构事件），
+          //     与「重置」殊途同归，但**不动书籍**。
+          if (!this.itemData.isSystem && (this.itemData.coverUrl ?? '') !== '') {
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+                .fontSize(15)
+                .fontColor([NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)'])
+              Text('恢复默认')
+                .fontSize(12)
+                .fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.65)')
+            }
+            .height(30)
+            .padding({ left: 12, right: 12 })
+            .borderRadius(15)
+            .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.06)')
+            .clickEffect(UiMotion.CLICK)
+            .onClick((): void => {
+              Haptics.tap()
+              this.resetGroupCoverOnly().catch((e: Error): void => {
+                console.error('resetGroupCoverOnly failed: ' + e.message)
+                showMessage('恢复失败')
+              })
+            })
+          }
         }
-        .height(30)
-        .padding({ left: 12, right: 12 })
-        .borderRadius(15)
-        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.06)')
-        .clickEffect(UiMotion.CLICK)
-        .onClick((): void => {
-          Haptics.tap()
-          this.openResetConfirm()
-        })
       }.padding(20)
       // （2026-10-01 已删除「仅用于当前分组」开关：coverOnly 字段全工程无渲染消费方，
       //  开关没有实际效果，用户确认删除。）
@@ -561,5 +593,29 @@ export default struct coverInfoDialog{
     this.controller?.close()
     this.cancel()
     showMessage(count > 0 ? `已恢复 ${count} 本书的封面` : '封面已恢复')
+  }
+
+  /**
+   * 2026-11-03（P5/A5）：只恢复**分组自身**的封面（清空 `book_groups.coverUrl`），不动组内书籍。
+   *
+   * 与 `resetGroupCover()`（批量重置书籍封面 + 顺带清分组封面）互补：
+   *   · 用户只想让分组卡片回落默认封面时，不该被牵连改掉组内每本书的封面；
+   *   · 写入仍走唯一入口 `GroupMutation.setGroupCover`（刷真源 + 发一次非结构事件），
+   *     因此分组管理 / 书架根页都能立刻看到新封面（原来直连 DAO 的写法要重进才刷新）。
+   */
+  private async resetGroupCoverOnly(): Promise<void> {
+    if (this.itemData.isSystem) {
+      return
+    }
+    this.itemData.coverUrl = ''
+    await GroupMutation.setGroupCover(this.itemData)
+    // 弹窗自身选择态一并清掉（与批量重置同款收尾）
+    this.pickDefault = -1
+    this.selectedType = 0
+    this.coverImages = ''
+    ShelfRefresh.groups()
+    this.controller?.close()
+    this.cancel()
+    showMessage('分组封面已恢复默认')
   }
 }

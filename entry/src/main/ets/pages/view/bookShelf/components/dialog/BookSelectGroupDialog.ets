@@ -438,55 +438,6 @@ export default struct BookSelectGroupDialog{
       }
       .layoutWeight(1)
       .height('100%')
-      .onClick(() => {
-        const id: number = row.group.groupId ?? -1
-        if (id <= 0) {
-          return
-        }
-        // 2026-11-01：点到"书/分组当前所在分组"时不再静默返回 ——
-        //   它是分组 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
-        if (this.oldGroupId === id) {
-          if (row.hasChildren) {
-            this.toggleExpand(id)
-          } else {
-            showMessage(this.isMoveGroupNode ? '目标就是当前分组' : '书已经在这个分组里')
-          }
-          return
-        }
-        if (this.disabledIds.indexOf(id) >= 0) {
-          showMessage('不能移动到自身或其子目录')
-          return
-        }
-        if (this.isMoveGroupNode) {
-          Haptics.tap()
-          // 2026-11-01：补确认弹窗（用户：没确认容易误触）。
-          //   每次点击新建实例 —— 弹窗参数不支持动态更新（SDK 明确写死），
-          //   复用会把标题永远停在第一次的分组名。
-          this.nodeMoveConfirm = new CustomDialogController({
-            builder: TitleContentDialog({
-              title: `移动分组至${row.group.groupName}`,
-              confirm: (): void => {
-                this.moveGroupNode(id, row.group.groupName)
-              }
-            }),
-            autoCancel: true,
-            alignment: DialogAlignment.Center,
-            gridCount: 4,
-            customStyle: false,
-            cornerRadius: 25
-          })
-          DialogHost.openIf(this.nodeMoveConfirm)
-          return
-        }
-        if (this.isManageMode) {
-          this.openManageDialog(row.group)
-          return
-        }
-        Haptics.tap()
-        this.moveGroupId = id
-        this.moveTitle = row.group.groupName
-        DialogHost.openIf(this.clickBookTypeDialog)
-      })
       // 行尾展开/收起：独立 36vp 热区，物理上与行内容不重叠
       Row() {
         if (row.hasChildren) {
@@ -510,13 +461,80 @@ export default struct BookSelectGroupDialog{
     .borderRadius(10)
     .backgroundColor(ShelfColors.chip())
     .margin({ bottom: PaddingConstants.PADDING_16 })
+    // ── 2026-11-03（P5/A3）：点击热区由「行内 Row(layoutWeight 1)」抬到**整行** ────────
+    // 真机现象：同一行 (372,1479) 无反应、(700,1479) 出确认 —— 因为左侧
+    //   `Row().width(depth*14)`（缩进）与 `Row().width(16)`（图标占位）**在可点 Row 之外**，
+    //   深层分组的缩进可达 42vp+，正好把点落在死区。
+    // 现在整行都可点；行尾 36vp 箭头是**子节点**且自带 onClick，按 ArkUI 命中规则优先消费，
+    // 所以"点箭头=展开/收起、点其它任何位置=选择"两条热区并存，互不吞并。
+    .onClick(() => {
+      this.onRowTap(row)
+    })
+  }
+
+  /**
+   * 2026-11-03（P5/A3）：整行点击的统一实现（原来是行内 Row 的一个内联闭包）。
+   * 逻辑逐字保留自原闭包，只把触发面从"行内容"扩到"整行"。
+   */
+  private onRowTap(row: GroupRow): void {
+    const id: number = row.group.groupId ?? -1
+    if (id <= 0) {
+      return
+    }
+    // 2026-11-01：点到"书/分组当前所在分组"时不再静默返回 ——
+    //   它是分组 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
+    if (this.oldGroupId === id) {
+      if (row.hasChildren) {
+        this.toggleExpand(id)
+      } else {
+        showMessage(this.isMoveGroupNode ? '目标就是当前分组' : '书已经在这个分组里')
+      }
+      return
+    }
+    if (this.disabledIds.indexOf(id) >= 0) {
+      showMessage('不能移动到自身或其子目录')
+      return
+    }
+    if (this.isMoveGroupNode) {
+      Haptics.tap()
+      // 2026-11-01：补确认弹窗（用户：没确认容易误触）。
+      //   每次点击新建实例 —— 弹窗参数不支持动态更新（SDK 明确写死），
+      //   复用会把标题永远停在第一次的分组名。
+      this.nodeMoveConfirm = new CustomDialogController({
+        builder: TitleContentDialog({
+          title: `移动分组至${row.group.groupName}`,
+          confirm: (): void => {
+            this.moveGroupNode(id, row.group.groupName)
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        gridCount: 4,
+        customStyle: false,
+        cornerRadius: 25
+      })
+      DialogHost.openIf(this.nodeMoveConfirm)
+      return
+    }
+    if (this.isManageMode) {
+      this.openManageDialog(row.group)
+      return
+    }
+    Haptics.tap()
+    this.moveGroupId = id
+    this.moveTitle = row.group.groupName
+    DialogHost.openIf(this.clickBookTypeDialog)
   }
 
   build() {
     Column() {
       Column(){
-        // 2026-10-22：分组管理模式标题不同（其余结构完全一致）
-        Text(this.isManageMode ? '分组管理' : '移动分组')
+        // 2026-11-03（P5/A4）：标题**三态**（原来只有两态 ⇒ 把「移动书籍」也写成了「移动分组」）
+        //   ① 移动分组节点：`isMoveGroupNode`（长按分组 → 移动分组）
+        //   ② 分组管理：`isManageMode`（批量管理 → 分组管理，点行开二级菜单）
+        //   ③ 移动书籍：默认态（书籍/批量 → 移动至分组）
+        //   真机证据：`442-move-dialog.json` 里书籍移动弹窗标题是「移动分组」，与入口文案不符。
+        Text(this.isMoveGroupNode ? '移动分组' : (this.isManageMode ? '分组管理' : '移动至分组'))
           .fontSize(16)
           .fontWeight(700)
           .lineHeight(24)
