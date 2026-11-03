@@ -1,5 +1,5 @@
 import { Attribute } from '../../../common/utils/Attribute'
-import AppRouter, { RouteName, ReadStatisticsRouteParam, ReadStatsRouteParam, ReaderRouteParam, BookManageRouteParam } from '../../../common/router/AppRouter'
+import AppRouter, { RouteName, ReadStatisticsRouteParam, ReadStatsRouteParam, ReaderRouteParam, BookManageRouteParam } from '../../../common/router/AppRouter'
 import { ReaderEntry } from '../../../common/reader/ReaderEntry'
 import { promptAction } from '@kit.ArkUI'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
@@ -92,8 +92,8 @@ export default struct MyCenter {
   //   移入底部 dock，见 Index.ets nav。）
 
   // ── Web服务（2026-09-30 回填）────────────────────────────────────────────
-  /** 传书对话框控制器（wifi传书/电脑阅读共用） */
-  private wifiDialog: CustomDialogController | null = null
+  // 2026-11-04（P4b 批 C-2）：原 `private wifiDialog: CustomDialogController | null = null` 已删 ——
+  //   宿主化后打开时 new、关闭走 DialogHost.closeCurrent()，页面不再自持 controller。
   /** 三个服务项各自的 Q弹缩放值（runJellyClick 自驱） */
   @State wifiScale: number = 1
   @State readScale: number = 1
@@ -102,18 +102,16 @@ export default struct MyCenter {
   // ── 会员（2026-09-28 会员化改造·二版：登录下线，VIP 跟系统华为账号）────────
   /** VIP 解锁缓存位（事实源在 IAP，见 VipManager；进本页自动 refreshVip 核对） */
   @StorageLink('vipUnlocked') vipOn: boolean = false
-  /** VIP 购买弹窗控制器 */
-  private vipDialog: CustomDialogController | null = null
+  /** VIP 购买弹窗控制器（2026-11-04 P4b 批 C-2 宿主化：不再自持字段，打开时 new、关闭走 closeCurrent） */
 
   /** 打开 VIP 弹窗（未登录也能直接买：IAP 跟系统华为账号走） */
   private openVipDialog(): void {
-    this.vipDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: VipDialog({
         dark: this.nightOn,
         vipOwned: VipManager.isVip(),
         onClose: (): void => {
-          this.vipDialog?.close()
-          this.vipDialog = null
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -125,10 +123,9 @@ export default struct MyCenter {
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.vipDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.vipDialog)
+    }))
   }
 
   build() {
@@ -467,11 +464,12 @@ export default struct MyCenter {
 
   /** 打开 WiFi 传书/电脑阅读对话框（同一个服务的两个入口） */
   private openWifiDialog(): void {
-    this.wifiDialog = new CustomDialogController({
+    // 2026-11-04（P4b 批 C-2）：宿主化 —— 不再自持 controller 字段，关闭统一走 DialogHost.closeCurrent()
+    DialogHost.open(new CustomDialogController({
       builder: WifiTransferDialog({
         dark: this.nightOn,
         onClose: (): void => {
-          this.wifiDialog = null
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -483,9 +481,8 @@ export default struct MyCenter {
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.wifiDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.wifiDialog)
+    }))
   }
 }

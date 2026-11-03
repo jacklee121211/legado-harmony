@@ -82,10 +82,10 @@ const CTRL_BUDGET = 63;
  * 宿主化之后每个调用点仍然要 new 一次，所以它**不会降**。本项数的是 struct 里
  * 「`xxx: CustomDialogController` 字段」的**存量** —— 这才是"自持"的真指标。
  *
- * 沿革：2026-11-04 首次实测 = **39** → 批 C-1 宿主化 `MyThemeConfigComp` 三个弹窗后 = **36**。
+ * 沿革：2026-11-04 首次实测 = **39** → 批 C-1 宿主化 `MyThemeConfigComp` 三个弹窗后 = **36** → 批 C-2 宿主化 `MyCenter` 两个后 = **34**。
  * 每降一批必须同步改这个数，并把原因写在这里（否则等于自己骗自己）。
  */
-const SELF_HELD_BUDGET = 36;
+const SELF_HELD_BUDGET = 34;
 const SELF_HELD_RE = /^\s*(?:(?:private|public|protected|readonly|static)\s+)*[A-Za-z_$][\w$]*\s*:\s*CustomDialogController\b/;
 
 const args = process.argv.slice(2);
