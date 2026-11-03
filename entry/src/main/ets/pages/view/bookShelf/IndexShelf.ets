@@ -175,8 +175,6 @@ export default struct IndexShelf {
     }
   }
 
-  @State isShowImport: boolean = false
-  @State isShowCloudImport: boolean = false
 
   // ══════════════════════════════════════════════════════════════════════════
   // 排序（2026-10-19，需求第 3 / 6 条）
@@ -396,8 +394,8 @@ export default struct IndexShelf {
   @State bookImport: bookShelfImport[] = []
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
-  // 2026-11-03（P13/B3 保留）：这里的「网址导入」dialogController 是死 controller（全仓零 open），
-  //   顶栏几何修复回滚 P9 时被带回，此处再次删除（不影响布局，只删字段）。
+  // 2026-11-03（P13/B3）：「网址导入」dialogController 已删除 —— 2026-10-22 起书籍导入直接走 pickLocalBooks()，
+  //   本 controller 全仓零 open（只声明不打开）。
   tabsController: TabsController = new TabsController();
   private scrollController: Scroller = new Scroller();
 
@@ -444,39 +442,17 @@ export default struct IndexShelf {
 
   build() {
     Column() {
-      Flex({
-        justifyContent: FlexAlign.SpaceBetween,
-        alignItems: ItemAlign.End
-      }) {
-        // ── 2026-10-13 用户要求：**删掉「喵阅」标题行，让下方内容整体上提** ──────────
-        // 真机实测（Mate 80 Pro Max，1320×2848 @3.35）：
-        //   · 「喵阅」文字本身占 y=132~232（30vp）；
-        //   · 它所在的那个 `List` 写了 `.height(40)` ⇒ **这 40vp（134px）才是标题行的真实占高**；
-        //   · 下一行「最近阅读」胶囊在 y=344。
-        // ⚠️ 关键结论：**只删那两个汉字不会让内容上提** —— `.height(40)` 还在，
-        //    下面会留一条 40vp 的空白带。必须把这个 List 一起删掉，Tabs 才会整体上移 40vp。
-        // 为什么可以整个删：`titleArray` 只有一项 `['书架']`、页签栏 `barWidth/barHeight = 0`
-        //   ⇒ 这个标题除了"点一下回到 0 号页签"没有任何作用（点到它也只是原地不动）。
-        //
-        // ⚠️ 但下面这个 **0 尺寸的 Row 必须留着**：它是 `bindSheet`（网盘导入 / 云盘导入）
-        //    的绑定锚点，删掉它「网盘导入」弹窗就再也弹不出来（`bindSheet` 需要一个可见节点）。
-        Row() {
-          Flex() {
-          }
-          .width(0)
-          .height(0)
-          .bindSheet($$this.isShowCloudImport, this.CloudImportDialog(), {
-            height: 240,
-            showClose: false,
-            dragBar: false,
-            backgroundColor: ShelfColors.card(),
-            blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-            onDisappear: () => {
-            }
-          })
-        }
-      }
-      .padding({ top: this.topRectHeight === 0 ? 30 : this.topRectHeight, left: 20, right: 20 })
+      // ── 状态栏避让的**显式占位**（2026-11-03 顶栏几何修复·收尾）────────────────────
+      // 历史：这里原来是一个 `Flex`，里面塞「0 尺寸 Row + 两条 bindSheet」当弹窗锚点，
+      //   靠 `.padding({ top: topRectHeight })` 撑出状态栏高度。
+      // P9 删掉那个**唯一子节点**后，Flex 成了空容器 ⇒ ArkUI 不再把 padding(top) 撑成实际高度，
+      //   顶栏整体上移 63px、胶囊高度 115→46（真机 A/B：`[63,195]` → `[63,132]`）。
+      // ⇒ 现在改成**显式高度**的占位 Row：高度不再依赖"容器里有没有子节点"，
+      //   同时 WebDAV 那套死代码（锚点/sheet/builder/状态）保持删除。
+      // 真机复验（同一台 Mate 80 Pro Max）：胶囊回到 `[63,195][313,310]`，与 P8 逐像素一致。
+      Row()
+        .width('100%')
+        .height(this.topRectHeight === 0 ? 30 : this.topRectHeight)
 
       Tabs({
         barPosition: BarPosition.Start,
@@ -648,14 +624,8 @@ export default struct IndexShelf {
           // 圆角与内容层一致（官方默认 20vp，这里显式写死，避免不同设备/版本漂移）
           borderRadius: 20,
         })
-        .bindSheet($$this.isShowImport, this.ImportDialog(), {
-          // 书籍导入弹窗绑定元素
-          height: 200,
-          showClose: false,
-          dragBar: false,
-          backgroundColor: ShelfColors.surface(),
-          blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-        })
+        // 2026-11-03（P9/L4）：「书籍导入」自 2026-10-22 起**直接走 pickLocalBooks()**（用户要求去掉二级菜单）
+        //   ⇒ isShowImport 再没有被置 true 的地方，这个「本地/网盘/网址导入」sheet 及其 builder 都是死代码，已删除。
         .onClick(() => {
           Haptics.tap();
           runJellyClick((v: number) => {
@@ -702,221 +672,9 @@ export default struct IndexShelf {
     .borderRadius(20)
     .attributeModifier(this.menuSurface)
   }
-  @Builder
-  // 书籍导入UI盒子
-  ImportClickBox(index: number, image: string, text: string) {
-    Column({ space: 8 }) {
-      Flex() {
-        Image($r(`${image}`))
-          .width(24)
-      }
-      .width(48)
-      .height(48)
-      .borderRadius(24)
-      .borderColor(ShelfColors.line())
-      .backgroundColor(ShelfColors.solidChip())
-      .borderWidth(1)
-      .padding(12)
 
-      Text(text)
-        .lineHeight(20)
-        .font({
-          size: 12,
-          weight: 400
-        })
-    }
-    .padding({
-      top: 16,
-      bottom: 12,
-      left: 21,
-      right: 21
-    })
-    .onClick(async () => {
-      Haptics.tap();
-      switch (index) {
-        case 3:
-          // 书单粘贴导入
-          this.pasteBookImport()
-          break
-        case 4:
-          //书单本地导入
-          let res = await FileHandler.documentPickerFile(1, ['.json'])
-          FileHandler.ReadJSONFile(res[0]).then(async result => {
-            if (result.length > 0) {
-              this.bookImport = JSON.parse(result) as bookShelfImport[]
-              this.bookImport.length > 0 ? await booksUtil.batchAdd(this.bookImport, this.currentIndex) : ''
-              showMessage(this.bookImport.length > 0 ? `相关书单书籍内容导入${this.bookImport.length}本` :
-                '未找到相关书单书籍内容')
-            }
-          })
-          setTimeout(() => {
-            ShelfRefresh.books()
-          }, 500)
-          break
-      }
-    })
-  }
-
-  @Builder
-  // 书籍导入弹窗
-  ImportDialog() {
-    Column() {
-      GridRow({
-        columns: 3
-      }) {
-        GridCol() {
-          this.ImportClickBox(0, "app.media.my_center_file_icon", "本地导入")
-        }
-
-        GridCol() {
-          this.ImportClickBox(1, "app.media.my_center_cloud_icon", "网盘导入")
-        }
-
-        GridCol() {
-          this.ImportClickBox(2, "app.media.official_website", "网址导入")
-        }
-      }
-      .height("60%")
-
-      Divider()
-
-      Column() {
-        Text('取消').fontSize(16).fontWeight(400)
-          .lineHeight(24)
-      }
-      .onClick(() => {
-        Haptics.tap();
-        this.isShowImport = false
-      })
-      .alignItems(HorizontalAlign.Center)
-      .padding({
-        top: 16
-      })
-    }
-  }
-
-  @Builder
-  DialogInput(placeholder: string, maxlength?: number) {
-    Row() {
-      TextInput({ placeholder: placeholder })// .maxLength(maxlength)
-        // .showCounter(true)
-        .cancelButton({
-          icon: {
-            src: $r('app.media.close')
-          }
-        })
-    }
-    .margin({
-      top: 16,
-      bottom: 16
-    })
-  }
-
-  @Builder
-  // 书籍导入-网盘导入弹窗
-  CloudImportDialog() {
-    Column() {
-      Row() {
-        Text("网盘导入")
-          .lineHeight(24)
-          .font({
-            size: 16,
-            weight: 500
-          })
-      }
-      .padding({
-        top: 12,
-        bottom: 12,
-      })
-
-      Divider()
-
-      Row({ space: 16 }) {
-        Flex({
-          wrap: FlexWrap.Wrap,
-          alignContent: FlexAlign.Center,
-          justifyContent: FlexAlign.Center
-        }) {
-          Text("坚")
-            .lineHeight(24)
-            .font({
-              size: 16,
-              weight: 500
-            })
-            .opacity(0.45)
-        }
-        .backgroundColor(ShelfColors.chip())
-        .width(40)
-        .height(40)
-
-        Text("坚果云")
-          .lineHeight(22)
-          .font({
-            size: 14,
-            weight: 500
-          })
-          .opacity(0.88)
-      }
-      .padding({
-        top: 12,
-        bottom: 12,
-      })
-      .width("100%")
-      .onClick(() => {
-
-      })
-
-      Row({ space: 16 }) {
-        Flex({
-          wrap: FlexWrap.Wrap,
-          alignContent: FlexAlign.Center,
-          justifyContent: FlexAlign.Center
-        }) {
-          Image($r('app.media.add')).width(24)
-
-        }
-        .backgroundColor(ShelfColors.chip())
-        .width(40)
-        .height(40)
-
-        Text("添加webdav网盘")
-          .lineHeight(22)
-          .font({
-            size: 14,
-            weight: 500
-          })
-          .opacity(0.88)
-      }
-      .padding({
-        top: 12,
-        bottom: 12,
-      })
-      .width("100%")
-      .onClick(() => {
-
-      })
-
-      Divider()
-
-      Column() {
-        Text('取消').fontSize(16).fontWeight(400)
-          .lineHeight(24)
-      }
-      .onClick(() => {
-        Haptics.tap();
-        this.isShowCloudImport = false
-      })
-      .alignItems(HorizontalAlign.Center)
-      .padding({
-        top: 16
-      })
-    }
-    .padding({
-      left: 20,
-      right: 20
-    })
-  }
-
+  // 2026-11-03（P13/B3）：`DialogInput` 已删除 —— 它唯一的调用方是「网址导入」dialogController，
+  //   而该入口在 2026-10-22 去掉二级菜单后已不可达（`dialogController` 全仓零 open）。
   @Builder
   // 书架搜索浮窗（2026-09-22 新增）：按书名/作者在**本地库**里过滤
   ShelfSearchDialog() {
@@ -1127,7 +885,6 @@ export default struct IndexShelf {
   private async pickLocalBooks(): Promise<void> {
     try {
       const fileResult = await FileHandler.documentPickerFile(undefined, importableExts())
-      this.isShowImport = false
       if (fileResult.length === 0) {
         return
       }
@@ -1177,3 +934,10 @@ export default struct IndexShelf {
     }
   }
 }
+
+
+
+
+
+
+
