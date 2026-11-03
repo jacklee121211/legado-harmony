@@ -927,11 +927,6 @@ export default struct MySetPage{
           this.testAccountDialog?.close()
           this.testAccountDialog = null
           this.getUIContext().getPromptAction().showToast({ message: '登录成功' })
-        },
-        onInviteRedeemed: (): void => {
-          this.testAccountDialog?.close()
-          this.testAccountDialog = null
-          this.getUIContext().getPromptAction().showToast({ message: '邀请码激活成功，VIP 已解锁！' })
         }
       }),
       autoCancel: true,

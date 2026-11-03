@@ -42,6 +42,17 @@ export class VipManager {
   static readonly EGG_USER: string = '我爱李杰克';
   static readonly EGG_PASS: string = 'woaixiaoyao';
 
+  /**
+   * 2026-11-03（L5）：彩蛋账号**别名** —— 用户口头说的是「我爱李佳琦」，代码里是「我爱李杰克」。
+   * 两种写法都认（避免改名把后门锁死）；`EGG_USER` 仍是 `ListenUnlock` 的键，**不能改**。
+   */
+  static readonly EGG_USER_ALIASES: string[] = ['我爱李杰克', '我爱李佳琦'];
+
+  /** 是否为彩蛋账号（含别名）+ 密码正确 */
+  static isEgg(user: string, pass: string): boolean {
+    return pass === VipManager.EGG_PASS && VipManager.EGG_USER_ALIASES.indexOf(user) >= 0;
+  }
+
   /** VIP 是否已解锁（读缓存位；阶段2 后由 refreshFromIap 刷新） */
   static isVip(): boolean {
     return PreferencesUtil.getSync(VipManager.KEY_VIP, false) as boolean;
