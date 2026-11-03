@@ -14,6 +14,7 @@ import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
 import { NightMode } from '../../../common/utils/NightMode'
 import { resolveCoverSource, coverCorners, resolveBookCover } from '../../../common/utils/CoverSource'
+import { groupCardKeyOf } from '../../../common/group/GroupCardKey'
 // 宫格列数（2026-10-23 多端适配）：与书籍宫格**同源同一份取值**
 import ShelfPrefs from '../../../common/utils/ShelfPrefs'
 // ── 2026-11-01 多级文件夹 ──────────────────────────────────────────────────
@@ -582,11 +583,11 @@ export default struct BookFolder {
         //   「如果keyGenerator未缺省，且包含index，无论itemGenerator中是否包含index，
         //     生成的键值规则都由开发者自定义，框架不会拼接index」——itemGenerator 里用了
         //     index（入场错峰），不声明的话框架会把 index 拼到键值尾部，等于键值里带下标。
-        return (item.groupId !== undefined ? 'g' + item.groupId : item.groupName)
-          + '|' + (item.groupName ?? '')
-          + '|' + (item.isTop ? 'T' : 'F')
-          + '|' + (item.show ? '1' : '0')
-          // ── 2026-11-02 第 26 轮（B⑥ 真根因）：**必须带 parentId** ─────────────────
+        // 2026-11-03：键的字段清单已收敛到 `common/group/GroupCardKey.ets` 的
+        //   `groupCardKeyOf()`（唯一实现）——本处、`BookFolderManages`、`BookContentRefresh`
+        //   三处各写一份，正是"改名后卡片不重绘"（本轮真机基线发现）的成因。
+        //   下面这段 parentId 的历史说明保留，作为该函数内注释的证据来源。
+        // ── 2026-11-02 第 26 轮（B⑥ 真根因）：**必须带 parentId** ─────────────────
           // 本 ForEach 的 itemGenerator 里有一条 `(item.parentId ?? 0) === 0` 的**显示过滤**，
           // 所以 parentId 是"影响显示"的字段；漏了它 ⇒ 键值不变 ⇒ 复用旧组件 ⇒ 那个 `if`
           // 根本不重新求值 ⇒ 卡片停在旧状态。
@@ -595,10 +596,8 @@ export default struct BookFolder {
           // （等 2 秒、切 tab 回来都不消失）——正是这条 key 缺字段导致的。
           // 与上面那段注释的规则同源（2026-10-06 的"共0本"就是同一个坑），
           // 多级文件夹（2026-11-01）新增 parentId 过滤时漏了同步补 key。
-          + '|p' + (item.parentId ?? 0)
-          + '|' + (item.coverUrl ?? '')
-          + '|' + item.coverType
-          + '|' + (item.bookIds?.length ?? 0)
+          // 2026-11-03：真实返回改调唯一实现（字段清单含 name/isTop/show/parentId/封面/计数/isSystem）
+        return groupCardKeyOf(item)
       })
     }
     // ── 2026-10-13：`bindSheet($$isShowBookFolderInfoDialog, BookManageDialog)` 整块删除 ──

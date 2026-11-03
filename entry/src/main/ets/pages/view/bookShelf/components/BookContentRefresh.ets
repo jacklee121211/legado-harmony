@@ -34,6 +34,7 @@ import { GroupFlags } from '../../../../common/group/GroupFlags'
 // 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
 import { ShelfRefresh } from '../../../../common/shelf/ShelfRefresh';
+import { groupCardKeyOf } from '../../../../common/group/GroupCardKey';
 
 /** 路径条上的一格（2026-11-01）：id=1 的「分组」是虚拟根，其余是真实分组 */
 interface PathChip {
@@ -390,8 +391,7 @@ export default struct BookContentRefresh {
         //   （字段变更不是 @State 可观测）⇒ 卡片停在旧文案。
         // 工程内已有正确样板：`BookFolder.keyOf()` 的 key 里带了 `bookIds?.length`。
         // 修法：把"可见性 + 计数"拼进 key ⇒ 数字一变就重建该行，其余行照常复用。
-      }, (g: BookGroups) => 'cf' + (g.groupId ?? 0) + '|' + (g.show ? 1 : 0)
-        + '|' + (g.bookIds?.length ?? 0))
+      }, (g: BookGroups) => groupCardKeyOf(g, 'cf'))
     }
     .width('100%')
     .padding({
@@ -818,3 +818,4 @@ export default struct BookContentRefresh {
     })
   }
 }
+
