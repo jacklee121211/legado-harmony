@@ -181,22 +181,75 @@ export class GroupTree {
     return false
   }
 
-  /** 子孙 id（不含自身，深度优先） */
+  /**
+   * 防环 guard —— `descendantIds` / `subtreeIds` / `subtreeHeight` 三条递归**唯一**的下行判定口。
+   *
+   * ── 为什么要有它（2026-11-04 G1）──────────────────────────────────────────
+   * 这三条递归原来全无上界：数据里一旦出现环（`A.parentId = B` 且 `B.parentId = A`）就无限下钻
+   * ⇒ `RangeError: Maximum call stack size exceeded`，把分组页/书架整页打挂。
+   * 环是**存量脏数据**（早期导入、并发移动都可能留下），`canMoveTo()` 只能拦"新造的环"，
+   * 管不了库里已经存在的环。
+   *
+   * ── 上界口径 ──────────────────────────────────────────────────────────────
+   * 与 `depthOf()`(:126) / `pathOf()`(:146) / `isDescendantOf()`(:170) **逐字一致**：
+   * `guard <= MAX_GROUP_DEPTH + 1`（最多下钻 12 层）。
+   * 正常数据永远碰不到这个上界 —— `canMoveTo()` / `canCreateChild()` 保证树高 ≤ `MAX_GROUP_DEPTH`(=10)，
+   * 所以**合法树的返回值与加 guard 前逐值相同**（单测里 77 条改前/改后逐字相同的断言兜底，
+   * 见 `scripts/tests/group-tree.test.mjs`）。
+   *
+   * ── 两个条件缺一不可 ──────────────────────────────────────────────────────
+   *   · `seen`：真正保证终止 —— 每个 groupId 只下行一次。树形数据每个节点只有一个父级
+   *     （`childrenMap` 按 `parentKey()` 唯一挂载）⇒ 不可能重复到达 ⇒ **对合法数据零影响**；
+   *   · `guard`：与既有三处同口径的兜底，防 `seen` 失效的极端脏数据（同一 groupId 重复出现）。
+   */
+  private canDescend(id: number, guard: number, seen: Set<number>): boolean {
+    if (seen.has(id)) {
+      return false
+    }
+    return guard <= MAX_GROUP_DEPTH + 1
+  }
+
+  /**
+   * 子孙 id（不含自身，深度优先、先序）。
+   *
+   * ── 环上语义（2026-11-04 定义，勿改）──────────────────────────────────────
+   * **遇环即停、返回已收集结果**，不抛异常。为什么这样定义：
+   *   ① 用户此刻的诉求是"把分组打开、把书移走/删掉"，抛栈溢出会让整页白屏，
+   *      连修数据的入口都进不去 —— 可用性优先于"严格报错"；
+   *   ② "看到多少算多少"是可展示的降级结果（最深的几个子组可能少列），
+   *      比"整页不可用"损失小；
+   *   ③ 暴露脏数据另有通道：`isOrphan()` + `GroupStore.keptGroups()`，不靠让查询接口炸掉来实现。
+   * 起点自身先占位到 `seen` ⇒ 环上也不会把自己当成自己的子孙（"不含自身"的约定不破）。
+   */
   descendantIds(id: number): number[] {
     const out: number[] = []
-    const walk = (pid: number): void => {
-      for (const child of this.childrenOf(pid)) {
-        if (child.groupId !== undefined) {
-          out.push(child.groupId)
-          walk(child.groupId)
-        }
-      }
-    }
-    walk(id)
+    const seen: Set<number> = new Set<number>()
+    seen.add(id)
+    this.walkDescendants(id, 1, seen, out)
     return out
   }
 
-  /** 自身 + 子孙 */
+  /** `descendantIds()` 的递归体；下行判定一律走 `canDescend()`，不要在这里再写上界 */
+  private walkDescendants(pid: number, guard: number, seen: Set<number>, out: number[]): void {
+    for (const child of this.childrenOf(pid)) {
+      const cid: number | undefined = child.groupId
+      if (cid === undefined) {
+        continue
+      }
+      if (!this.canDescend(cid, guard, seen)) {
+        continue
+      }
+      seen.add(cid)
+      out.push(cid)
+      this.walkDescendants(cid, guard + 1, seen, out)
+    }
+  }
+
+  /**
+   * 自身 + 子孙。
+   * 自身不递归：防环 guard 由 `descendantIds()` 单点提供（单一通路，不重复写一遍上界），
+   * 环上同样"遇环即停"且结果**不含重复 id**（起点只出现一次）。
+   */
   subtreeIds(id: number): number[] {
     const out: number[] = [id]
     for (const d of this.descendantIds(id)) {
@@ -205,15 +258,31 @@ export class GroupTree {
     return out
   }
 
-  /** 子树高度（自身算 1 层） */
+  /**
+   * 子树高度（自身算 1 层）。
+   * 环上语义同上：**遇环即停**，环上节点每个只计一次（`seen` 判重），不抛异常。
+   */
   subtreeHeight(id: number): number {
+    const seen: Set<number> = new Set<number>()
+    seen.add(id)
+    return this.heightFrom(id, 1, seen)
+  }
+
+  /** `subtreeHeight()` 的递归体；下行判定同样只走 `canDescend()` */
+  private heightFrom(id: number, guard: number, seen: Set<number>): number {
     let h: number = 1
     for (const child of this.childrenOf(id)) {
-      if (child.groupId !== undefined) {
-        const ch: number = 1 + this.subtreeHeight(child.groupId)
-        if (ch > h) {
-          h = ch
-        }
+      const cid: number | undefined = child.groupId
+      if (cid === undefined) {
+        continue
+      }
+      if (!this.canDescend(cid, guard, seen)) {
+        continue
+      }
+      seen.add(cid)
+      const ch: number = 1 + this.heightFrom(cid, guard + 1, seen)
+      if (ch > h) {
+        h = ch
       }
     }
     return h

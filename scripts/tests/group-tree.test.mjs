@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // P5 纯函数单测 ①：common/group/GroupTree.ets
 //
-// 被测源码：entry/src/main/ets/common/group/GroupTree.ets（275 行，全纯函数）
+// 被测源码：entry/src/main/ets/common/group/GroupTree.ets（343 行，全纯函数）
 // 运行：    node scripts/tests/group-tree.test.mjs      （全通过 exit 0，任一失败 exit 1）
 //
 // ── 方式：源码文本提取 + 类型剥离 + 沙箱执行**真源码**（不是算法复刻）──────────
@@ -68,6 +68,12 @@ t.sentinel('parentKey 仍把"父级缺失/自环"兜底成 0', /private parentKe
   '守 GroupTree.ets:80-92 —— 兜底口径')
 t.sentinel('depthOf 仍带 guard 上界', /while \(cur !== undefined && guard <= MAX_GROUP_DEPTH \+ 1\)/,
   '守 GroupTree.ets:126 —— 深度循环的防环保险')
+t.sentinel('三递归共用的防环 helper 仍在（唯一入口，不许三处各写一遍）',
+  /private canDescend\(id: number, guard: number, seen: Set<number>\): boolean \{/,
+  '守 GroupTree.ets:204 —— 2026-11-04 G1 修复的核心：descendantIds/subtreeHeight 的下行判定只此一处')
+t.sentinel('helper 内部上界仍与 depthOf/pathOf/isDescendantOf 同口径（MAX_GROUP_DEPTH + 1）',
+  /private canDescend[\s\S]{0,300}?return guard <= MAX_GROUP_DEPTH \+ 1/,
+  '守 GroupTree.ets:204-209 —— 口径漂移会让环上行为与既有三处不一致')
 t.sentinel('hasSiblingNamed 仍对两侧 trim 后严格比较', /if \(\(g\.groupName \?\? ''\)\.trim\(\) === target\) \{/,
   '守 GroupTree.ets:269 —— 重名口径（大小写/空格）')
 t.check('源码依赖集合未漂移（仍只有 BookGroups 一条 import）',
@@ -115,10 +121,10 @@ t.eq('pathNames(3) = 根→自身', names(normal.pathOf(3)), ['文学', '小说'
 t.eq('pathNames(1) = 只有自己', names(normal.pathOf(1)), ['文学'], '证据：GroupTree.ets:146-154')
 t.eq('pathNames(0) = 空数组', names(normal.pathOf(0)), [], '证据：GroupTree.ets:141-143')
 t.eq('pathNames(undefined) = 空数组', names(normal.pathOf(undefined)), [], '证据：GroupTree.ets:141-143')
-t.eq('descendantIds(1) 深度优先 = [2,3]', normal.descendantIds(1), [2, 3], '证据：GroupTree.ets:185-197')
-t.eq('descendantIds(叶) = []', normal.descendantIds(3), [], '证据：GroupTree.ets:185-197')
-t.eq('subtreeIds(1) = 自身 + 子孙', normal.subtreeIds(1), [1, 2, 3], '证据：GroupTree.ets:200-206')
-t.eq('subtreeHeight(1) = 3', normal.subtreeHeight(1), 3, '证据：GroupTree.ets:209-220')
+t.eq('descendantIds(1) 深度优先 = [2,3]', normal.descendantIds(1), [2, 3], '证据：GroupTree.ets:223-245')
+t.eq('descendantIds(叶) = []', normal.descendantIds(3), [], '证据：GroupTree.ets:223-245')
+t.eq('subtreeIds(1) = 自身 + 子孙', normal.subtreeIds(1), [1, 2, 3], '证据：GroupTree.ets:247-258')
+t.eq('subtreeHeight(1) = 3', normal.subtreeHeight(1), 3, '证据：GroupTree.ets:260-288')
 t.eq('subtreeHeight(叶) = 1', normal.subtreeHeight(3), 1, '证据：GroupTree.ets:210 `let h = 1`')
 t.eq('isDescendantOf(3,1) = true', normal.isDescendantOf(3, 1), true, '证据：GroupTree.ets:164-182')
 t.eq('isDescendantOf(1,3) = false（反向）', normal.isDescendantOf(1, 3), false, '证据：GroupTree.ets:171-173（走到根就 false）')
@@ -145,18 +151,37 @@ t.eq('互指环 pathOf 也有界（不会挂死）', tCycle.pathOf(101).length, 
 t.eq('互指环**不在 roots() 里**', ids(tCycle.roots()), [1], '证据：GroupTree.ets:43-54（两者互相挂在对方 childrenMap 下）+ :102-110')
 t.eq('互指环 isOrphan(A) = **false**（父级确实存在）', tCycle.isOrphan(cycA), false,
   '证据：GroupTree.ets:77 `!this.byId.has(pid)` —— 父级存在 ⇒ 不算孤儿')
-t.check('已知缺陷：descendantIds 在互指环上栈溢出（无 guard 递归）',
-  throwsStackOverflow(() => tCycle.descendantIds(101)),
-  '证据：GroupTree.ets:185-197（walk 递归调 childrenOf，全函数无 guard）— 已报告未修')
-t.check('已知缺陷：subtreeIds 继承同一栈溢出（内部调 descendantIds）',
-  throwsStackOverflow(() => tCycle.subtreeIds(101)),
-  '证据：GroupTree.ets:200-206 → :185-197')
-t.check('已知缺陷：subtreeHeight 在互指环上栈溢出（无 guard 递归）',
-  throwsStackOverflow(() => tCycle.subtreeHeight(101)),
-  '证据：GroupTree.ets:209-220 — 已报告未修')
+// ── 2026-11-04 G1 修复后（原 3 条"已知缺陷：栈溢出"断言按新语义改写）────────────
+//    三个递归（descendantIds / subtreeIds / subtreeHeight）统一走 `canDescend()`（:204-209），
+//    环上语义 =「**遇环即停、返回已收集结果**」（不抛异常），定义与理由见 :211-222 注释。
+t.check('互指环：descendantIds/subtreeIds/subtreeHeight 三个入口**都不再抛 RangeError**',
+  !throwsStackOverflow(() => tCycle.descendantIds(101)) &&
+    !throwsStackOverflow(() => tCycle.subtreeIds(101)) &&
+    !throwsStackOverflow(() => tCycle.subtreeHeight(101)),
+  '证据：GroupTree.ets:204-209（canDescend 统一 guard）+ :223-245 / :252-258 / :264-288')
+t.eq('互指环 descendantIds(101) 遇环即停 = [102]（不含自身：起点先占位 seen）', tCycle.descendantIds(101), [102],
+  '证据：GroupTree.ets:225-227（`seen.add(id)`）+ :238-240（B 的子 A 被 seen 拦下）')
+t.eq('互指环 descendantIds(102) 对称 = [101]', tCycle.descendantIds(102), [101],
+  '证据：GroupTree.ets:223-245（同一个 walkDescendants，方向对称）')
+t.eq('互指环 subtreeIds(101) = [101,102]（无重复 id，自身只出现一次）', tCycle.subtreeIds(101), [101, 102],
+  '证据：GroupTree.ets:247-258（自身不递归，防环由 descendantIds 单点提供）')
+t.eq('互指环 subtreeHeight(101) = 2（环上节点每个只计一次）', tCycle.subtreeHeight(101), 2,
+  '证据：GroupTree.ets:265-267（起点占位）+ :278-280（绕回 A 被 seen 拦下）')
+t.eq('互指环不影响非环节点：descendantIds(1) = []', tCycle.descendantIds(1), [],
+  '证据：GroupTree.ets:233（`childrenOf(1)` 为空）+ :145（环整体不可从根到达）')
 const threeCycle = GroupTree.build([g(1, 'A', 3), g(2, 'B', 1), g(3, 'C', 2)])
 t.eq('三节点环 depthOf 也有界 = MAX+3', threeCycle.depthOf(1), MAX_GROUP_DEPTH + 3, '证据：GroupTree.ets:124-135')
 t.eq('三节点环整体不在 roots()（全环不可达）', ids(threeCycle.roots()), [], '证据：GroupTree.ets:43-54 + :102-110')
+// ── 三节点环（A.parent=C、B.parent=A、C.parent=B）在**新语义**下的逐值结果 ─────
+//    环外无入口 ⇒ 只能从环内节点起算；「遇环即停」= 每个 id 最多出现一次。
+t.eq('三节点环 descendantIds(1) 遇环即停 = [2,3]（1→2→3→绕回 1 停）', threeCycle.descendantIds(1), [2, 3],
+  '证据：GroupTree.ets:223-245（seen 由 :226 起点占位，:238-240 拦下绕回）')
+t.eq('三节点环 descendantIds(2) = [3,1]（从 B 起算，绕一圈后 A 还没被占位 ⇒ 收下）',
+  threeCycle.descendantIds(2), [3, 1], '证据：GroupTree.ets:223-245（唯一的"占位"是起点 2 自身）')
+t.eq('三节点环 subtreeIds(1) = [1,2,3]（整环每个 id 各一次，无重复）', threeCycle.subtreeIds(1), [1, 2, 3],
+  '证据：GroupTree.ets:247-258')
+t.eq('三节点环 subtreeHeight(1) = 3（三个节点各计一层，不放大到 MAX+）', threeCycle.subtreeHeight(1), 3,
+  '证据：GroupTree.ets:260-288（seen 判重 ⇒ 高度只按真实环长，不按 guard 上界）')
 
 // ═══ 6. 孤儿分组 ════════════════════════════════════════════════════════════
 t.group('6. 孤儿分组（父级不在列表）')
@@ -178,21 +203,28 @@ t.eq('⇒ 孤儿子树整棵从 roots 不可达（父不可见则子树不可见
 
 // ═══ 7. canMoveTo / canCreateChild（hasSiblingNamed 的同级校验伴侣）════════════
 t.group('7. 移动/新建校验')
-t.eq('canMoveTo(自身) 拒绝', normal.canMoveTo(1, 1), { ok: false, reason: '不能移动到自身' }, '证据：GroupTree.ets:230-232')
-t.eq('canMoveTo(源不存在) 拒绝', normal.canMoveTo(99, 0), { ok: false, reason: '分组不存在' }, '证据：GroupTree.ets:227-229')
-t.eq('canMoveTo(目标不存在) 拒绝', normal.canMoveTo(3, 99), { ok: false, reason: '目标分组不存在' }, '证据：GroupTree.ets:233-235')
+t.eq('canMoveTo(自身) 拒绝', normal.canMoveTo(1, 1), { ok: false, reason: '不能移动到自身' }, '证据：GroupTree.ets:298-300')
+t.eq('canMoveTo(源不存在) 拒绝', normal.canMoveTo(99, 0), { ok: false, reason: '分组不存在' }, '证据：GroupTree.ets:295-297')
+t.eq('canMoveTo(目标不存在) 拒绝', normal.canMoveTo(3, 99), { ok: false, reason: '目标分组不存在' }, '证据：GroupTree.ets:301-303')
 t.eq('canMoveTo(自己的子孙下) 拒绝（防环）', normal.canMoveTo(1, 3), { ok: false, reason: '不能移动到自己的子目录里' },
-  '证据：GroupTree.ets:236-238')
-t.eq('canMoveTo(根级) 放行且 reason 为空串', normal.canMoveTo(1, 0), { ok: true, reason: '' }, '证据：GroupTree.ets:239-244')
+  '证据：GroupTree.ets:304-306')
+t.eq('canMoveTo(根级) 放行且 reason 为空串', normal.canMoveTo(1, 0), { ok: true, reason: '' }, '证据：GroupTree.ets:307-312')
 const depthChain = GroupTree.build([...chain(10, 1000), g(11, '旁根', 0)])
 t.eq('10 层链：canCreateChild(第 10 层) 拒绝', depthChain.canCreateChild(1009),
-  { ok: false, reason: `最多 ${MAX_GROUP_DEPTH} 层，不能继续嵌套` }, '证据：GroupTree.ets:253-255')
+  { ok: false, reason: `最多 ${MAX_GROUP_DEPTH} 层，不能继续嵌套` }, '证据：GroupTree.ets:321-323')
 t.eq('10 层链：canCreateChild(第 9 层) 放行', depthChain.canCreateChild(1008), { ok: true, reason: '' },
-  '证据：GroupTree.ets:253-256')
+  '证据：GroupTree.ets:321-324')
 t.eq('10 层子树移到第 1 层下 ⇒ 超 10 层，拒绝', depthChain.canMoveTo(1000, 11),
-  { ok: false, reason: `最多 ${MAX_GROUP_DEPTH} 层，移动后会超出` }, '证据：GroupTree.ets:239-243')
+  { ok: false, reason: `最多 ${MAX_GROUP_DEPTH} 层，移动后会超出` }, '证据：GroupTree.ets:307-311')
 t.eq('单层分组移到第 1 层下 ⇒ 深度 2，放行', depthChain.canMoveTo(11, 1000), { ok: true, reason: '' },
-  '证据：GroupTree.ets:239-244')
+  '证据：GroupTree.ets:307-312')
+// ── 「语义不变」自证（2026-11-04 G1）：guard 上界 = MAX_GROUP_DEPTH+1 = 12 层 > 合法树最高 10 层
+//    ⇒ 合法树（含满 10 层链）**碰不到上界**，返回值与加 guard 前逐值相同。
+t.eq('10 层链 descendantIds 不被 guard 截断 = 9 个子孙', depthChain.descendantIds(1000),
+  [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009], '证据：GroupTree.ets:204-209（上界 12 层 ≥ 链深 10）')
+t.eq('10 层链 subtreeIds 长度 10、subtreeHeight = 10（与改前逐值相同）',
+  [depthChain.subtreeIds(1000).length, depthChain.subtreeHeight(1000)], [10, 10],
+  '证据：GroupTree.ets:247-258 + :260-288')
 
 // ═══ 8. hasSiblingNamed：同级同名判定 ═══════════════════════════════════════
 t.group('8. hasSiblingNamed：同级同名')
@@ -200,27 +232,27 @@ const sib = GroupTree.build([
   g(1, '文学', 0), g(2, '小说', 1), g(3, '小说', 0), g(4, '  带空格  ', 1),
   g(5, 'AB', 1), g(6, '有 空格', 1), g(7, '小说 ', 0),
 ])
-t.eq('同级同名 ⇒ true', sib.hasSiblingNamed(1, '小说'), true, '证据：GroupTree.ets:265-271')
-t.eq('根级同名（3 号「小说」）⇒ true', sib.hasSiblingNamed(0, '小说'), true, '证据：GroupTree.ets:265-271')
+t.eq('同级同名 ⇒ true', sib.hasSiblingNamed(1, '小说'), true, '证据：GroupTree.ets:333-341')
+t.eq('根级同名（3 号「小说」）⇒ true', sib.hasSiblingNamed(0, '小说'), true, '证据：GroupTree.ets:333-341')
 t.eq('非同级不拦（父级 2 下没有「小说」）', sib.hasSiblingNamed(2, '小说'), false,
-  '证据：GroupTree.ets:265 `this.childrenOf(parentId)`')
-t.eq('待判定名两端空白被 trim 后命中', sib.hasSiblingNamed(1, '  小说  '), true, '证据：GroupTree.ets:261 `(name ?? \'\').trim()`')
+  '证据：GroupTree.ets:333 `this.childrenOf(parentId)`')
+t.eq('待判定名两端空白被 trim 后命中', sib.hasSiblingNamed(1, '  小说  '), true, '证据：GroupTree.ets:329 `(name ?? \'\').trim()`')
 t.eq('已有分组名两端空白被 trim 后命中', sib.hasSiblingNamed(0, '小说'), true,
-  '证据：GroupTree.ets:269 `(g.groupName ?? \'\').trim() === target`（7 号存的是「小说 」）')
+  '证据：GroupTree.ets:337 `(g.groupName ?? \'\').trim() === target`（7 号存的是「小说 」）')
 t.eq('内部空格**不**归一（只 trim 首尾）', sib.hasSiblingNamed(1, '有空格'), false,
-  '证据：GroupTree.ets:261/269 —— 只用 trim，无 replace/正则压缩')
+  '证据：GroupTree.ets:329/337 —— 只用 trim，无 replace/正则压缩')
 t.eq('大小写敏感（AB vs ab ⇒ false）', sib.hasSiblingNamed(1, 'ab'), false,
-  '证据：GroupTree.ets:269 `===` 严格比较，全函数无 toLowerCase')
-t.eq('空名 ⇒ false（不做"同名"判定）', sib.hasSiblingNamed(1, ''), false, '证据：GroupTree.ets:262-264')
-t.eq('纯空白名 ⇒ false', sib.hasSiblingNamed(1, '   '), false, '证据：GroupTree.ets:261-264')
-t.eq('name 为 undefined ⇒ false（`?? \'\'` 兜底）', sib.hasSiblingNamed(1, undefined), false, '证据：GroupTree.ets:261')
-t.eq('excludeId 排除自身 ⇒ false', sib.hasSiblingNamed(1, '小说', 2), false, '证据：GroupTree.ets:266-268')
-t.eq('excludeId 指向别的组 ⇒ 不影响命中', sib.hasSiblingNamed(1, '小说', 5), true, '证据：GroupTree.ets:266-268')
+  '证据：GroupTree.ets:337 `===` 严格比较，全函数无 toLowerCase')
+t.eq('空名 ⇒ false（不做"同名"判定）', sib.hasSiblingNamed(1, ''), false, '证据：GroupTree.ets:330-332')
+t.eq('纯空白名 ⇒ false', sib.hasSiblingNamed(1, '   '), false, '证据：GroupTree.ets:329-332')
+t.eq('name 为 undefined ⇒ false（`?? \'\'` 兜底）', sib.hasSiblingNamed(1, undefined), false, '证据：GroupTree.ets:329')
+t.eq('excludeId 排除自身 ⇒ false', sib.hasSiblingNamed(1, '小说', 2), false, '证据：GroupTree.ets:334-336')
+t.eq('excludeId 指向别的组 ⇒ 不影响命中', sib.hasSiblingNamed(1, '小说', 5), true, '证据：GroupTree.ets:334-336')
 t.eq('parentId 传负数 ⇒ 按根级查（能命中根级同名）', sib.hasSiblingNamed(-1, '小说'), true,
   '证据：GroupTree.ets:102-103 `parentId > 0 ? parentId : 0`')
 // ⚠️ 语义可疑点（已报告）：根级孤儿被 childrenOf(0) 剔除 ⇒ 与之重名抓不到。
 const tOrphanDup = GroupTree.build([g(1, '文学', 0), g(301, '玄幻', 999)])
 t.eq('已知缺陷：与"根级孤儿"同名 ⇒ false（漏判重复）', tOrphanDup.hasSiblingNamed(0, '玄幻'), false,
-  '证据：GroupTree.ets:265 → :102-110（childrenOf(0) 已剔孤儿）—— 已在报告登记，未改源码')
+  '证据：GroupTree.ets:333 → :102-110（childrenOf(0) 已剔孤儿）—— 已在报告登记，未改源码')
 
 t.done()
