@@ -103,20 +103,21 @@ export struct MyThemeConfigComp {
 
   /**
    * 「自定义主题」编辑弹窗（2026-10-01 复活：取色器 + RGB + 方案管理，**VIP 特权**）。
-   * 打开时新建 controller（规范：参数动态/统一范式；见 docs/标准-弹窗与按钮统一规范.md）。
+   *
+   * 2026-11-04（P4b 批 C-1 宿主化）：**不再自持 controller 字段** —— 打开时才 `new`，
+   * 关闭统一走 `DialogHost.closeCurrent()`。理由见 `common/dialog/DialogHost.ets` 铁律 1/2：
+   * 一次性实例、父先真关；自持字段会让旧实例（连同监听器/定时器）一直挂在页面上。
    */
-  private themeEditorDialog: CustomDialogController | null = null
+
   /** 「VIP 购买」弹窗（嵌套打开，与 ReaderFontDialog.openVip 同款） */
-  private vipDialog: CustomDialogController | null = null
 
   /** 个性化配置弹窗（2026-10-10 新增） */
-  private plugboardDialog: CustomDialogController | null = null
 
   private openPlugboard(): void {
-    this.plugboardDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: PlugboardConfigDialog({
         onClose: (): void => {
-          this.plugboardDialog = null
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -132,20 +133,18 @@ export struct MyThemeConfigComp {
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.plugboardDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.plugboardDialog)
+    }))
   }
 
   private openVip(): void {
-    this.vipDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: VipDialog({
         dark: NightMode.isDarkSurface(),
         vipOwned: VipManager.isVip(),
         onClose: (): void => {
-          this.vipDialog?.close()
-          this.vipDialog = null
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -157,10 +156,9 @@ export struct MyThemeConfigComp {
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.vipDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.vipDialog)
+    }))
   }
 
   /** 自定义主题入口（VIP 门控范式与导入字体/下载字体一致：非 VIP → VIP 弹窗） */
@@ -169,10 +167,10 @@ export struct MyThemeConfigComp {
       this.openVip()
       return
     }
-    this.themeEditorDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: ThemeCustomEditorDialog({
         onClose: (): void => {
-          this.themeEditorDialog = null
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -184,10 +182,9 @@ export struct MyThemeConfigComp {
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.themeEditorDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.themeEditorDialog)
+    }))
   }
 
   /** 「+ 自定义主题」入口瓦片（VIP 金标提示；样式与主题色板瓦片同构） */

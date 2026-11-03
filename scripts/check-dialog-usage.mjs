@@ -75,6 +75,19 @@ const ALLOW_LEGACY_API = [];
  */
 const CTRL_BUDGET = 63;
 
+/**
+ * RATCHET · **自持 controller 字段**（2026-11-04 P4b 批 C-1 新增，只许降）。
+ *
+ * 与 `CTRL_BUDGET` 的区别：那个数的是 `new CustomDialogController(` 的**总次数**（含方法内临时创建）；
+ * 宿主化之后每个调用点仍然要 new 一次，所以它**不会降**。本项数的是 struct 里
+ * 「`xxx: CustomDialogController` 字段」的**存量** —— 这才是"自持"的真指标。
+ *
+ * 沿革：2026-11-04 首次实测 = **39** → 批 C-1 宿主化 `MyThemeConfigComp` 三个弹窗后 = **36**。
+ * 每降一批必须同步改这个数，并把原因写在这里（否则等于自己骗自己）。
+ */
+const SELF_HELD_BUDGET = 36;
+const SELF_HELD_RE = /^\s*(?:(?:private|public|protected|readonly|static)\s+)*[A-Za-z_$][\w$]*\s*:\s*CustomDialogController\b/;
+
 const args = process.argv.slice(2);
 const REPORT_ONLY = args.includes('--report');
 const AS_JSON = args.includes('--json');
@@ -112,6 +125,20 @@ for (const abs of files) {
 }
 
 const totalNew = rows.reduce((n, r) => n + r.newCtrl.length, 0);
+
+// ── 自持 controller 字段（排除唯一宿主 DialogHost 自身的实现文件）──
+const selfHeld = [];
+for (const abs of files) {
+  const rel = relative(SRC_DIR, abs).split(sep).join('/');
+  if (rel.startsWith('common/dialog/')) continue;
+  const lines = readFileSync(abs, 'utf8').split(/\r?\n/);
+  lines.forEach((line, i) => {
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+    if (line.includes('(')) return; // 形参 / 局部调用不是字段声明
+    if (SELF_HELD_RE.test(line)) selfHeld.push({ file: rel, line: i + 1, text: line.trim() });
+  });
+}
+const totalSelfHeld = selfHeld.length;
 const violations = [];
 for (const r of rows) {
   if (r.bareOpen.length && !ALLOW_BARE_OPEN.includes(r.file)) {
@@ -120,6 +147,14 @@ for (const r of rows) {
   if (r.legacyApi.length && !ALLOW_LEGACY_API.includes(r.file)) {
     for (const o of r.legacyApi) violations.push({ kind: 'legacy-api', file: r.file, ...o });
   }
+}
+if (totalSelfHeld > SELF_HELD_BUDGET) {
+  violations.push({
+    kind: 'self-held-budget',
+    file: '(全仓)',
+    line: 0,
+    text: `自持 CustomDialogController 字段 = ${totalSelfHeld} > BUDGET ${SELF_HELD_BUDGET}`,
+  });
 }
 if (totalNew > CTRL_BUDGET) {
   violations.push({
@@ -135,6 +170,8 @@ const summary = {
   filesWithDialogs: rows.length,
   newCustomDialogController: totalNew,
   ctrlBudget: CTRL_BUDGET,
+  selfHeldControllers: totalSelfHeld,
+  selfHeldBudget: SELF_HELD_BUDGET,
   bareOpenAllowed: rows.reduce((n, r) => n + (ALLOW_BARE_OPEN.includes(r.file) ? r.bareOpen.length : 0), 0),
   violations,
 };
@@ -147,6 +184,7 @@ if (AS_JSON) {
 console.log('=== 弹窗收口闸门 (scripts/check-dialog-usage.mjs) ===');
 console.log(`扫描真实源码: ${summary.scannedFiles} 个 .ets；含弹窗用法的文件: ${summary.filesWithDialogs} 个`);
 console.log(`new CustomDialogController 总数: ${totalNew} / 预算 ${CTRL_BUDGET}（只许降）`);
+console.log(`自持 controller 字段: ${totalSelfHeld} / 预算 ${SELF_HELD_BUDGET}（只许降）`);
 console.log('');
 
 if (rows.length) {
