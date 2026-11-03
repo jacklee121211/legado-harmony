@@ -73,7 +73,7 @@ const ALLOW_LEGACY_API = [];
  * ⚠️ 这个数**不会**变成 0：`DialogHost.open/openIf` 的入参就是 controller 实例
  *   （`common/dialog/DialogHost.ets`），构造动作必须留在调用方。它只用于防"新增弹窗又各自 new 一堆"。
  */
-const CTRL_BUDGET = 71;
+const CTRL_BUDGET = 70;
 
 const args = process.argv.slice(2);
 const REPORT_ONLY = args.includes('--report');

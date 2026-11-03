@@ -13,6 +13,7 @@ import { DialogHost } from '../../../../../common/dialog/DialogHost'
 // 2026-11-02 第 26 轮（B②）：分组树唯一真源
 import { GroupStore } from '../../../../../common/group/GroupStore'
 import booksDao from '../../../../../database/dao/BooksDao'
+import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
 import { GroupTree } from '../../../../../common/group/GroupTree'
@@ -776,7 +777,7 @@ export default struct FolderInfoDialog{
         const choice: number = idx >= 0 ? choices[idx] : -1
         if (choice === 2) {
           if (b.id !== undefined) {
-            await booksDao.updateBookGroup(b.id, 3)
+            await BooksMutation.moveOne(b.id, 3)
           }
           continue
         }
@@ -787,10 +788,10 @@ export default struct FolderInfoDialog{
         }
         if (choice === 1) {
           b.bookName = `${b.bookName} (2)`
-          await booksDao.update(b)
+          await BooksMutation.update(b)
         }
         if (b.id !== undefined) {
-          await booksDao.updateBookGroup(b.id, target)
+          await BooksMutation.moveOne(b.id, target)
         }
       }
       let promoteTo: number = -1
@@ -819,15 +820,9 @@ export default struct FolderInfoDialog{
     } catch (e) {
       // ── 2026-11-02 失败回滚：书回原分组、子分组回原父级 ──────────────────────
       console.error(`[GRP-ROLLBACK] applyDissolve 失败 gid=${gid}，开始回滚：${JSON.stringify(e)}`)
-      let rb: number = 0
-      for (let i = 0; i < snapBookId.length; i++) {
-        try {
-          await booksDao.updateBookGroup(snapBookId[i], snapBookGroup[i])
-          rb++
-        } catch (e2) {
-          console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${snapBookId[i]}: ${JSON.stringify(e2)}`)
-        }
-      }
+      // 2026-11-03（P3/A1）：书回滚也走书籍域写入口（内部逐条吞异常、返回成功条数，
+      //   语义与原来 UI 里手写的 for + try/catch 完全一致）
+      const rb: number = await BooksMutation.restoreGroups(snapBookId, snapBookGroup)
       // 2026-11-03（Ⅱ-1）：子分组回滚也走写入口（一次批量恢复 + 一条结构事件）
       let rg: number = 0
       if (snapChildId.length > 0) {
@@ -1067,7 +1062,7 @@ export default struct FolderInfoDialog{
         const choice: number = idx >= 0 ? choices[idx] : -1
         if (choice === 2) {
           if (b.id !== undefined) {
-            await booksDao.updateBookGroup(b.id, 3)
+            await BooksMutation.moveOne(b.id, 3)
           }
           continue
         }
@@ -1076,10 +1071,10 @@ export default struct FolderInfoDialog{
         }
         if (choice === 1) {
           b.bookName = `${b.bookName} (2)`
-          await booksDao.update(b)
+          await BooksMutation.update(b)
         }
         if (b.id !== undefined) {
-          await booksDao.updateBookGroup(b.id, targetGid)
+          await BooksMutation.moveOne(b.id, targetGid)
         }
       }
       // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）

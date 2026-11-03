@@ -49,7 +49,7 @@ const ROOT = process.cwd();
 const SRC_DIR = join(ROOT, 'entry', 'src', 'main', 'ets');
 
 /** 只许降的预算（每下调一次都要在文件头写沿革） */
-const GROUP_TREE_BUILD_BUDGET = 9;
+const GROUP_TREE_BUILD_BUDGET = 8;
 const WRITE_BYPASS_BUDGET = 0;
 
 /**
@@ -121,7 +121,7 @@ const INVENTORY = [
     label: 'new CustomDialogController（组件自持 controller）',
     pattern: /new CustomDialogController\s*\(/,
     allow: (rel) => rel.startsWith('common/reader/'),
-    budget: 71,
+    budget: 70,
     note: 'DialogHost 铁律 4：调用点不许自持 controller（打开已收口，持有未收口；实测 71 处）',
   },
   {
@@ -171,11 +171,31 @@ const INVENTORY = [
     allow: (rel) => rel.startsWith('database/')
       || rel === 'common/utils/booksUtils.ets'
       || rel === 'common/utils/bookGroupUtils.ets'
-      || rel === 'common/group/GroupMutation.ets',
-    budget: 5,
-    note: '2026-11-03（Ⅲ-2 审计）：实测 5 处全在 FolderInfoDialog（合并/解散的移书与回滚）—— 书籍域还没有 BooksMutation，先 ratchet 锁住不许增长',
+      || rel === 'common/group/GroupMutation.ets'
+      || rel === 'common/books/BooksMutation.ets',
+    budget: 0,
+    note: '2026-11-03（Ⅲ-2 审计 → P3/A1 收口）：5 处已全部走 common/books/BooksMutation.ets（moveOne/moveMany/update/restoreGroups）',
   },
+  // 2026-11-03（P3/B4）：书籍域**旧写通道**的定性闸门。
+  //   定性：ooksUtils = 书籍域**适配器**（写入细节唯一实现），ookGroupUtils = **遗留分组工具**
+  //   （分组写已归 GroupMutation，它现在只剩"读 + 被 GroupMutation 调用"）。
+  //   允许的调用方：数据层、两个工具自身、新的 common/books/BooksMutation、
+  //   以及**边界适配器**（导入/传书/分享：FileHandler / WifiBookServer / BookShareBridge）。
+  //   UI 层对新代码**不允许**再直接调它；存量以预算锁定，只降不升（下一批如 P6/P13 再压）。
   {
+    id: 'legacy-book-write',
+    label: 'UI 直接调旧书籍工具写（绕过 BooksMutation）',
+    pattern: /booksUtils?\.(updateBooks|updateAddBookIds|addBooks|delBooksById|partialUpdate|update)\s*\(/,
+    allow: (rel) => rel.startsWith('database/')
+      || rel === 'common/utils/booksUtils.ets'
+      || rel === 'common/utils/bookGroupUtils.ets'
+      || rel === 'common/books/BooksMutation.ets'
+      || rel === 'common/utils/FileHandler.ets'
+      || rel === 'common/utils/WifiBookServer.ets'
+      || rel === 'common/share/BookShareBridge.ets',
+    budget: 13,
+    note: '2026-11-03（P3/B4 定性）：存量 13 处（UI 侧删书/加入书架/封面/批量移书），只许降；新代码一律 BooksMutation',
+  },  {
     id: 'boundary-dao-write',
     label: '边界 lane 直写事实（导入/传书/分享/碰一碰）',
     pattern: /\b(booksDao|bookGroupsDao|bookmarksDao)\.(insert|partialUpdate|update|updateBookGroup|add|remove|delete)\s*\(/,
