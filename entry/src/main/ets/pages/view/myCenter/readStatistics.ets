@@ -4,7 +4,7 @@ import CommonConstants from '../../../common/constants/CommonConstants';
 import { dataItem } from '../../../componets/dataList/dataItem';
 import { readStatisticsDataList } from '../../../componets/myCenter/readStatisticsDataList';
 import { readBookList } from '../../../componets/dataList/readBookList';
-import { serviceDialog } from '../../../componets/webDavService/serviceDialog';
+import TitleContentDialog from '../../../componets/common/TitleContentDialog'
 import BooksDao from '../../../database/dao/BooksDao';
 import { Books } from '../../../database/entities/Books';
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
@@ -257,10 +257,12 @@ export default struct readStatistics {
     this.delDialog = false
   }
 
+  // 2026-11-03（P9/L4）：原来的 serviceDialog（WebDAV 目录下那个只当确认框用的组件）已整体删除；
+  //   删除确认改用工程统一确认弹窗 TitleContentDialog（渲染成「确定删除吗？」+ 取消/确认）。
   clearInfoDel: CustomDialogController | null = new CustomDialogController({
-    builder: serviceDialog({
-      title: "确认删除吗？",
-      value: "",
+    builder: TitleContentDialog({
+      title: '删除',
+      content: '',
       cancel: () => { this.onCancel() },
       confirm: () => { this.onAccept() }
     }),
@@ -269,7 +271,7 @@ export default struct readStatistics {
     alignment: DialogAlignment.Center,
     offset: { dx: 0, dy: 20 },
     customStyle: true,
-    // 确认弹窗的材质走官方 options 渠道；配套的 `serviceDialog` 内已把内容层设为透明。
+    // 确认弹窗的材质走官方 options 渠道（`TitleContentDialog` 是工程统一确认弹窗）。
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
   })
 

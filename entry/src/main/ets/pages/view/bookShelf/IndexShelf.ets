@@ -176,8 +176,6 @@ export default struct IndexShelf {
     }
   }
 
-  @State isShowImport: boolean = false
-  @State isShowCloudImport: boolean = false
 
   // ══════════════════════════════════════════════════════════════════════════
   // 排序（2026-10-19，需求第 3 / 6 条）
@@ -469,23 +467,9 @@ export default struct IndexShelf {
         // 为什么可以整个删：`titleArray` 只有一项 `['书架']`、页签栏 `barWidth/barHeight = 0`
         //   ⇒ 这个标题除了"点一下回到 0 号页签"没有任何作用（点到它也只是原地不动）。
         //
-        // ⚠️ 但下面这个 **0 尺寸的 Row 必须留着**：它是 `bindSheet`（网盘导入 / 云盘导入）
-        //    的绑定锚点，删掉它「网盘导入」弹窗就再也弹不出来（`bindSheet` 需要一个可见节点）。
-        Row() {
-          Flex() {
-          }
-          .width(0)
-          .height(0)
-          .bindSheet($$this.isShowCloudImport, this.CloudImportDialog(), {
-            height: 240,
-            showClose: false,
-            dragBar: false,
-            backgroundColor: ShelfColors.card(),
-            blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-            onDisappear: () => {
-            }
-          })
-        }
+        // 2026-11-03（P9/L4）：原来这里有个 0 尺寸 Row 当 `bindSheet` 锚点，用来弹「网盘导入」
+        //   （里面是「坚果云」和「添加 webdav 网盘」两行）。那两行按钮的 `onClick` **都是空的**，
+        //   整条 WebDAV 网盘导入从未实现 ⇒ 锚点、sheet、builder、状态一并删除。
       }
       .padding({ top: this.topRectHeight === 0 ? 30 : this.topRectHeight, left: 20, right: 20 })
 
@@ -659,14 +643,8 @@ export default struct IndexShelf {
           // 圆角与内容层一致（官方默认 20vp，这里显式写死，避免不同设备/版本漂移）
           borderRadius: 20,
         })
-        .bindSheet($$this.isShowImport, this.ImportDialog(), {
-          // 书籍导入弹窗绑定元素
-          height: 200,
-          showClose: false,
-          dragBar: false,
-          backgroundColor: ShelfColors.surface(),
-          blurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-        })
+        // 2026-11-03（P9/L4）：「书籍导入」自 2026-10-22 起**直接走 pickLocalBooks()**（用户要求去掉二级菜单）
+        //   ⇒ isShowImport 再没有被置 true 的地方，这个「本地/网盘/网址导入」sheet 及其 builder 都是死代码，已删除。
         .onClick(() => {
           Haptics.tap();
           runJellyClick((v: number) => {
@@ -713,98 +691,6 @@ export default struct IndexShelf {
     .borderRadius(20)
     .attributeModifier(this.menuSurface)
   }
-  @Builder
-  // 书籍导入UI盒子
-  ImportClickBox(index: number, image: string, text: string) {
-    Column({ space: 8 }) {
-      Flex() {
-        Image($r(`${image}`))
-          .width(24)
-      }
-      .width(48)
-      .height(48)
-      .borderRadius(24)
-      .borderColor(ShelfColors.line())
-      .backgroundColor(ShelfColors.solidChip())
-      .borderWidth(1)
-      .padding(12)
-
-      Text(text)
-        .lineHeight(20)
-        .font({
-          size: 12,
-          weight: 400
-        })
-    }
-    .padding({
-      top: 16,
-      bottom: 12,
-      left: 21,
-      right: 21
-    })
-    .onClick(async () => {
-      Haptics.tap();
-      switch (index) {
-        case 3:
-          // 书单粘贴导入
-          this.pasteBookImport()
-          break
-        case 4:
-          //书单本地导入
-          let res = await FileHandler.documentPickerFile(1, ['.json'])
-          FileHandler.ReadJSONFile(res[0]).then(async result => {
-            if (result.length > 0) {
-              this.bookImport = JSON.parse(result) as bookShelfImport[]
-              this.bookImport.length > 0 ? await booksUtil.batchAdd(this.bookImport, this.currentIndex) : ''
-              showMessage(this.bookImport.length > 0 ? `相关书单书籍内容导入${this.bookImport.length}本` :
-                '未找到相关书单书籍内容')
-            }
-          })
-          setTimeout(() => {
-            ShelfRefresh.books()
-          }, 500)
-          break
-      }
-    })
-  }
-
-  @Builder
-  // 书籍导入弹窗
-  ImportDialog() {
-    Column() {
-      GridRow({
-        columns: 3
-      }) {
-        GridCol() {
-          this.ImportClickBox(0, "app.media.my_center_file_icon", "本地导入")
-        }
-
-        GridCol() {
-          this.ImportClickBox(1, "app.media.my_center_cloud_icon", "网盘导入")
-        }
-
-        GridCol() {
-          this.ImportClickBox(2, "app.media.official_website", "网址导入")
-        }
-      }
-      .height("60%")
-
-      Divider()
-
-      Column() {
-        Text('取消').fontSize(16).fontWeight(400)
-          .lineHeight(24)
-      }
-      .onClick(() => {
-        Haptics.tap();
-        this.isShowImport = false
-      })
-      .alignItems(HorizontalAlign.Center)
-      .padding({
-        top: 16
-      })
-    }
-  }
 
   @Builder
   DialogInput(placeholder: string, maxlength?: number) {
@@ -820,111 +706,6 @@ export default struct IndexShelf {
     .margin({
       top: 16,
       bottom: 16
-    })
-  }
-
-  @Builder
-  // 书籍导入-网盘导入弹窗
-  CloudImportDialog() {
-    Column() {
-      Row() {
-        Text("网盘导入")
-          .lineHeight(24)
-          .font({
-            size: 16,
-            weight: 500
-          })
-      }
-      .padding({
-        top: 12,
-        bottom: 12,
-      })
-
-      Divider()
-
-      Row({ space: 16 }) {
-        Flex({
-          wrap: FlexWrap.Wrap,
-          alignContent: FlexAlign.Center,
-          justifyContent: FlexAlign.Center
-        }) {
-          Text("坚")
-            .lineHeight(24)
-            .font({
-              size: 16,
-              weight: 500
-            })
-            .opacity(0.45)
-        }
-        .backgroundColor(ShelfColors.chip())
-        .width(40)
-        .height(40)
-
-        Text("坚果云")
-          .lineHeight(22)
-          .font({
-            size: 14,
-            weight: 500
-          })
-          .opacity(0.88)
-      }
-      .padding({
-        top: 12,
-        bottom: 12,
-      })
-      .width("100%")
-      .onClick(() => {
-
-      })
-
-      Row({ space: 16 }) {
-        Flex({
-          wrap: FlexWrap.Wrap,
-          alignContent: FlexAlign.Center,
-          justifyContent: FlexAlign.Center
-        }) {
-          Image($r('app.media.add')).width(24)
-
-        }
-        .backgroundColor(ShelfColors.chip())
-        .width(40)
-        .height(40)
-
-        Text("添加webdav网盘")
-          .lineHeight(22)
-          .font({
-            size: 14,
-            weight: 500
-          })
-          .opacity(0.88)
-      }
-      .padding({
-        top: 12,
-        bottom: 12,
-      })
-      .width("100%")
-      .onClick(() => {
-
-      })
-
-      Divider()
-
-      Column() {
-        Text('取消').fontSize(16).fontWeight(400)
-          .lineHeight(24)
-      }
-      .onClick(() => {
-        Haptics.tap();
-        this.isShowCloudImport = false
-      })
-      .alignItems(HorizontalAlign.Center)
-      .padding({
-        top: 16
-      })
-    }
-    .padding({
-      left: 20,
-      right: 20
     })
   }
 
@@ -1139,7 +920,6 @@ export default struct IndexShelf {
   private async pickLocalBooks(): Promise<void> {
     try {
       const fileResult = await FileHandler.documentPickerFile(undefined, importableExts())
-      this.isShowImport = false
       if (fileResult.length === 0) {
         return
       }
@@ -1189,3 +969,6 @@ export default struct IndexShelf {
     }
   }
 }
+
+
+
