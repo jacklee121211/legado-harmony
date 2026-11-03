@@ -29,7 +29,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 必须是 22：`scripts/tests/_ets-harness.mjs` 用 `node:module.stripTypeScriptTypes`
+          # （官方文档 added v22.13.0）在 vm 沙箱里执行 .ets 真源码。
+          # 用 20 会让第 5 项单测以「需要 Node >= 22.13」硬失败 —— 这是**故意**的：
+          # 宁可 CI 红，也不要"低版本静默跳过"造成闸门假绿。
+          node-version: "22"
 
       - name: Run all gates (single-path / dialog / logic tests)
         run: node scripts/check-all.mjs

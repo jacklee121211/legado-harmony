@@ -21,6 +21,13 @@ const CHECKS = [
   { script: 'verify-group-event-coalescing.mjs', name: '事件合并逻辑（4 断言）' },
   // AppStorage 键预算（ratchet，只许降）：新增全局键会让 CI 变红
   { script: 'audit-appstorage.mjs', args: ['--check'], name: 'AppStorage 键预算（85，只许降）' },
+  // P5 纯函数单测（2026-11-03）：GroupTree / CountLabel / ShelfCollection / ShelfPrefs。
+  // 入口是 tests/run-all.mjs —— 它串跑 tests/*.test.mjs 四个文件（各自可独立执行）。
+  // 这四个测试用 `node:module.stripTypeScriptTypes` 直接执行 `entry/src/main/ets/**` 的**真源码**
+  // （不 import .ets、不依赖 SDK/真机），但仍要求 **Node >= 22.13**（该 API 的起始版本）。
+  // ⚠️ CI 目前是 node-version: "20"（.github/workflows/quality-gates.yml），会以清晰的
+  //    「需要 Node >= 22.13」信息失败 —— 需把该 workflow 的 node 版本升到 22（不在本文件改动范围）。
+  { script: 'tests/run-all.mjs', name: 'P5 纯函数单测（GroupTree/Shelf*/CountLabel）' },
 ]
 
 let failed = 0
