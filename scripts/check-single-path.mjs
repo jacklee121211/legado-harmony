@@ -73,6 +73,63 @@ const REFRESH_WRITE_ALLOW = [
   { file: 'storage/bookListData.ets', why: '启动时把三个全局键初始化为 0（不是喊刷新）' },
 ];
 
+/**
+ * **存量账**（2026-11-03，与用户讨论后新增）。
+ *
+ * 背景：上一轮闸门只守住了"门面写直连"这一类，于是出现了盲区 —— 例如
+ * `BookGroupsDao.insert/updatePartialGroup` 在弹窗里**直接写库**、置顶 `isTopGroup` 没有入口方法、
+ * `new CustomDialogController` 仍 77 处、分组域还有 8 处 `setTimeout` 延时刷。
+ * 这些都不是"新问题"，是**从来没被机器数过**。
+ *
+ * 处理方式沿用 ratchet：**先把存量钉住（budget = 实测值），再逐批降**。
+ * budget = null 表示"本次只统计、不判违规"（第一轮跑出来的数字用于定价）。
+ */
+const INVENTORY = [
+  {
+    id: 'dao-write-in-ui',
+    label: 'DAO 直写分组（绕过 GroupMutation）',
+    pattern: /BookGroupsDao\.(insert|update|updatePartialGroup|deleteBook|isUpdateGroupTop|onlyGroupUpdateName)\s*\(/,
+    allow: (rel) => rel.startsWith('database/')
+      || rel === 'common/group/GroupMutation.ets'
+      || rel === 'common/utils/bookGroupUtils.ets',
+    budget: 6,
+    note: 'UI 层不得直接写分组表（实测 6 处：insert 2 + updatePartialGroup 4）；只允许写入口与数据层内部',
+  },
+  {
+    id: 'set-top-direct',
+    label: '置顶直连（还没有入口方法）',
+    pattern: /bookGroupUtil(s)?\.isTopGroup\s*\(/,
+    allow: (rel) => rel === 'common/utils/bookGroupUtils.ets',
+    budget: 2,
+    note: '后续补 GroupMutation.setTop 再降到 0（实测 2 处：FolderInfoDialog:410 / BookManagePage:1345）',
+  },
+  {
+    id: 'new-dialog-controller',
+    label: 'new CustomDialogController（组件自持 controller）',
+    pattern: /new CustomDialogController\s*\(/,
+    allow: () => false,
+    budget: 71,
+    note: 'DialogHost 铁律 4：调用点不许自持 controller（打开已收口，持有未收口；实测 71 处）',
+  },
+  {
+    id: 'group-setTimeout',
+    label: '分组域 setTimeout 延时刷',
+    pattern: /setTimeout\s*\(/,
+    scope: /(FolderInfoDialog|BookSelectGroupDialog|coverInfoDialog|BookFolder|BookContentRefresh|groupTypePanel|GroupType)\.ets$/,
+    allow: () => false,
+    budget: 10,
+    note: '时序应靠"事件后重查"，不靠 500ms 延时（实测 10 处）',
+  },
+  {
+    id: 'group-flags-old-branch',
+    label: '双轨旧分支读取点（GroupFlags.USE_*）',
+    pattern: /GroupFlags\.USE_\w+/,
+    allow: (rel) => rel === 'common/group/GroupFlags.ets',
+    budget: 5,
+    note: '开关是安全网；删一处旧分支就把 budget 降一（实测 5 处读取点）',
+  },
+];
+
 /** 写直连白名单：双轨回退分支（不可达但刻意保留） */
 const WRITE_BYPASS_ALLOW = [
   { file: 'pages/view/bookShelf/components/dialog/FolderInfoDialog.ets', method: 'updateGroupShow' },
@@ -104,6 +161,9 @@ const hits = {
 };
 const allowedBypass = [];
 const allowedRefresh = [];
+/** 存量账命中：ruleId → [{file,line,text}] */
+const inventoryHits = new Map();
+for (const r of INVENTORY) inventoryHits.set(r.id, []);
 
 for (const abs of files) {
   const rel = relative(SRC_DIR, abs).split(sep).join('/');
@@ -142,6 +202,14 @@ for (const abs of files) {
         else allowedRefresh.push({ file: rel, line: lineNo, sig });
       }
     }
+
+    // 存量账（ratchet 候选）：先如实统计，再定价
+    for (const r of INVENTORY) {
+      if (r.scope && !r.scope.test(rel)) continue;
+      if (!r.pattern.test(t)) continue;
+      if (r.allow && r.allow(rel)) continue;
+      inventoryHits.get(r.id).push({ file: rel, line: lineNo, text: t });
+    }
   });
 }
 
@@ -170,6 +238,15 @@ if (hits.refreshWrites.length > REFRESH_SIGNAL_BUDGET) {
     msg: `刷新信号写点 = ${hits.refreshWrites.length} > 预算 ${REFRESH_SIGNAL_BUDGET}（只许降；B1 目标是收敛到 GroupEvents 单一路）`,
   });
 }
+for (const r of INVENTORY) {
+  const list = inventoryHits.get(r.id);
+  if (r.budget !== null && list.length > r.budget) {
+    violations.push({
+      kind: 'ratchet-' + r.id, file: '(全仓)', line: 0,
+      msg: `${r.label} = ${list.length} > 预算 ${r.budget}（只许降）`,
+    });
+  }
+}
 
 const summary = {
   scannedFiles: files.length,
@@ -182,6 +259,9 @@ const summary = {
   uiSql: hits.uiSql.length,
   refreshWrites: hits.refreshWrites.length,
   refreshSignalBudget: REFRESH_SIGNAL_BUDGET,
+  inventory: INVENTORY.map((r) => ({
+    id: r.id, label: r.label, count: inventoryHits.get(r.id).length, budget: r.budget,
+  })),
   violations,
 };
 
@@ -210,6 +290,19 @@ if (hits.groupTreeBuild.length) {
 }
 for (const a of allowedBypass) {
   console.log(`  [白名单] ${a.file}:${a.line}  ${a.method}(…)  —— 双轨回退分支，开关 true 时不可达`);
+}
+
+console.log('');
+console.log('--- 存量账（ratchet 候选：只许降）---');
+for (const r of INVENTORY) {
+  const list = inventoryHits.get(r.id);
+  const budgetText = r.budget === null ? '未定价（只统计）' : `预算 ${r.budget}`;
+  console.log(`  ${String(list.length).padStart(3)}  ${r.label}   [${budgetText}]`);
+  for (const h of list.slice(0, 8)) {
+    console.log(`        ${h.file}:${h.line}  ${h.text.slice(0, 72)}`);
+  }
+  if (list.length > 8) console.log(`        … 其余 ${list.length - 8} 处见 --json`);
+  if (r.note) console.log(`        ↳ ${r.note}`);
 }
 
 if (violations.length === 0) {
