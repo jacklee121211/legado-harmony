@@ -1,7 +1,6 @@
 import { showMessage } from '../componets/common/promptShow'
 import { ezCustomTransition, LongTakeSession, LongTakeTransitionDelegate } from '../common/ezlt'
 import { hostContext } from '../common/utils/HostContextUtil'
-import ReadShow from '../componets/common/ReadShow'
 import { NavItem } from '../componets/dataList/type'
 import { initAppData } from '../storage/appData'
 import BookShelf from './view/BookShelf'
@@ -114,7 +113,6 @@ import { ShelfRefresh } from '../common/shelf/ShelfRefresh';
 @Entry
 @Component
 struct Main {
-  @State showReadShow: boolean = true
   @State currentTabIndex: number = 0
   /**
    * App 级夜间开关（书架深色档的总闸）。
@@ -1027,7 +1025,6 @@ struct Main {
     WindowAbility.getInstance().toggleWindowSystemBar(['status', 'navigation'], this.getUIContext().getHostContext());
     // initBookListData()
     setTimeout(() => {
-      this.showReadShow = false
       this.isShow = false
     }, 5000)
 
@@ -1960,9 +1957,6 @@ struct Main {
         }
       })
 
-      if (this.showReadShow) {
-        ReadShow({ showReadShow: this.showReadShow }).offset({ y: -150 - this.bottomRectHeight })
-      }
       }
     }
     .width("100%")

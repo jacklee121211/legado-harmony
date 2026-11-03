@@ -2,7 +2,6 @@
   "src": [
     "pages/Index",
     "pages/ShareReceivePage",
-    "pages/PdfProbePage",
     "pages/view/Reader/PdfReaderPage"
   ]
 }

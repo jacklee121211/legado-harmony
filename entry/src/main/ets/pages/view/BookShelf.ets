@@ -1,4 +1,3 @@
-import ReadShow from '../../componets/common/ReadShow'
 import IndexShelf from './bookShelf/IndexShelf'
 
 @Component

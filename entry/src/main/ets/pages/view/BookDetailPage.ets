@@ -8,8 +8,6 @@ import ImmersiveMaterialUtil, { MaterialButtonModifier } from '../../common/util
 import AppRouter, { RouteName, ReaderRouteParam } from '../../common/router/AppRouter'
 import { FileHandler } from '../../common/utils/FileHandler'
 import { Books } from '../../database/entities/Books'
-import { BookHistory } from '../../database/entities/BookHistory'
-import bookHistoryUtils from '../../common/utils/BookHistoryUtils'
 import booksUtil from '../../common/utils/booksUtils'
 import booksDao from '../../database/dao/BooksDao'
 import { resolveBookCover, coverCorners } from '../../common/utils/CoverSource'
@@ -295,7 +293,7 @@ export default struct BookDetailPage {
           .onClick(() => { // 跳转到阅读器
             // 迁 Navigation 第 3 期：阅读页已改为 NavDestination，改走路由门面
             const rp: ReaderRouteParam = { bookData: this.bookData };
-            AppRouter.push(RouteName.READER, rp) // this.jumpReadPage(``, 0)
+            AppRouter.push(RouteName.READER, rp)
           })
           .attributeModifier(new MaterialButtonModifier(this.theme.mainColor, '#FFFFFF',
             ImmersiveMaterialUtil.tint(this.theme.mainColor, 0.75)))
@@ -518,20 +516,4 @@ export default struct BookDetailPage {
     })
   }
 
-  // @StorageLink('BOOK_IS_BOOK_HISTORY_REFRESHING') isBookHistoryRefreshing: number = 0
-  //跳转阅读界面更新或者添加阅读历史记录方法
-  async jumpReadPage(durChapterTitle: string, durChapterIndex: number) {
-    let bookHistory = new BookHistory()
-    bookHistory.id = this.bookData.id
-    bookHistory.bookName = this.bookData.bookName
-    bookHistory.author = this.bookData.author
-    bookHistory.durChapterTime = Date.now()
-    bookHistory.bookType = this.bookData.bookType
-    bookHistory.bookUrl = this.bookData.bookUrl ?? ''
-    bookHistory.coverUrl = this.bookData.coverUrl ?? ''
-    bookHistory.originBookId = this.bookData.id
-    bookHistory.durChapterTitle = durChapterTitle
-    bookHistory.durChapterIndex = durChapterIndex
-    bookHistoryUtils.addBooks(bookHistory)
-  }
 }

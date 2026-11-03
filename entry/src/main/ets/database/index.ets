@@ -1,9 +1,7 @@
 import BookGroupsDao from './dao/BookGroupsDao'
-import bookHistoryDao from './dao/BookHistoryDao'
 import BooksDao from './dao/BooksDao'
 // 2026-10-25：`worksListsDao`（书单）随书单功能删除
 import BookmarksDao from './dao/BookmarksDao'
-import readRecordDao from './dao/ReadRecordDao'
 import readDailyDao from './dao/ReadDailyDao'
 
 class DataBase {
@@ -59,7 +57,6 @@ class DataBase {
     await BooksDao.initBooksTable()
     await BookGroupsDao.initGroupTable()
     // 2026-10-25：`works_lists` 建表随书单功能删除（老库里的表保留，不再读写）
-    await bookHistoryDao.initBookHistoryTable()
     // ★ 2026-09-21 补：`bookmarks` 表此前**从未被创建** ——
     //   原 `initAllTable()` 漏掉了它，而 `AppDatabase/index.ets` 虽已定义建表语句
     //   却无人调用。真机实测报 `no such table: bookmarks`，
@@ -67,18 +64,10 @@ class DataBase {
     // ★ 2026-09-28 书源/订阅体系整体移除：book_sources / rssSources / searchBooks
     //   等表定义与对应 DAO 一并删除，本地阅读器不再有任何联网取书路径。
     await BookmarksDao.initBookmarksTable()
-    // ★ 2026-10-12 补：`readRecord` 表与 `bookmarks` 是**同一个坑的第二次发作** ——
-    //   快照里早已定义（`AppDatabase/index.ets:1750`）但 `initAllTable()` 漏了它，
-    //   且全工程没有任何 `createTable('readRecord')` ⇒ 真机 DB 里没这张表。
-    //   后果：`BookRename.rename()` 的事务第 3 条（DELETE FROM readRecord）必然失败
-    //   ⇒ 整笔回滚 ⇒ **重命名功能整体不可用**。
-    //   真机证据（`docs/日志.md:10020-10024`）：
-    //     `no such table: rea***ord in "DELETE FROM rea***ord ..."`
-    //     `[RdbTag], 事务第 3 条失败，回滚`
-    //     `BookRename.rename db failed: {"code":14800021}`
-    await readRecordDao.initReadRecordTable()
+    // 2026-11-03（清理）：`readRecord`（旧阅读时长模型，全工程零写入）整表删除，
+    //   时长统一由下面的 `readDaily` 承担 —— 历史背景见 `docs/待办-统一清单-2026-11-03.md`。
     // ★ 2026-10-13 新增：阅读数据模块的**日粒度时长表** `readDaily`。
-    //   与 `bookmarks` / `readRecord` 是同一个坑的第三次预防 ——
+    //   与 `bookmarks` 是同一个坑的第三次预防 ——
     //   建表语句只在 `AppDatabase/index.ets` 的快照里，**没人调就永远不会建**。
     //   本表由 `ReadTimeRecorder` 写入（进书计时），`ReadDailyDao` 提供四档聚合。
     await readDailyDao.initTable()

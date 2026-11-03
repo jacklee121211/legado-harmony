@@ -35,10 +35,8 @@ import BookmarkPorts from '../reader/BookmarkPorts';
 import { ColumnInfo } from '../../database/types/ColumnInfo'
 import AppDatabaseUtil from '../../database/AppDatabaseUtil'
 import DbUtil from './DbUtil'
-import readRecordDao from '../../database/dao/ReadRecordDao'
 import booksDao from '../../database/dao/BooksDao'
 import bookmarksDao from '../../database/dao/BookmarksDao'
-import bookHistoryDao from '../../database/dao/BookHistoryDao'
 // 2026-10-12：改名后同步听书会话书名（迷你栏书名条）
 import { ListenSession } from '../../tts/ListenSession'
 import { Books } from '../../database/entities/Books'
@@ -185,15 +183,10 @@ class BookRename {
       return res
     }
 
-    // 附属表迁移（书签 / 阅读时长 / 浏览历史）—— 失败**不**回滚书行，只记录
+    // 附属表迁移（书签）—— 失败**不**回滚书行，只记录
     // 2026-11-03（A1）：SQL 由各 DAO 提供，本文件不再拼 SQL；事务语义不变。
     const derivedSqls: string[] = [
-      // ② 书签
-      ...BookmarkPorts.renameSqls(oldN, newN),
-      // ③④ 阅读时长（主键 (deviceId, bookName)：先删冲突行再改名，顺序不可换）
-      ...readRecordDao.renameBookSqls(oldN, newN),
-      // ⑤ 浏览历史
-      ...bookHistoryDao.renameBookSqls(oldN, newN)
+      ...BookmarkPorts.renameSqls(oldN, newN)
     ]
     try {
       await DbUtil.runInTransaction(derivedSqls)
@@ -268,12 +261,9 @@ class BookRename {
     //   失败只是"没清干净"，不影响书行已删除这件事。
     try {
       await BookmarkPorts.deleteByBookName(n)
-      await bookHistoryDao.deleteByBookName(n)
     } catch (err) {
       console.error('BookRename.purge db failed: ' + JSON.stringify(err))
     }
-    // `readRecord` 走自己的 DAO（2026-10-12）：该方法内部已吞异常，且表缺失时不再影响其它清理
-    await readRecordDao.purge(n)
     for (const prefix of BookRename.NAME_KEYED_PREF_PREFIXES) {
       try {
         PreferencesUtil.deleteSync(prefix + n)

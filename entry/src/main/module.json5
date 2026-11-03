@@ -149,19 +149,6 @@
             ]
           }
         ]
-      },
-      {
-        // ⚠️ POC 取证专用（2026-10-19）：验证「PDF 页图 → epub → ReaderKit」这条链路。
-        //    启动：hdc shell aa start -a ProbeAbility -b com.jk.reader
-        //    POC 结束后连同 pages/PdfProbePage.ets、rawfile/poc_pages.epub 一起删除。
-        "name": "ProbeAbility",
-        "srcEntry": "./ets/entryability/ProbeAbility.ets",
-        "description": "$string:EntryAbility_desc",
-        "icon": "$media:layered_image",
-        "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:icon",
-        "startWindowBackground": "$color:start_window_background",
-        "exported": true
       }
     ],
     // ── 分享接收端（2026-09-30 回填，官方文档：
