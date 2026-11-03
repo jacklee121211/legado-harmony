@@ -4,9 +4,6 @@ import { FileHandler } from '../../../common/utils/FileHandler'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
 import { showMessage } from '../../../componets/common/promptShow'
 import { bookShelfImport } from '../../../database/entities/Books'
-import { getPasteDataSync, isNetworkUrl, sleep } from '../../../common/utils/utils'
-import booksUtil from '../../../common/utils/booksUtils'
-import axios, { AxiosResponse } from '@ohos/axios'
 import { ThemeItem } from '../../../common/model/Theme'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { IconTitleVo } from '../../../componetsmodel/IconTitleVo'
@@ -20,15 +17,12 @@ import BookSelectGroupDialog from './components/dialog/BookSelectGroupDialog'
 import bookGroupUtils from '../../../common/utils/bookGroupUtils'
 import { DialogHost } from '../../../common/dialog/DialogHost'
 import { BookGroups } from '../../../database/entities/BookGroups'
-import { LengthMetrics } from '@kit.ArkUI'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 // ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
 import { Haptics } from '../../../common/utils/Haptics'
 import { importableExts } from '../../../common/format/FormatFlags'
 // ── 个性化插件屏（2026-10-10 新增）───────────────────────────────────────────
-import { PlugboardZone } from '../../../componets/plugboard/PlugboardZone'
-import { PlugZone } from '../../../componets/plugboard/PlugboardTypes'
 // 2026-11-02 第 26 轮（B⑤）：按 id 现查书籍（移动至需要"此刻"所在分组，不能依赖快照）
 import booksDao from '../../../database/dao/BooksDao'
 import { Books } from '../../../database/entities/Books'
@@ -350,7 +344,7 @@ export default struct IndexShelf {
   // 2026-11-03（P13/B3）：「网址导入」dialogController 已删除 —— 2026-10-22 起书籍导入直接走 pickLocalBooks()，
   //   本 controller 全仓零 open（只声明不打开）。
   tabsController: TabsController = new TabsController();
-  private scrollController: Scroller = new Scroller();
+  // 2026-11-04（P4b 批 C-6 收尾）：原 `scrollController: Scroller` 已删 —— 随「导入书单」链一起失效（MCP 6133 确认未使用）
 
   /**
    * 书架顶部**三个图标**（🔍 搜索 / ≡ 排序 / ⋯ 更多）的颜色。
@@ -863,7 +857,6 @@ export default struct IndexShelf {
 
   // 2026-11-04（P4b 批 C-6）：`pasteBookImport` 已删除 —— 唯一调用方是死方法 `openImportListDialog`。
 }
-
 
 
 
