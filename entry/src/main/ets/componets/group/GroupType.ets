@@ -688,11 +688,6 @@ export default struct groupTypeComponent {
       // 删了会导致第一行书被顶栏压住（2026-09-23 真机踩过）。
       .onAreaChange((_o: Area, n: Area) => {
         AppStorage.setOrCreate('shelfGroupRowH', Number(n.height))
-        // 把本行的**窗口坐标底边**也上报 —— 三横弹窗要停在它下面。
-        //   `Area.globalPosition` 依据（SDK `component/units.d.ts:2110-2119`）原文：
-        //     「Position of the top-left corner of the target element in the **current window
-        //       coordinate system**.」（单位 vp）
-        AppStorage.setOrCreate('shelfGroupRowBottom', Number(n.globalPosition.y) + Number(n.height))
       })
     }
   }

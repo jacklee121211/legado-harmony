@@ -1201,13 +1201,6 @@ export struct ReaderPageNoAnim {
             // 那时我们的 `onActionEnd` **根本不会跑** ⇒ 若只在 End 里打戳，
             // `Index.onBackPress()` 永远等不到这个戳、拦不住。
             // 所以在 `onActionStart` 就打，并保证**先于**系统判定写入。
-            .onActionStart(() => {
-              AppStorage.setOrCreate('NOANIM_SWIPE_AT', Date.now());
-            })
-            .onActionUpdate(() => {
-              // 持续刷新：系统侧滑往往在 move 阶段就抢走，Start 可能来不及被我们拿到
-              AppStorage.setOrCreate('NOANIM_SWIPE_AT', Date.now());
-            })
             .onActionEnd((e: GestureEvent) => {
               const dx: number = e.offsetX;
               if (Math.abs(dx) < SWIPE_TRIGGER_VP) {

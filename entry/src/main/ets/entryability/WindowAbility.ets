@@ -39,18 +39,16 @@ export class WindowAbility {
    */
   async initAvoidArea(mainWindow: window.Window): Promise<void> {
     hilog.info(0x0000, TAG, 'initAvoidArea start');
-    // Initialize default values
-    AppStorage.setOrCreate<number>('statusBarHeight', 36);
-    AppStorage.setOrCreate<number>('navigationAiBarHeight', 28);
-    const defaultDisplay = display.getDefaultDisplaySync();
-    let scaledDensity = (defaultDisplay.scaledDensity > 0) ? defaultDisplay.scaledDensity : 1;
+    // 2026-11-03（P2）：`statusBarHeight` / `navigationAiBarHeight` 两个键零读取方，写入删掉后
+    //   `defaultDisplay` / `scaledDensity` 也不再被用到（它们只服务那两个除法），一并删除。
     const systemArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
     const navArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
-    if (systemArea) {
-      const statusBarHeight = systemArea.topRect.height / scaledDensity;
-      hilog.info(0x0000, TAG, "initAvoidArea statusBarHeight: " + statusBarHeight);
-      AppStorage.setOrCreate<number>('statusBarHeight', statusBarHeight);
 
+    // 2026-11-03（P2）：只保留**仍被读取**的避让键。
+    //   `statusBarHeight` / `navigationAiBarHeight` 两个键全仓零读取方（P2 审计），写入已删；
+    //   注意**不能**顺便删 `Paf.TopHeight` / `NavigationBarHeight` —— 它们来自 ezCustomTransition
+    //   那一侧（`common/ezlt`），读取方在转场库里，属"外部契约"。
+    if (systemArea) {
       if (deviceInfo.deviceType === 'tablet') {
         AppStorage.setOrCreate<number>("Paf.TopHeight", 56);
       } else if (deviceInfo.deviceType === '2in1') {
@@ -60,10 +58,6 @@ export class WindowAbility {
       }
     }
     if (navArea) {
-      const navigationAiBarHeight = navArea.bottomRect.height / scaledDensity;
-      hilog.info(0x0000, TAG, "initAvoidArea navigationAiBarHeight: " + navigationAiBarHeight);
-      AppStorage.setOrCreate<number>('navigationAiBarHeight', navigationAiBarHeight);
-
       if (deviceInfo.deviceType === 'tablet') {
         AppStorage.setOrCreate<number>("NavigationBarHeight", navArea.bottomRect.height);
       } else if (deviceInfo.deviceType === '2in1') {

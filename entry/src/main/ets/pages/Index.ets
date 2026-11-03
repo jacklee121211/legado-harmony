@@ -2775,7 +2775,6 @@ struct Main {
             // 依据：极速打断会触发框架层缺陷（自定义转场被整体丢弃、NavDestination 残留
             // disabled——2026-10-02 02:37 日志：pop transition end 缺失 + 两次 arm released
             // + "Touch test result is empty"卡死），冷却把点击挪出危险窗口。
-            AppStorage.setOrCreate('ltArmReleasedAt', Date.now())
             console.info('LTBOOK', 'arm released')
           }, 80)
         })

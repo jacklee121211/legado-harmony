@@ -506,9 +506,6 @@ export default class EntryAbility extends UIAbility {
     // skill: hmos-arkui-longtake-transition Step 2 —— 缺它转场 API 全部不可用）
     ezCustomTransition.init(windowStage);
     this.initWindowProcess(windowStage);
-    // 获取本地文件存储路径
-    const pathDir = this.context.filesDir;
-    AppStorage.setOrCreate('pathDir', pathDir);
     // Main window is created, set main page for this ability
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
     // 全屏
@@ -623,10 +620,9 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('WindowHeight', this.toVp(windowClass, WindowHeight));
       AppStorage.setOrCreate('WindowWidth', this.toVp(windowClass, WindowWidth));
 
-      let avoidAreaSys = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      let navi = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
-      let total = avoidAreaSys.topRect.height + navi.bottomRect.height;
-      AppStorage.setOrCreate('avoidHeight', total);
+      // 2026-11-03（P2）：`avoidHeight` 是只写不读的死键（全仓零读取），已删；
+      //   这里只保留 `stateHeight`（仍有读取方）所需的实测避让高度。
+      const avoidAreaSys = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
       AppStorage.setOrCreate('stateHeight', this.toVp(windowClass, avoidAreaSys.topRect.height));
       // 注册监听函数，动态获取避让区域数据
       windowClass.on('avoidAreaChange', (data) => {

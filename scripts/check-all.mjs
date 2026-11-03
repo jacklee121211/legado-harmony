@@ -19,6 +19,8 @@ const CHECKS = [
   { script: 'check-dialog-usage.mjs', name: '弹窗统一（DialogHost）' },
   // 事件合并语义的逻辑测试（复刻 GroupEvents.emitFromBump 算法，4 条断言）
   { script: 'verify-group-event-coalescing.mjs', name: '事件合并逻辑（4 断言）' },
+  // AppStorage 键预算（ratchet，只许降）：新增全局键会让 CI 变红
+  { script: 'audit-appstorage.mjs', args: ['--check'], name: 'AppStorage 键预算（85，只许降）' },
 ]
 
 let failed = 0
@@ -26,7 +28,7 @@ const results = []
 
 for (const c of CHECKS) {
   const abs = path.join(HERE, c.script)
-  const r = spawnSync(process.execPath, [abs], { encoding: 'utf8' })
+  const r = spawnSync(process.execPath, [abs, ...(c.args ?? [])], { encoding: 'utf8' })
   const ok = r.status === 0
   if (!ok) {
     failed++

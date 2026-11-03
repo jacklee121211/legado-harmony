@@ -5543,7 +5543,6 @@ oAnimInitNode 配套） */
       let displaySync = display.getDefaultDisplaySync();
       let scaledDensity = displaySync.scaledDensity;
       if (scaledDensity !== this.readerSetting.scaledDensity) {
-        AppStorage.setOrCreate('isDensityChange', true);
         AppRouter.pop();
       }
     }

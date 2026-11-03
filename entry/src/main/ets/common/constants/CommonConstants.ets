@@ -233,7 +233,6 @@ export default class CommonConstants {
   static readonly KEY_CARTOON_BOOK_DATA:string = 'KEY_CARTOON_BOOK_DATA'
   static readonly GROUP_LIST_DATA:string = 'GROUP_LIST_DATA'
   static readonly SHELF_LIST_DATA:string = 'SHELF_LIST_DATA'
-  static readonly HAS_EXPLORE_URL:string = 'HAS_EXPLORE_URL'
   static readonly BOOK_IS_BOOK_REFRESHING:string = 'BOOK_IS_BOOK_REFRESHING'
   static readonly BOOK_IS_BOOK_GROUPS_REFRESHING:string = 'BOOK_IS_BOOK_GROUPS_REFRESHING'
   // 2026-11-03（P8/L2）：RSS_SOURCES_GROUP_INIT / RSS_SOURCES_GROUP_LIST_DATA_KEY 已删除 ——
