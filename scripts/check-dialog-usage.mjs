@@ -93,7 +93,7 @@ const CTRL_BUDGET = 63;
  *   **真实基线 = 61**，批 C-1~C-3 共宿主化 11 个 ⇒ 现在 = **50**，预算按 50 钉住。
  * 每降一批必须同步改这个数，并把原因写在这里（否则等于自己骗自己）。
  */
-const SELF_HELD_BUDGET = 50;
+const SELF_HELD_BUDGET = 48;
 const SELF_HELD_RE = /^\s*(?:(?:private|public|protected|readonly|static)\s+)*[A-Za-z_$][\w$]*\s*:\s*CustomDialogController\b/;
 
 const args = process.argv.slice(2);

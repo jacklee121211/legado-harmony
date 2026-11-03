@@ -234,8 +234,8 @@ export default struct IndexShelf {
   }
   /** 三横（≡）按钮的 Q弹缩放（2026-10-20 从 `GroupType` 搬到本组件） */
   @State sortScale: number = 1
-  /** 排序/显示设置面板控制器（每次打开新建，理由见 GroupType 同款注释） */
-  private sortPanelDialog: CustomDialogController | null = null
+  // 2026-11-04（P4b 批 C-4）：原 sortPanelDialog 字段已删 —— 宿主化后每次打开 new、关闭走 closeCurrent()
+  //   （每次新建 的原有语义保持不变，仍是新实例）
 
   /**
    * 打开「显示设置」面板（排序 + 列表/宫格）。
@@ -247,14 +247,14 @@ export default struct IndexShelf {
    *   （见 `groupTypePanel.aboutToAppear` 的快照逻辑）。
    */
   private openSortPanel(): void {
-    this.sortPanelDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: GroupManageDialog({
         // 分组列表已不再在面板里渲染（用户：「显示分组和隐藏分组也不在需要了」），
         // 传空数组即可 —— 面板只读 `curSortKey/curSortDir/isGridMode` 这些全局态。
         showGroupList: [],
         currentIndex: this.currentIndex,
         onClose: (): void => {
-          this.sortPanelDialog?.close()
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -267,10 +267,9 @@ export default struct IndexShelf {
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
         // 遮罩/返回键：同样必须真的 close（工程既有约定，见 GroupType 同款注释）
-        this.sortPanelDialog?.close()
+        DialogHost.closeCurrent()
       },
-    })
-    DialogHost.openIf(this.sortPanelDialog)
+    }))
   }
 
   /**
@@ -304,10 +303,10 @@ export default struct IndexShelf {
 
   // 「导入书单」弹窗（2026-09-25 从贴底 bindSheet 升级为标准居中 @CustomDialog，
   //   见 components/dialog/ImportBookListDialog.ets；控制器每次打开新建）
-  private importListDialog: CustomDialogController | null = null
+  // 2026-11-04（P4b 批 C-4）：原 importListDialog 字段已删 —— 宿主化后打开时 new
 
   private openImportListDialog(): void {
-    this.importListDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: ImportBookListDialog({
         onPaste: (): void => {
           this.pasteBookImport()
@@ -317,7 +316,7 @@ export default struct IndexShelf {
         },
         onClose: (): void => {
           // 关闭权在页面侧（全工程 2026-09-25 统一约定）
-          this.importListDialog?.close()
+          DialogHost.closeCurrent()
         }
       }),
       autoCancel: true,
@@ -328,8 +327,7 @@ export default struct IndexShelf {
       systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    })
-    DialogHost.openIf(this.importListDialog)
+    }))
   }
 
   /**
