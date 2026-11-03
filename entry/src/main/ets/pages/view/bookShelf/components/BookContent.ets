@@ -154,7 +154,9 @@ export default struct BookContent {
     // 与列表**同一份查询口径**（2026-10-19）：否则「最近」模式下
     // 续页门槛用的是分组计数，`onReachEnd` 会算错 ⇒ 翻页提前停止。
     // 2026-11-02：计数也要排除隐藏分组（与 getBookList 同源设置）
-    booksDao.setHiddenGroupIds(await bookGroupUtils.hiddenSubtreeIds());
+    // 2026-11-03（P12/X5）：原来是 `booksDao.setHiddenGroupIds(...)`（遗留壳）⇒ 真源唯一所有者是 GroupStore，
+    //   这里只需保证「按库最新值重算过」，查询侧每次现读 `GroupStore.hiddenIds()`。
+    await bookGroupUtils.refreshHiddenGroupIds();
     // 2026-11-03（Ⅲ-1）：计数口径同样走 `ShelfCollection`（原来这里是**第三份**重复的 ternary）
     const col: ShelfCollection = ShelfCollection.resolve(this.onRecentChip, this.bookTypeNumber)
     this.bookCount =  await booksDao.getBookCount({
@@ -354,7 +356,10 @@ export default struct BookContent {
     try {
       const params: BooksTypeSearchParams = this.buildQueryParams();
       // 2026-11-02：隐藏分组（含子树）里的书不参与列表与计数
-      booksDao.setHiddenGroupIds(await bookGroupUtils.hiddenSubtreeIds());      let list: Books[] = await booksDao.searchPage(params, this.currentPage)
+      // 2026-11-03（P12/X5）：原来是 `booksDao.setHiddenGroupIds(...)`（遗留壳）⇒ 真源唯一所有者是 GroupStore，
+      //   这里只需保证「按库最新值重算过」，查询侧每次现读 `GroupStore.hiddenIds()`。
+      await bookGroupUtils.refreshHiddenGroupIds();
+    let list: Books[] = await booksDao.searchPage(params, this.currentPage)
       // 首字母档：SQL 只能给 bookName 兜底序，真正的拼音序在这里做（见 sortByPinyin 注释）
       if (!this.onRecentChip && ShelfPrefs.getSortKey() === SortKey.PINYIN) {
         list = this.sortByPinyin(list, ShelfPrefs.getSortDir());
@@ -549,7 +554,7 @@ export default struct BookContent {
   /**
    * 调用方是否真的提供了头。
    *
-   * 由父级算好传进来（`GroupFlags.USE_UNIFIED_SCROLL && 本页确实有子分组宫格`）。
+   * 由父级算好传进来（**固定**：子分组宫格作为列表头；原 `GroupFlags` 双轨开关已于 A8 删除）。
    * 为什么要这个额外参数、而不是只看开关：`BookContentRefresh` 一共有两条 `BookContent` 分支
    * （「最近」/ 具体分组），「最近」页**没有**分组网格 ⇒ 它必须**逐字节保持旧结构**，
    * 否则开关一开，「最近」也会被套进 ListItemGroup（多一层容器 = 多一份回归风险）。

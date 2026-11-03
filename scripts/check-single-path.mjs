@@ -152,7 +152,7 @@ const INVENTORY = [
     pattern: /GroupFlags\.USE_\w+/,
     allow: (rel) => rel === 'common/group/GroupFlags.ets',
     budget: 0,
-    note: '2026-11-03（Ⅱ-3）：5 处读取点已随旧分支删除 ⇒ 预算 5→0；GroupFlags.ets 本身保留一个版本（已标 deprecated）'
+    note: '2026-11-03（Ⅱ-3）：5 处读取点已随旧分支删除 ⇒ 预算 5→0；2026-11-03（P12/A8）GroupFlags.ets 已整份删除'
   },
   {
     id: 'collection-semantics-fork',

@@ -46,12 +46,6 @@ const COUNT_COLUMN: ColumnInfo[] = [
 ]
 
 class BooksDao {
-  /**
-   * 2026-11-03（Ⅱ-2）：写入迁到 `GroupStore.setHiddenIds()`（唯一所有者），本方法保留签名以免改动调用点。
-   */
-  setHiddenGroupIds(ids: number[]): void {
-    GroupStore.setHiddenIds(ids)
-  }
 
   TABLE_NAME: string = 'books'
 
@@ -293,7 +287,8 @@ class BooksDao {
     const whereClause: string[] = [];
 
     // 2026-11-02：**隐藏分组里的书一律不出现在列表/计数里**（用户：隐藏组的书与计数全部排除）。
-    //   由调用方在查询前用 `BooksDao.setHiddenGroupIds(子树id)` 设置；空数组＝不过滤。
+    //   2026-11-03（P12/X5）：原来那条 `BooksDao.setHiddenGroupIds()` 遗留壳已删除，
+    //   调用方用 `bookGroupUtils.refreshHiddenGroupIds()` 刷真源即可（本类每次查询现读）。
     // 2026-11-03（Ⅱ-2）：隐藏集合的**唯一所有者**是 GroupStore（本类只读）
     const hiddenIds: number[] = GroupStore.hiddenIds();
     if (hiddenIds.length > 0) {
