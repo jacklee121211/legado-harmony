@@ -26,7 +26,8 @@ interface SortOptionVo {
  * 2026-10-13 起本常量只用于**判定**（哪些 chip 点击无反馈 / 不画眼睛 / 不许隐藏），
  * 不改变渲染顺序 —— 顺序仍与父级 `GroupType.sortSystemChips` 一致（五要素在前）。
  */
-const BASE_UNIT_NAMES: string[] = ['全部', '本地', '书单', '分组', '未分组']
+// 2026-11-03（P10/L3）：去掉 '书单' —— 本工程没有这一行 isSystem 数据（真机 DB 只有四条）。
+const BASE_UNIT_NAMES: string[] = ['全部', '本地', '分组', '未分组']
 
 /**
  * 需要在**渲染层屏蔽**的系统单元（2026-10-19 需求第 1/4/5 条）。
@@ -41,7 +42,8 @@ const BASE_UNIT_NAMES: string[] = ['全部', '本地', '书单', '分组', '未�
  *   `bookGroup = 4`（本地）的筛选能力**全部原样保留**。
  * 回退：把本数组清空（`= []`）即恢复这两个入口。
  */
-const HIDDEN_UNIT_NAMES: string[] = ['本地', '书单']
+// 2026-11-03（P10/L3）：'书单' 同上，已去掉；剩 '本地'。
+const HIDDEN_UNIT_NAMES: string[] = ['本地']
 
 /**
  * 书架 → 分组行尾部「三横」→ 本面板（`GroupManageDialog` 的内容层）。

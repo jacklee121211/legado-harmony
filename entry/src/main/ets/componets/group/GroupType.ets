@@ -5,7 +5,6 @@ import { BookGroups } from '../../database/entities/BookGroups'
 //    （`GroupTypeSearch` 等其它地方仍在用）。
 import { GroupManageDialog } from './GroupManageDialog'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
-import coverInfoDialog from '../../pages/view/bookShelf/components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../common/utils/ImmersiveMaterialUtil'
 // ⚠️ 2026-10-20：`runJellyClick` / `showMessage` / `Haptics` 在本文件已无调用点 ——
 //   三横按钮搬去 `IndexShelf`、chip 行换成 `GlassSegment`（震动在它内部做）、
@@ -132,37 +131,7 @@ export default struct groupTypeComponent {
     this.openChipEditDialog()
   }
 
-  /**
-   * 「书单」（系统单元）长按 → **直达封面样式弹窗**（2026-10-01 用户定义）。
-   * 封面会真实应用到所有书单内的书（见 coverInfoDialog.resolveTargetBooks 的书单聚合分支）。
-   */
-  private worksCoverDialog: CustomDialogController | null = null
-  private openWorksCoverDialog(item: BookGroups): void {
-    this.worksCoverDialog = new CustomDialogController({
-      builder: coverInfoDialog({
-        itemData: item,
-        // 2026-10-12：必须真的 close（旧写法只置 null ⇒ 弹窗关不掉）
-        cancel: (): void => {
-          this.worksCoverDialog?.close()
-          this.worksCoverDialog = null
-        }
-      }),
-      autoCancel: true,
-      width: '92%',
-      alignment: DialogAlignment.Center,
-      cornerRadius: 20,
-      customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      // 遮罩/返回键：同一条收尾路径（2026-10-12）
-      cancel: (): void => {
-        this.worksCoverDialog?.close()
-        this.worksCoverDialog = null
-      }
-    })
-    DialogHost.openIf(this.worksCoverDialog)
-  }
+  // 2026-11-03（P10/L3）：openWorksCoverDialog（书单封面样式）已删除 —— 书单功能整体移除后无调用方。
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`），理由见 `IndexShelf` 同名字段 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   // ★ 2026-10-11：主题颜色（与 IndexShelf.ets:164 同款），给"三横"图标跟随主题色用。
@@ -303,17 +272,14 @@ export default struct groupTypeComponent {
    * 把下面 `customs` 那段重新 push 进 `result`（原实现见 git 历史）。
    */
   private sortSystemChips(list: BookGroups[]): BookGroups[] {
-    const order: string[] = ['全部', '本地', '书单', '分组', '未分组']
+    // 2026-11-03（P10/L3）：「书单」已从单位名清单移除 —— 它的数据行在本工程从未创建
+    //   （真机 DB ook_groups 只有 全部/分组/未分组/本地 四条 isSystem 行），书单功能本体也已删除。
+    const order: string[] = ['全部', '本地', '分组', '未分组']
     const systems: BookGroups[] = []
     for (const name of order) {
-      // ── 2026-10-19 需求第 1/5 条：「书单」入口屏蔽 ──────────────────────────
-      // 用户原话：「删除书单分组」「删除所有书单入口…只针对入口，具体功能暂时不引用了，屏蔽入口。」
-      // ⇒ 与「本地」同一手法：只在**渲染层**跳过，`book_groups` 那一行数据、`works_lists`
-      //   表、`WorksBookLists` 组件、`worksListsDao` 全部保留，随时可恢复。
-      // 回退：删掉下面这行 continue 即恢复入口。
-      if (name === '书单') {
-        continue
-      }
+      // 2026-11-03（P10/L3）：「书单」分支已删除 —— 本工程从未创建过 `书单` 这行 isSystem 数据
+      //   （真机 DB `book_groups` 只有 全部/分组/未分组/本地 四条），书单功能本体也已在
+      //   2026-10-25 整体移除（`worksListsDao` / `works_lists` 表 / `WorksBookLists` 组件）。
       // ── 2026-10-19 需求第 4 条：「本地」入口屏蔽 ──────────────────────────
       // 用户原话：「以前我们是有书源功能的，现在只有本地，所以这个功能意义就不大了，
       //   我们可以直接把入口屏蔽掉也行。筛选能力作为保留完全可以。」
@@ -345,7 +311,7 @@ export default struct groupTypeComponent {
 
   /** 五个系统基础单元识别（锁定改名/删除/长按编辑，见各入口守卫） */
   private isLockedUnit(item: BookGroups): boolean {
-    return item.isSystem && ['全部', '本地', '书单', '分组', '未分组'].includes(item.groupName ?? '')
+    return item.isSystem && ['全部', '本地', '分组', '未分组'].includes(item.groupName ?? '')
   }
 
   /**
@@ -718,3 +684,5 @@ export default struct groupTypeComponent {
     }
   }
 }
+
+

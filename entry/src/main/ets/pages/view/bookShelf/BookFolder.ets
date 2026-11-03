@@ -1,4 +1,4 @@
-import { it } from '@ohos/hypium'
+import { it } from '@ohos/hypium'
 import { CountLabel } from '../../../common/shelf/CountLabel'
 import { Haptics } from '../../../common/utils/Haptics';
 import BookOverlay from '../../../componets/bookDetail/BookOverlay'
@@ -9,7 +9,6 @@ import FolderCard, { FolderCell } from './components/FolderCard'
 import bookGroupUtil from '../../../common/utils/bookGroupUtils'
 import { BookGroups } from '../../../database/entities/BookGroups'
 import FolderInfoDialog from './components/dialog/FolderInfoDialog'
-import coverInfoDialog from './components/dialog/coverInfoDialog'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import UiMotion from '../../../common/utils/UiMotion'
 import { shelfEntrance } from '../../../common/utils/EntranceWave'
@@ -508,11 +507,9 @@ export default struct BookFolder {
                 // 五个系统单元锁定（2026-10-01 用户定义）：全部/本地/分组/未分组不提供
                 // 长按弹窗；书单长按**直达封面样式弹窗**；自建分组仍走原弹窗。
                 if (item.isSystem) {
-                  if (item.groupName === '书单') {
-                    this.openWorksCoverDialog(item)
-                  } else {
-                    showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
-                  }
+                  // 2026-11-03（P10/L3）：原来这里对「书单」有单独分支（直达封面样式弹窗）；
+                  //   书单功能整体移除后该分支不可达，已删除，系统单元一律只提示。
+                  showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
                   return
                 }
                 this.dialogGroupData = item
@@ -633,11 +630,8 @@ export default struct BookFolder {
         onLongPress: (): void => {
           Haptics.tap()
           if (item.isSystem) {
-            if (item.groupName === '书单') {
-              this.openWorksCoverDialog(item)
-            } else {
-              showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
-            }
+            // 2026-11-03（P10/L3）：书单专属分支已删除（同上方说明）
+            showMessage('「' + (item.groupName ?? '') + '」是系统单元，不支持编辑')
             return
           }
           this.dialogGroupData = item
@@ -796,35 +790,9 @@ export default struct BookFolder {
     DialogHost.openIf(this.groupInfoDialog)
   }
 
-  /** 「书单」（系统单元）长按 → 直达封面样式弹窗（与 GroupType 同款，2026-10-01） */
-  private worksCoverDialog: CustomDialogController | null = null
-  private openWorksCoverDialog(item: BookGroups): void {
-    this.worksCoverDialog = new CustomDialogController({
-      builder: coverInfoDialog({
-        itemData: item,
-        // 2026-10-12：必须真的 close（旧写法只置 null ⇒ 弹窗关不掉；
-        // 子组件内自己 close 不可靠，真机两次验证见 `ReaderSaveSchemeDialog.ets:205-208`）
-        cancel: (): void => {
-          this.worksCoverDialog?.close()
-          this.worksCoverDialog = null
-        }
-      }),
-      autoCancel: true,
-      width: '92%',
-      alignment: DialogAlignment.Center,
-      cornerRadius: 20,
-      customStyle: false,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      // 遮罩/返回键：同一条收尾路径（2026-10-12）
-      cancel: (): void => {
-        this.worksCoverDialog?.close()
-        this.worksCoverDialog = null
-      }
-    })
-    DialogHost.openIf(this.worksCoverDialog)
-  }
+  // 2026-11-03（P10/L3）：openWorksCoverDialog（书单封面样式）已删除 —— 书单功能整体移除后无调用方。
 }
+
+
 
 
