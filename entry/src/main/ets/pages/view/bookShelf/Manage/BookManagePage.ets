@@ -1,4 +1,5 @@
-import bookListManage from './bookManage/bookListManage';
+import bookListManage from './bookManage/bookListManage';
+import { BooksMutation } from '../../../../common/books/BooksMutation'
 import { CountLabel } from '../../../../common/shelf/CountLabel'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
@@ -1496,7 +1497,7 @@ export default struct BookManagePage {
       })
     }
     if (bookIds.length > 0) {
-      booksUtil.delBooksById(bookIds)
+      BooksMutation.remove(bookIds)
     }
     setTimeout(()=>{
       this.refreshData()

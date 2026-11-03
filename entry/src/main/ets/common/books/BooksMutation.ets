@@ -1,4 +1,5 @@
 import booksDao from '../../database/dao/BooksDao'
+import booksUtil from '../utils/booksUtils'
 import { Books } from '../../database/entities/Books'
 
 /**
@@ -43,6 +44,37 @@ export class BooksMutation {
   /** 整行更新（改名/加"(2)"后缀等场景；与 `booksUtils.partialUpdate` 的区别：这里写全列） */
   static async update(book: Books): Promise<void> {
     await booksDao.update(book)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-11-03（B4 收尾）：把原先散在 UI 里的三类 `booksUtil.*` 写调用也收进来。
+  //   这三类的**重活**仍在适配器 `booksUtils` 里（删书要清封面文件 + 以书名为键的进度/设置/
+  //   书签、移书要维护 `book_groups.bookIds` 映射），本类只做"唯一出口"，不再重复实现细节。
+  //   这样 UI 层只认 `BooksMutation`，闸门 `legacy-book-write` 才能从 13 降到 0。
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** 加入书架（`isJoin=true`、`bookGroup` 缺省 3 未分组；重活见 `booksUtils.addBooks`） */
+  static async add(book: Books): Promise<void> {
+    await booksUtil.addBooks(book)
+  }
+
+  /**
+   * 删除书籍（连带清封面文件 + 以书名为键的阅读进度/设置/书签）。
+   * @param id 单本 id 或 id 数组
+   */
+  static async remove(id: number | number[]): Promise<void> {
+    await booksUtil.delBooksById(id)
+  }
+
+  /**
+   * 批量移动（维护 `book_groups.bookIds` 映射的那条路径）。
+   *
+   * ⚠️ 与 `moveMany` 的区别：`moveMany` 只改 `books.bookGroup` 一列；
+   *    本方法走 `booksUtils.updateBooks`，会同时维护分组行里的 `bookIds` 映射
+   *    ——「移动至」弹窗用的是这条（原 `BookSelectGroupDialog:983`）。
+   */
+  static async moveTo(id: number | number[], groupId: number): Promise<void> {
+    await booksUtil.updateBooks(id, groupId)
   }
 
   /**

@@ -193,8 +193,8 @@ const INVENTORY = [
       || rel === 'common/utils/FileHandler.ets'
       || rel === 'common/utils/WifiBookServer.ets'
       || rel === 'common/share/BookShareBridge.ets',
-    budget: 13,
-    note: '2026-11-03（P3/B4 定性）：存量 13 处（UI 侧删书/加入书架/封面/批量移书），只许降；新代码一律 BooksMutation',
+    budget: 0,
+    note: '2026-11-03（B4 收尾）：13 处 UI 写调用已全部迁到 BooksMutation（add/remove/moveTo），预算 13→0',
   },  // 2026-11-03（P6/B2）：计数文案的唯一实现闸门。
   //   「共N本 · M个分组」「已选N本 · M个分组」这类字符串曾经有 4 份各自拼（其中 coverInfoDialog 那份
   //   还把数量写死成 0）。现在统一从 `common/shelf/CountLabel.ets` 出，禁止再自己拼。

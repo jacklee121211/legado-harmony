@@ -4,6 +4,8 @@ import BooksDao from '../../database/dao/BooksDao'
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../utils/bookGroupUtils'
 import { GroupStore } from './GroupStore'
+import { GroupTree } from './GroupTree'
+import toolsUtils from '../utils/ToolsUtils'
 import { GroupEvents } from './GroupEvents'
 
 /**
@@ -59,7 +61,7 @@ export class GroupMutation {
    *   否则会"底层发一次 + 收尾再发一次"= 双发（违反 S8）。
    */
   static async dissolve(groupId: number, mode: string = 'keepChildren'): Promise<void> {
-    await bookGroupUtils.dissolveGroup(groupId, mode, false)
+    await GroupMutation.dissolveGroup(groupId, mode, false)
     await GroupMutation.afterChange([], [], true)
   }
 
@@ -97,7 +99,7 @@ export class GroupMutation {
         }
       }
     }
-    await bookGroupUtils.delGroupById(ids, false)
+    await GroupMutation.delGroupById(ids, false)
     await GroupMutation.afterChange([], [], true)
   }
 
@@ -280,7 +282,7 @@ export class GroupMutation {
     if (groupIds.length === 0) {
       return
     }
-    await bookGroupUtils.dissolveGroups(groupIds, mode, false)
+    await GroupMutation.dissolveGroups(groupIds, mode, false)
     await GroupMutation.afterChange([], [], true)
   }
 
@@ -343,6 +345,178 @@ export class GroupMutation {
     // 2026-11-03（Ⅱ-2）：隐藏集合已并入真源 `GroupStore.apply()`，这里不再二次写入
     GroupEvents.emit(structural ? [] : changedGroupIds, changedBookIds)
     // S6：结构变更后选中集立即失效（由订阅方清空；这里只保证事件里标记为"全量"）
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-11-03（B4 收尾）：**分组级联删书**的三个方法从 `bookGroupUtils` 搬到这里。
+  //   原因：它们原先在 `bookGroupUtils` 里直接 `BooksDao.moveBooksToGroup(...)`（3 处），
+  //   而分组域写操作的**归属**应该是 `GroupMutation`；搬过来后「分组解散/删除时书去哪」
+  //   只有一个表达位置，也不必让 `bookGroupUtils` 反向 import 写入口（避免循环依赖）。
+  //   `dissolveIfEmpty`（空分组自动解散）同期删除 —— `EMPTY_AUTO_DISSOLVE=false` 之后已无调用方。
+  // ═══════════════════════════════════════════════════════════════════════════
+  static async delGroupById(id:number|number[], emitEvent: boolean = true){
+    const Ids: number[] = toolsUtils.numberArrays(id)
+    if (Ids.length === 0) return
+    // ── 2026-11-02 预检：只对真实存在的分组动手，避免"删了不存在的 id"出现假成功 ──
+    const groups: BookGroups[] = await BookGroupsDao.search()
+    const alive: number[] = []
+    for (const gid of Ids) {
+      let hit: boolean = false
+      for (const g of groups) {
+        if ((g.groupId ?? -1) === gid) {
+          hit = true
+          break
+        }
+      }
+      if (hit) {
+        alive.push(gid)
+      } else {
+        console.error(`[GRP-PRECHECK] delGroupById: 分组不存在 id=${gid}，已跳过`)
+      }
+    }
+    if (alive.length === 0) return
+    // ── 2026-11-02 回滚快照：失败时把这些书的 bookGroup 写回原值 ─────────────
+    const allBooks: Books[] = await BooksDao.search()
+    const snap: Books[] = []
+    for (const b of allBooks) {
+      if (b.bookGroup !== undefined && alive.indexOf(b.bookGroup) >= 0) {
+        snap.push(b)
+      }
+    }
+    try {
+      //同时更新书籍分组为未分组
+      // 2026-11-03（A3）：`queryBookByGroup` 实为写操作，已改名 `moveBooksToGroup`
+      await BooksDao.moveBooksToGroup(alive, 3)
+      //删除分组
+      await BookGroupsDao.deleteBook(alive)
+      // ── 2026-11-02 第 24 轮（D2/S8）两处修正 ─────────────────────────────────
+      // ① 事件改到 `refreshHiddenGroupIds()` **之后**：旧写法在 try 内、刷新隐藏集合之前 emit，
+      //    万一刷新抛异常就会"事件已发出、随后回滚"，订阅方看到结构变了但数据没变。
+      // ② 新增 `emitEvent` 开关（默认 true = 行为不变）：批量场景由调用方传 **一次数组**
+      //    或传 false 后统一发一次，满足 S8「一次操作只发一次事件」。
+      await GroupStore.refresh()
+      if (emitEvent) {
+        GroupEvents.emit([], [])
+      }
+    } catch (e) {
+      console.error(`[GRP-ROLLBACK] delGroupById 失败 ids=${alive.join(',')}：${JSON.stringify(e)}`)
+      let restored: number = 0
+      for (const b of snap) {
+        if (b.id === undefined) {
+          continue
+        }
+        try {
+          await BooksDao.updateBookGroup([b.id], b.bookGroup)
+          restored++
+        } catch (e2) {
+          console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${b.id}: ${JSON.stringify(e2)}`)
+        }
+      }
+      console.error(`[GRP-ROLLBACK] 已回滚 ${restored}/${snap.length} 本`)
+      throw e as Error
+    }
+  }
+
+  static async dissolveGroup(id: number, mode: string = 'keepChildren', emitEvent: boolean = true): Promise<void> {
+    if (id <= 0) {
+      return
+    }
+    const groups: BookGroups[] = await BookGroupsDao.search()
+    let parentId: number = 0
+    let exists: boolean = false
+    for (const g of groups) {
+      if ((g.groupId ?? -1) === id) {
+        parentId = g.parentId ?? 0
+        exists = true
+        break
+      }
+    }
+    // ── 2026-11-02 预检：分组不存在 ⇒ 直接返回（不半途改库、不误删） ──────────
+    if (!exists) {
+      console.error(`[GRP-PRECHECK] dissolveGroup: 分组不存在 id=${id}，已跳过`)
+      return
+    }
+    const target: number = parentId > 0 ? parentId : 3
+    // ── 2026-11-02 回滚快照：记录"哪些书来自哪个分组"，失败按快照逆序恢复 ──────
+    // 2026-11-03（P6/B1）：树一律取真源（GroupStore.reload 会先刷库再返回），
+    //   不再用调用方传进来的 list 自建树（那会把"筛选视图"和"真源"混为一谈）。
+    const truthTree: GroupTree = await GroupStore.reload()
+    const idsPreview: number[] = mode === 'collapse' ? truthTree.subtreeIds(id) : [id]
+    const allBooks: Books[] = await BooksDao.search()
+    const bookSnap: Books[] = []
+    for (const b of allBooks) {
+      if (b.bookGroup !== undefined && idsPreview.indexOf(b.bookGroup) >= 0) {
+        bookSnap.push(b)
+      }
+    }
+    try {      if (mode === 'collapse') {
+        // 2026-11-01：**全部解散** —— 整棵子树的书全部上提到父级，子树目录行全删
+        const tree: GroupTree = truthTree
+        const ids: number[] = tree.subtreeIds(id)
+        await BooksDao.moveBooksToGroup(ids, target)
+        await BookGroupsDao.deleteBook(ids)
+        await GroupStore.refresh()
+        // 2026-11-02 第 24 轮（D2）：解散原来**一次事件都不发** ⇒ 批量页的 S6 清空永远不触发、
+        //   真机上"解散后取不到 [GRP-EVENT]"就是这条导致的。放在最后一个 await 之后 = 成功才发。
+        if (emitEvent) {
+          GroupEvents.emit([], [])
+        }
+        return
+      }
+      // ① 直属书归还父级
+      await BooksDao.moveBooksToGroup([id], target)
+      // ② 子分组挂到同一父级（保持层级不断链）
+      const moved: number[] = []
+      for (const g of groups) {
+        if ((g.parentId ?? 0) === id && g.groupId !== undefined && g.groupId !== id) {
+          moved.push(g.groupId)
+        }
+      }
+      for (const cid of moved) {
+        for (const g of groups) {
+          if ((g.groupId ?? -1) === cid) {
+            g.parentId = parentId > 0 ? parentId : 0
+            await BookGroupsDao.update(g)
+            break
+          }
+        }
+      }
+      // ③ 删本分组行
+      await BookGroupsDao.deleteBook([id])
+      // 2026-11-02 第 24 轮（D2）：同上 —— 成功之后发**唯一一次**结构变更事件（最后一步，失败则不发）
+      if (emitEvent) {
+        GroupEvents.emit([], [])
+      }
+    } catch (e) {
+      // ── 失败回滚：把动过的书按快照写回原分组 ────────────────────────────────
+      console.error(`[GRP-ROLLBACK] dissolveGroup 失败 id=${id} mode=${mode}，开始回滚：${JSON.stringify(e)}`)
+      let restored: number = 0
+        for (const b of bookSnap) {
+          if (b.id === undefined) {
+            continue
+          }
+          try {
+            await BooksDao.updateBookGroup([b.id], b.bookGroup)
+            restored++
+          } catch (e2) {
+            console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${b.id}: ${JSON.stringify(e2)}`)
+          }
+        }
+      console.error(`[GRP-ROLLBACK] 已回滚 ${restored}/${bookSnap.length} 本`)
+      throw e as Error
+    }
+  }
+
+  static async dissolveGroups(ids: number[], mode: string = 'keepChildren', emitEvent: boolean = true): Promise<void> {
+    if (ids.length === 0) {
+      return
+    }
+    for (const id of ids) {
+      await GroupMutation.dissolveGroup(id, mode, false)
+    }
+    if (emitEvent) {
+      GroupEvents.emit([], [])
+    }
   }
 }
 

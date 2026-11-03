@@ -4,7 +4,8 @@
  * @className: BookSelectGroupDialog
  * 移动分组弹窗
  */
-import CommonConstants from '../../../../../common/constants/CommonConstants'
+import CommonConstants from '../../../../../common/constants/CommonConstants'
+import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import PaddingConstants from '../../../../../common/constants/PaddingConstants'
 // 2026-11-02 第 24 轮：隐藏/恢复显示改走唯一写入口（那条路才会发 GroupEvents）
@@ -979,7 +980,7 @@ export default struct BookSelectGroupDialog{
     switch (this.isMoveStatus){
       //0标识书籍
       case 0:
-        await booksUtils.updateBooks(this.Ids,this.moveGroupId);
+        await BooksMutation.moveTo(this.Ids, this.moveGroupId);
         // 2026-10-12：书移走后，检查原分组是否还有书，若无则自动解散
         await this.cleanupOldGroup()
         break
@@ -1228,7 +1229,7 @@ export default struct BookSelectGroupDialog{
       const bookIds: number[] = await BooksDao.queryBooksByGroupId([groupId])
       // ② 逐本删（`delBooksById` 内部清理书签/进度/封面，必须 await 完再继续）
       if (bookIds.length > 0) {
-        await booksUtils.delBooksById(bookIds)
+        await BooksMutation.remove(bookIds)
       }
       // ③ 再删分组行（此时组内已无书，内部"书置 3"是幂等的空操作）
       // 2026-11-02 第 26 轮（B③）：改走**唯一写入口** GroupMutation（它内部 emitEvent=false +

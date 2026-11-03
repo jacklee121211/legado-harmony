@@ -1,4 +1,5 @@
-import CommonConstants from '../../common/constants/CommonConstants'
+import CommonConstants from '../../common/constants/CommonConstants'
+import { BooksMutation } from '../../common/books/BooksMutation'
 import { Haptics } from '../../common/utils/Haptics';
 // 2026-09-21 精简：`ReadRecordItem` / `TagIndex` / `NoteIndex` 三个组件随
 // 「阅读记录」「分类标签」「笔记 Tab」一起移除，故不再 import；
@@ -179,7 +180,7 @@ export default struct BookDetailPage {
 
   // 加入书架函数
   addBookShelf() {
-    booksUtil.addBooks(this.bookData)
+    BooksMutation.add(this.bookData)
     DialogHost.openIf(this.dialogController);
     this.isAddBookShelf = true; // 1s后关闭dialog
     setTimeout(() => {

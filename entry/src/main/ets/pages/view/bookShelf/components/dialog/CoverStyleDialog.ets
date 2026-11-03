@@ -1,4 +1,5 @@
 import { Haptics } from '../../../../../common/utils/Haptics'
+import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import UiMotion, { runJellyClick } from '../../../../../common/utils/UiMotion'
 import { pickerAvatar } from '../../../../../common/utils/photoViewPicker'
 import { showMessage } from '../../../../../componets/common/promptShow'
@@ -179,7 +180,7 @@ export default struct CoverStyleDialog {
     this.saving = true
     const b: Books = this.bookData
     b.customCoverUrl = value
-    booksUtil.addBooks(b).then((): void => {
+    BooksMutation.add(b).then((): void => {
       this.saving = false
       // 广播书架刷新（依据见本字段注释；与删除/置顶同一条公共信号）
       ShelfRefresh.books()

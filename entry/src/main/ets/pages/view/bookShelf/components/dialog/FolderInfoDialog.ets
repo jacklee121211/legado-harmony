@@ -762,7 +762,7 @@ export default struct FolderInfoDialog{
       // 2026-11-02：分组结构已安全变更，最后才真正删除被覆盖的旧书文件
       for (const oldId of pendingDelete) {
         try {
-          await booksUtil.delBooksById([oldId])
+          await BooksMutation.remove([oldId])
         } catch (e4) {
           console.error(`[DISSOLVE-CLEANUP] 删除旧书失败 id=${oldId}: ${JSON.stringify(e4)}`)
         }
@@ -809,7 +809,7 @@ export default struct FolderInfoDialog{
       // ① 本组自己的书：真删
       const own: number[] = await booksDao.queryBooksByGroupId([gid])
       if (own.length > 0) {
-        await booksUtil.delBooksById(own)
+        await BooksMutation.remove(own)
       }
       // ② 子分组：**一律上提一级**（2026-11-01 用户拍板：空目录也保留，不再自动删空子树，
       //    否则会与「空目录一律保留」规则冲突，也会把用户刚建的空分组静默吃掉）
@@ -843,7 +843,7 @@ export default struct FolderInfoDialog{
       for (const id of ids) {
         const bookIds: number[] = await booksDao.queryBooksByGroupId([id])
         if (bookIds.length > 0) {
-          await booksUtil.delBooksById(bookIds)
+          await BooksMutation.remove(bookIds)
           bookCount += bookIds.length
         }
       }
@@ -1018,7 +1018,7 @@ export default struct FolderInfoDialog{
           continue
         }
         if (choice === 0 && idx >= 0) {
-          await booksUtil.delBooksById([conflicts[idx].oldId])
+          await BooksMutation.remove([conflicts[idx].oldId])
         }
         if (choice === 1) {
           b.bookName = `${b.bookName} (2)`

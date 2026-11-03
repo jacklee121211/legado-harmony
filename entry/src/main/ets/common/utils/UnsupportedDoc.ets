@@ -13,7 +13,8 @@
  *  - `fs.copyFile(src: string | number, dest: string | number, mode?: number)`（`@ohos.file.fs.d.ts:761`）。
  * 源文件始终是数据库里的原始 `bookUrl`（不导出转换缓存）。
  */
-import { common } from '@kit.AbilityKit';
+import { common } from '@kit.AbilityKit';
+import { BooksMutation } from '../books/BooksMutation'
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { UIContext } from '@kit.ArkUI';
@@ -86,7 +87,7 @@ export class UnsupportedDoc {
   static async deleteBook(book: Books, ui: UIContext): Promise<void> {
     try {
       if (book.id !== undefined && book.id !== null) {
-        await booksUtil.delBooksById(book.id);
+        await BooksMutation.remove(book.id);
       }
       // 2026-11-03（B1）：刷新信号统一走门面（唯一写点），行为等价（仍是加一）
       ShelfRefresh.books();

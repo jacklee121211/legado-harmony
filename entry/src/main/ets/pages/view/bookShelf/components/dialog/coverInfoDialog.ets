@@ -1,4 +1,5 @@
-import { pickerAvatar } from '../../../../../common/utils/photoViewPicker'
+import { pickerAvatar } from '../../../../../common/utils/photoViewPicker'
+import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import { CountLabel } from '../../../../../common/shelf/CountLabel'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import { NightMode } from '../../../../../common/utils/NightMode'
@@ -434,7 +435,7 @@ export default struct coverInfoDialog{
           continue
         }
         b.customCoverUrl = this.itemData.coverUrl
-        await booksUtil.addBooks(b)
+        await BooksMutation.add(b)
       }
       // 覆盖改写了书行 ⇒ 书架列表也要重查（LazyForEach 键值含 customCoverUrl）
       ShelfRefresh.books()
@@ -573,7 +574,7 @@ export default struct coverInfoDialog{
     for (const b of targetBooks) {
       if ((b.customCoverUrl ?? '') !== '') {
         b.customCoverUrl = ''
-        await booksUtil.addBooks(b)
+        await BooksMutation.add(b)
         count++
       }
     }

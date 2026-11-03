@@ -1,4 +1,5 @@
-import { buttonList } from '../../../../../componets/dataList/buttonList'
+import { buttonList } from '../../../../../componets/dataList/buttonList'
+import { BooksMutation } from '../../../../../common/books/BooksMutation'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import { Books } from '../../../../../database/entities/Books'
 import { router } from '@kit.ArkUI'
@@ -496,7 +497,7 @@ export default struct BookInfoDialogs{
 
   async deleteBook(){
     if (this.bookData.id){
-      booksUtil.delBooksById(this.bookData.id)
+      BooksMutation.remove(this.bookData.id)
     }
     // let index = this.booksDataSource.getIndex(this.bookData)
     // this.booksDataSource.deleteData(index)
