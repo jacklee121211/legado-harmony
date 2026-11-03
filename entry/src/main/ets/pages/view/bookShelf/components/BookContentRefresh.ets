@@ -30,7 +30,6 @@ import { GroupTree } from '../../../../common/group/GroupTree'
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
 // P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
-import { GroupFlags } from '../../../../common/group/GroupFlags'
 // 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
 import { ShelfRefresh } from '../../../../common/shelf/ShelfRefresh';
@@ -652,9 +651,7 @@ export default struct BookContentRefresh {
           // ★ P4-U1（2026-11-02 第 23 轮）双轨：开关打开时这块**不再**当兄弟节点排版，
           //   而是作为书籍 List 的 header 传下去（`childGroupGrid(true)`）——
           //   否则网格不自带滚动、书在自己的 List 里滚 ⇒ 分组钉死、书单独滑（U1 割裂）。
-          if (!GroupFlags.USE_UNIFIED_SCROLL && this.hasChildGrid()) {
-            this.childGroupGrid(false)
-          }
+          // 2026-11-03（Ⅱ-3）：开关已删 —— 子分组宫格固定走"作为列表头"（下方 useHeaderInList），本分支为死代码
 
           if (this.onRecentChip) {
             BookContent({
@@ -679,7 +676,7 @@ export default struct BookContentRefresh {
               // ── P4-U1 双轨（2026-11-02）：分组网格作为列表头 ⇒ 与书籍同域滚动 ──
               // ⚠️ 父级侧**必须**是箭头函数闭包，不能写 `header: this.childGroupGrid`
               //   （`ReaderPage3.ets:1051` 与 `ReaderSettingDialog.ets:23` 都记了这条）。
-              useHeaderInList: GroupFlags.USE_UNIFIED_SCROLL && this.hasChildGrid(),
+              useHeaderInList: this.hasChildGrid(),
               header: (): void => {
                 this.childGroupGrid(true)
               }
@@ -818,4 +815,6 @@ export default struct BookContentRefresh {
     })
   }
 }
+
+
 

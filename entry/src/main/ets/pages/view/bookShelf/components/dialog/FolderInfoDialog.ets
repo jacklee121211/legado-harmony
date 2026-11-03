@@ -13,7 +13,6 @@ import { GroupMutation } from '../../../../../common/group/GroupMutation'
 import { DialogHost } from '../../../../../common/dialog/DialogHost'
 // 2026-11-02 第 26 轮（B②）：分组树唯一真源
 import { GroupStore } from '../../../../../common/group/GroupStore'
-import { GroupFlags } from '../../../../../common/group/GroupFlags'
 import booksDao from '../../../../../database/dao/BooksDao'
 import BookSelectGroupDialog from './BookSelectGroupDialog'
 import booksUtil from '../../../../../common/utils/booksUtils'
@@ -1199,15 +1198,12 @@ export default struct FolderInfoDialog{
   hideGroup(){
     this.itemData.show = this.itemData.show ? false : true
     if (this.itemData.groupId) {
-      if (GroupFlags.USE_MUTATION_IN_DIALOG) {
+      // 2026-11-03（Ⅱ-3）：双轨开关已删 —— 隐藏固定走唯一写入口
         // 2026-11-02 架构收敛 P2-1：走唯一写入口（刷新真源 + 单次事件）；
         //   旧信号仍保留在 setTimeout 里，供双轨期未迁移的组件消费。
         GroupMutation.setVisible(this.itemData.groupId, this.itemData.show).catch((e: Error): void => {
           console.error(`[GRP-MUTATION] setVisible failed: ${e.message}`)
         })
-      } else {
-        bookGroupUtil.updateGroupShow(this.itemData.groupId)
-      }
     }
     setTimeout(()=>{
       ShelfRefresh.groups()
@@ -1242,4 +1238,6 @@ export default struct FolderInfoDialog{
   })
 
 }
+
+
 

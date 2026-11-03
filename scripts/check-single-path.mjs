@@ -126,8 +126,8 @@ const INVENTORY = [
     label: '双轨旧分支读取点（GroupFlags.USE_*）',
     pattern: /GroupFlags\.USE_\w+/,
     allow: (rel) => rel === 'common/group/GroupFlags.ets',
-    budget: 5,
-    note: '开关是安全网；删一处旧分支就把 budget 降一（实测 5 处读取点）',
+    budget: 0,
+    note: '2026-11-03（Ⅱ-3）：5 处读取点已随旧分支删除 ⇒ 预算 5→0；GroupFlags.ets 本身保留一个版本（已标 deprecated）'
   },
   {
     id: 'hidden-state-owner',
@@ -325,4 +325,5 @@ for (const v of violations) {
   if (v.text) console.log(`      ${v.text}`);
 }
 process.exit(1);
+
 

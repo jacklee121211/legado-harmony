@@ -19,7 +19,6 @@ import { showMessage } from '../../../../componets/common/promptShow'
 import { IncomingFiles, INCOMING_TICK } from '../../../../common/format/IncomingFiles'
 import { intl } from '@kit.LocalizationKit'
 // P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
-import { GroupFlags } from '../../../../common/group/GroupFlags'
 
 /** 2026-11-01：进出分组时复用列表缓存（改 false 即完全回到"每次重查"的旧行为） */
 const REUSE_LIST_CACHE: boolean = true
@@ -677,14 +676,15 @@ export default struct BookContent {
         //   · 开（`USE_UNIFIED_SCROLL=true` 且本页确实有头）：网格进 `ListItemGroup.header`，
         //     全宽（`list_item_group.d.ts:207-208`），书籍仍按 `lanes` 排（`list.d.ts:928-929`）；
         //   · 关（默认）：**逐字节回到旧结构** —— LazyForEach 直接是 List 的子节点。
-        if (GroupFlags.USE_UNIFIED_SCROLL && this.useHeaderInList) {
+        // 2026-11-03（Ⅱ-3）：开关已删 —— 有头就走进 ListItemGroup.header（同域滚动），无头直接 bookItems
+        if (this.useHeaderInList) {
           ListItemGroup({ header: this.headerSlot, space: 10 }) {
             this.bookItems()
           }
           .width('100%')
-        } else {
-          this.bookItems()
         }
+
+
       }
       .alignListItem(ListItemAlign.Center)
       .layoutWeight(1)
@@ -768,3 +768,5 @@ export default struct BookContent {
     }
   }
 }
+
+

@@ -22,7 +22,6 @@ import { Books } from '../../../database/entities/Books'
 import BooksDao from '../../../database/dao/BooksDao'
 import { GroupTree } from '../../../common/group/GroupTree'
 import { GroupStore } from '../../../common/group/GroupStore'
-import { GroupFlags } from '../../../common/group/GroupFlags'
 // 2026-11-02 第 25 轮（P3 弹窗收口）：所有弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../common/dialog/DialogHost'
 
@@ -183,7 +182,7 @@ export default struct BookFolder {
     // ── 2026-11-02 架构收敛 P1-2（双轨开关）───────────────────────────────
     //   true  ⇒ 走 GroupStore（唯一树真源），本页不再自建树；
     //   false ⇒ 完全走旧实现（默认，行为零变化；真机对照一致后再切 true）。
-    if (GroupFlags.USE_STORE_IN_FOLDER) {
+    // 2026-11-03（Ⅱ-3）：双轨开关已删 —— 书架分组页固定走 GroupStore（唯一树真源），旧实现整段删除
       await GroupStore.refresh()
       const all: BookGroups[] = GroupStore.groupsOfType(this.currentIndex)
       await bookGroupUtil.fillRealBookIds(all, this.currentIndex)
@@ -211,44 +210,7 @@ export default struct BookFolder {
           ShelfPrefs.getSortDir() === 1)
         : []
       return keptByStore
-    }    const val: BookGroups[] = await BookGroupsDao.search({
-      type: this.currentIndex
-    })
-    await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
-    // ── 2026-11-01 多级文件夹：建树（父子 / 深度）+ 拉 2×2 预览用的书 ──────────
-    this.tree = GroupTree.build(val)
-    // 2026-11-01：剔除孤儿分组（父级缺失/自环），否则会被当成根级卡片重复展示
-    const kept: BookGroups[] = []
-    for (const g of val) {
-      if (!this.tree.isOrphan(g)) {
-        kept.push(g)
-      }
-    }
-    val.length = 0
-    for (const g of kept) {
-      val.push(g)
-    }
-    const visibleIds: number[] = []
-    for (const g of val) {
-      if (g.groupId === undefined || !g.show) {
-        continue
-      }
-      // 与 build() 的过滤条件保持一致：除「未分组」外的系统单元不是"装书的地方"
-      if (g.isSystem && g.groupName !== '未分组') {
-        continue
-      }
-      visibleIds.push(g.groupId)
-    }
-    // 2026-11-01：每组预取 4 本（原来 2 本）—— 未分组书多，只取 2 本时
-    //   epub 等带自带封面的书可能压根没被取到，宫格里看不到它的封面。
-    //   排序与书列表同源（`ShelfPrefs.getSortKey()`），保证宫格顺序 = 点进去的列表顺序。
-    this.previewBooks = visibleIds.length > 0
-      ? await BooksDao.queryPreviewByGroups(visibleIds, 4, ShelfPrefs.getSortKey(),
-        ShelfPrefs.getSortDir() === 1)
-      : []
-    return val
   }
-
   // ── 2026-11-01 多级文件夹：2×2 预览的数据取用 ────────────────────────────────
   /**
    * 直属子分组（`parentId === 本组 id`）。
@@ -863,3 +825,5 @@ export default struct BookFolder {
     DialogHost.openIf(this.worksCoverDialog)
   }
 }
+
+
