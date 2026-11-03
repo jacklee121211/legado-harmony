@@ -8,7 +8,7 @@ import { GroupMutation } from '../../../../common/group/GroupMutation'
 import { DialogHost } from '../../../../common/dialog/DialogHost'
 import { gKey, bKey, USE_SEPARATED_KEYS, isGroupKey, idOfKey } from '../../../../common/manage/SelectionKeys'
 import { Haptics } from '../../../../common/utils/Haptics';
-import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
+import { ShelfCollection } from '../../../../common/shelf/ShelfCollection'
 import {showMessage} from '../../../../componets/common/promptShow'
 import confirmDialogExample from '../../../../componets/common/confirmDialog';
 import BookFolderManages from './bookManage/BookFolderManages';
@@ -178,12 +178,13 @@ export default struct BookManagePage {
     // 2026-11-01 二修：书籍区只放**本分组自己的书**（用户：21 是文件夹，不该把它的书
     //   摊到书籍区；点文件夹本身就等于选中它里面的所有书）。
     //   子分组的书仍参与"选父 → 分享"的范围（由 currentSelection 的 subtree 展开负责）。
+    // 2026-11-03（Ⅲ-1）：查询口径统一走 `ShelfCollection`（最近 = 全部书 + 最近降序锁死）
+    const col: ShelfCollection = ShelfCollection.resolve(this.onRecentChip, this.bookTypeNumber)
     const val: Books[] = await booksDao.searchPage({
       type:this.currentIndex,
-      bookGroup:this.bookTypeNumber,
-      // 2026-11-01：排序与所在页一致 —— 最近 = 最近阅读降序(2)，其余走 ShelfPrefs 档位
-      sortKey: this.onRecentChip ? 2 : ShelfPrefs.getSortKey(),
-      sortDir: this.onRecentChip ? 1 : ShelfPrefs.getSortDir()
+      bookGroup: col.bookGroup,
+      sortKey: col.sortKey,
+      sortDir: col.sortDir
     },1,0)
     this.bookList = val
   }
@@ -303,7 +304,7 @@ export default struct BookManagePage {
     this.bookTypeNumber = this.routeParam.bookTypeNumber
     // 2026-11-01：入口态（最近/全部/分组/未分组）
     this.onRecentChip = this.routeParam.onRecentChip ?? false
-    this.pageInit()
+    this.pageInit().catch((e: Error): void => { console.error('[GRP] pageInit failed: ' + e.message) })
     GroupEvents.subscribe(this.groupChangedListener)
     // ── 碰一碰 / 隔空传送（2026-10-25 收口到 BookShareBridge）──────────────────
     // 官方要求：进入可分享页面注册、离开页面（含退后台）注销。
@@ -344,15 +345,17 @@ export default struct BookManagePage {
     }
   }
 
-  pageInit(): void {
+  // 2026-11-03（Ⅲ-1）：改 async —— 内部 getBookList 需要 await（避免先渲染空列表再跳的闪动）
+  async pageInit(): Promise<void> {
     // 2026-11-01：进入页面先清空上一页的勾选状态（否则子目录会沿用父页的全选，
     //   表现为"全选一直亮着"且分享范围被放大成整个父目录）
     this.checkLists = {}
     this.allCheck = false
     // 2026-11-01：从「最近」进入 ⇒ 批量管理按"全部书"处理（最近 = 全部书 + 最近阅读排序）
+    // 2026-11-03（Ⅲ-1）：归一规则收敛到 `ShelfCollection.batchEntryGroup()`
     if (this.onRecentChip) {
-      this.bookTypeNumber = 2
-      this.getBookList()
+      this.bookTypeNumber = ShelfCollection.batchEntryGroup(true, this.bookTypeNumber)
+      await this.getBookList()
       this.isMoveStatus = 0
       return
     }
@@ -1754,7 +1757,7 @@ export default struct BookManagePage {
       showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子文件夹已上提）')
       ShelfRefresh.books()
       ShelfRefresh.groups()
-      this.pageInit()
+      this.pageInit().catch((e: Error): void => { console.error('[GRP] pageInit failed: ' + e.message) })
     } catch (e) {
       console.error('runDissolve failed: ' + JSON.stringify(e))
       showMessage('解散失败')
@@ -1980,3 +1983,4 @@ struct ManageToolButton {
     })
   }
 }
+

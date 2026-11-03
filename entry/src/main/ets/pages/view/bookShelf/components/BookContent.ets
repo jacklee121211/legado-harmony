@@ -8,6 +8,7 @@ import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import DataBase from '../../../../database/index'
 import { Books } from '../../../../database/entities/Books'
 import { BooksTypeSearchParams } from '../../../../database/types/BooksType'
+import { ShelfCollection } from '../../../../common/shelf/ShelfCollection'
 import BookInfoGrids from './BookInfoGrids'
 import BookInfos from './BookInfos'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
@@ -154,9 +155,11 @@ export default struct BookContent {
     // 续页门槛用的是分组计数，`onReachEnd` 会算错 ⇒ 翻页提前停止。
     // 2026-11-02：计数也要排除隐藏分组（与 getBookList 同源设置）
     booksDao.setHiddenGroupIds(await bookGroupUtils.hiddenSubtreeIds());
+    // 2026-11-03（Ⅲ-1）：计数口径同样走 `ShelfCollection`（原来这里是**第三份**重复的 ternary）
+    const col: ShelfCollection = ShelfCollection.resolve(this.onRecentChip, this.bookTypeNumber)
     this.bookCount =  await booksDao.getBookCount({
       type:this.currentIndex,
-      bookGroup: this.onRecentChip ? 2 : this.bookTypeNumber,
+      bookGroup: col.bookGroup,
     })
   }
   @State bookCount:number = 0
@@ -277,19 +280,14 @@ export default struct BookContent {
    * （原文见该方法的注释：「`bookGroup = 2` → 不加分组条件（"全部"）」）。
    */
   private buildQueryParams(): BooksTypeSearchParams {
-    if (this.onRecentChip) {
-      return {
-        type: this.currentIndex,
-        bookGroup: 2,
-        sortKey: SortKey.RECENT_READ,
-        sortDir: SortDir.DESC
-      };
-    }
+    // 2026-11-03（Ⅲ-1）：口径统一走 `ShelfCollection.resolve()` —— 书架与批量管理**同一份**语义，
+    //   不再各自写一遍"最近 = bookGroup 2 + 最近阅读降序"（数字硬编码是分叉的温床）。
+    const col: ShelfCollection = ShelfCollection.resolve(this.onRecentChip, this.bookTypeNumber)
     return {
       type: this.currentIndex,
-      bookGroup: this.bookTypeNumber,
-      sortKey: ShelfPrefs.getSortKey(),
-      sortDir: ShelfPrefs.getSortDir()
+      bookGroup: col.bookGroup,
+      sortKey: col.sortKey,
+      sortDir: col.sortDir
     };
   }
 
@@ -676,12 +674,18 @@ export default struct BookContent {
         //   · 开（`USE_UNIFIED_SCROLL=true` 且本页确实有头）：网格进 `ListItemGroup.header`，
         //     全宽（`list_item_group.d.ts:207-208`），书籍仍按 `lanes` 排（`list.d.ts:928-929`）；
         //   · 关（默认）：**逐字节回到旧结构** —— LazyForEach 直接是 List 的子节点。
-        // 2026-11-03（Ⅱ-3）：开关已删 —— 有头就走进 ListItemGroup.header（同域滚动），无头直接 bookItems
+        // 2026-11-03（Ⅱ-3）：开关已删 —— 有头就走 `ListItemGroup.header`（同域滚动）
+        // ⚠️ 2026-11-03（Ⅲ-1 修复）：**必须保留 else 分支**。
+        //   Ⅱ-3 删开关时漏掉了"无分组头"这一侧，导致「全部 / 最近」整页空白（真机截图
+        //   rows=21` 证明数据已查到、只是没渲染。「分组」页因为有 header 才看起来正常 ——
+        //   这正是"只验一条渲染路径"的代价，已记入真源文档 §30。
         if (this.useHeaderInList) {
           ListItemGroup({ header: this.headerSlot, space: 10 }) {
             this.bookItems()
           }
           .width('100%')
+        } else {
+          this.bookItems()
         }
 
 
@@ -768,5 +772,6 @@ export default struct BookContent {
     }
   }
 }
+
 
 

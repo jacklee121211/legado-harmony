@@ -155,6 +155,15 @@ const INVENTORY = [
     note: '2026-11-03（Ⅱ-3）：5 处读取点已随旧分支删除 ⇒ 预算 5→0；GroupFlags.ets 本身保留一个版本（已标 deprecated）'
   },
   {
+    id: 'collection-semantics-fork',
+    label: '集合语义分叉（最近/全部 口径写死在各处）',
+    pattern: /(onRecentChip\s*\?\s*2\b)|(bookGroup:\s*2\b)/,
+    // 唯一允许：集合语义真源自身
+    allow: (rel) => rel === 'common/shelf/ShelfCollection.ets',
+    budget: 0,
+    note: '2026-11-03（Ⅲ-1）：统一走 ShelfCollection.resolve()；闸门防"又有人在一处写死 bookGroup: 2"',
+  },
+  {
     id: 'hidden-state-owner',
     label: '隐藏集合写入点（第二份状态的回归闸门）',
     pattern: /GroupStore\.setHiddenIds\s*\(/,
