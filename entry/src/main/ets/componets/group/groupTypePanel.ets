@@ -250,7 +250,7 @@ export default struct groupTypePanel {
   /**
    * 主文字色 / 次级文字色 / 淡色块底 —— 夜间必须自己翻，否则是**黑字压深底**。
    *
-   * 为什么不能靠 `$r('app.string.color_black_*')` 的 dark 限定词：本面板这两处用的是
+   * 为什么不能靠 `$r('app.color.color_black_*')` 的 dark 限定词：本面板这两处用的是
    * **字面量** `rgba(0,0,0,…)`（不是资源），限定词目录管不到。
    * 本面板唯一的宿主是 `GroupManageDialog`（书架 → 分组管理）⇒ 恒属"书架深色档"，
    * 直接读全局夜间开关是安全的。

@@ -206,16 +206,16 @@ export default struct CoverStyleDialog {
       Row() {
         Text('封面样式')
           .fontSize(16).fontWeight(600)
-          .fontColor($r('app.string.color_black_88'))
+          .fontColor($r('app.color.color_black_88'))
         Blank()
         if (this.canReset()) {
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
               .fontSize(15)
-              .fontColor([this.resetRequested ? Color.White : $r('app.string.color_black_65')])
+              .fontColor([this.resetRequested ? Color.White : $r('app.color.color_black_65')])
             Text('重置')
               .fontSize(12)
-              .fontColor(this.resetRequested ? Color.White : $r('app.string.color_black_65'))
+              .fontColor(this.resetRequested ? Color.White : $r('app.color.color_black_65'))
           }
           .height(30)
           .padding({ left: 12, right: 12 })
@@ -349,7 +349,7 @@ export default struct CoverStyleDialog {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor($r('app.string.color_black_65'))
+          .backgroundColor($r('app.color.color_black_65'))
           .fontColor(Color.White)
           .fontSize(15)
           .onClick(() => {

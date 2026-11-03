@@ -249,7 +249,7 @@ export default struct BookInfoDialogs{
           .draggable(false)
           .borderRadius(4)
         Column({ space: 4 }){
-          Text(this.bookData.bookName).fontSize(16).fontWeight(500).fontColor($r('app.string.color_black_88'))
+          Text(this.bookData.bookName).fontSize(16).fontWeight(500).fontColor($r('app.color.color_black_88'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           // ── 「重命名」入口（2026-10-05 用户方案：作者行换成重命名入口，不再显示作者）──
@@ -260,8 +260,8 @@ export default struct BookInfoDialogs{
           Row({ space: 4 }){
             SymbolGlyph($r('sys.symbol.square_and_pencil'))
               .fontSize(13)
-              .fontColor([$r('app.string.color_black_45')])
-            Text('重命名').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
+              .fontColor([$r('app.color.color_black_45')])
+            Text('重命名').fontSize(12).fontWeight(400).fontColor($r('app.color.color_black_45'))
           }
           .scale({ x: this.renameScale, y: this.renameScale })
           .onClick((): void => {
@@ -285,8 +285,8 @@ export default struct BookInfoDialogs{
           }){
             SymbolGlyph($r('sys.symbol.picture'))
               .fontSize(14)
-              .fontColor([$r('app.string.color_black_45')])
-            Text('封面').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
+              .fontColor([$r('app.color.color_black_45')])
+            Text('封面').fontSize(12).fontWeight(400).fontColor($r('app.color.color_black_45'))
           }
           .onClick(()=>{
             Haptics.tap();
@@ -334,8 +334,8 @@ export default struct BookInfoDialogs{
           Row({
             space:4
           }){
-            Text('书籍详情').fontSize(12).fontWeight(400).fontColor($r('app.string.color_black_45'))
-            Image($r('app.media.icon_right')).width(20).height(20).fillColor($r('app.string.color_black_45'))
+            Text('书籍详情').fontSize(12).fontWeight(400).fontColor($r('app.color.color_black_45'))
+            Image($r('app.media.icon_right')).width(20).height(20).fillColor($r('app.color.color_black_45'))
           }
           .onClick(()=>{
             Haptics.tap();

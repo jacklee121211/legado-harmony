@@ -125,7 +125,7 @@ export default struct BookInfoGridManage{
           }.alignContent(Alignment.BottomStart)
         }
         .alignContent(Alignment.BottomEnd)
-        .backgroundColor($r('app.string.color_black_45'))
+        .backgroundColor($r('app.color.color_black_45'))
         .borderRadius(10)
       }
       .alignContent(Alignment.TopEnd)

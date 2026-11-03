@@ -78,7 +78,7 @@ export default struct dialogTitleFuction{
 
   /** 前景色：图标与文字**共用同一档**（日间黑 / 夜间白），保证图标不会比文字"重"或"轻" */
   private fgColor(): ResourceColor {
-    return this.nightStyle ? 'rgba(248, 249, 250, 0.88)' : $r('app.string.color_black_88')
+    return this.nightStyle ? 'rgba(248, 249, 250, 0.88)' : $r('app.color.color_black_88')
   }
 
   build() {

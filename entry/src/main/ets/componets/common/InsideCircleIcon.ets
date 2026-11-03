@@ -17,7 +17,7 @@ export default struct InsideCircleIcon{
       .border({width:0.5,color:'rgba(0, 0, 0, 0.15)'})
 
       Text(this.title)
-        .fontColor($r('app.string.color_black_65'))
+        .fontColor($r('app.color.color_black_65'))
         .fontSize(12)
         .fontWeight(400)
         .lineHeight(20)

@@ -114,9 +114,9 @@ export default struct coverInfoDialog{
           Column({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.picture'))
               .fontSize(20)
-              .fontColor([$r('app.string.color_black_45')])
+              .fontColor([$r('app.color.color_black_45')])
             Text('点击选择')
-              .fontColor($r('app.string.color_black_45'))
+              .fontColor($r('app.color.color_black_45'))
               .fontWeight(400)
               .fontSize(12)
               .lineHeight(16)
@@ -131,7 +131,7 @@ export default struct coverInfoDialog{
         }
         .borderRadius(5)
         // 深色衬底只在**有图**时当画框；空态必须透明
-        .backgroundColor(this.customPreviewSrc() !== '' ? $r('app.string.color_black_65') : Color.Transparent)
+        .backgroundColor(this.customPreviewSrc() !== '' ? $r('app.color.color_black_65') : Color.Transparent)
         .align(Alignment.Start)
         .width(CommonConstants.NOVEL_IMG_WIDTH)
         .height(CommonConstants.NOVEL_IMG_HEIGHT)
@@ -142,7 +142,7 @@ export default struct coverInfoDialog{
         Text('自定义')
           .fontWeight(400)
           .fontSize(14)
-          .fontColor($r('app.string.color_black_45'))
+          .fontColor($r('app.color.color_black_45'))
           .lineHeight(22)
         Radio({ value: JSON.stringify('1'), group: 'radioGroup' })
           .checked(this.selectedType === 1)

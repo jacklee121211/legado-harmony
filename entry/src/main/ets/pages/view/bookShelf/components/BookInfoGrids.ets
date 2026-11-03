@@ -181,7 +181,7 @@ export default struct BookInfoGrids{
         .alignContent(Alignment.BottomStart)
       }
       .alignContent(Alignment.TopEnd)
-      .backgroundColor($r('app.string.color_black_45'))
+      .backgroundColor($r('app.color.color_black_45'))
       .borderRadius(10)
       // 视觉升级（2026-09-21）：给整张封面卡片加柔和投影。
       // 纯增量属性，不动尺寸/布局 ⇒ 零回归风险。

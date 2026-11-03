@@ -95,6 +95,18 @@
     {
       "name": "night_text",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "color_black_45",
+      "value": "#73000000"
+    },
+    {
+      "name": "color_black_65",
+      "value": "#A6000000"
+    },
+    {
+      "name": "color_black_88",
+      "value": "#E0000000"
     }
   ]
 }

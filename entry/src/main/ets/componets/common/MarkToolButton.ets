@@ -13,7 +13,7 @@ export default struct MarkToolButton {
   label: string = ''
   iconFontSize: number = 24
   labelFontSize: number = 12
-  labelFontColor: ResourceColor = $r('app.string.color_black_65')
+  labelFontColor: ResourceColor = $r('app.color.color_black_65')
   onTap: () => void = (): void => {}
   @State jellyScale: number = 1
 
@@ -21,7 +21,7 @@ export default struct MarkToolButton {
     Column({ space: 6 }) {
       SymbolGlyph(this.icon)
         .fontSize(this.iconFontSize)
-        .fontColor([$r('app.string.color_black_65')])
+        .fontColor([$r('app.color.color_black_65')])
         .scale({ x: this.jellyScale, y: this.jellyScale })
       Text(this.label)
         .fontSize(this.labelFontSize).fontWeight(400)

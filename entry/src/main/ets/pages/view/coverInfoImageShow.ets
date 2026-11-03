@@ -62,7 +62,7 @@ export default struct coverInfoImageShow {
         Text('默认样式')
           .fontWeight(400)
           .fontSize(14)
-          .fontColor($r('app.string.color_black_45'))
+          .fontColor($r('app.color.color_black_45'))
           .lineHeight(22)
         Radio({value:JSON.stringify('0'),group:'radioGroup'})
           .checked(this.selectImage === 0)
@@ -113,9 +113,9 @@ export default struct coverInfoImageShow {
             Column({ space: 4 }) {
               SymbolGlyph($r('sys.symbol.picture'))
                 .fontSize(20)
-                .fontColor([$r('app.string.color_black_45')])
+                .fontColor([$r('app.color.color_black_45')])
               Text('点击选择')
-                .fontColor($r('app.string.color_black_45'))
+                .fontColor($r('app.color.color_black_45'))
                 .fontWeight(400)
                 .fontSize(12)
                 .lineHeight(16)
@@ -131,7 +131,7 @@ export default struct coverInfoImageShow {
         .borderRadius(5)
         // 2026-10-13：深色衬底只在**有图**时当"画框"用；空态必须透明，
         // 否则又会退化成用户看到的"灰块 + 框 + 黑字"。
-        .backgroundColor(this.imageString ? $r('app.string.color_black_65') : Color.Transparent)
+        .backgroundColor(this.imageString ? $r('app.color.color_black_65') : Color.Transparent)
         .align(Alignment.Start)
         .width(CommonConstants.NOVEL_IMG_WIDTH).height(CommonConstants.NOVEL_IMG_HEIGHT)
         .zIndex(2)
@@ -145,7 +145,7 @@ export default struct coverInfoImageShow {
         space:12
       }){
         Text('自定义')
-          .fontWeight(400).fontSize(14).fontColor($r('app.string.color_black_45')).lineHeight(22)
+          .fontWeight(400).fontSize(14).fontColor($r('app.color.color_black_45')).lineHeight(22)
         Radio({value:JSON.stringify('1'),group:'radioGroup'})
           .checked(this.selectImage === 1)
           .radioStyle({
