@@ -8,9 +8,9 @@ import { ShelfRefresh } from '../shelf/ShelfRefresh';
  * ② 工程已有约定：`captureQuickAction()` **只把意图写进 AppStorage，不在这里跳转**
  *    （`EntryAbility.ets:105-108`），由书架页消费。这里沿用同一条约定。
  *
- * 消费方：`BookContent.aboutToAppear`（DB 已就绪）+ `@StorageLink(INCOMING_TICK) @Watch`。
+ * 消费方：`BookContent.aboutToAppear`（DB 已就绪）→ `IncomingFiles.take()`。
+ *   ⚠️ 2026-11-04：原 `@StorageLink(INCOMING_TICK) @Watch` 消费通道已删（全仓零写入点，永不触发）。
  */
-export const INCOMING_TICK: string = 'FMT_INCOMING_TICK';
 export const INCOMING_LIST: string = 'FMT_INCOMING_LIST';
 
 export class IncomingFiles {

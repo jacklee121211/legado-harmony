@@ -18,7 +18,7 @@ import { NightMode, ShelfColors } from '../../../../common/utils/NightMode'
 import { FileHandler } from '../../../../common/utils/FileHandler'
 import { showMessage } from '../../../../componets/common/promptShow'
 // 外部文件接收（2026-10-19 双响炮）：EntryAbility 只登记，这里（DB 已就绪）才真正导入
-import { IncomingFiles, INCOMING_TICK } from '../../../../common/format/IncomingFiles'
+import { IncomingFiles } from '../../../../common/format/IncomingFiles'
 import { intl } from '@kit.LocalizationKit'
 // P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
 
@@ -114,12 +114,10 @@ export default struct BookContent {
     this.getBookList()
   }
 
-  /** 外部文件信号（应用已在后台时被唤起 ⇒ aboutToAppear 不会再跑，靠它） */
-  @StorageLink(INCOMING_TICK) @Watch('onIncomingFiles') incomingTick: number = 0
-
-  private onIncomingFiles(): void {
-    this.importIncomingFiles()
-  }
+  // 2026-11-04（P2 批 C-7）：原 `@StorageLink(FMT_INCOMING_TICK) @Watch(incomingTick)` 已删 ——
+  //   全仓**零写入点**（没有任何 `AppStorage.setOrCreate(INCOMING_TICK, …)`）⇒ 这个 @Watch 永不触发，
+  //   属"死通道"。前台接收分享文件时的自动导入因此**本来就不存在**（已记入遗留，待专项修）。
+  //   冷启动/切回前台仍由 `aboutToAppear → importIncomingFiles()` 兜住。
 
   /**
    * 导入"分享进来 / 用其他应用打开"的文件。
@@ -790,6 +788,5 @@ export default struct BookContent {
     }
   }
 }
-
 
 
