@@ -47,7 +47,7 @@
  * 用户原话：「只保留冷启动进入动画，进入后 dock 切换回书架，书架书籍无需动画。」
  * 实现：`begin()` 先过 `allowColdStartWave()` 闸门 —— 进程内**首个** begin() 开启一个
  * `COLD_WINDOW_MS` 的冷启动窗口，窗口内的 begin() 都算"冷启动那一波"（冷启动时
- * 书列表 / 文件夹 / 书单可能几乎同时各调一次）；窗口关掉之后，本进程内**任何** begin()
+ * 书列表 / 分组 / 书单可能几乎同时各调一次）；窗口关掉之后，本进程内**任何** begin()
  * 一律不生效。
  * 被闸掉的 begin() **不改** `running` / `startTs` ⇒ `delayFor()` 自然返回 -1
  * ⇒ 子组件（`BookInfos` / `BookInfoGrids`）收到 -1 就把 `entered` 置 true
@@ -76,7 +76,7 @@ export class EntranceWave {
   /**
    * 冷启动窗口时长（ms）：从进程内**第一次** `begin()` 起算。
    * 为什么要窗口而不是"首个 begin() 独占"：冷启动时书列表（`BookContent.getBookList`）、
-   * 文件夹（`BookFolder.getGroupList`）、书单（`WorksBookLists.getWorkLists`）都可能在
+   * 分组（`BookFolder.getGroupList`）、书单（`WorksBookLists.getWorkLists`）都可能在
    * 同一帧前后各开一次波，若只放行第一个，其余视图会突然"硬渲染"，冷启动观感不一致。
    * 取值 1500ms ≈ 默认档一整波的总时长（120 + 15×64 + 507 ≈ 1587ms），
    * 既覆盖同一次绘制的多次 begin，又不会把用户随后的切分类误判成冷启动。
@@ -156,7 +156,7 @@ export class EntranceWave {
    *
    * ⚠️ 2026-10-19（用户要求「只保留冷启动进入动画」）：以上调用点**全部**先过
    *    `allowColdStartWave()` 闸门 —— 只有冷启动那一波真正开得起来，
-   *    之后（dock 切回书架 / 切分类 / 切分组 / 进文件夹 / 切书单）一律不播。
+   *    之后（dock 切回书架 / 切分类 / 切分组 / 进分组 / 切书单）一律不播。
    */
   begin(): void {
     if (!EntranceWave.allowColdStartWave()) {
@@ -201,7 +201,7 @@ export class EntranceWave {
 }
 
 /**
- * 书架列表 / 宫格 / 文件夹 / 书单**共用**的同一波次。
+ * 书架列表 / 宫格 / 分组 / 书单**共用**的同一波次。
  *
  * 为什么共用一个实例而不是每个页面各一个：这些视图在同一个 Tabs 里互相切换
  * （`BookContentRefresh` 按 `bookTypeNumber` 分流），切过去的一瞬间

@@ -40,7 +40,7 @@ const SHARE_CURSOR_TTL_MS: number = 30 * 60 * 1000
 
 @CustomDialog
 /**
- * 文件夹长按弹窗
+ * 分组长按弹窗
  */
 export default struct FolderInfoDialog{
   controller?: CustomDialogController
@@ -365,7 +365,7 @@ export default struct FolderInfoDialog{
       case 2 :
         this.isFolderTop(); break;
       case 3 :
-        // 2026-11-01 多级文件夹：「移动至」= 把**分组本身**挂到另一个分组下（改 parentId）
+        // 2026-11-01 多级分组：「移动至」= 把**分组本身**挂到另一个分组下（改 parentId）
         this.openGroupMoveDialog(); break;
       case 4 :
         // 2026-10-25：「加入书单」入口已随书单功能删除 ⇒ 本分支不再可达
@@ -387,7 +387,7 @@ export default struct FolderInfoDialog{
         // 2026-11-01：含子分组时让用户选「一起解散 / 子组保留（上提一级）」；否则沿用旧确认框
         this.prepareDisbandThenOpen(); break;
       case 8 :
-        // 2026-11-01：删除 = **真删**（递归子文件夹 + 书文件），先算数量再弹确认
+        // 2026-11-01：删除 = **真删**（递归子分组 + 书文件），先算数量再弹确认
         this.prepareDeleteThenOpen(); break;
     }
   }
@@ -503,7 +503,7 @@ export default struct FolderInfoDialog{
   })
 
   @State delCache:boolean = false
-  /** 删除确认框标题（2026-11-01：按实际子文件夹数/书数动态生成） */
+  /** 删除确认框标题（2026-11-01：按实际子分组数/书数动态生成） */
   @State delTitle:string = '删除'
   //删除分组弹窗
   groupDelDialog: CustomDialogController | null = new CustomDialogController({
@@ -525,7 +525,7 @@ export default struct FolderInfoDialog{
   })
   // ── 删除分组（2026-11-01 按新语义重写）────────────────────────────────────
   /**
-   * 打开删除确认框前先算数量：删除 = **递归删子文件夹 + 真删书**（含书签/进度/封面文件）。
+   * 打开删除确认框前先算数量：删除 = **递归删子分组 + 真删书**（含书签/进度/封面文件）。
    *
    * 与「分组管理弹窗」的 `doDeleteGroup` 同一口径（`BookSelectGroupDialog.ets:661-681`）。
    * 回退：把 `folderInfo` 的 `case 8` 改回 `this.openChildDialog(this.groupDelDialog)`、
@@ -533,8 +533,8 @@ export default struct FolderInfoDialog{
    */
   /**
    * 「删除」三选一（2026-11-01 用户拍板）：
-   *   ① 全部删除 = 递归删子文件夹 + 真删书（不可恢复）；
-   *   ② 保留有书的子文件夹 = 删掉本组自己的书与空子文件夹，**有书的子文件夹上提一级**；
+   *   ① 全部删除 = 递归删子分组 + 真删书（不可恢复）；
+   *   ② 保留有书的子分组 = 删掉本组自己的书与空子分组，**有书的子分组上提一级**；
    *   ③ 取消。
    */
   private async prepareDeleteThenOpen(): Promise<void> {
@@ -554,10 +554,10 @@ export default struct FolderInfoDialog{
       const subCount: number = ids.length - 1
       this.openGroupActionDialog(
         `删除「${this.itemData.groupName ?? ''}」`,
-        `全部删除：${subCount} 个子文件夹、${bookCount} 本书一并删除（不可恢复）`,
-        '保留子文件夹：本组自己的书删除，子文件夹（含空目录）上提一级',
+        `全部删除：${subCount} 个子分组、${bookCount} 本书一并删除（不可恢复）`,
+        '保留子分组：本组自己的书删除，子分组（含空目录）上提一级',
         '全部删除',
-        '保留子文件夹',
+        '保留子分组',
         (): void => { this.deleteGroup() },
         (): void => { this.deleteGroupKeepChildFolders() }
       )
@@ -623,8 +623,8 @@ export default struct FolderInfoDialog{
       }
       this.openGroupActionDialog(
         `解散「${this.itemData.groupName ?? ''}」`,
-        `一起解散：连同 ${kids.length} 个子文件夹全部解散`,
-        '子组保留：子文件夹上提一级，书籍不受影响',
+        `一起解散：连同 ${kids.length} 个子分组全部解散`,
+        '子组保留：子分组上提一级，书籍不受影响',
         '一起解散',
         '子组保留',
         (): void => { this.dissolveGroup(false) },
@@ -848,7 +848,7 @@ export default struct FolderInfoDialog{
     }
   }
 
-  /** 删除但保留有书的子文件夹：本组自己的书删掉；有书的子组上提，空子树删除 */
+  /** 删除但保留有书的子分组：本组自己的书删掉；有书的子组上提，空子树删除 */
   private async deleteGroupKeepChildFolders(): Promise<void> {
     const gid: number = this.itemData.groupId ?? -1
     if (gid <= 0) {
@@ -866,7 +866,7 @@ export default struct FolderInfoDialog{
         await booksUtil.delBooksById(own)
       }
       // ② 子分组：**一律上提一级**（2026-11-01 用户拍板：空目录也保留，不再自动删空子树，
-      //    否则会与「空目录一律保留」规则冲突，也会把用户刚建的空文件夹静默吃掉）
+      //    否则会与「空目录一律保留」规则冲突，也会把用户刚建的空分组静默吃掉）
       // 2026-11-03（Ⅱ-1）：上提动作进写入口（`remove(gid, parentId)`）——
       //   原来在这里逐个子分组 `BookGroupsDao.updatePartialGroup`，属 UI 直写事实。
       // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）
@@ -918,7 +918,7 @@ export default struct FolderInfoDialog{
   }
 
   /**
-   * 移动「分组本身」（2026-11-01 多级文件夹）。
+   * 移动「分组本身」（2026-11-01 多级分组）。
    *
    * 与旧的「整组移动」不同：这里改的是 `book_groups.parentId`，不是把组内书搬走。
    * 目标可以是任意分组（含子目录），也可以挂回根目录（targetId = 0）。

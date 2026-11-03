@@ -64,12 +64,12 @@ export class GroupMutation {
   }
 
   /**
-   * 删除分组（书随删除，或保留子文件夹由上层已先行处理）
+   * 删除分组（书随删除，或保留子分组由上层已先行处理）
    *
    * ⚠️ 同上：`delGroupById(ids, false)` 关掉底层 emit，避免与 `afterChange` 双发（S8）。
    *
    * @param promoteChildrenTo 2026-11-03（Ⅱ-1）新增：≥0 时先把这些分组的**直属子分组**
-   *   `parentId` 改到该目标（= 「保留子文件夹」的"上提一级"），再删分组行；
+   *   `parentId` 改到该目标（= 「保留子分组」的"上提一级"），再删分组行；
    *   全过程**只发一次**结构事件。
    *   为什么放进入口而不是留在弹窗里：原来弹窗逐个 `BookGroupsDao.updatePartialGroup` 直接写库，
    *   属"UI 层直写事实"（闸门 `dao-write-in-ui` 计数 6 的来源之一）。

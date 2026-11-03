@@ -175,8 +175,8 @@ export default struct BookManagePage {
    *   旧实现 (1,100) 在批量导入超过 100 本时只显示前 100 本。
    */
   async getBookList(): Promise<void> {
-    // 2026-11-01 二修：书籍区只放**本分组自己的书**（用户：21 是文件夹，不该把它的书
-    //   摊到书籍区；点文件夹本身就等于选中它里面的所有书）。
+    // 2026-11-01 二修：书籍区只放**本分组自己的书**（用户：21 是分组，不该把它的书
+    //   摊到书籍区；点分组本身就等于选中它里面的所有书）。
     //   子分组的书仍参与"选父 → 分享"的范围（由 currentSelection 的 subtree 展开负责）。
     // 2026-11-03（Ⅲ-1）：查询口径统一走 `ShelfCollection`（最近 = 全部书 + 最近降序锁死）
     const col: ShelfCollection = ShelfCollection.resolve(this.onRecentChip, this.bookTypeNumber)
@@ -226,7 +226,7 @@ export default struct BookManagePage {
         val.push(g)
       }
     }
-    // 2026-11-01：根目录批量管理**只显示顶层自定义分组**（用户：根目录没必要显示子文件夹，
+    // 2026-11-01：根目录批量管理**只显示顶层自定义分组**（用户：根目录没必要显示子分组，
     //   要在子层处理就进去处理）。子层（>=5）仍按子树过滤。
     if (this.bookTypeNumber === 1) {
       const topOnly: BookGroups[] = []
@@ -1727,8 +1727,8 @@ export default struct BookManagePage {
     this.dissolveModeDialog = new CustomDialogController({
       builder: ThreeActionDialog({
         title: `解散 ${gids.length} 个分组`,
-        hintPrimary: '一起解散：子文件夹内的书全部上提到上级分组',
-        hintSecondary: '子组保留：子文件夹上提一级，书籍不受影响',
+        hintPrimary: '一起解散：子分组内的书全部上提到上级分组',
+        hintSecondary: '子组保留：子分组上提一级，书籍不受影响',
         primaryText: '一起解散',
         secondaryText: '子组保留',
         cancelText: '取消',
@@ -1754,7 +1754,7 @@ export default struct BookManagePage {
       // `dissolveGroups` = 逐个原子解散（各自预检/回滚）+ **最后只 emit 一次**。
       // 2026-11-03（A2）：走唯一写入口 dissolveMany（关掉底层 emit，由 afterChange 刷真源 + 只发一次）
       await GroupMutation.dissolveMany(gids, mode)
-      showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子文件夹已上提）')
+      showMessage(mode === 'collapse' ? '已解散（书籍已上提）' : '已解散（子分组已上提）')
       ShelfRefresh.books()
       ShelfRefresh.groups()
       this.pageInit().catch((e: Error): void => { console.error('[GRP] pageInit failed: ' + e.message) })
@@ -1827,7 +1827,7 @@ export default struct BookManagePage {
     }
   }
 
-  /** 2026-11-01：已选**本页可见**书籍数（子文件夹的书不铺开，故不在此计入） */
+  /** 2026-11-01：已选**本页可见**书籍数（子分组的书不铺开，故不在此计入） */
   private selectedBookCount(): number {
     let n: number = 0
     for (const b of this.bookList) {
@@ -1838,12 +1838,18 @@ export default struct BookManagePage {
     return n
   }
 
-  /** 2026-11-01：已选分组数（点分组=选中其整棵子树内的书，故单列显示） */
+  /**
+   * 已选**子分组**数（点分组 = 选中其整棵子树内的书，故单列显示）。
+   *
+   * 2026-11-03（Ⅱ-5，用户拍板）：**本分组自己不计入 y** —— 本分组那一步本质是
+   * 「本页全选/反选 + 其全部书籍总和的显示」，它不是"被选中的一个子分组"。
+   * 所以 z 只数**本页可见的子分组**（根级时即全部自定义顶层分组）。
+   */
   private selectedGroupCount(): number {
     let n: number = 0
     for (const g of this.bookGroups) {
       const gid: number = g.groupId ?? -1
-      if (gid > 0 && !g.isSystem && this.groupOn(gid)) {
+      if (gid > 0 && !g.isSystem && gid !== this.bookTypeNumber && this.groupOn(gid)) {
         n++
       }
     }

@@ -16,7 +16,7 @@ import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUti
 import { NightMode } from '../../../../common/utils/NightMode'
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
 import { ThemeItem } from '../../../../common/model/Theme'
-// ── 2026-11-01 多级文件夹：左下角常驻「新建分组」按钮（复用现有弹窗与动效）──────────
+// ── 2026-11-01 多级分组：左下角常驻「新建分组」按钮（复用现有弹窗与动效）──────────
 import addBookTypeDialog, { AddGroupChannel } from '../../../../componets/common/addBookTypeDialog'
 import { BookGroups } from '../../../../database/entities/BookGroups'
 import { Books } from '../../../../database/entities/Books'
@@ -74,15 +74,15 @@ export default struct BookContentRefresh {
   @StorageLink('SHELF_CURRENT_GROUP_NAME') currentGroupName: string = ''
   /** 「返回分组列表」按钮的 Q弹缩放（规范 §1 三件套） */
   @State backScale: number = 1
-  // ── 2026-11-01 多级文件夹：左下角「新建分组」按钮 ──────────────────────────
+  // ── 2026-11-01 多级分组：左下角「新建分组」按钮 ──────────────────────────
   /** 「+」按钮 Q弹缩放 */
   @State addScale: number = 1
   /** 新建分组的输入通道（与 `addBookTypeDialog` 共用 AppStorage key） */
   @StorageLink(AddGroupChannel.KEY_TEXT) newGroupName: string = ''
-  // ── 2026-11-01 多级文件夹：路径条 + 子文件夹行 ─────────────────────────────
+  // ── 2026-11-01 多级分组：路径条 + 子分组行 ─────────────────────────────
   /** 当前路径（首格是虚拟根「分组」id=1，后面是真实分组，根 → 当前） */
   @State pathChips: PathChip[] = []
-  /** 当前分组的直属子文件夹（进入父组后以横滑卡片行展示） */
+  /** 当前分组的直属子分组（进入父组后以横滑卡片行展示） */
   @State childGroups: BookGroups[] = []
   /** 子分组卡片 2×2 预览用的书（每组最多 2 本） */
   @State childPreviews: Books[] = []
@@ -95,7 +95,7 @@ export default struct BookContentRefresh {
   private onShelfRefresh(): void {
     this.onFolderChanged()
   }
-  // ── 2026-11-01：长按任意层级的子文件夹 → 与主栏同款分组弹窗 ──────────────────
+  // ── 2026-11-01：长按任意层级的子分组 → 与主栏同款分组弹窗 ──────────────────
   @State dialogGroupData: BookGroups = new BookGroups()
   groupInfoDialog: CustomDialogController | null = null
 
@@ -250,20 +250,20 @@ export default struct BookContentRefresh {
     showMessage(`已添加${name}分组`)
   }
 
-  // ── 2026-11-01 多级文件夹：路径条 / 子文件夹行 ──────────────────────────────
+  // ── 2026-11-01 多级分组：路径条 / 子分组行 ──────────────────────────────
   aboutToAppear(): void {
     this.onFolderChanged()
   }
 
   /**
-   * 层级变化：重算路径条 + 直属子文件夹。
+   * 层级变化：重算路径条 + 直属子分组。
    * 触发：① `bookTypeNumber` 变化（@Watch）；② 新建分组后手动调用。
    * 口径：`bookTypeNumber <= 1`（分组根 / 全部）或「最近」态 ⇒ 清空。
    */
   private async onFolderChanged(): Promise<void> {
     const id: number = this.bookTypeNumber
     // 2026-11-01：async 竞态保护 —— 快速进出/连点时，旧请求可能后返回并覆盖新页数据
-    //   （真机偶发"进入文件夹即时看不到子文件夹"，就是旧请求把 childGroups 清空了）
+    //   （真机偶发"进入分组即时看不到子分组"，就是旧请求把 childGroups 清空了）
     const token: number = ++this.folderToken
     if (id <= 2 || this.onRecentChip) {
       this.pathChips = []
@@ -292,7 +292,7 @@ export default struct BookContentRefresh {
       //   等查询回来再赋，中间会出现一帧"有子分组但没有封面"的行高，把下面的书籍
       //   网格整体推一下（用户：进入子分组时书"上移一下才消失"）。
       const childGroupsRaw: BookGroups[] = tree.childrenOf(id).filter((g: BookGroups): boolean => g.show)
-      // 2026-11-01：剔除孤儿分组（父级缺失/自环），避免子文件夹行里出现重复同名行
+      // 2026-11-01：剔除孤儿分组（父级缺失/自环），避免子分组行里出现重复同名行
       const childGroups: BookGroups[] = childGroupsRaw.filter((g: BookGroups): boolean => !tree.isOrphan(g))
       const childIds: number[] = []
       for (const g of childGroups) {
@@ -309,7 +309,7 @@ export default struct BookContentRefresh {
         ? await BooksDao.queryPreviewByGroups(childIds, 2, ShelfPrefs.getSortKey(), ShelfPrefs.getSortDir() === 1) : []
       // ── 2026-11-02 第 26 轮（真机取证修）：**子分组卡片的「共N本」必须现算** ─────────────
       // 缺陷（dev-verify 真机 dump `2026-11-04-A-verify/50-verify-1-cards.json`）：
-      //   分组「1」里的子文件夹「12」卡片写 `共1本 · 1个文件夹`，点进去实际 **3 本**
+      //   分组「1」里的子分组「12」卡片写 `共1本 · 1个分组`，点进去实际 **3 本**
       //   （龙域 / 天王 / 战国福星大事记）。
       // 数据库取证（拉 device novel.db + WAL，`node:sqlite` 直查）：
       //   `SELECT COUNT(*) FROM books WHERE bookGroup=10` = **3**；
@@ -342,7 +342,7 @@ export default struct BookContentRefresh {
     }
   }
 
-  /** 跳到某个分组（路径条 / 子文件夹行共用）；只改 bookTypeNumber，不动 GROUP */
+  /** 跳到某个分组（路径条 / 子分组行共用）；只改 bookTypeNumber，不动 GROUP */
   private jumpToFolder(id: number): void {
     if (id <= 0 || id === this.bookTypeNumber) {
       return
@@ -423,7 +423,7 @@ export default struct BookContentRefresh {
         break
       }
       // 2026-11-01：解析不到封面时必须回退**默认书封面** ——
-      //   真机证据：11 的四宫格只显示 1 张（子文件夹默认封面），2 本书是空底色，
+      //   真机证据：11 的四宫格只显示 1 张（子分组默认封面），2 本书是空底色，
       //   因为 resolveBookCover 返回 '' 而这里没有兜底（根层 cellsOf 有兜底，子层漏了）。
       // resolveBookCover 返回 ResourceStr（可能是 $r 资源，也可能是路径字符串）
       const cov: ResourceStr = resolveBookCover(b)
@@ -479,7 +479,7 @@ export default struct BookContentRefresh {
         .width('100%')
         .justifyContent(FlexAlign.Center)
       }
-      // 2026-11-01：子层卡片补计数（真机实测：根层有「共N本 · M个文件夹」，子层只有名字）
+      // 2026-11-01：子层卡片补计数（真机实测：根层有「共N本 · M个分组」，子层只有名字）
       Text(this.childCountLabel(g))
         .fontSize(12)
         .fontColor('rgb(174,174,174)')
@@ -492,14 +492,14 @@ export default struct BookContentRefresh {
     .width('100%')
   }
 
-  /** 子分组卡片副标题：直属书数 + **该分组的直属子文件夹数**（与根层 countLabel 同口径） */
+  /** 子分组卡片副标题：直属书数 + **该分组的直属子分组数**（与根层 countLabel 同口径） */
   private childCountLabel(g: BookGroups): string {
     const books: number = g.bookIds?.length ?? 0
     // 2026-11-01 修正：不能用 this.childGroups（那只是"当前目录"的子级），
     //   要用整棵树取该分组自己的子级，否则孙目录不会被计入（真机：11 有子目录 111 却只显示共1本）
     const kids: number = (g.groupId !== undefined && this.tree !== null)
       ? this.tree.childrenOf(g.groupId).length : 0
-    return kids > 0 ? `共${books}本 · ${kids}个文件夹` : `共${books}本`
+    return kids > 0 ? `共${books}本 · ${kids}个分组` : `共${books}本`
   }
   private childBooksOf(g: BookGroups): Books[] {
     const out: Books[] = []
@@ -671,7 +671,7 @@ export default struct BookContentRefresh {
               bookTypeNumber:this.bookTypeNumber,
               EXHIBIT: this.EXHIBIT,
               searchValue: this.searchValue,
-              // 2026-11-01：本分组有子文件夹时（哪怕空的），不显示"暂无书籍"空态
+              // 2026-11-01：本分组有子分组时（哪怕空的），不显示"暂无书籍"空态
               hasChildGroups: this.childGroups.length > 0,
               // ── P4-U1 双轨（2026-11-02）：分组网格作为列表头 ⇒ 与书籍同域滚动 ──
               // ⚠️ 父级侧**必须**是箭头函数闭包，不能写 `header: this.childGroupGrid`
@@ -735,8 +735,8 @@ export default struct BookContentRefresh {
       //  · 路径用 `/` 分隔（Windows 地址栏观感），超长省略；
       //  · 点击 = 回上一级；已经在根级分组（如 `分组/开心`）时 = 回分组列表。
       //  · 左侧「+」仍是"在当前分组下新建子分组"（与面包屑分离，避免多按钮语义混淆）。
-      // 2026-11-01：只在"真正的文件夹"里显示。全部(2)/最近 都是**大类**（与分组同级），
-      //   不是文件夹 ⇒ 不显示「+新建子分组」和面包屑。
+      // 2026-11-01：只在"真正的分组"里显示。全部(2)/最近 都是**大类**（与分组同级），
+      //   不是分组 ⇒ 不显示「+新建子分组」和面包屑。
       if (this.bookTypeNumber > 2 && !this.onRecentChip) {
         Row({ space: 8 }) {
           Row() {

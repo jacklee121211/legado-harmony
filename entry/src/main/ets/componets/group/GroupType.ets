@@ -596,7 +596,7 @@ export default struct groupTypeComponent {
    * 语义与改造前**逐条对齐**：
    *   0 最近 ⇒ `onRecentChip = true` + 高亮基准置哨兵 + 持久化 undefined
    *   1 全部 ⇒ 退出最近 + `bookTypeNumber = 全部.groupId` + 持久化
-   *   2 分组 ⇒ 退出最近 + `GROUP='文件夹'` + `bookTypeNumber = 分组.groupId` + 持久化
+   *   2 分组 ⇒ 退出最近 + `GROUP='分组'` + `bookTypeNumber = 分组.groupId` + 持久化
    */
   private onChipClicked(displayIndex: number): void {
     const semantic: number = this.chipSemanticIndexAt(displayIndex)
@@ -621,7 +621,10 @@ export default struct groupTypeComponent {
       return
     }
     this.onRecentChip = false
-    this.GROUP = (name === '分组') ? '文件夹' : '标签'
+    // 2026-11-03（Ⅱ-5）：`GROUP` 是**运行期哨兵**（只在 `IndexShelf:172` 比一次，不持久化）。
+    // 用户要求"以后没有文件夹表述"，故哨兵值由 `'文件夹'` 改为 `'分组'`；
+    // 语义仍等价「分组视图 / 标签视图」，非"文件系统目录"。
+    this.GROUP = (name === '分组') ? '分组' : '标签'
     this.bookTypeNumber = hit.groupId
     this.chipHighlightId = hit.groupId
     // ★ 2026-10-20：同步分段控件下标（缺这句 = "功能生效但按钮不动"）

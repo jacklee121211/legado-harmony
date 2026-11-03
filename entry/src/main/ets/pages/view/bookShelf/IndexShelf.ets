@@ -118,7 +118,7 @@ export default struct IndexShelf {
    * ```
    * square_and_arrow_down: 125832677,   ← 书籍导入（方框 + 下箭头 = 导入语义）
    * list_checkmark:        125835983,   ← 批量管理（清单 + 勾选 = 批量勾选语义）
-   * folder:                125831897,   ← 分组管理（文件夹）
+   * folder:                125831897,   ← 分组管理（分组页）
    * ```
    * ⇒ 三项同源（同一套 symbol 字体）、同字号（`dialogTitleFuction` 统一 18）、
    *   同色（与文字共用 `fgColor()`）⇒ 不会再出现"这一项偏大偏灰"。
@@ -169,7 +169,7 @@ export default struct IndexShelf {
   private menuSurface: MaterialColumnModifier =
     new MaterialColumnModifier(ShelfColors.surface(), true)
   changeGroup() {
-    if (this.GROUP === '文件夹') {
+    if (this.GROUP === '分组') {
       this.bookTypeNumber = 1
     } else {
       this.bookTypeNumber = 2

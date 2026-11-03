@@ -27,7 +27,7 @@ const REUSE_LIST_CACHE: boolean = true
 @Component
 export default struct BookContent {
   @State bookList:Books[] = []
-  /** 2026-11-01：当前分组是否有子文件夹（有则不显示"暂无书籍"空态） */
+  /** 2026-11-01：当前分组是否有子分组（有则不显示"暂无书籍"空态） */
   @Prop hasChildGroups: boolean = false
   // 2026-11-01：按分组缓存列表，进出分组时命中缓存就不再清空重查（避免封面重挂载闪默认图）
   private listCache: Map<number, Books[]> = new Map<number, Books[]>()
@@ -655,7 +655,7 @@ export default struct BookContent {
       .width('100%')
       .margin({ top: 120 })
     } else if (this.bookList.length === 0 && !this.hasChildGroups){
-      // 2026-11-01：本分组里有子文件夹（哪怕空）就不该显示"暂无书籍"
+      // 2026-11-01：本分组里有子分组（哪怕空）就不该显示"暂无书籍"
       Column() {
         Image($r('app.media.no_record')).width(130).height(130)
         Text('暂无书籍')

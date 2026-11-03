@@ -402,7 +402,7 @@ class BookGroupsDao{
   }
 
   getPartialColumn(): ColumnInfo[] {
-    // 2026-11-01：多级文件夹 —— `parentId` 必须在这里，否则 `updatePartialGroup` 写不进去
+    // 2026-11-01：多级分组 —— `parentId` 必须在这里，否则 `updatePartialGroup` 写不进去
     return AppDatabaseUtil.getAssignColumn(this.TABLE_NAME, ['groupId',
       'groupName', 'coverOnly', 'coverType','coverUrl','groupDescribe',
       'enableRefresh','canUpdate','parentId'

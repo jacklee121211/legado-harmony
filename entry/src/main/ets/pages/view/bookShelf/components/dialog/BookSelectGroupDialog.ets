@@ -27,7 +27,7 @@ import UiMotion from '../../../../../common/utils/UiMotion'
 import { GroupTree } from '../../../../../common/group/GroupTree'
 import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
-/** 树形列表的一行（2026-11-01 多级文件夹） */
+/** 树形列表的一行（2026-11-01 多级分组） */
 interface GroupRow {
   group: BookGroups
   depth: number
@@ -64,7 +64,7 @@ export default struct BookSelectGroupDialog{
    */
   isManageMode: boolean = false
   /**
-   * **移动「分组本身」模式**（2026-11-01 多级文件夹新增）。
+   * **移动「分组本身」模式**（2026-11-01 多级分组新增）。
    *
    * 与「移动书籍」的差异：点目标 = 把这个分组挂到目标分组下（改 `parentId`），
    * 而不是把组内书搬过去。目标为 0（根目录）时挂回顶层。
@@ -162,7 +162,7 @@ export default struct BookSelectGroupDialog{
   }
 
   @State groupList:BookGroups[] = []
-  // ── 2026-11-01 多级文件夹：树形展示（官方 FAQ「如何实现简单列表折叠和展开」方案二）──
+  // ── 2026-11-01 多级分组：树形展示（官方 FAQ「如何实现简单列表折叠和展开」方案二）──
   /** 已展开的父分组 id */
   @State expandedIds: number[] = []
   /** 当前可见行（已按展开状态拍平，带缩进 depth） */
@@ -444,7 +444,7 @@ export default struct BookSelectGroupDialog{
           return
         }
         // 2026-11-01：点到"书/分组当前所在分组"时不再静默返回 ——
-        //   它是文件夹 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
+        //   它是分组 ⇒ 点行 = 展开/收起；没有子分组才提示"已经在这里"。
         if (this.oldGroupId === id) {
           if (row.hasChildren) {
             this.toggleExpand(id)
@@ -1243,7 +1243,7 @@ export default struct BookSelectGroupDialog{
         await GroupMutation.dissolve(groupId, mode)
         showMessage(mode === 'collapse'
           ? `已解散「${groupName}」，全部书籍已归还上级分组`
-          : `已解散「${groupName}」，子文件夹已上提一级`)
+          : `已解散「${groupName}」，子分组已上提一级`)
         return
       }
       await GroupMutation.dissolve(groupId, 'keepChildren')
@@ -1284,8 +1284,8 @@ export default struct BookSelectGroupDialog{
           primaryText: '一起解散',
           secondaryText: '子组保留',
           cancelText: '取消',
-          hintPrimary: '子文件夹内的书全部上提到上级分组',
-          hintSecondary: '子文件夹上提一级，书籍不受影响',
+          hintPrimary: '子分组内的书全部上提到上级分组',
+          hintSecondary: '子分组上提一级，书籍不受影响',
           onPrimary: (): void => {
             DialogHost.closeNested(ctrl)
             resolve('collapse')
@@ -1349,8 +1349,8 @@ export default struct BookSelectGroupDialog{
    */
   private async cleanupOldGroup(): Promise<void> {
     // ── 2026-11-01：**取消「空分组自动解散」**（用户拍板：控制权交给用户）──────────
-    // 多级文件夹下，父目录经常"只有子文件夹、没有直属书"，自动解散会把用户建好的
-    // 文件夹悄悄删掉；同时用户明确要求"空分组也能创建"。
+    // 多级分组下，父目录经常"只有子分组、没有直属书"，自动解散会把用户建好的
+    // 分组悄悄删掉；同时用户明确要求"空分组也能创建"。
     // 回退：恢复下面被注释的两行（调 `bookGroupUtils.dissolveIfEmpty([oldGid])`）即可。
     // const dissolved: boolean = await bookGroupUtils.dissolveIfEmpty([oldGid])
     // if (dissolved) { … }

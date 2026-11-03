@@ -9,7 +9,7 @@ import { gKey } from '../../../../../common/manage/SelectionKeys'
 import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
 
 /**
- * 文件夹列表_管理页
+ * 分组列表_管理页
  */
 @Component
 export default struct BookFolderInfoManage {

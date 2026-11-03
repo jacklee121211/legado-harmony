@@ -1,5 +1,5 @@
 /**
- * 文件夹
+ * 分组
  */
 export class folderList {
 

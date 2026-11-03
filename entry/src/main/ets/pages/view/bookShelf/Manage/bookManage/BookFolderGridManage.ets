@@ -11,7 +11,7 @@ import { resolveCoverSource, coverCorners } from '../../../../../common/utils/Co
 import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
 
 /**
- * 文件夹宫格_管理页
+ * 分组宫格_管理页
  */
 @Component
 export default struct BookFolderGridManage {
@@ -158,7 +158,7 @@ export default struct BookFolderGridManage {
   cardContent() {
     Column() {
       Stack() {
-        // 2026-11-01：三层叠（两层偏移底板 + 封面），与书架文件夹卡一致，
+        // 2026-11-01：三层叠（两层偏移底板 + 封面），与书架分组卡一致，
         // 避免分组卡与同封面的书籍卡混淆（用户验收反馈）。
         Row()
           .width(88).height(120)
@@ -199,7 +199,7 @@ export default struct BookFolderGridManage {
                 .position({ x: 4, y: 4 })
                 .zIndex(3)
             }
-            // 2026-10-06：分组封面与书架文件夹视图**同一解析契约**（`CoverSource.ets` 头注释；
+            // 2026-10-06：分组封面与书架分组视图**同一解析契约**（`CoverSource.ets` 头注释；
             // 规范 `docs/标准-弹窗与按钮统一规范.md:200`「任何显示端不得手写 substring，
             // 统一走 resolveCoverSource()」）。此前直接 `Image(this.group.coverUrl)` ⇒
             // 用户挑的内置封面存成 `default://cover_defaults/cN.svg`，Image 认不出这个协议

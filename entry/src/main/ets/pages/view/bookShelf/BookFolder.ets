@@ -17,7 +17,7 @@ import { resolveCoverSource, coverCorners, resolveBookCover } from '../../../com
 import { groupCardKeyOf } from '../../../common/group/GroupCardKey'
 // 宫格列数（2026-10-23 多端适配）：与书籍宫格**同源同一份取值**
 import ShelfPrefs from '../../../common/utils/ShelfPrefs'
-// ── 2026-11-01 多级文件夹 ──────────────────────────────────────────────────
+// ── 2026-11-01 多级分组 ──────────────────────────────────────────────────
 import { Books } from '../../../database/entities/Books'
 import BooksDao from '../../../database/dao/BooksDao'
 import { GroupTree } from '../../../common/group/GroupTree'
@@ -26,7 +26,7 @@ import { GroupStore } from '../../../common/group/GroupStore'
 import { DialogHost } from '../../../common/dialog/DialogHost'
 
 /**
- * 文件夹
+ * 分组
  */
 @Component
 export default struct BookFolder {
@@ -66,7 +66,7 @@ export default struct BookFolder {
    * 整屏入场动画，删一本书就翻一次牌是噪音（同 `BookContent.animateOnNextLoad` 的取舍）。
    */
   @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('refreshGroupCounts') BOOK_IS_BOOK_REFRESHING: number = 0
-  // ── 2026-11-01 多级文件夹：2×2 预览数据 ──────────────────────────────────
+  // ── 2026-11-01 多级分组：2×2 预览数据 ──────────────────────────────────
   /** 本页 2×2 预览用的书（每组最多 2 本，一次查询；见 `BooksDao.queryPreviewByGroups`） */
   @State previewBooks: Books[] = []
   /** 分组树（只用于查层级/父子，每次 `loadGroupList` 重建） */
@@ -141,8 +141,8 @@ export default struct BookFolder {
    * 拉分组列表（2026-09-29 修审核问题④「未分组的书未存放在未分组组别」）。
    *
    * 「未分组」是系统分组（isSystem=true），而 build() 过去把系统分组**全部**过滤掉
-   * ⇒ 文件夹视图里根本没有"未分组"这个文件夹，默认 bookGroup=3（未分组）的书
-   * 在文件夹视图里无家可归（「全部 / 未分组」两个页签能看到，文件夹视图看不到）。
+   * ⇒ 分组视图里根本没有"未分组"这个分组，默认 bookGroup=3（未分组）的书
+   * 在分组视图里无家可归（「全部 / 未分组」两个页签能看到，分组视图看不到）。
    * ① 放行名为「未分组」的系统分组（按名字认，不按 groupId 认 —— 系统分组由
    *    `initGroupData` 按固定顺序插入，老库 groupId 可能漂移，名字才是稳定标识）；
    * ② 它的 `bookIds` 库里恒空（默认入架的书从不走 updateAddBookIds）。
@@ -211,7 +211,7 @@ export default struct BookFolder {
         : []
       return keptByStore
   }
-  // ── 2026-11-01 多级文件夹：2×2 预览的数据取用 ────────────────────────────────
+  // ── 2026-11-01 多级分组：2×2 预览的数据取用 ────────────────────────────────
   /**
    * 直属子分组（`parentId === 本组 id`）。
    * 口径与 build() 的渲染过滤一致：隐藏分组不显示、除「未分组」外的系统单元不算。
@@ -245,12 +245,12 @@ export default struct BookFolder {
     return this.tree.depthOf(item.groupId)
   }
 
-  /** 预览里子文件夹占的格数（最多 4） */
+  /** 预览里子分组占的格数（最多 4） */
   private previewGroupCount(item: BookGroups): number {
     return Math.min(4, this.childGroupsOf(item).length)
   }
 
-  /** 预览里书占的格数（子文件夹占完剩余格，最多 2 本） */
+  /** 预览里书占的格数（子分组占完剩余格，最多 2 本） */
   private previewBookCount(item: BookGroups): number {
     return Math.min(4 - this.previewGroupCount(item), this.booksOfGroup(item).length)
   }
@@ -267,7 +267,7 @@ export default struct BookFolder {
     return out
   }
 
-  /** 第 idx 个子文件夹的封面 */
+  /** 第 idx 个子分组的封面 */
   private groupPreviewCover(item: BookGroups, idx: number): ResourceStr {
     const kids: BookGroups[] = this.childGroupsOf(item)
     if (idx < 0 || idx >= kids.length) {
@@ -291,7 +291,7 @@ export default struct BookFolder {
     return cov === '' ? $r('app.media.icon_book_default_cover_one') : cov
   }
 
-  /** 2×2 预览的一格：子文件夹优先、书在后，空格留半透明底 */
+  /** 2×2 预览的一格：子分组优先、书在后，空格留半透明底 */
   /** 统一组件的格子数据：子分组三层叠在前、书真实封面在后，最多 4 格 */
   private cellsOf(item: BookGroups): FolderCell[] {
     const out: FolderCell[] = []
@@ -356,7 +356,7 @@ export default struct BookFolder {
   /**
    * 分组卡片内容：2×2 预览 + 外框线条（2026-11-01 用户拍板）。
    *
-   * · 子文件夹在前、书在后；最多 4 格；>4 不提示（用户：「超过四个不管，用户自己知道」）；
+   * · 子分组在前、书在后；最多 4 格；>4 不提示（用户：「超过四个不管，用户自己知道」）；
    * · 外框只用 `border` 线条 + 半透明底，**不用模糊**（用户明确担心兼容/性能）；
    * · 角标：置顶沿用旧样式；层级 ≥ 2 时右上角显示「N 级」。
    */
@@ -364,7 +364,7 @@ export default struct BookFolder {
   folderPreview(item: BookGroups) {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.previewGroupCount(item) === 0 && this.previewBookCount(item) === 0) {
-        // 空文件夹：退回"一张封面"的经典观感（否则四格全空，像一张坏掉的卡片）
+        // 空分组：退回"一张封面"的经典观感（否则四格全空，像一张坏掉的卡片）
         Image(resolveCoverSource(item.coverUrl ?? '') ?? $rawfile('cover_defaults/c1.svg'))
           .width('100%')
           .height('100%')
@@ -557,7 +557,7 @@ export default struct BookFolder {
           // DB 里 `groupId 31 parentId=5` **已正确落库**，但根页**一直残留** T1 卡片
           // （等 2 秒、切 tab 回来都不消失）——正是这条 key 缺字段导致的。
           // 与上面那段注释的规则同源（2026-10-06 的"共0本"就是同一个坑），
-          // 多级文件夹（2026-11-01）新增 parentId 过滤时漏了同步补 key。
+          // 多级分组（2026-11-01）新增 parentId 过滤时漏了同步补 key。
           // 2026-11-03：真实返回改调唯一实现（字段清单含 name/isTop/show/parentId/封面/计数/isSystem）
         return groupCardKeyOf(item)
       })
@@ -618,7 +618,7 @@ export default struct BookFolder {
     Column({
       space: 5
     }) {
-      // ── 2026-11-01 多级文件夹：2×2 内容预览（替换原来的单封面 + 叠加装饰）────────
+      // ── 2026-11-01 多级分组：2×2 内容预览（替换原来的单封面 + 叠加装饰）────────
       //   旧实现（单封面 + FolderStackDecor + occlusion 叠层 + 底条）保留在文件里
       //   （`FolderStackDecor` / `UiMotion.SHELF_COVER_STACK` / `SHELF_COVER_BASE_BAR`），
       //   需要回退时把下面这行换回旧的三层 Stack 即可。
@@ -655,7 +655,7 @@ export default struct BookFolder {
         .ellipsisMode(EllipsisMode.END)
         .maxLines(2)
         .hitTestBehavior(HitTestMode.None)
-      // 「共N本」= 直属书（口径与点进去的列表同源）；有多级子文件夹时补一段数量
+      // 「共N本」= 直属书（口径与点进去的列表同源）；有多级子分组时补一段数量
       // 2026-11-02：被隐藏的分组在根层也显示「眼睛关闭 + 已隐藏」（与子层同源，只标父级）
       if (!item.show || item.isSystem) {
         if (!item.show) {
@@ -744,11 +744,11 @@ export default struct BookFolder {
     .borderRadius(10)
   }
 
-  /** 卡片副标题：直属书数；有子文件夹时补一段数量（口径：直属，不递归） */
+  /** 卡片副标题：直属书数；有子分组时补一段数量（口径：直属，不递归） */
   private countLabel(item: BookGroups): string {
     const books: number = item.bookIds?.length ?? 0
     const kids: number = this.childGroupsOf(item).length
-    return kids > 0 ? `共${books}本 · ${kids}个文件夹` : `共${books}本`
+    return kids > 0 ? `共${books}本 · ${kids}个分组` : `共${books}本`
   }
 
   @State dialogGroupData: BookGroups = new BookGroups()
