@@ -4,7 +4,6 @@ import { BookGroups } from '../../database/entities/BookGroups'
 // ⚠️ 2026-10-20：`BookType` 已不再使用 —— 顶栏 chip 行整体换成官方 `SegmentButton`
 //    （封装见 `componets/common/GlassSegment.ets`）。`BookType` 组件本身保留
 //    （`GroupTypeSearch` 等其它地方仍在用）。
-import { GroupManageDialog } from './GroupManageDialog'
 import FolderInfoDialog from '../../pages/view/bookShelf/components/dialog/FolderInfoDialog'
 import ImmersiveMaterialUtil from '../../common/utils/ImmersiveMaterialUtil'
 // ⚠️ 2026-10-20：`runJellyClick` / `showMessage` / `Haptics` 在本文件已无调用点 ——
@@ -79,56 +78,9 @@ export default struct groupTypeComponent {
   /** 分组行尾部三横按钮的 Q弹缩放值（2026-09-25，`runJellyClick` 自驱 `.scale()`） */
   @State groupRowScale: number = 1
 
-  /** 显示分组 chip 的**长按编辑**弹窗（2026-09-25 新增：与隐藏分组同款 FolderInfoDialog） */
-  @State editChipGroup: BookGroups | null = null
-  // 2026-11-04（P4b 批 C-3）：原 `private chipEditDialog: CustomDialogController | null = null` 已删 ——
-  //   宿主化后打开时 new、关闭走 DialogHost.closeCurrent()。
-
-  private openChipEditDialog(): void {
-    if (this.editChipGroup === null) {
-      return
-    }
-    DialogHost.open(new CustomDialogController({
-      builder: FolderInfoDialog({
-        itemData: this.editChipGroup,
-        // 真开真关（2026-10-01 用户方案）：子弹窗关闭后由**创建者**重建父弹窗——
-        // 全新实例=全新 @Prop 快照，天然刷新；不再复用旧实例（其快照不具备刷新能力）。
-        reopen: (): void => { this.reopenChipEditDialog() },
-        cancel: (): void => {
-          // 2026-10-12：**先真的 close**（旧写法只置 null ⇒ 弹窗留在屏幕上）
-          DialogHost.closeCurrent()
-          this.getGroupList()
-        }
-      }),
-      autoCancel: true,
-      width: '80%',
-      alignment: DialogAlignment.Center,
-      customStyle: false,
-      cornerRadius: 20,
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      // 2026-10-12：遮罩/返回键路径同样**必须真的 close**（子组件内自己 close 不可靠，
-      // 真机两次验证见 `ReaderSaveSchemeDialog.ets:205-208`）
-      cancel: (): void => {
-        DialogHost.closeCurrent()
-        this.getGroupList()
-      },
-    }))
-  }
-
-  /** 真开真关：重查该分组 → 更新 editChipGroup → **新建 controller** 全新实例打开 */
-  private async reopenChipEditDialog(): Promise<void> {
-    const id = this.editChipGroup?.groupId
-    if (id !== undefined) {
-      const groups: BookGroups[] = await BookGroupsDao.search({ type: this.currentIndex })
-      const fresh = groups.find((g: BookGroups) => g.groupId === id)
-      if (fresh !== undefined) {
-        this.editChipGroup = fresh
-      }
-    }
-    this.openChipEditDialog()
-  }
+  // 2026-11-04（P4b 批 C-5）：`editChipGroup` / `openChipEditDialog` / `reopenChipEditDialog` 已删除 ——
+  //   自定义分组自 2026-10-20 起不再进顶栏（`chipLabels()` 只返回系统三项），长按编辑入口随之消失；
+  //   全仓 grep 确认零调用方（`reopenChipEditDialog` 唯一的引用来自将被删的对话框本身）。
 
   // 2026-11-03（P10/L3）：openWorksCoverDialog（书单封面样式）已删除 —— 书单功能整体移除后无调用方。
   /** App 级夜间开关：只为触发重绘（取色走 `ShelfColors`），理由见 `IndexShelf` 同名字段 */
@@ -136,7 +88,8 @@ export default struct groupTypeComponent {
   // ★ 2026-10-11：主题颜色（与 IndexShelf.ets:164 同款），给"三横"图标跟随主题色用。
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   @Link @Watch('changeRefresh')currentIndex: number
-  @Link groupCoverShow:boolean
+  // 2026-11-04（P4b 批 C-5）：原 `@Link groupCoverShow:boolean` 已删 —— 面板路径删除后它在组件内零读写，
+  //   父级 `BookBodyContent` 的 `@State groupCoverShow` 也一并删除（同批）。
   @Link GROUP:string
   @State groupList:BookGroups[] = []
   @Link bookTypeNumber:number
@@ -321,51 +274,8 @@ export default struct groupTypeComponent {
     return item.isSystem && ['全部', '本地', '分组', '未分组'].includes(item.groupName ?? '')
   }
 
-  /**
-   * 打开「分组管理」面板（`@CustomDialog`）。
-   *
-   * ⚠️ 2026-10-20：由 `private` 改为 **public** —— 三横（≡）按钮已移到 `IndexShelf` 的
-   *   右侧动作区（用户要求「搜索之后是三横…三横之后是更多」），入口不再在本组件内。
-   *   调用方式：`IndexShelf` 通过 `@BuilderParam` 传进来的 builder 无法直接拿到子组件实例，
-   *   所以改用**回调注入**：`IndexShelf` 把 `openSortPanel` 这类动作作为参数传进来
-   *   （见 `BookBodyContent` 的 `onOpenSortPanel`）。本方法仍保留，供分组行内部复用。
-   */
-  openGroupPanel(): void {
-    this.groupCoverShow = true
-    DialogHost.open(new CustomDialogController({
-      builder: GroupManageDialog({
-        showGroupList: this.groupList,
-        currentIndex: this.currentIndex,
-        onClose: (): void => {
-          this.closeGroupPanel()
-        }
-      }),
-      autoCancel: true,
-      // 2026-09-25 用户改版：不再顶到分组行下面（旧"整宽下拉面板"观感 —— 左右顶满屏幕、
-      // 只有下两角圆），改成与全工程统一的**标准居中弹窗**：四圆角 20 + 90% 宽
-      // （用户原话：「不是四圆角，左右太宽，顶屏幕了，宽度百分之90就行」）。
-      alignment: DialogAlignment.Center,
-      width: '90%',
-      // 只有 `customStyle: false` 时弹窗层才有背景 ⇒ 材质才有处可附。
-      // SDK `custom_dialog_controller.d.ts:130-134` 原文：`customStyle: true` 时
-      // 「the rounded corner radius is 0, and **the background color is transparent**」
-      // ⇒ 材质无处附着（本工程 2026-09-22 真机踩过：弹窗整个变透明）。
-      customStyle: false,
-      cornerRadius: 20,
-      // 真沉浸光感材质（官方「开启沉浸光感」把 CustomDialog 列在弹窗类里）
-      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-      // ── 展开动画（用户点名「其次没有展开动画」）────────────────────────────
-      // SDK `custom_dialog_controller.d.ts:205/226`：`openAnimation?` / `closeAnimation?: AnimateParam`
-      // ⚠️ 官方 NOTE（同文件 `:37-38`）原文：「During animation playback, the page **does not
-      //   respond to touch, swipe, or click interactions**」⇒ 弹窗动效要短 ⇒ 用 `SPRING_FAST`。
-      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-      cancel: (): void => {
-        // 点遮罩 / 返回手势关掉：同步标志位（本行不依赖它渲染，只作状态镜像）
-        this.groupCoverShow = false
-      },
-    }))
-  }
+  // 2026-11-04（P4b 批 C-5）：`openGroupPanel` / `closeGroupPanel` 已删除 —— 全仓零调用方
+  //   （三横入口在 `IndexShelf.openSortPanel`，本组件的面板路径 2026-10-20 起就不再被调用。）
 
   /**
    * 顶栏 chip 的文字色（2026-10-20 二修）。
@@ -473,11 +383,6 @@ export default struct groupTypeComponent {
     return name
   }
 
-  /** 关面板（面板里的 ✕ 按钮走这里） */
-  private closeGroupPanel(): void {
-    this.groupCoverShow = false
-    DialogHost.closeCurrent()
-  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // SegmentButton 的「文案 / 选中下标 / 点击」三件套（2026-10-20 新增）
@@ -689,5 +594,3 @@ export default struct groupTypeComponent {
     }
   }
 }
-
-

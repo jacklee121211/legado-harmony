@@ -39,7 +39,6 @@ export default struct BookBodyContent {
    */
   @State searchValue: string = '最近阅读'
   @Link bookTypeNumber:number
-  @State groupCoverShow: boolean = false
   @State bookBodyIndex: number = 0
   tabsBookBodyController: TabsController = new TabsController();
   /**
@@ -179,7 +178,6 @@ export default struct BookBodyContent {
           groupTypeComponent({
             bookTypeNumber: this.bookTypeNumber,
             currentIndex: this.currentIndex,
-            groupCoverShow: this.groupCoverShow,
             GROUP: this.GROUP
           })
         }
