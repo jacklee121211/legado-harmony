@@ -20,6 +20,7 @@ const TESTS = [
   { file: 'count-label.test.mjs', name: 'CountLabel 计数文案（共N本 · M个分组）' },
   { file: 'shelf-collection.test.mjs', name: 'ShelfCollection.resolve / batchEntryGroup' },
   { file: 'shelf-prefs.test.mjs', name: 'ShelfPrefs.effectiveColumns（sm/md/lg/xl + 手动档）' },
+  { file: 'reader-const.test.mjs', name: 'ReaderConst 常量契约（滑条刻度/标定键名/迁移版本/字体族名）' },
 ]
 
 let failed = 0
