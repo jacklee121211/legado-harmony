@@ -1192,9 +1192,12 @@ class BooksDao {
    *    主键 + 原 bookType」序列化进 Preferences（键 `bookTypeMergedToShelfV1_backup`）。
    *    要还原：取出该 JSON，按 id 逐条 `UPDATE books SET bookType = ?` 即可
    *    （应用内没有 SQL 控制台 ⇒ 手工手段是 hdc 拉库，或临时写一段一次性代码执行）。
-   *  · 留档只覆盖 `books`：`book_groups` / `works_lists` / `book_history` 三张表在本工程
-   *    里**没有写入 1/2 的入口**（`newBookShelf.ets:168,499` 恒写 0；
-   *    `BookSelectGroupDialog.ets:213` 写的是当前大类 = 0），实际不会产生这两档数据。
+   *  · 留档只覆盖 `books`：`book_groups` 在本工程里**没有写入 1/2 的入口**
+   *    （`newBookShelf.ets:168,499` 恒写 0；`BookSelectGroupDialog.ets:213` 写的是当前大类 = 0），
+   *    实际不会产生这两档数据。
+   *  · 2026-11-03（P7/L1）：`works_lists` 与 `book_history` 两条 UPDATE 已删除 ——
+   *    这两张表在本工程已不存在（前者从来就是 Legado 书单域遗留、后者随「上次阅读」下线整表移除），
+   *    留着它们会让本迁移**永远 catch**、标志永不落盘 ⇒ 每次启动都重试并打一条 `no such table` 错误。
    */
   async migrateBookTypeToShelf(): Promise<void> {
     if (PreferencesUtil.getSync(KEY_BOOKTYPE_MERGED, false) === true) {
@@ -1207,14 +1210,13 @@ class BooksDao {
         `UPDATE ${this.TABLE_NAME} SET bookType = 0 WHERE bookType = 1 OR bookType = 2`)
       await DbUtil.executeSql(
         `UPDATE book_groups SET groupType = 0 WHERE groupType = 1 OR groupType = 2`)
-      await DbUtil.executeSql(
-        `UPDATE works_lists SET worksType = 0 WHERE worksType = 1 OR worksType = 2`)
-      // book_history 的 bookType 只在「浏览历史」里用，那个入口早已摘除；
-      // 一并归一，保证存量数据不会在别处按旧口径被过滤掉。
-      await DbUtil.executeSql(
-        `UPDATE book_history SET bookType = 0 WHERE bookType = 1 OR bookType = 2`)
+      // 2026-11-03（P7/L1）：删掉 `works_lists` 那条 UPDATE —— 该表已随 Legado 书单域整体删除，
+      //   这条语句必然抛 `no such table`，导致整个迁移 catch 掉、标志永不落盘 ⇒ **每次启动都重试并报错**
+      //   （真机日志原文：`no such table: wor***sts in "UPDATE wor***sts SET wor***ype = 0 …`"）。
+      // 2026-11-03（P7/L1）：`book_history` 那条 UPDATE 同样删除 —— 该表已在
+      //   「上次阅读」下线（A6）时整表移除，留着只会让迁移永远失败。
       PreferencesUtil.putSync(KEY_BOOKTYPE_MERGED, true)
-      console.info('TagInfo', 'migrateBookTypeToShelf: done (bookType/groupType/worksType -> 0)');
+      console.info('TagInfo', 'migrateBookTypeToShelf: done (bookType/groupType -> 0)');
     } catch (e) {
       // 不打标志 ⇒ 下次启动重试。必须留原因（上一版种书迁移静默失败吃过亏）。
       console.error('TagInfo', 'migrateBookTypeToShelf failed: ' + JSON.stringify(e));
