@@ -46,6 +46,11 @@ import { PageRange, effectiveLineMul, geomSelfContained, geom, cplFor, simulateP
   scrollWeightOffset, scrollTopInsetVp,
   scrollBottomInsetVp, densityVp, textAreaLeftVp, immersiveBudgetPx,
   SELF_DRAWN_DELTA_VP } from '../../../common/reader/ReaderCalibMath';
+// 2026-11-04（P3 批 A-3）：**进度 / 书签 IO 的纯计算与读取投影**已抽到
+//   `common/reader/ReaderProgressIo.ets`（无 `this.`、不写 DB/AppStorage、不改 `@State`）。
+//   本页只保留调用点；写库 / 发事件 / 改 `@State` 的执行体仍在下方（等 `ReaderSession`）。
+import { ReaderPosition, currentPosition, parseDomPos, domPosFor, clampProgressUnit,
+  progressTipX, hasBookmarkInRange } from '../../../common/reader/ReaderProgressIo';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -151,18 +156,9 @@ interface themeItem {
 // 2026-11-04（P3 批 A-2）：`PageRange` 随 `simulatePage()` 搬到
 //   `common/reader/ReaderCalibMath.ets`（类型只留一份），此处用 import 引用。
 
-/**
- * 「当前位置」的唯一表示（ReaderKit 坐标，2026-10-24 新增）。
- * 由 `ReaderPage3.currentPosition()` 统一产出 —— 见该方法的注释。
- */
-interface ReaderPosition {
-  /** 章节索引（= spineIndex = resourceIndex） */
-  spine: number;
-  /** 章内块节点下标（0 基） */
-  node: number;
-  /** 节点内字符偏移 */
-  char: number;
-}
+// 2026-11-04（P3 批 A-3）：`ReaderPosition` 随 `currentPosition()` 搬到
+//   `common/reader/ReaderProgressIo.ets`（类型只留一份），此处用 import 引用。
+//   「当前位置」的唯一表示（ReaderKit 坐标，2026-10-24 新增）。
 
 /** 定位目标（ReaderKit 坐标） */
 interface LocateTarget {
@@ -752,29 +748,9 @@ export default struct ReaderPage3 {
    *  但当前阅读页只保证 `pageRange.startNode`（页首块节点号）稳定可比。
    *  自用场景下取"节点号"即可满足"同页判定 + 列表定位"，
    *  且比拿一个不随翻页更新的 `durChapterPos` 正确得多。 */
-  /**
-   * 当前页范围内是否已有书签（**区间包含**，不要求页首节点精确相等）。
-   *
-   * 为什么不能用 `isBookmarked(name, idx, startNode)` 精确匹配：
-   *   书签存的是"保存那一页的页首节点"，而 `startPlay` 落页只保证目标节点在页内，
-   *   经常落在页尾（真机日志：书签 node=62，落页 [59..62]）⇒ 页首 59 ≠ 62
-   *   ⇒ 图标不亮、用户再点一次 ⇒ 同章多叠书签。跨档（ReaderKit 页首 vs 自绘页首）同理。
-   *   换成「书签节点 ∈ 当前页 [startNode, endNode]」后，落页到尾/换档/换排版都能点亮。
-   */
-  private async hasBookmarkInRange(idx: number, startNode: number, endNode: number): Promise<boolean> {
-    const name: string = this.bookData.bookName
-    if (name === undefined || name === null || name.length === 0) {
-      return false
-    }
-    // ⚠️ 2026-10-31 回退 listByChapter：真机出现"书签图标上来就掉"，
-    //    疑似 RdbPredicates 的 equalTo 链在该表上不可靠；先回到已验证的 list()+JS 过滤，
-    //    书签量级很小（几十~几百），不是卡顿主因。
-    const rows: BookmarkRow[] = await BookmarkPorts.list()
-    const hits: BookmarkRow[] = rows.filter((b: BookmarkRow): boolean =>
-      b.bookName === name && b.chapterIndex === idx
-      && b.chapterPos >= startNode && b.chapterPos <= endNode)
-    return hits.length > 0
-  }
+  // 2026-11-04（P3 批 A-3）：`hasBookmarkInRange()`（区间包含判定 + 只读 `BookmarkPorts.list()`）
+  //   已搬到 `common/reader/ReaderProgressIo.ets`（判定口径与理由的注释一并搬过去），
+  //   此处只留调用点。
 
   /** 同步书签图标状态（只在"页范围"变化时查库，避免每次翻页都查） */
   private async syncBookmarkState(): Promise<void> {
@@ -795,7 +771,7 @@ export default struct ReaderPage3 {
       this.isBookmarked = false
       return
     }
-    this.isBookmarked = await this.hasBookmarkInRange(idx, s, e)
+    this.isBookmarked = await hasBookmarkInRange(this.bookData.bookName, idx, s, e)
   }
 
   /** 顶部栏书签图标点击：当前页范围内有则全删、无则存（区间模型，跨档同源） */
@@ -4372,12 +4348,12 @@ oAnimInitNode 配套） */
     if (this.selfDrawnModeOn()) {
       const cSpine: number = temp.continueSpine ?? -1;
       let ri: number = this.bookData.localBookDurChapterPos?.resourceIndex ?? 0;
-      let nd: number = this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
+      let nd: number = parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
       if (cSpine >= 0) {
         // 接续落点优先（continueNode 由 Index 从 wantParam 带来，备用坐标）
         ri = cSpine;
         const cNode: number = temp.continueNode ?? -1;
-        nd = cNode >= 0 ? cNode : this.parseDomPos(temp.continueDomPos ?? '')[0];
+        nd = cNode >= 0 ? cNode : parseDomPos(temp.continueDomPos ?? '')[0];
         hilog.info(0x0000, 'ContinueIdx',
           'selfDrawn init from CONTINUE: spine=%{public}d node=%{public}d (local was spine=%{public}d)',
           ri, nd, this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
@@ -4471,7 +4447,7 @@ oAnimInitNode 配套） */
       const nIdx: number = temp.continueNode ?? -1;
       const cOff: number = temp.continueChar ?? 0;
       if (dp.length === 0 && nIdx >= 0) {
-        dp = this.domPosFor(nIdx, cOff);
+        dp = domPosFor(nIdx, cOff);
         hilog.info(0x0000, 'ContinueIdx',
           'startPlay: domPos empty, rebuilt from node=%{public}d char=%{public}d -> %{public}s',
           nIdx, cOff, dp);
@@ -5115,12 +5091,12 @@ oAnimInitNode 配套） */
     }
     if (bestNode >= 0) {
       // 规整化偏移 ≈ 原文偏移（差异仅为被压缩的空白，行级可接受）
-      this.readerComponentController.startPlay(spine, this.domPosFor(bestNode, bestChar))
+      this.readerComponentController.startPlay(spine, domPosFor(bestNode, bestChar))
       return
     }
     // ④ 章内兜底：跨端章内比例 → 块节点号
     if (posRatio >= 0) {
-      this.readerComponentController.startPlay(spine, this.domPosFor(ratioToIndex(posRatio, nodes.length), 0))
+      this.readerComponentController.startPlay(spine, domPosFor(ratioToIndex(posRatio, nodes.length), 0))
       return
     }
     this.readerComponentController.startPlay(spine, `${spine}`)
@@ -5567,8 +5543,8 @@ oAnimInitNode 配套） */
       // ── 进度同步 v2（2026-10-01，用户设计）：页首/页末双锚写给 web 端 ──
       this.writeWebSyncAnchors();
       // ReaderKit 页内容范围（唯一坐标来源）：startDomPos/endDomPos 是字符级的页内容映射
-      const s = this.parseDomPos(data.startDomPos);
-      const e = this.parseDomPos(data.endDomPos);
+      const s = parseDomPos(data.startDomPos);
+      const e = parseDomPos(data.endDomPos);
       const endAfter = e[0] > s[0] || (e[0] === s[0] && e[1] >= s[1]);
       const range: PageRange = {        spine: data.resourceIndex,
         startNode: s[0],
@@ -7073,30 +7049,10 @@ oAnimInitNode 配套） */
   }
 
   // ---------- 精确定位（ReaderKit 坐标系：spine / 块节点 / 节点内字符） ----------
-  /**
-   * "19=0#43;@;0" → [块节点下标(0 基), 节点内字符偏移]。
-   * 官方 FAQ：domPos = 章节标识=子节点索引=子孙节点索引#文字索引;@;进度；
-   * 本工程实际形态 "<子节点索引>=0#<字符下标>"，且 X 段序号满足 X = 2k−1
-   * （见文件头注释：偶数 X 是不渲染的块间空节点）。
-   * 因此 node = floor((X−1)/2)；遇到偶数 X 也归到它前面那个渲染块。
-   */
-  private parseDomPos(domPos: string): number[] {
-    const eq = domPos.indexOf('=');
-    const hash = domPos.indexOf('#');
-    const semi = hash >= 0 ? domPos.indexOf(';', hash) : -1;
-    const x = eq > 0 ? parseInt(domPos.substring(0, eq)) : NaN;
-    const y = hash >= 0 && semi > hash ? parseInt(domPos.substring(hash + 1, semi)) : 0;
-    if (!Number.isFinite(x)) {
-      return [0, 0];
-    }
-    const node = Math.max(0, Math.floor((Math.max(1, x) - 1) / 2));
-    return [node, Number.isFinite(y) ? Math.max(0, y) : 0];
-  }
-
-  /** [块节点下标(0 基), 节点内字符偏移] → domPos（与 pageShow 回报同构） */
-  private domPosFor(node: number, char: number): string {
-    return `${2 * Math.max(0, node) + 1}=0#${char};@;0`;
-  }
+  // 2026-11-04（P3 批 A-3）：`parseDomPos()` / `domPosFor()`（ReaderKit 坐标 ↔ 块节点号/字符的
+  //   双向换算，纯字符串算术）已搬到 `common/reader/ReaderProgressIo.ets`，
+  //   这里只留调用点。⚠️ 换算式必须成对使用（node = (X−1)/2，X = 2·node+1），
+  //   见本文件 `FlipSearch` 上方那段 "ReaderKit domPos 的 X 语义" 说明。
 
   /** 当前页范围是否覆盖目标位置（含边界字符级校验） */
   /**
@@ -7187,8 +7143,8 @@ oAnimInitNode 配套） */
     }
     this.continueFineTuned = true;
     // 用本帧真实范围构造 PageRange（不依赖 `this.pageRange` 的赋值时机）
-    const s: number[] = this.parseDomPos(data.startDomPos ?? '');
-    const e: number[] = this.parseDomPos(data.endDomPos ?? '');
+    const s: number[] = parseDomPos(data.startDomPos ?? '');
+    const e: number[] = parseDomPos(data.endDomPos ?? '');
     const range: PageRange = {
       spine: data.resourceIndex,
       startNode: s[0],
@@ -7251,7 +7207,7 @@ oAnimInitNode 配套） */
     this.lastNavMs = Date.now();
     hilog.info(0x0000, 'testTag', 'locate: → spine=%{public}d node=%{public}d char=%{public}d cur=%{public}s',
       spine, n, c, this.rangeText());
-    this.startPlayAt(spine, this.domPosFor(n, c));
+    this.startPlayAt(spine, domPosFor(n, c));
     this.armLocateTimeout(target);
   }
 
@@ -9006,7 +8962,7 @@ oAnimInitNode 配套） */
                 .padding({ left: 8, right: 8, top: 5, bottom: 5 })
                 .backgroundColor('rgba(0, 0, 0, 0.78)')
                 .borderRadius(8)
-                .position({ x: this.progressTipX(), y: -54 })
+                .position({ x: progressTipX(this.progressTrackW, this.progressUnit), y: -54 })
                 .opacity(this.progressTipShow ? 1 : 0)
                 .animation({ duration: 120, curve: Curve.EaseOut })
                 // 气泡只负责显示，绝不能吃掉落手指（否则滑条拖不动）
@@ -10636,7 +10592,7 @@ oAnimInitNode 配套） */
       let spine: number = r !== null ? r.spine
         : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
       let node: number = r !== null ? r.startNode
-        : this.parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
+        : parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
       // ⚠️ 反"往回跑"：刚从自绘层切过来、且当前页仍覆盖我们上次请求的那一段 ⇒ 用它。
       //    （理由与实测数据见 `pagedRestoreSpine` 字段注释）
       if (r !== null && this.pagedRestoreSpine === r.spine && this.pagedRestoreNode >= 0
@@ -11019,22 +10975,10 @@ oAnimInitNode 配套） */
    * · 两者都拿不到 ⇒ 兜底 `pageRange` 的页首；再不行 ⇒ `(0,0,0)`
    *
    * ⚠️ 不要在这里做节流/缓存：调用方语义就是"要此刻的准确位置"。
+   *
+   * 2026-11-04（P3 批 A-3）：方法体（纯投影）搬到 `common/reader/ReaderProgressIo.ets`
+   *   的 `currentPosition()`，本页只留上面这份口径说明与调用点。
    */
-  private currentPosition(): ReaderPosition {
-    if (this.selfDrawnModeOn()) {
-      return { spine: this.scrollSpine, node: this.scrollNode, char: 0 };
-    }
-    const pd: readerCore.PageDataInfo | null | undefined = this.bookData.localBookDurChapterPos;
-    if (pd !== null && pd !== undefined) {
-      const parsed: number[] = this.parseDomPos(pd.startDomPos ?? '');
-      return { spine: pd.resourceIndex ?? 0, node: parsed[0], char: parsed[1] };
-    }
-    const r: PageRange | null = this.pageRange;
-    if (r !== null) {
-      return { spine: r.spine, node: r.startNode, char: r.startChar };
-    }
-    return { spine: 0, node: 0, char: 0 };
-  }
 
   /**
    * 应用接续（无缝流转，2026-10-24）：把"此刻读到哪儿 + 用什么排版"登记到
@@ -11051,9 +10995,10 @@ oAnimInitNode 配套） */
    */
   private publishContinueState(): void {
     // 位置统一走 `currentPosition()`（滚动=实时值 / 分页=pageShow 值）
-    const pos: ReaderPosition = this.currentPosition();
+    const pos: ReaderPosition = currentPosition(this.selfDrawnModeOn(), this.scrollSpine,
+      this.scrollNode, this.bookData.localBookDurChapterPos, this.pageRange);
     // 双坐标：domPos 与 (node, char) 一并带（对端 domPos 异常时用 node/char 重算）
-    this.publishContinueStateWith(pos.spine, this.domPosFor(pos.node, pos.char),
+    this.publishContinueStateWith(pos.spine, domPosFor(pos.node, pos.char),
       pos.node, pos.char, TtsEngine.getState() !== 'stopped');
   }
 
@@ -11077,7 +11022,7 @@ oAnimInitNode 配套） */
       return;
     }
     this.publishContinueStateWith(seg.spineIndex,
-      this.domPosFor(seg.nodeIndex, seg.charStart ?? 0),
+      domPosFor(seg.nodeIndex, seg.charStart ?? 0),
       seg.nodeIndex, seg.charStart ?? 0, true);
   }
 
@@ -11143,8 +11088,8 @@ oAnimInitNode 配套） */
     try {
       const pd = new readerCore.PageDataInfo('', '');
       pd.resourceIndex = spine;
-      pd.startDomPos = this.domPosFor(node, 0);
-      pd.endDomPos = this.domPosFor(node, 0);
+      pd.startDomPos = domPosFor(node, 0);
+      pd.endDomPos = domPosFor(node, 0);
       pd.pageOffset = 0;
       pd.pageHeaderContent = '';
       pd.pageFooterContent = '';
@@ -11754,7 +11699,7 @@ oAnimInitNode 配套） */
    *    ⇒ 连续拖动只会来 Begin/Moving/End；`Click` 只出现在"点轨道"那一下。
    */
   private onProgressSliderChange(value: number, mode: SliderChangeMode): void {
-    const u: number = this.clampProgressUnit(Math.round(Number.isFinite(value) ? value : 0));
+    const u: number = clampProgressUnit(Math.round(Number.isFinite(value) ? value : 0));
     // 诊断打点：真机上"跟手/不跟手"的争议全靠这几行区分（Begin=0/Moving=1/End=2/Click=3）。
     // 只打非 Moving（Moving 一秒几十条，会把日志冲掉）。
     if (mode !== SliderChangeMode.Moving) {
@@ -11804,13 +11749,9 @@ oAnimInitNode 配套） */
     this.progressDragging = false;
   }
 
-  /** 夹到 `[0, PROGRESS_UNIT_MAX]` 的整数单位 */
-  private clampProgressUnit(u: number): number {
-    if (!Number.isFinite(u) || u < 0) {
-      return 0;
-    }
-    return u > PROGRESS_UNIT_MAX ? PROGRESS_UNIT_MAX : u;
-  }
+  // 2026-11-04（P3 批 A-3）：`clampProgressUnit()`（夹到 [0, PROGRESS_UNIT_MAX]）与
+  //   `progressTipX()`（进度气泡横向位置）都是"只吃入参"的纯数值换算，已搬到
+  //   `common/reader/ReaderProgressIo.ets`，此处只留调用点。
 
   /** 显示气泡，并（重新）开始 `PROGRESS_TIP_MS` 后自动隐藏的计时 */
   private showProgressTip(): void {
@@ -11822,20 +11763,6 @@ oAnimInitNode 配套） */
       this.progressTipTimer = -1;
       this.progressTipShow = false;
     }, PROGRESS_TIP_MS);
-  }
-
-  /** 气泡横向位置（跟随 thumb 中心，夹在轨道内） */
-  private progressTipX(): number {
-    const track: number = this.progressTrackW;
-    if (track <= 0) {
-      return 0;
-    }
-    // thumb 直径 30 ⇒ 两端各留 15vp 才是 thumb 中心的实际行程
-    const usable: number = Math.max(1, track - 30);
-    const center: number = 15 + usable * (this.progressUnit / PROGRESS_UNIT_MAX);
-    const maxX: number = Math.max(0, track - PROGRESS_TIP_W);
-    const x: number = center - PROGRESS_TIP_W / 2;
-    return Math.max(0, Math.min(maxX, x));
   }
 
   /** 气泡第二行：「312/765 · 章节名」 */
@@ -11867,7 +11794,7 @@ oAnimInitNode 配套） */
       this.toastLocate('目录还没加载完，请稍后再试');
       return;
     }
-    const pct: number = this.clampProgressUnit(unit) / PROGRESS_UNIT_PER_PCT;
+    const pct: number = clampProgressUnit(unit) / PROGRESS_UNIT_PER_PCT;
     const pos: ChapterRatio = percentToChapter(pct, total);
     const idx: number = pos.chapterIndex;
     const item = this.CatalogList.getData(idx);
@@ -11962,7 +11889,7 @@ oAnimInitNode 配套） */
     const pct: number = chapterToPercent(idx, ratio, total);
     // ⚠️ 取整到 0.1% 单位：Slider 的 `value` 必须是 `step` 的整数倍，
     //   写一个任意浮点（如 4.7123）会让内部吸附算错（见 `PROGRESS_UNIT_PER_PCT` 注释）。
-    const u: number = this.clampProgressUnit(Math.round(pct * PROGRESS_UNIT_PER_PCT));
+    const u: number = clampProgressUnit(Math.round(pct * PROGRESS_UNIT_PER_PCT));
     this.progressUnit = u;
   }
 
