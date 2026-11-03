@@ -24,6 +24,7 @@
  *    每张落位单独刷新（`thumbTick` 只用于提示刷新，不再等全部就绪）。
  * ④ **设置面板取消**（用户拍板：PDF 里没意义），夜间直接放 dock。
  */
+import BookmarkPorts from '../../../common/reader/BookmarkPorts';
 import AppRouter from '../../../common/router/AppRouter';
 import { common } from '@kit.AbilityKit';
 import { PdfView, pdfService, pdfViewManager } from '@kit.PDFKit';
@@ -390,7 +391,7 @@ export default struct PdfViewerPage {
   private async refreshBookmarkState(): Promise<void> {
     try {
       const name: string = this.book.bookName ?? '';
-      this.isBookmarked = await BookmarksDao.isBookmarked(name, this.pageIndex, 0);
+      this.isBookmarked = await BookmarkPorts.isMarked(name, this.pageIndex, 0);
     } catch (e) {
       this.isBookmarked = false;
     }
@@ -401,11 +402,11 @@ export default struct PdfViewerPage {
     const idx: number = this.pageIndex;
     try {
       if (this.isBookmarked) {
-        const ok: boolean = await BookmarksDao.removeAt(name, idx, 0);
+        const ok: boolean = await BookmarkPorts.removeAt(name, idx, 0);
         this.isBookmarked = false;
         this.toast(ok ? '已移除书签' : '移除失败');
       } else {
-        const ok: boolean = await BookmarksDao.add(name, this.book.author ?? '', idx, 0,
+        const ok: boolean = await BookmarkPorts.add(name, this.book.author ?? '', idx, 0,
           this.pageTitle(idx), this.pageTitle(idx), true);
         this.isBookmarked = ok;
         this.toast(ok ? ('已添加书签 · ' + this.pageTitle(idx)) : '添加失败');
@@ -420,7 +421,7 @@ export default struct PdfViewerPage {
 
   private async loadBookmarkList(): Promise<void> {
     try {
-      const all: BookmarkRow[] = await BookmarksDao.list();
+      const all: BookmarkRow[] = await BookmarkPorts.list();
       const name: string = this.book.bookName ?? '';
       const mine: BookmarkRow[] = [];
       for (const r of all) {
@@ -436,7 +437,7 @@ export default struct PdfViewerPage {
   }
 
   private async removeBookmark(time: number): Promise<void> {
-    await BookmarksDao.remove(time);
+    await BookmarkPorts.removeByTime(time);
     await this.loadBookmarkList();
     await this.refreshBookmarkState();
     this.toast('已删除书签');

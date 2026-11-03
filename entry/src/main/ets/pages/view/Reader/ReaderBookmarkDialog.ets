@@ -15,7 +15,7 @@
  * · 空态提示与改造前的书签页签**逐字一致**（「本书还没有书签」/「阅读时点右上角…」）。
  *
  * ── 数据流（与目录弹窗同款，且**严禁 `@Link` 跨级转发**）────────────────────────
- * · 书签由本组件自己 `BookmarksDao.list()` 后按**书名**过滤 —— 写入端 `toggleBookmark()`
+ * · 书签由本组件自己 `BookmarkPorts.list()` 后按**书名**过滤 —— 写入端 `toggleBookmark()`
  *   也是这个口径（`bookmarks` 表没有 bookId 列，书名是唯一关联键）。
  * · 之所以不让父页面异步加载后传进来：`@Prop`/普通成员只在构造时取一次值，
  *   异步加载完成后无法保证回灌到已经打开的弹窗里，本组件自持状态最稳。
@@ -28,6 +28,7 @@
  *   由**阅读器自己的** `colorMode` 决定），options 里**不再有** `systemMaterial`
  *   —— 沉浸光感由系统按整机模式渲染，「系统暗 + 阅读器亮」时会把面板带成暗色。
  */
+import BookmarkPorts from '../../../common/reader/BookmarkPorts';
 import { MaterialDockModifier, default as ImmersiveMaterialUtil, READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
@@ -79,12 +80,12 @@ export struct ReaderBookmarkDialog {
 
   /**
    * 拉取**本书**的书签。
-   * `BookmarksDao.list()` 返回全部书的书签，这里按 `bookName` 过滤 ——
+   * `BookmarkPorts.list()` 返回全部书的书签，这里按 `bookName` 过滤 ——
    * `bookmarks` 表没有 bookId 列，书名是唯一关联键（与写入端 `toggleBookmark()` 一致）。
    */
   private async loadBookmarks(): Promise<void> {
     try {
-      const all = await BookmarksDao.list()
+      const all = await BookmarkPorts.list()
       this.bmRows = all.filter((r: BookmarkRow) => (r.bookName ?? '') === this.bookName)
     } catch (e) {
       this.bmRows = []

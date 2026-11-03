@@ -31,6 +31,7 @@
  * 执行顺序：**先 DB 事务**（4 张表，全成功才提交）→ **再迁移 Preferences 键** → **再迁移书名清单**
  * （Preferences 无事务；放在 DB 之后，失败只记录日志、不影响改名已成功的事实）。
  */
+import BookmarkPorts from '../reader/BookmarkPorts';
 import { ColumnInfo } from '../../database/types/ColumnInfo'
 import AppDatabaseUtil from '../../database/AppDatabaseUtil'
 import DbUtil from './DbUtil'
@@ -188,7 +189,7 @@ class BookRename {
     // 2026-11-03（A1）：SQL 由各 DAO 提供，本文件不再拼 SQL；事务语义不变。
     const derivedSqls: string[] = [
       // ② 书签
-      ...bookmarksDao.renameBookSqls(oldN, newN),
+      ...BookmarkPorts.renameSqls(oldN, newN),
       // ③④ 阅读时长（主键 (deviceId, bookName)：先删冲突行再改名，顺序不可换）
       ...readRecordDao.renameBookSqls(oldN, newN),
       // ⑤ 浏览历史
@@ -266,7 +267,7 @@ class BookRename {
     // 2026-11-03（A1）：删除派生数据也收回 DAO（谓词版，不拼 SQL）；语义不变：
     //   失败只是"没清干净"，不影响书行已删除这件事。
     try {
-      await bookmarksDao.deleteByBookName(n)
+      await BookmarkPorts.deleteByBookName(n)
       await bookHistoryDao.deleteByBookName(n)
     } catch (err) {
       console.error('BookRename.purge db failed: ' + JSON.stringify(err))

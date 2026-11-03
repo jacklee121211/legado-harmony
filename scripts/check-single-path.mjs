@@ -181,8 +181,8 @@ const INVENTORY = [
     pattern: /\b(booksDao|bookGroupsDao|bookmarksDao)\.(insert|partialUpdate|update|updateBookGroup|add|remove|delete)\s*\(/,
     scope: /(FileHandler|WifiBookServer|BookShareBridge|UnsupportedDoc)\.ets$/,
     allow: () => false,
-    budget: 2,
-    note: '2026-11-03（Ⅳ-1）：FileHandler 已改走适配器；剩 WifiBookServer 的 bookmarksDao.add/remove 2 处（书签还没有适配器，属下一批）',
+    budget: 0,
+    note: '2026-11-03（Ⅴ-2）：书签写点已全部收进 BookmarkPorts ⇒ 边界 lane 归零（Ⅳ-1 的 2 处随 Ⅴ-2 一并消失）',
   },
   {
     id: 'reader-fact-write',
@@ -192,6 +192,15 @@ const INVENTORY = [
     allow: () => false,
     budget: 0,
     note: '2026-11-03（Ⅴ-1）：阅读器只允许"进书取快照 / 退书结算"两个窄口（common/reader/ReaderPorts.ets）',
+  },
+  {
+    id: 'bookmark-dao-write',
+    label: '书签直写（绕过 BookmarkPorts）',
+    pattern: /\b(bookmarksDao|BookmarksDao)\.(add|remove|removeAt|deleteByBookName|renameBookSqls|initBookmarksTable)\s*\(/,
+    // 建表引导在数据层内部（database/index.ets）是合法的，不反向依赖 common/
+    allow: (rel) => rel === 'common/reader/BookmarkPorts.ets' || rel.startsWith('database/'),
+    budget: 0,
+    note: '2026-11-03（Ⅴ-2）：6 文件 13 处已收进 BookmarkPorts；建表引导留在 database/ 内部避免循环依赖'
   },
   {
     id: 'hidden-state-owner',
@@ -389,5 +398,7 @@ for (const v of violations) {
   if (v.text) console.log(`      ${v.text}`);
 }
 process.exit(1);
+
+
 
 

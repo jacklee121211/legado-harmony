@@ -1,4 +1,5 @@
 import { socket } from '@kit.NetworkKit'
+import BookmarkPorts from '../reader/BookmarkPorts';
 import { wifiManager } from '@kit.ConnectivityKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
 import { common, wantAgent } from '@kit.AbilityKit'
@@ -2114,7 +2115,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 WifiBookServer.respond(client, 200, 'application/json; charset=utf-8', WifiBookServer.textBytes(JSON.stringify({ ok: false })));
                 return;
             }
-            const all = await bookmarksDao.list();
+            const all = await BookmarkPorts.list();
             const mine: Array<Record<string, number | string>> = [];
             all.forEach((m) => {
                 if (m.bookName === book.bookName) {
@@ -2160,11 +2161,11 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             // 网页"＋签"原来每次点击都插一行（连点 N 次 = N 条同位置书签）。`content` 列原先
             // 没有任何消费者，现在存 `webKey = 章标题#段号#段首10字`，同一处再点就只回 exists。
             const webKey = String(body['webKey'] ?? '');
-            if (webKey !== '' && await bookmarksDao.existsByContent(book.bookName ?? '', webKey)) {
+            if (webKey !== '' && await BookmarkPorts.exists(book.bookName ?? '', webKey)) {
                 WifiBookServer.respondJson(client, true, 'exists');
                 return;
             }
-            await bookmarksDao.add(book.bookName ?? '', book.author ?? '暂无', -1, -1, String(body['chapterName'] ?? ''), String(body['bookText'] ?? '').slice(0, 60), false, webKey);
+            await BookmarkPorts.add(book.bookName ?? '', book.author ?? '暂无', -1, -1, String(body['chapterName'] ?? ''), String(body['bookText'] ?? '').slice(0, 60), false, webKey);
             WifiBookServer.respondJson(client, true, 'added');
         }
         catch (err) {
@@ -2189,7 +2190,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 WifiBookServer.respondJson(client, false, 'book not found');
                 return;
             }
-            const all = await bookmarksDao.list();
+            const all = await BookmarkPorts.list();
             let owned: boolean = false;
             all.forEach((m) => {
                 if (m.time === time && m.bookName === book.bookName) {
@@ -2201,7 +2202,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 WifiBookServer.respondJson(client, false, 'not found');
                 return;
             }
-            const ok: boolean = await bookmarksDao.remove(time);
+            const ok: boolean = await BookmarkPorts.removeByTime(time);
             WifiBookServer.respondJson(client, ok, ok ? 'removed' : 'not found');
         }
         catch (err) {

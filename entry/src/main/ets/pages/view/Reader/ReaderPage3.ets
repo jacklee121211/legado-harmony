@@ -2,6 +2,7 @@ import { display, router, LengthMetrics, promptAction, window,
   CapsuleSegmentButtonV2, SegmentButtonV2Items, SegmentButtonV2ItemOptions } from '@kit.ArkUI';
 // 2026-09-21 精简：以下三个 import 随其唯一使用处（底栏「换源/净化」注释块
 // 与不可达的 `sourceView()`/`purificationView()`/`LayoutMoreDialog()` builder）一并移除。
+import BookmarkPorts from '../../../common/reader/BookmarkPorts';
 import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -859,7 +860,7 @@ export default struct ReaderPage3 {
     // ⚠️ 2026-10-31 回退 listByChapter：真机出现"书签图标上来就掉"，
     //    疑似 RdbPredicates 的 equalTo 链在该表上不可靠；先回到已验证的 list()+JS 过滤，
     //    书签量级很小（几十~几百），不是卡顿主因。
-    const rows: BookmarkRow[] = await BookmarksDao.list()
+    const rows: BookmarkRow[] = await BookmarkPorts.list()
     const hits: BookmarkRow[] = rows.filter((b: BookmarkRow): boolean =>
       b.bookName === name && b.chapterIndex === idx
       && b.chapterPos >= startNode && b.chapterPos <= endNode)
@@ -898,20 +899,20 @@ export default struct ReaderPage3 {
     // ★ 与 `syncBookmarkState` 同源：目录号由页的 spine 反推，保证存/查/比同一坐标系
     const pageCatalog: number = this.catalogIndexForSpine(r.spine)
     const idx: number = pageCatalog >= 0 ? pageCatalog : (this.bookData.durChapterIndex ?? 0)
-    const rows: BookmarkRow[] = await BookmarksDao.list()
+    const rows: BookmarkRow[] = await BookmarkPorts.list()
     const inRange: BookmarkRow[] = rows.filter((b: BookmarkRow): boolean =>
       b.bookName === name && b.chapterIndex === idx
       && b.chapterPos >= r.startNode && b.chapterPos <= r.endNode)
     if (inRange.length > 0) {
       // 同页可能有多条（历史遗留的"多叠"）⇒ 一次清干净
       for (const b of inRange) {
-        await BookmarksDao.remove(b.time)
+        await BookmarkPorts.removeByTime(b.time)
       }
       this.isBookmarked = false
       this.getUIContext().getPromptAction().showToast({ message: '已移除书签' })
     } else {
       const chapterName = this.CatalogList.getData(idx)?.catalogName ?? ''
-      const ok = await BookmarksDao.add(name, this.bookData.author ?? '', idx, r.startNode, chapterName,
+      const ok = await BookmarkPorts.add(name, this.bookData.author ?? '', idx, r.startNode, chapterName,
         await this.currentPageFirstLine(), false)
       this.isBookmarked = ok
       this.getUIContext().getPromptAction().showToast({ message: ok ? '已添加书签' : '添加失败' })
