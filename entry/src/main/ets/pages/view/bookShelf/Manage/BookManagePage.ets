@@ -1198,10 +1198,10 @@ export default struct BookManagePage {
         // 2026-10-25：「加入书单」入口与弹窗已随书单功能删除 ⇒ 本分支不再可达
         break;
       case 4 :
-        DialogHost.openIf(this.clickHideDialog)
+        DialogHost.openIf(this.makeClickHideDialog())
         break
       case 5 :
-        DialogHost.openIf(this.delDialog); break;
+        DialogHost.openIf(this.makeDelDialog()); break;
       case 7 :
         // 2026-11-02：批量解散（书保留、归还上级；有后代分组时先问模式）
         this.manageDissolve().catch((e: Error): void => {
@@ -1417,19 +1417,23 @@ export default struct BookManagePage {
   }
   //删除确认弹窗
   @State delCache:boolean = false
-  delDialog: CustomDialogController | null = new CustomDialogController({
-    builder: confirmDialogExample({
-      confirm: ()=> { this.manageDelete() },
-      delCache:this.delCache
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-    // 2026-09-25 用户反馈：删除确认弹窗材质与全局统一（原 options 漏了 systemMaterial）
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-  })
+  // 2026-11-04（P4b 批 C-8）：原 delDialog 字段（初始化器里 new）已删 —— 改为**工厂方法**，
+  //   每次打开新建实例（@CustomDialog 参数不支持动态更新，复用旧实例是历史坑）。
+  private makeDelDialog(): CustomDialogController {
+    return new CustomDialogController({
+      builder: confirmDialogExample({
+        confirm: ()=> { this.manageDelete() },
+        delCache:this.delCache
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+      // 2026-09-25 用户反馈：删除确认弹窗材质与全局统一（原 options 漏了 systemMaterial）
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    })
+  }
   //删除功能
   /**
    * 批量删除（2026-11-02 第 23 轮 **事故修复**，务必先读这段再改）。
@@ -1511,19 +1515,23 @@ export default struct BookManagePage {
       this.refreshData()
       showMessage('已删除')
     },500)
-    this.delDialog?.close()
+    // 2026-11-04（P4b 批 C-8）：字段已删，关闭统一走 DialogHost.closeCurrent()
+    DialogHost.closeCurrent()
   }
   //是否隐藏分组弹窗
-  clickHideDialog: CustomDialogController | null = new CustomDialogController({
-    builder: hideDialogExample({
-      confirm: ()=> { this.clickHideAccept() }
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-  })
+  // 2026-11-04（P4b 批 C-8）：同上，改为工厂方法。
+  private makeClickHideDialog(): CustomDialogController {
+    return new CustomDialogController({
+      builder: hideDialogExample({
+        confirm: ()=> { this.clickHideAccept() }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 25,
+    })
+  }
   //隐藏操作
   /**
    * 批量「隐藏分组」。
