@@ -39,6 +39,13 @@ import CommonConstants from '../../../common/constants/CommonConstants';
 import { TtsPrefs, loadTtsPrefs } from '../../../tts/TtsPrefs';
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import { HL_DEV_DEFAULT, HL_ADVANCE_RATIO, HL_INDENT_SLOTS, PROGRESS_UNIT_PER_PCT, PROGRESS_UNIT_MAX, PROGRESS_TIP_W, PROGRESS_TIP_MS, PROGRESS_HOLD_MS, HL_DEF_TOP_PX, HL_DEF_WIDTH_RATIO, HL_DEF_LINE_MUL, HL_LINE_MUL_MIN, HL_LINE_MUL_MAX, HL_BOTTOM_RESERVED_PX, HL_CALIB_KEY, RS_SETTING_VER, SYSTEM_CJK_FONT_NAME } from '../../../common/reader/ReaderConst';
+// 2026-11-04（P3 批 A-2）：**排版标定纯计算**已抽到 `common/reader/ReaderCalibMath.ets`
+//   （无 `this.`、不写 AppStorage/@State）。本页只保留调用点，公式真源在那边。
+import { PageRange, effectiveLineMul, geomSelfContained, geom, cplFor, simulatePage,
+  scrollLineHeightFp, scrollIndentFp, arkFontName, selfDrawnFontWeight, scrollFontFamily,
+  scrollWeightOffset, scrollTopInsetVp,
+  scrollBottomInsetVp, densityVp, textAreaLeftVp, immersiveBudgetPx,
+  SELF_DRAWN_DELTA_VP } from '../../../common/reader/ReaderCalibMath';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -141,14 +148,8 @@ interface themeItem {
   customPath?: string,
 }
 
-/** ReaderKit 一页的内容范围（ReaderKit 坐标：node 为 0 基块节点号，即 domPos 的 X-1） */
-interface PageRange {
-  spine: number;
-  startNode: number;
-  startChar: number;
-  endNode: number;
-  endChar: number;
-}
+// 2026-11-04（P3 批 A-2）：`PageRange` 随 `simulatePage()` 搬到
+//   `common/reader/ReaderCalibMath.ets`（类型只留一份），此处用 import 引用。
 
 /**
  * 「当前位置」的唯一表示（ReaderKit 坐标，2026-10-24 新增）。
@@ -247,20 +248,8 @@ interface FlipSearch {
 //   值逐字未改；下方用 import 引用。外部重复定义（ReaderPager / CalibMode / MySetPage / ReaderCustomBg）
 //   后续逐个改为从同一模块 import。
 
-// ── ArkUI 侧的族名（2026-10-23 真机日志定案，理由见 `arkFontName()` 注释）──────
-/**
- * 系统中文黑体在 **ArkUI** 里认的族名（英文全名）。
- * `getFontByName('HarmonyOS Sans SC')` 实测正常返回；而传中文 family
- * 「鸿蒙黑体」会让 ArkUI 解析不到、静默回落默认族。
- */
-const ARK_FONT_SYS_CJK: string = 'HarmonyOS Sans SC';
-/** 最后一级回退：ArkUI 的默认无衬线族（只有拉丁字形，仅作兜底，正常不应落到这里） */
-const ARK_FONT_FALLBACK: string = 'HarmonyOS Sans';
-/**
- * 系统中文黑体在 ArkUI 侧的字重补偿（2026-10-23 真机验证：`-100` 后与分页模式
- * **完全一致**）。机理与"为什么不能全局用"见 `scrollWeightOffset()` 注释。
- */
-const SCROLL_SYS_CJK_WEIGHT_OFFSET: number = -100;
+// 2026-11-04（P3 批 A-2）：`ARK_FONT_*` / `SCROLL_SYS_CJK_WEIGHT_OFFSET` 搬到
+//   `common/reader/ReaderCalibMath.ets`（与 `arkFontName()` / `scrollWeightOffset()` 同源），此处用 import 引用。
 
 /**
  * 系统中文黑体的**真实文件路径**（`getFontByName('HarmonyOS Sans SC').path` 实测值）。
@@ -3332,7 +3321,7 @@ oAnimInitNode 配套） */
     // ⇒ 新字形才真正落到屏幕上。
     // ⚠️ 注册用的是 **ArkUI 族名**（`arkFontName()` 翻译过），不是引擎族名：
     //   引擎名「鸿蒙黑体」在 ArkUI 里解析不到（真机 1s 超时），注册它等于白等一轮。
-    ReaderFontLib.ensureRegistered(this.getUIContext(), this.arkFontName(), path, (): void => {
+    ReaderFontLib.ensureRegistered(this.getUIContext(), arkFontName(this.readerSetting), path, (): void => {
       this.fontSerial++
       this.updateHighlight()
     })
@@ -3399,14 +3388,14 @@ oAnimInitNode 配套） */
     const s: LineStyle = new LineStyle();
     const ctx = this.getUIContext();
     s.fontSizePx = ctx.fp2px(this.readerSetting.fontSize);
-    s.lineHeightPx = ctx.fp2px(this.scrollLineHeightFp());
+    s.lineHeightPx = ctx.fp2px(scrollLineHeightFp(this.readerSetting));
     s.letterSpacingPx = ctx.fp2px(LETTER_SPACING_FP);
     s.gapPx = ctx.fp2px(this.readerSetting.fontSize) * SCROLL_PARA_GAP_EM;
     s.widthPx = ctx.vp2px(this.textAreaWidthVp());
     s.pageHeightPx = Math.max(1, this.readerSetting.viewPortHeight
-      - ctx.vp2px(this.scrollTopInsetVp() + this.scrollBottomInsetVp()));
-    s.fontFamily = this.scrollFontFamily();
-    s.fontWeight = this.readerSetting.fontWeight + this.scrollWeightOffset();
+      - ctx.vp2px(scrollTopInsetVp() + scrollBottomInsetVp()));
+    s.fontFamily = scrollFontFamily(this.readerSetting);
+    s.fontWeight = this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting);
     s.fontPath = this.scrollFontPath();
     return s;
   }
@@ -5368,7 +5357,7 @@ oAnimInitNode 配套） */
     // （高亮测量通道 / 沉浸层按 fontName 渲染，走 @ohos.font；引擎侧走 resourceRequest 不依赖此）
     // 2026-10-20：注册是异步的，完成后再逼一次重排 —— 否则首帧可能抢在注册之前，
     // 而滚动层的 List 项参数不变就不会自己重排 ⇒ 字体永久停在系统默认字形。
-    ReaderFontLib.ensureRegistered(this.getUIContext(), this.arkFontName(),
+    ReaderFontLib.ensureRegistered(this.getUIContext(), arkFontName(this.readerSetting),
       this.readerSetting.fontPath, (): void => {
         this.fontSerial++
       });
@@ -6694,16 +6683,16 @@ oAnimInitNode 配套） */
       return;
     }
     const key = `${TtsEngine.currentChapter()}:${this.readerSetting.fontSize}`
-      + `:${this.readerSetting.lineHeight.toFixed(1)}:${this.effectiveLineMul().toFixed(3)}`
+      + `:${this.readerSetting.lineHeight.toFixed(1)}:${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}`
       + `:${this.calibWidthRatio.toFixed(3)}`;
     if (key === this.immPagesKey && this.immPages.length > 0) {
       return;
     }
-    const g = this.geom();
-    const cpl = this.cplFor(
+    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
+    const cpl = cplFor(
       Math.max(1, (this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth)
         * this.calibWidthRatio), g[2]);
-    const maxLines = Math.max(1, Math.floor(this.immersiveBudgetPx() / Math.max(1, g[3])));
+    const maxLines = Math.max(1, Math.floor(immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx) / Math.max(1, g[3])));
     // ★ 行粒度分页（与 ReaderKit 一致：可在段落中间断页）
     //   此前按"整段"切页：当"已用行数 + 整段行数 > 上限"时只能提前关页，
     //   大段落会白白浪费半页（实测 estLines=6/12 = 50%），观感就是每页占屏比例乱跳。
@@ -7737,14 +7726,14 @@ oAnimInitNode 配套） */
     if (nodes === null || this.measureCtrls.length !== this.measureParas.length) {
       return;
     }
-    const g = this.geom();
+    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const fontPx = g[2];
     const lh = g[3];
     const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
     const textW = Math.max(1, vw * this.calibWidthRatio);
-    const cpl = this.cplFor(textW, fontPx);
+    const cpl = cplFor(textW, fontPx);
     // 我们模型的逐段行数
-    const sim = this.simulatePage(nodes, r, cpl);
+    const sim = simulatePage(nodes, r, cpl);
     const arkCnt: number[] = [];
     let arkTotal = 0;
     let simTotal = 0;
@@ -7883,7 +7872,7 @@ oAnimInitNode 配套） */
       this.calibLabel = '';
       return;
     }
-    const g = this.geom();
+    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const densityPx = g[0];
     const scale = g[1];
     const fontPx = g[2];
@@ -7891,7 +7880,7 @@ oAnimInitNode 配套） */
     const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
     const vh = this.readerSetting.viewPortHeight > 0 ? this.readerSetting.viewPortHeight : this.windowHeight;
     const textW = Math.max(1, vw * this.calibWidthRatio);
-    const cpl = this.cplFor(textW, fontPx);
+    const cpl = cplFor(textW, fontPx);
     const leftPx = Math.max(0, (vw - textW) / 2);
     const topPx = this.calibTopPx;
     const usable = Math.max(lh, vh - HL_BOTTOM_RESERVED_PX - topPx);
@@ -7911,7 +7900,7 @@ oAnimInitNode 配套） */
     let base = 0;
     let counts = '';
     if (r !== null && nodes !== null && r.endNode >= r.startNode) {
-      const pairs = this.simulatePage(nodes, r, cpl);
+      const pairs = simulatePage(nodes, r, cpl);
       const n = Math.floor((pairs.length - 1) / 2);
       for (let i = 0; i < n; i++) {
         marks.push((topPx + pairs[i * 2] * lh) / densityPx);
@@ -7929,20 +7918,15 @@ oAnimInitNode 配套） */
       + `font ${fontPx.toFixed(1)}px  line ${lh.toFixed(1)}px  每行 ${cpl} 字`
       + `  实测每页 ${this.learnedCapacity > 0 ? this.learnedCapacity : '—'} 行\n`
       + `左 ${leftPx.toFixed(0)}  宽 ${textW.toFixed(0)}  顶 ${topPx.toFixed(0)}`
-      + `  行高系数 ${this.effectiveLineMul().toFixed(3)}`
+      + `  行高系数 ${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}`
       + (this.autoLineMul > 0 ? '(自动)' : '(手调)') + `  宽比 ${this.calibWidthRatio.toFixed(3)}`;
-  }
-
-  /** 生效的行高系数：优先用自动校准值 */
-  private effectiveLineMul(): number {
-    return this.autoLineMul > 0 ? this.autoLineMul : this.calibLineMul;
   }
 
   /** 测量/几何的失效键：页区间 + 排版参数，任一变化都要重新测量 */
   private measureKeyFor(r: PageRange): string {
     return `${r.spine}:${r.startNode}:${r.startChar}:${r.endNode}:${r.endChar}`
       + `:${this.readerSetting.fontSize}:${this.readerSetting.lineHeight.toFixed(1)}`
-      + `:${this.effectiveLineMul().toFixed(3)}:${this.calibWidthRatio.toFixed(3)}`;
+      + `:${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}:${this.calibWidthRatio.toFixed(3)}`;
   }
 
   /** 由"实测每页行数"反推行高系数：行高 = 页高 / 每页行数 */
@@ -7950,7 +7934,7 @@ oAnimInitNode 配套） */
     if (this.learnedCapacity <= 0) {
       return;
     }
-    const g = this.geomSelfContained();
+    const g = geomSelfContained(this.readerSetting);
     const vh = this.readerSetting.viewPortHeight > 0 ? this.readerSetting.viewPortHeight : this.windowHeight;
     const targetPitch = (vh - this.calibTopPx) / this.learnedCapacity;
     const derived = targetPitch / Math.max(1, this.readerSetting.lineHeight * g);
@@ -7971,12 +7955,6 @@ oAnimInitNode 配套） */
     }
   }
 
-  /** 字号px（不含行高系数），供 recomputeAutoPitch 使用 */
-  private geomSelfContained(): number {
-    const scale = this.readerSetting.scaledDensity > 0 ? this.readerSetting.scaledDensity : 1;
-    return Math.max(1, this.readerSetting.fontSize) * scale;
-  }
-
   /**
    * 确保当前页已有测量数据；没有就发起一次测量。
    * 之前只在 pageShow 里发起 ⇒ "打开书后直接按播放、没翻页"时永远不测量，
@@ -7992,21 +7970,6 @@ oAnimInitNode 配套） */
     }
     this.measurePending = key;
     this.refreshMeasure(r);
-  }
-
-  /** [densityPx, scale, fontPx, linePx] —— 高亮与标尺共用的几何基准 */
-  private geom(): number[] {
-    const disp = display.getDefaultDisplaySync();
-    const densityPx = disp.densityPixels > 0 ? disp.densityPixels : 1;
-    const scale = this.readerSetting.scaledDensity > 0 ? this.readerSetting.scaledDensity : 1;
-    const fontPx = Math.max(1, this.readerSetting.fontSize) * scale;
-    const lh = Math.max(1, this.readerSetting.lineHeight) * fontPx * this.effectiveLineMul();
-    return [densityPx, scale, fontPx, lh];
-  }
-
-  /** 每行字数：按"中文实际字宽 = 字号px × HL_ADVANCE_RATIO"折算 */
-  private cplFor(textWPx: number, fontPx: number): number {
-    return Math.max(4, Math.floor(textWPx / Math.max(1, fontPx * HL_ADVANCE_RATIO)));
   }
 
   // ---------- 标定值持久化 + 微调 ----------
@@ -8135,15 +8098,15 @@ oAnimInitNode 配套） */
     // 还没有测量数据（例如"打开书直接按播放、从未翻页"）⇒ 主动发起测量
     this.ensureMeasured(r);
     this.hlBands = [];
-    const g = this.geom();
+    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const densityPx = g[0];
     const scale = g[1];
     const fontPx = g[2];
     const lh = g[3];
     const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
     const textW = Math.max(1, vw * this.calibWidthRatio);
-    const cpl = this.cplFor(textW, fontPx);
-    const pairs = this.simulatePage(nodes, r, cpl);
+    const cpl = cplFor(textW, fontPx);
+    const pairs = simulatePage(nodes, r, cpl);
     const idx = seg.nodeIndex - r.startNode;
     if (idx < 0 || idx * 2 + 1 >= pairs.length) {
       this.clearHighlight();
@@ -8189,42 +8152,6 @@ oAnimInitNode 配套） */
       this.hlTop.toFixed(1), this.hlHeight.toFixed(1));
   }
 
-  /**
-   * 逐字模拟本页排版（块级节点强制换行 + 段首 text-indent）。
-   * @returns 扁平数组：i*2 = 第 (startNode+i) 个节点的起始行，i*2+1 = 结束行；
-   *          最后一项 = 本页总行数。
-   */
-  private simulatePage(nodes: string[], r: PageRange, cpl: number): number[] {
-    const pairs: number[] = [];
-    let line = 0;
-    let col = 0;
-    for (let n = r.startNode; n <= r.endNode && n < nodes.length; n++) {
-      const text = nodes[n];
-      const from = n === r.startNode ? r.startChar : 0;
-      const to = n === r.endNode ? Math.min(r.endChar, text.length - 1) : text.length - 1;
-      if (from === 0 && col === 0) {
-        col = HL_INDENT_SLOTS; // ReaderKit 给块级元素加的段首缩进
-      }
-      const startLine = line;
-      let endLine = line;
-      for (let i = from; i <= to; i++) {
-        endLine = line;
-        col++;
-        if (col >= cpl) {
-          col = 0;
-          line++;
-        }
-      }
-      pairs.push(startLine, endLine);
-      if (col !== 0) {
-        col = 0; // 块节点结束：强制换行
-        line++;
-      }
-    }
-    pairs.push(line);
-    return pairs;
-  }
-
   private clearHighlight(): void {
     if (this.hlTop !== -1) {
       this.hlTop = -1;
@@ -8262,9 +8189,9 @@ oAnimInitNode 配套） */
               // 字体管理（2026-09-26）：测量通道必须与引擎渲染同字体，否则换字体后
               // 高亮/沉浸层的行高测量错位。导入字体由 migrateReaderSetting 里的
               // ensureRegistered 注册到 ArkUI（@ohos.font）。
-              .fontFamily(this.scrollFontFamily())
-              .fontWeight(this.readerSetting.fontWeight + this.scrollWeightOffset())
-              .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul())
+              .fontFamily(scrollFontFamily(this.readerSetting))
+              .fontWeight(this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting))
+              .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
               .textIndent(this.measureIndents.length > i ? this.measureIndents[i] : 0)
               .width('100%')
               .fontColor(Color.Transparent)
@@ -8341,19 +8268,19 @@ oAnimInitNode 配套） */
       // 与引擎、与沉浸听读层**同源**，所以几种方式看起来是同一本书、同一个版式。
       if (this.scrollModeOn() && this.bookHandlerReady) {
         ReaderScrollView({
-          fontName: this.scrollFontFamily(),
+          fontName: scrollFontFamily(this.readerSetting),
           fontSize: this.readerSetting.fontSize,
-          fontWeight: this.selfDrawnFontWeight(),
+          fontWeight: selfDrawnFontWeight(this.readerSetting),
           fontColor: this.readerSetting.fontColor,
-          lineHeightFp: this.scrollLineHeightFp(),
-          indentFp: this.scrollIndentFp(),
+          lineHeightFp: scrollLineHeightFp(this.readerSetting),
+          indentFp: scrollIndentFp(this.readerSetting),
           bgColor: this.readerSetting.themeColor,
           bgUri: this.scrollBgUri(),
-          sideInsetVp: this.textAreaLeftVp(),
+          sideInsetVp: textAreaLeftVp(this.readerSetting, this.windowWidth, this.calibWidthRatio),
           // 顶部：与分页模式正文首行严格对齐（同时让出阅读器信息窗）
           // 底部：只让出手势条 ⇒ 整块正文区域整体下移（见两个方法的注释）
-          topInsetVp: this.scrollTopInsetVp(),
-          bottomInsetVp: this.scrollBottomInsetVp(),
+          topInsetVp: scrollTopInsetVp(),
+          bottomInsetVp: scrollBottomInsetVp(),
           initSpine: this.scrollInitSpine,
           initNode: this.scrollInitNode,
           initChar: this.scrollInitChar,
@@ -8373,7 +8300,7 @@ oAnimInitNode 配套） */
           // 让 .fontFamily 用上刚注册好的族名（见 ReaderScrollView.rowKey 注释）
           fontSerial: this.fontSerial,
           // 字重补偿：系统中文黑体（可变字体）减一档才与引擎的默认实例一致
-          weightOffset: this.scrollWeightOffset(),
+          weightOffset: scrollWeightOffset(this.readerSetting),
           // 解析器用闭包读：`BookHandler` 是异步赋值的普通字段，
           // 直接按值传会永远拿到构造那一刻的 null。
           handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
@@ -8408,21 +8335,21 @@ oAnimInitNode 配套） */
       // 差别只有一处：本层把"连续行流"按页切开，翻页 = 换一个整数，**没有任何动画**。
       if (this.noAnimModeOn() && this.bookHandlerReady) {
         ReaderPageNoAnim({
-          fontName: this.scrollFontFamily(),
+          fontName: scrollFontFamily(this.readerSetting),
           // ⚠️ 引擎排行与渲染都要这个路径；不传的话自定义字体在自绘层会用默认字体
           fontPath: this.scrollFontPath(),
           fontSize: this.readerSetting.fontSize,
-          fontWeight: this.selfDrawnFontWeight(),
+          fontWeight: selfDrawnFontWeight(this.readerSetting),
           fontColor: this.readerSetting.fontColor,
-          lineHeightFp: this.scrollLineHeightFp(),
-          indentFp: this.scrollIndentFp(),
+          lineHeightFp: scrollLineHeightFp(this.readerSetting),
+          indentFp: scrollIndentFp(this.readerSetting),
           // 段间距系数与滚动层**必须是同一个值**（两档互切时段落疏密不能变）
           gapEm: SCROLL_PARA_GAP_EM,
           bgColor: this.readerSetting.themeColor,
           bgUri: this.scrollBgUri(),
-          sideInsetVp: this.textAreaLeftVp(),
-          topInsetVp: this.scrollTopInsetVp(),
-          bottomInsetVp: this.scrollBottomInsetVp(),
+          sideInsetVp: textAreaLeftVp(this.readerSetting, this.windowWidth, this.calibWidthRatio),
+          topInsetVp: scrollTopInsetVp(),
+          bottomInsetVp: scrollBottomInsetVp(),
           initSpine: this.noAnimInitSpine,
           // ★ 章节内容缓存（2026-10-31）：父页持有，跨组件重挂保留；只有缓存未命中
           //   才让自绘层去调 `getSpineItemContent`（见 ReaderPageNoAnim.loadChapter 注释）。
@@ -8448,7 +8375,7 @@ oAnimInitNode 配套） */
           hlTo: this.scrollHlTo,
           hlSerial: this.scrollHlSerial,
           fontSerial: this.fontSerial,
-          weightOffset: this.scrollWeightOffset(),
+          weightOffset: scrollWeightOffset(this.readerSetting),
           // dock 展开时关掉本层横向手势 —— 否则会抢走 dock 进度滑条
           // 的横向拖动（与本页下拉书签手势 `fingers: 9` 同一套做法，见该处注释）。
           gestureEnabled: !this.isShowSetting,
@@ -10917,15 +10844,15 @@ oAnimInitNode 配套） */
     // ★ 2026-11-01 版式探针（真机取证）：把自绘矩形的全部输入打出来，
     //   用于解释"同一套 vp 常量在 PuraX / 平板上首行仍偏低"这类跨设备差异。
     try {
-      const dv: number = this.densityVp();
+      const dv: number = densityVp();
       hilog.info(0x0000, 'testTag',
         'LAYOUTPROBE mode=%{public}d vp=%{public}sx%{public}s density=%{public}s topInset=%{public}s bottomInset=%{public}s topRect=%{public}s bottomRect=%{public}s infoPos=%{public}d calibTopPx=%{public}s',
         this.readMode,
         (dv > 0 ? this.readerSetting.viewPortWidth / dv : 0).toFixed(2),
         (dv > 0 ? this.readerSetting.viewPortHeight / dv : 0).toFixed(2),
         dv.toFixed(3),
-        this.scrollTopInsetVp().toFixed(2),
-        this.scrollBottomInsetVp().toFixed(2),
+        scrollTopInsetVp().toFixed(2),
+        scrollBottomInsetVp().toFixed(2),
         this.topRectHeight.toFixed(2),
         this.bottomRectHeight.toFixed(2),
         this.infoWinPos,
@@ -10937,9 +10864,9 @@ oAnimInitNode 配套） */
         this.readerSetting.fontWeight,
         this.readerSetting.fontSize.toFixed(2),
         this.readerSetting.lineHeight.toFixed(3),
-        this.scrollFontFamily(),
+        scrollFontFamily(this.readerSetting),
         this.scrollFontPath(),
-        this.scrollLineHeightFp().toFixed(2));
+        scrollLineHeightFp(this.readerSetting).toFixed(2));
     } catch (e) {
       hilog.warn(0x0000, 'testTag', 'LAYOUTPROBE failed');
     }
@@ -11275,125 +11202,6 @@ oAnimInitNode 配套） */
   }
 
   /**
-   * 自绘两档（上下 / 无动画）的行高（fp）。
-   *
-   * ⚠️⚠️ **不再乘 `effectiveLineMul()`**（2026-10-27 真机像素实测定案）
-   * ──────────────────────────────────────────────────────────────────────
-   * 那个系数是**旧架构**的产物：当时自绘层没有排版权，只能"用 ReaderKit 每页行数
-   * 反推行高"（见 `recomputeAutoPitch()`），拿到的 `autoLineMul` ≈ 1.25。
-   *
-   * 现在自绘两档由引擎（`@ohos.graphics.text`）自己排版，行高就**应该直接等于**
-   * `lineHeight × fontSize` —— 与 ReaderKit 用的是同一个公式。
-   * 继续乘 1.25 的后果（同一章、同一字号实测）：
-   *   · 我们行距 **193px** vs ReaderKit **154px**（大 25%）⇒ 整页又疏又空；
-   *   · 每页行数偏少 ⇒ 页边界与 ReaderKit 差得更远 ⇒ 进度对不上。
-   *
-   * ⇒ 去掉系数后：154px（= 1.9 × 24fp × 3.375），与 ReaderKit 逐像素一致。
-   */
-  private scrollLineHeightFp(): number {
-    return this.readerSetting.lineHeight * this.readerSetting.fontSize;
-  }
-
-  /** 滚动视图的段首缩进（fp）：2 个字位（`HL_INDENT_SLOTS`） */
-  private scrollIndentFp(): number {
-    return this.readerSetting.fontSize * HL_INDENT_SLOTS;
-  }
-
-  /**
-   * **引擎族名 → ArkUI 族名**的翻译（2026-10-23，真机日志定案）。
-   *
-   * ── 为什么需要翻译（`docs/日志.md` 原文证据）────────────────────────────────
-   * 引擎侧 config：`fontName:"鸿蒙黑体", fontPath:"/system/fonts/HarmonyOS_Sans_SC.ttf"`
-   * —— 引擎是**按 fontPath 直接加载字体文件**的，不依赖族名匹配 ⇒ 永远正确。
-   *
-   * ArkUI 侧（滚动层/沉浸层/测量通道）只能给 `.fontFamily(名字)`，必须让 ArkUI 的
-   * 字体管理器**按名字匹配到族**。而：
-   *   · `fontinfo HarmonyOS Sans SC: {"family":"鸿蒙黑体", "fullName":"HarmonyOS Sans SC"}`
-   *     ⇒「鸿蒙黑体」只是该 TTF **name 表里的中文本地化 family**；
-   *   · 真机实测：`getFontByName('鸿蒙黑体')` **1 秒超时（解析不到）**，
-   *     而 `getFontByName('HarmonyOS Sans SC')` 正常返回上面那条 fontinfo
-   *     （本文件 `readerSetting` 初值注释里也记着这个实测）。
-   * ⇒ 直接传「鸿蒙黑体」会让 ArkUI **静默回落到默认族 `HarmonyOS Sans`**
-   *   （只有拉丁字形，中文再走另一套 CJK 兜底）⇒ 字形与引擎不同、观感"更黑"。
-   *   注意**不是**字重问题：两边 `fontWeight` 都是 400。
-   *
-   * 反过来，自定义/系统别名（如「书宋-简」）在系统字体清单里就是真名
-   * （`sysfonts(1): ["书宋-简"]`），`getFontByName` 能直接解析 ⇒ 原样传即可。
-   */
-  private arkFontName(): string {
-    const n: string = this.readerSetting.fontName;
-    if (n === undefined || n === null || n.length === 0) {
-      return ARK_FONT_FALLBACK;
-    }
-    if (n === SYSTEM_CJK_FONT_NAME) {
-      // 「鸿蒙黑体」= HarmonyOS_Sans_SC.ttf 的中文 family ⇒ ArkUI 要英文全名
-      return ARK_FONT_SYS_CJK;
-    }
-    return n;
-  }
-
-  /**
-   * 滚动层的 `fontFamily` 取值：**ArkUI 族名 + 回退链**。
-   *
-   * ArkUI 的 `fontFamily` 支持逗号分隔的回退列表（与 CSS 同语义），
-   * 前面的解析不到就用后面的 ⇒ 即使某个自定义字体在 ArkUI 侧注册失败，
-   * 也会落到 `HarmonyOS Sans SC`（全字库），而不是掉进只有拉丁字形的默认族。
-   */
-  /**
-   * 自绘两档的**字重补偿**（2026-11-01 实测加入）。
-   *
-   * 实测（两边同字体 `/system/fonts/HarmonyOS_Sans_SC.ttf`、同 weight=400；
-   * 同区域像素采样、亮度 <90 计为墨）：
-   *   · m80  ：仿真 10.32% vs 自绘 8.23%（自绘轻 20%）
-   *   · PuraX：仿真  9.71% vs 自绘 6.36%（自绘轻 34%，肉眼可见）
-   * ⇒ 不是参数传错，是**两个渲染栈**（ReaderKit 内部 Chromium 文本栈 vs ArkGraphics）
-   *   的光栅/合成差异，只能调数值逼近。
-   * 0 = 与设置页字重完全一致（旧行为）；100 = 加粗一档（400→500）。
-   * ⚠️ 字重改变字形宽度 ⇒ 自绘重排后每行字数可能变；
-   *    若发现与引擎错字加剧，把这个值调回 0。
-   */
-  private readonly SELF_DRAWN_WEIGHT_BOOST: number = 100;
-
-  /** 自绘层实际使用的字重（设置值 + 补偿，夹在 100~900） */
-  /**
-   * 自绘实际字重 = 设置值 + **按密度插值的补偿**（2026-11-01 用户实测结论）。
-   *
-   * 实测事实：
-   *   · m80 (density 3.375)：补偿 0（400）正好；加到 500 时自绘**比 ReaderKit 黑**；
-   *   · PuraX (2.55)：补偿 100（500）正好；400 时明显偏细；
-   *   · 平板 (2.25)：倾向 PuraX。
-   * ⇒ 同一补偿值无法同时满足，因为“字形笔画粗细”跟**字号落到多少 px** 相关：
-   *   m80 的 18fp = 60.75px，PuraX = 45.9px，px 越小笔画越细、越需要加粗。
-   *
-   * 公式（线性插值，锚点由两处实测值定）：
-   *   boost = clamp(round(120 × (3.375 − density)), 0, 200)
-   *   · m80   3.375 → 0     ✅（用户实测“正好”）
-   *   · PuraX 2.55  → 99    ≈100 ✅（用户实测“正好”）
-   *   · 平板  2.25  → 135
-   * 若某档不合适，只调系数 120 或上下限即可。
-   */
-  private readonly WEIGHT_BOOST_PER_DENSITY: number = 120;
-
-  private selfDrawnFontWeight(): number {
-    const d: number = this.densityVp();
-    let boost: number = this.SELF_DRAWN_WEIGHT_BOOST;
-    if (d > 0) {
-      boost = Math.round(this.WEIGHT_BOOST_PER_DENSITY * (3.375 - d));
-      boost = Math.max(0, Math.min(200, boost));
-    }
-    const w: number = this.readerSetting.fontWeight + boost;
-    return Math.max(100, Math.min(900, w));
-  }
-
-  private scrollFontFamily(): string {
-    const primary: string = this.arkFontName();
-    if (primary === ARK_FONT_SYS_CJK) {
-      return `${ARK_FONT_SYS_CJK}, ${ARK_FONT_FALLBACK}`;
-    }
-    return `${primary}, ${ARK_FONT_SYS_CJK}, ${ARK_FONT_FALLBACK}`;
-  }
-
-  /**
    * 自绘排版层要用的**字体文件路径**（给引擎 `FontCollection.loadFontSync` 注册）。
    *
    * ⚠️ 与 `readerSetting.fontPath` 的语义**不同**：
@@ -11411,21 +11219,6 @@ oAnimInitNode 配套） */
       return p;
     }
     return SYSTEM_CJK_FONT_PATH;
-  }
-
-  /**
-   * ArkUI 侧的字重补偿（2026-10-23 真机定案：`-100` 后与分页模式**完全一致**）。
-   *
-   * 机理：`HarmonyOS Sans SC` 是**可变字体**——
-   *   · 引擎加载该 ttf 时**不指定 wght 轴** ⇒ 用文件**默认实例**（比 Regular 细一档）；
-   *   · ArkUI 收到 `fontWeight(400)` 会**显式取 wght=400 实例**。
-   * ⇒ 系统中文黑体必须减一档才对得上；真机已验证 400→300 完全吻合。
-   *
-   * ⚠️ **只对系统中文黑体生效**：自定义字体（书宋-简 `ShuS-SC.ttf`、用户导入字体）
-   *    大多是单一字重的静态字体，减一档要么被忽略、要么触发合成变细 ⇒ 会弄坏。
-   */
-  private scrollWeightOffset(): number {
-    return this.arkFontName() === ARK_FONT_SYS_CJK ? SCROLL_SYS_CJK_WEIGHT_OFFSET : 0;
   }
 
   /**
@@ -11483,44 +11276,6 @@ oAnimInitNode 配套） */
    * ══════════════════════════════════════════════════════════════════════════
    */
   private readonly SELF_DRAWN_MARGIN_FALLBACK_VP: number = 58;
-  private readonly SELF_DRAWN_DELTA_VP: number = 0;
-  /**
-   * **只动自绘**的校正量（vp）：正 = 自绘整块下移，负 = 上移；高度不变。
-   *
-   * ── 为什么需要它（2026-11-01 真机实测）────────────────────────────────────
-   * 代码能精确知道**自绘**的首行位置（`scrollTopInsetVp()`），但**无法计算**
-   * ReaderKit 的首行位置 —— SDK 里 `PageDataInfo` 只有 header/footer/pageOffset，
-   * `ReaderSetting` 13 个字段没有 margin（`@hms.core.readerservice.readerComponent.d.ets`）。
-   * 现在自绘用的 `margin = calibTopPx/density` 来自 **TTS 高亮框顶**（`TtsHlCalibV3.topPx`），
-   * 与引擎「行框顶」并不等价 ⇒ 实测 Mate 80 上自绘比 ReaderKit 高约 **1 行**。
-   *
-   * δ（`SELF_DRAWN_DELTA_VP`）两边一起动，修不了这种**相对**偏差；
-   * 所以单独给自绘一个偏移：顶 +k、底 −k（高度不变）。
-   */
-  private readonly SELF_DRAWN_ONLY_OFFSET_VP: number = 0;
-
-  /**
-   * 自绘**顶边**相对引擎的修正（vp）—— **由 m80 截图实测反推**（2026-11-01）。
-   *
-   * 实测（1320×2848，density 3.375，系统状态栏关，信息窗上/下各一组）：
-   *   · ReaderKit 正文墨迹首行 = **338px = 100.1vp**（信息窗在上/在下都相同，已验证不随信息条移动）
-   *   · 自绘   正文墨迹首行 = **270px = 80.0vp**
-   *   · 行内墨迹偏移（行框顶→墨迹顶）≈ 40px = 11.9vp（两档同字体，可视为相同）
-   *   ⇒ ReaderKit 行框顶 ≈ 338−40 = 298px = **88.3vp**；自绘行框顶 = calibTopPx 230px = 68.2vp
-   *   ⇒ **顶部差 +20.1vp**
-   *
-   * ⚠️ 不直接改 `calibTopPx`：那个值还被 TTS 高亮（`TtsHlCalibV3`）使用，改了会连带移动高亮框。
-   */
-  private readonly SELF_DRAWN_TOP_ADJUST_VP: number = 0;   // 2026-11-01：已并入 ENGINE_TOP_MARGIN_VP，勿重复加
-
-  /**
-   * 自绘**底边**相对引擎的修正（vp，正值 = 底 inset 收小 = 正文更往下）—— 同批实测。
-   *
-   * 实测：ReaderKit 正文墨迹末行 = 2586px = **766.2vp**（信息窗上）、2584px（信息窗下）；
-   *      自绘正文墨迹末行 = 2564px = **759.7vp** ⇒ 自绘比引擎**高 6.5vp**。
-   * 行距两档一致（≈115px = 34vp）⇒ 不是字号问题，只需把自绘的下沿再放低 ~6.5vp。
-   */
-  private readonly SELF_DRAWN_BOTTOM_ADJUST_VP: number = 0;   // 2026-11-01：已并入 ENGINE_BOTTOM_MARGIN_VP，勿重复加
 
   /**
    * ══════════════════════════════════════════════════════════════════════════
@@ -11598,110 +11353,6 @@ oAnimInitNode 配套） */
   }
 
   /**
-   * 引擎正文上留白（vp）—— **基准模型唯一的地基**。
-   *
-   * 取值优先级：`calibTopPx / density`（标定过的真实引擎首行位置）
-   *            → 兜底 `SELF_DRAWN_MARGIN_FALLBACK_VP`（58vp，三台实测 55~62 的中值）。
-   * 依据：探针 MEASURE 实测 topMargin = 55 / 62 / 56 vp
-   *      （手机 3.375 / 宽折叠 2.55 / 平板 2.25）；
-   *      官方 FAQ `faqs-reader-3` 原文：「ReadPageComponent 顶部和底部预留了页眉页脚，
-   *      呈现效果为顶部和底部有空白」⇒ 上下留白对称，且 `ReaderSetting` 13 个字段里
-   *      没有 margin/inset（SDK `@hms.core.readerservice.readerComponent.d.ets`）。
-   *
-   * ── 2026-11-01 第二次修正：**改为 vp 常量，不再除以 density** ────────────────
-   * 旧实现 `margin = calibTopPx / density` 会让不同密度设备得到完全不同的 vp 留白：
-   *   · m80  (3.375) ⇒ 230/3.375 = 68.2vp
-   *   · PuraX(2.55)  ⇒ 230/2.55  = 90.2vp
-   *   · 平板 (2.25)  ⇒ 230/2.25  = 102.2vp
-   * ⇒ 用户实测「平板/PuraX 上自绘比 ReaderKit **上下都矮**」——正是这两个大留白挤掉的。
-   * 引擎的页眉页脚是**按 vp 布局**的（三台探针实测行距 17.6~18.2vp 几乎恒定），
-   * 所以这里改为**固定 vp**，按 m80 上"ReaderKit 实际墨迹位置"反推：
-   *   · 上留白 88vp（RK 首行墨迹 100.1vp − 行内墨迹偏移 ≈12vp）
-   *   · 下留白 62vp（把自绘末行推到 RK 的 766vp）
-   * ⚠️ `calibTopPx` 仍保留给 **TTS 高亮**（`TtsHlCalibV3`），不参与这里。
-   */
-  /**
-   * 引擎上留白（vp）。
-   *
-   * ★ 2026-11-01 云真机实测（XT2 三折叠，4 次运行、3 种形态、density 2.55/3.0）：
-   *   引擎正文首行墨迹**恒定在 ≈158~165px**，与窗口宽度（447~1249vp）、密度、折叠形态
-   *   **全部无关** ⇒ 引擎页眉是**按 px 固定**的，不是按 vp，也不是按字号。
-   *   （探针把 fontSize 从 14 扫到 28，5 个结果完全相同 ⇒ 该接口对引擎不生效，字号假设作废。）
-   *
-   * 因此提供两条路径，**默认仍走旧的固定 vp 常量**（= 已验证的 m80 / PuraX 完美行为）：
-   *   · `ENGINE_MARGIN_BY_DENSITY = false`（默认）：top = ENGINE_TOP_MARGIN_VP(88)
-   *   · `= true`：top = 160px / density + ENGINE_MARGIN_OFFSET_VP(40.6)
-   *     ⇒ m80(3.375) 47.4+40.6 = 88.0（与旧值一致）；PuraX(2.55) 62.7+40.6 = 103.3；
-   *        平板(2.25) 71.1+40.6 = 111.7
-   * ⚠️ 切换后必须三台真机复验，不满意就把开关改回 false（一键回退）。
-   */
-  private readonly ENGINE_MARGIN_BY_DENSITY: boolean = false;
-  private readonly ENGINE_MARGIN_PX: number = 160;
-  private readonly ENGINE_MARGIN_OFFSET_VP: number = 40.6;
-
-  private engineMarginVp(): number {
-    if (!this.ENGINE_MARGIN_BY_DENSITY) {
-      return this.ENGINE_TOP_MARGIN_VP;
-    }
-    const d: number = this.densityVp();
-    if (d <= 0) {
-      return this.ENGINE_TOP_MARGIN_VP;
-    }
-    return this.ENGINE_MARGIN_PX / d + this.ENGINE_MARGIN_OFFSET_VP;
-  }
-
-  /** 引擎下留白（vp）：与上留白保持固定差（旧行为 88→62 即 −26） */
-  private engineBottomMarginVp(): number {
-    if (!this.ENGINE_MARGIN_BY_DENSITY) {
-      return this.ENGINE_BOTTOM_MARGIN_VP;
-    }
-    return Math.max(0, this.engineMarginVp() - 26);
-  }
-
-  /** 引擎正文**上**留白（vp，m80 实测反推；三台共用） */
-  private readonly ENGINE_TOP_MARGIN_VP: number = 88;
-  /**
-   * 引擎正文**下**留白（vp，m80 实测反推）。
-   * ReaderKit 墨迹末行 2586px=766.2vp；自绘在此留白下墨迹末行 ≈ 766vp ⇒ 对齐。
-   * ⚠️ 与上留白**不相等**（88 vs 62）：说明引擎的页眉/页脚并非等宽，
-   *    「上下对称」的假设在 m80 上不成立，所以这里用两个独立常量。
-   */
-  private readonly ENGINE_BOTTOM_MARGIN_VP: number = 62;
-
-  /**
-   * 自绘文本区**顶边**（vp）= 引擎上留白 + δ。
-   *
-   * 基准模型（2026-11-01 换轨）：自绘矩形 = 引擎矩形 + 一个 δ。
-   *   · 不再按信息条位置分支：官方 FAQ 说上下留白是内建页眉页脚，
-   *     信息条本来就落在页脚留白里 ⇒ **信息条不再驱动正文位移**；
-   *   · 两态高度恒等（= 屏高 − 2·margin），切换信息条位置时正文不动。
-   */
-  private scrollTopInsetVp(): number {
-    return Math.max(0, this.ENGINE_TOP_MARGIN_VP + this.SELF_DRAWN_DELTA_VP
-      + this.SELF_DRAWN_ONLY_OFFSET_VP + this.SELF_DRAWN_TOP_ADJUST_VP);
-  }
-
-  /**
-   * 滚动模式文本区**底部**（vp）—— 只让出手势条，尽量往下铺。
-   *
-   * 用户原话：「底部的话也向下，正好相当于把整个正文内容区域向下了」
-   * ⇒ 顶部下移之后，底部**不再保留原来那 28vp 的呼吸位**（那会让整个文本区变矮、
-   *   读起来比正常模式少一行），只留手势条本身的高度 + 8vp 余量，
-   *   于是整块正文区域是"整体下移"的观感，而不是"上下各切一刀"。
-   */
-  /**
-   * 自绘文本区**底边**（vp）= 引擎下留白 − δ。
-   *
-   * 基准模型：引擎上下留白对称（官方 FAQ：顶部和底部预留了页眉页脚），
-   * 所以底边 = margin − δ，与顶边 = margin + δ 配对 ⇒ 高度恒为 `屏高 − 2·margin`，
-   * **两态（信息条在上/在下）完全一致**，切换时不重排、不跳行。
-   */
-  private scrollBottomInsetVp(): number {
-    return Math.max(0, this.engineBottomMarginVp() - this.SELF_DRAWN_DELTA_VP
-      - this.SELF_DRAWN_ONLY_OFFSET_VP - this.SELF_DRAWN_BOTTOM_ADJUST_VP);
-  }
-
-  /**
    * ReaderKit 整页位移（px）—— 基准模型下**只剩 δ**。
    *
    * 2026-11-01 换轨：官方 FAQ `faqs-reader-3` 原文
@@ -11712,8 +11363,8 @@ oAnimInitNode 配套） */
    */
   private readerKitInfoWinShiftY(): number {
     // （PDF 整页位移分支已随 R3 删除）
-    const d: number = this.densityVp();
-    return this.SELF_DRAWN_DELTA_VP * d
+    const d: number = densityVp();
+    return SELF_DRAWN_DELTA_VP * d
   }
 
   /**
@@ -11833,21 +11484,21 @@ oAnimInitNode 配套） */
               Span(this.immAfter(sg))
             }
             .fontSize(this.readerSetting.fontSize)
-            .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul())
+            .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
             .textIndent(sg[1] === 0 ? this.readerSetting.fontSize * HL_INDENT_SLOTS : 0)
             .fontColor(this.readerSetting.fontColor)
-            .fontFamily(this.scrollFontFamily())
-            .fontWeight(this.readerSetting.fontWeight + this.scrollWeightOffset())
+            .fontFamily(scrollFontFamily(this.readerSetting))
+            .fontWeight(this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting))
             .width('100%')
             .hitTestBehavior(HitTestMode.None)
           } else {
             Text(this.immSegText(sg))
               .fontSize(this.readerSetting.fontSize)
-              .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * this.effectiveLineMul())
+              .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
               .textIndent(sg[1] === 0 ? this.readerSetting.fontSize * HL_INDENT_SLOTS : 0)
               .fontColor(this.readerSetting.fontColor)
-              .fontFamily(this.scrollFontFamily())
-              .fontWeight(this.readerSetting.fontWeight + this.scrollWeightOffset())
+              .fontFamily(scrollFontFamily(this.readerSetting))
+              .fontWeight(this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting))
               .width('100%')
               .hitTestBehavior(HitTestMode.None)
           }
@@ -11856,11 +11507,11 @@ oAnimInitNode 配套） */
           : `imm-${sg[0]}-${sg[1]}`)
       }
       .width(this.textAreaWidthVp())
-      .height(this.immersiveBudgetPx() / this.densityVp())
+      .height(immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx) / densityVp())
       .clip(true)
       .position({
-        x: this.textAreaLeftVp(),
-        y: this.calibTopPx / this.densityVp()
+        x: textAreaLeftVp(this.readerSetting, this.windowWidth, this.calibWidthRatio),
+        y: this.calibTopPx / densityVp()
       })
       .hitTestBehavior(HitTestMode.None)
 
@@ -11903,29 +11554,6 @@ oAnimInitNode 配套） */
     .height('100%')
   }
 
-  private densityVp(): number {
-    const d = display.getDefaultDisplaySync();
-    return d.densityPixels > 0 ? d.densityPixels : 1;
-  }
-
-  /** 文本区左边界（vp）——独立计算，不能依赖标定模式（calibLeft 只在标定模式下才被赋值） */
-  private textAreaLeftVp(): number {
-    const densityPx = this.densityVp();
-    const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
-    const textW = Math.max(1, vw * this.calibWidthRatio);
-    return Math.max(0, (vw - textW) / 2) / densityPx;
-  }
-
-  /** 沉浸听读可见高度（px）：**按整屏**算，不按阅读器自身高度。
-   *  实测（2026-09-20）：阅读器的 web 视图只有 2150px，而窗口是 2848px；
-   *  若用阅读器高度算预算，沉浸层只占上方 3/4，底部空出一大块（截图为证）。 */
-  private immersiveBudgetPx(): number {
-    const disp = display.getDefaultDisplaySync();
-    const fullPx = disp.height > 0 ? disp.height : this.windowHeight;
-    const reserveVp = 24 + this.bottomRectHeight + 46; // 浮条下距 + 浮条高度 + 2vp 余量
-    return Math.max(120, fullPx - this.calibTopPx - reserveVp * this.densityVp());
-  }
-
   /** 若当前朗读段落在可见区之下，需要把整层上移多少 px（对齐整行，避免半行被切） */
   private immersiveShiftPx(): number {
     const r = this.pageRange;
@@ -11945,11 +11573,11 @@ oAnimInitNode 配套） */
         bottom += last.top + last.height;
       }
     }
-    const budget = this.immersiveBudgetPx();
+    const budget = immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx);
     if (bottom <= budget) {
       return 0;
     }
-    const linePx = Math.max(1, this.geom()[3]);
+    const linePx = Math.max(1, geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul))[3]);
     return Math.ceil((bottom - budget) / linePx) * linePx;
   }
 
