@@ -1,3 +1,4 @@
+import { BooksMutation } from '../books/BooksMutation'
 import { BusinessError } from '@ohos.base';
 import fs, { Options } from '@ohos.file.fs';
 import { common, Context } from '@kit.AbilityKit';
@@ -127,7 +128,7 @@ export class FileHandler {
         book.fileSize = 0;
         hilog.warn(0x0000, 'testTag', 'CopyFile: stat %{public}s failed, fileSize=0', dstPath);
       }
-      await booksUtil.addBooks(book)
+      await BooksMutation.add(book)
       return true
     } catch (err) {
       const e = err as BusinessError;
@@ -239,7 +240,7 @@ export class FileHandler {
           isJoin: true,
           isLocalBook: true
         };
-        await booksUtil.addBooks(book);
+        await BooksMutation.add(book);
         const check: Books[] = await booksDao.isExistBooks(dstPath, '默认协议.txt');
         if (check.length > 0) {
           PreferencesUtil.putSync('defaultBookSeededV3', true);

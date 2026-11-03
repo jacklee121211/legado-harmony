@@ -1,3 +1,4 @@
+import { BooksMutation } from '../books/BooksMutation'
 import { socket } from '@kit.NetworkKit'
 import BookmarkPorts from '../reader/BookmarkPorts';
 import { wifiManager } from '@kit.ConnectivityKit'
@@ -2522,7 +2523,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
             if (builtinCover !== '') {
                 book.builtinCoverUrl = builtinCover;
             }
-            await booksUtil.addBooks(book);
+            await BooksMutation.add(book);
             // 传书入库后**广播书架刷新**（2026-10-06 用户反馈"传完要手下滑才刷新"）：
             // `BOOK_IS_BOOK_REFRESHING` 是书架全组件的公共刷新信号（BookContent
             // `@StorageLink+@Watch` ⇒ 重查数据库）。与 BookInfos 改名广播同款语义：自增。
