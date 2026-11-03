@@ -1,4 +1,3 @@
-import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import { BookGroups } from '../../../../../database/entities/BookGroups'
 import BookFolderGridManage from './BookFolderGridManage'
@@ -122,19 +121,7 @@ export default struct BookFolderManages {
     this.brush.end()
   }
 
-  bookInfoDel: CustomDialogController | null = new CustomDialogController({
-    builder: confirmDialogExample({
-      cancel: ()=> { this.onCancel() },
-      confirm: ()=> { this.onAccept() },
-      delCache:this.delCache
-    }),
-    cancel: this.exitApp,
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-  })
+  // 2026-11-03（P13/B3）：bookInfoDel（删除确认 controller）已删除 —— 全仓零 open。
 
   onCancel() {
     // this.isClear = false
@@ -362,3 +349,4 @@ function groupCardKey(item: BookGroups): string {
     + '|' + item.coverType
     + '|' + (item.bookIds?.length ?? 0)
 }
+

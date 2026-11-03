@@ -121,7 +121,7 @@ const INVENTORY = [
     label: 'new CustomDialogController（组件自持 controller）',
     pattern: /new CustomDialogController\s*\(/,
     allow: (rel) => rel.startsWith('common/reader/'),
-    budget: 70,
+    budget: 63,
     note: 'DialogHost 铁律 4：调用点不许自持 controller（打开已收口，持有未收口；实测 71 处）',
   },
   {

@@ -2,7 +2,6 @@ import AppRouter, { RouteName, BookManageRouteParam } from '../../../common/rout
 import BookBodyContent from './components/BookBodyContent'
 import { FileHandler } from '../../../common/utils/FileHandler'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../common/utils/ImmersiveMaterialUtil'
-import Dialog from '../../../componets/common/Dialog'
 import { showMessage } from '../../../componets/common/promptShow'
 import { bookShelfImport } from '../../../database/entities/Books'
 import { getPasteDataSync, isNetworkUrl, sleep } from '../../../common/utils/utils'
@@ -396,17 +395,8 @@ export default struct IndexShelf {
   @State bookImport: bookShelfImport[] = []
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
-  // 网址导入dialog
-  dialogController: CustomDialogController = new CustomDialogController({
-    builder: Dialog({
-      title: '网址导入',
-      child: () => {
-        this.DialogInput("请输入书籍目录或详情页")
-      }
-    }),
-    cornerRadius: 8,
-    offset: { dx: 0, dy: 0 }
-  })
+  // 2026-11-03（P13/B3）：「网址导入」dialogController 已删除 —— 2026-10-22 起书籍导入直接走 pickLocalBooks()，
+  //   本 controller 全仓零 open（只声明不打开）。
   tabsController: TabsController = new TabsController();
   private scrollController: Scroller = new Scroller();
 
@@ -692,23 +682,8 @@ export default struct IndexShelf {
     .attributeModifier(this.menuSurface)
   }
 
-  @Builder
-  DialogInput(placeholder: string, maxlength?: number) {
-    Row() {
-      TextInput({ placeholder: placeholder })// .maxLength(maxlength)
-        // .showCounter(true)
-        .cancelButton({
-          icon: {
-            src: $r('app.media.close')
-          }
-        })
-    }
-    .margin({
-      top: 16,
-      bottom: 16
-    })
-  }
-
+  // 2026-11-03（P13/B3）：`DialogInput` 已删除 —— 它唯一的调用方是「网址导入」dialogController，
+  //   而该入口在 2026-10-22 去掉二级菜单后已不可达（`dialogController` 全仓零 open）。
   @Builder
   // 书架搜索浮窗（2026-09-22 新增）：按书名/作者在**本地库**里过滤
   ShelfSearchDialog() {
@@ -969,6 +944,8 @@ export default struct IndexShelf {
     }
   }
 }
+
+
 
 
 

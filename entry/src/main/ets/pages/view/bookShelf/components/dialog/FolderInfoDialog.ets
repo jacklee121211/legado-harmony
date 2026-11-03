@@ -2,7 +2,6 @@ import { Haptics } from '../../../../../common/utils/Haptics';
 import { CountLabel } from '../../../../../common/shelf/CountLabel'
 import { NightMode } from '../../../../../common/utils/NightMode'
 import commonInputDialog from '../../../../../componets/common/commonInputDialog'
-import confirmDialogExample from '../../../../../componets/common/confirmDialog'
 import MarkToolButton from '../../../../../componets/common/MarkToolButton'
 import { showMessage } from '../../../../../componets/common/promptShow'
 import TitleContentDialog from '../../../../../componets/common/TitleContentDialog'
@@ -472,60 +471,11 @@ export default struct FolderInfoDialog{
     this.closeChildAndReopen(this.restTitleDialog)
   }
 
-  //移动分组弹窗
-  bookMoveGroup: CustomDialogController | null = new CustomDialogController({
-    builder: BookSelectGroupDialog({
-      moveGroup: ()=> {
-        // 2026-11-03（Ⅱ-4）：移动已在弹窗内 await 提交 ⇒ 立即刷（原 500ms 延时）
-        ShelfRefresh.books()
-        ShelfRefresh.groups()
-        this.bookMoveGroup?.close()
-      },
-      // 子退父进：移动分组弹窗被取消（取消按钮/遮罩）⇒ **关闭子弹窗** + 本弹窗恢复
-      // ⚠️ 2026-10-12：旧写法只 `childDialogClosed()`，子弹窗留在屏幕上 ⇒ 双弹窗叠加
-      //    （真机日志 4446 行 `View: Dialog/1715 lost focus` 但 1715 未 close）。
-      onClose: ()=> {
-        this.closeChildAndReopen(this.bookMoveGroup)
-      },
-      oldGroupId:this.itemData.groupId,
-      currentIndex:this.itemData.groupType,
-      Ids:this.itemData.groupId,
-      isMoveStatus: 1
-    }),
-    height: 400,
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-    // 遮罩/返回键：同一条收尾路径（2026-10-12 一并修）
-    cancel: (): void => {
-      this.closeChildAndReopen(this.bookMoveGroup)
-    }
-  })
-
-  @State delCache:boolean = false
+  // 2026-11-03（P13/B3）：这里原有的「移动分组」与「删除确认」两个 controller 已删除 ——
+  //   前者被「单书移动至改为页面级打开」取代（IndexShelf.openPageBookMoveDialog），
+  //   后者被「删除三选一」取代（prepareDeleteThenOpen）；两者都只剩 close、再无 open。
   /** 删除确认框标题（2026-11-01：按实际子分组数/书数动态生成） */
   @State delTitle:string = '删除'
-  //删除分组弹窗
-  groupDelDialog: CustomDialogController | null = new CustomDialogController({
-    builder: confirmDialogExample({
-      confirm: ()=> { this.deleteGroup() },
-      delCache:this.delCache,
-      title:this.delTitle,
-      // 2026-10-12：取消路径必须**真的 close**（同 bookMoveGroup 那个坑）
-      cancel: ()=> { this.closeChildAndReopen(this.groupDelDialog) }
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-    cancel: (): void => {
-      this.closeChildAndReopen(this.groupDelDialog)
-    }
-  })
-  // ── 删除分组（2026-11-01 按新语义重写）────────────────────────────────────
   /**
    * 打开删除确认框前先算数量：删除 = **递归删子分组 + 真删书**（含书签/进度/封面文件）。
    *
@@ -1234,6 +1184,11 @@ export default struct FolderInfoDialog{
   })
 
 }
+
+
+
+
+
 
 
 

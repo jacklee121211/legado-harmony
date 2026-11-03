@@ -1,6 +1,5 @@
 import { common } from '@kit.AbilityKit'
 import { UnsupportedDoc } from '../../../../common/utils/UnsupportedDoc'
-import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
 import { ReaderEntry, ReaderLaunch } from '../../../../common/reader/ReaderEntry'
@@ -124,23 +123,7 @@ export default struct BookInfoGrids{
    */
   onBookOpen: () => void = () => {
   }
-  @State delCache:boolean = false
-  //弹窗
-  bookInfoDel: CustomDialogController | null = new CustomDialogController({
-    builder: confirmDialogExample({
-      cancel: ()=> { this.onCancel() },
-      confirm: ()=> { this.onAccept() },
-      delCache:this.delCache,
-      isShowCache:true
-    }),
-    cancel: this.exitApp,
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    // offset: { dx: 0, dy: '-40%' },
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 25,
-  })
+  // 2026-11-03（P13/B3）：bookInfoDel（删除确认 controller）与 delCache 已删除 —— 全仓零 open（宫格删除改走 BookInfoDialogs）。
 
   onCancel() {
     console.info('取消')
@@ -339,5 +322,6 @@ export default struct BookInfoGrids{
     console.info('BookRename', `renamed -> ${newName}, broadcast BOOK_IS_BOOK_REFRESHING`)
   }
 }
+
 
 
