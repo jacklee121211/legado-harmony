@@ -164,6 +164,18 @@ const INVENTORY = [
     note: '2026-11-03（Ⅲ-1）：统一走 ShelfCollection.resolve()；闸门防"又有人在一处写死 bookGroup: 2"',
   },
   {
+    id: 'books-dao-write-in-ui',
+    label: 'UI 层直写 bookGroup（书籍域的"写入口"缺口）',
+    pattern: /booksDao\.updateBookGroup\s*\(/,
+    // 数据层与工具层是合法落点；`GroupMutation` 是分组写入口本身（移书是它的职责）
+    allow: (rel) => rel.startsWith('database/')
+      || rel === 'common/utils/booksUtils.ets'
+      || rel === 'common/utils/bookGroupUtils.ets'
+      || rel === 'common/group/GroupMutation.ets',
+    budget: 5,
+    note: '2026-11-03（Ⅲ-2 审计）：实测 5 处全在 FolderInfoDialog（合并/解散的移书与回滚）—— 书籍域还没有 BooksMutation，先 ratchet 锁住不许增长',
+  },
+  {
     id: 'hidden-state-owner',
     label: '隐藏集合写入点（第二份状态的回归闸门）',
     pattern: /GroupStore\.setHiddenIds\s*\(/,
