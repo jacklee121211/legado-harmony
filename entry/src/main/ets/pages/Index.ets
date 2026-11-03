@@ -18,7 +18,7 @@ import { router } from '@kit.ArkUI'
 import BooksDao from '../database/dao/BooksDao'
 import { Books } from '../database/entities/Books'
 import ImmersiveMaterialUtil from '../common/utils/ImmersiveMaterialUtil'
-import AppRouter, { RouteName } from '../common/router/AppRouter'
+import AppRouter, { RouteName } from '../common/router/AppRouter'
 import { ReaderEntry } from '../common/reader/ReaderEntry'
 import UiMotion from '../common/utils/UiMotion'
 import BookDetailPage from './view/BookDetailPage'
@@ -656,11 +656,23 @@ struct Main {
    *   （`onBackPress` 同时服务返回键，猜错就会让返回键失灵）。
    */
   onBackPress(): boolean {
-    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
-      // 只消费、**不复位**（2026-10-19 用户反馈：「滑动的时候偶尔会触发重置 100%，
-      // 实际上滑动不能触发重置」）⇒ 放大态下这类返回事件一律静默吞掉。
-      console.info('PDFZOOM', 'entry onBackPress consumed (no reset)')
-      return true
+    // ── 2026-11-03（P4/A2）：阅读页返回键的**兜底**（真机偶发"退回桌面"）───────────
+    // 证据（本轮真机探针，5 次试验：点书后 40/80/150/250/600ms 按返回）：
+    //   每一次都是 [BACK] dest.onBackPressed zoom=false → ReaderPage3.aboutToDisappear，
+    //   本方法**一次都没被调用** ⇒ 正常路径由 NavDestination.onBackPressed 消费。
+    // 但 @Entry 页在这一层的默认行为是"**退出应用**"：只要有哪个瞬间 Navigation 没接住
+    // 返回（转场/容器重建/栈尚未就绪等），返回键就会直接落到本方法 ⇒ 用户看到"App 没了"。
+    // ⇒ 兜底：栈顶是阅读页（txt 或 pdf）时，**自己弹栈并消费**，绝不把返回漏给系统。
+    //    正常路径不会走到这里；走到了就说明那一帧 Navigation 没接住，日志会留痕便于复查。
+    const top: string | null = AppRouter.topName();
+    if (top === RouteName.READER || top === RouteName.PDF_VIEWER) {
+      if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
+        console.info('PDFZOOM', 'entry onBackPress consumed (no reset)');
+        return true;
+      }
+      console.warn('[BACK] page-level fallthrough: top=' + top + ' → 自己 pop 并消费（正常应由 NavDestination 处理）');
+      AppRouter.pop();
+      return true;
     }
     return false
   }
