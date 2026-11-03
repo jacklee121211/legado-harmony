@@ -442,10 +442,18 @@ class bookGroupUtils{
   async fillRealBookIds(groups: BookGroups[], type?: number): Promise<void> {    for (const group of groups) {
       // 只算会被渲染的卡片：隐藏分组不显示；除「未分组」外的系统单元（分组/全部/本地/书单）
       // 不是"装书的地方"（口径见 BookFolder.build / BookFolderManages.build 的过滤条件）。
+      //
+      // ⚠️ 2026-11-03 真机基线修复：**跳过时必须清空 `bookIds`**。
+      //   否则实体上留着 DB 的历史冗余列 `book_groups.bookIds`（B④ 决议仍在写它），
+      //   于是"隐藏分组的书"会以陈旧值混进父级的「共N本」：
+      //   实测把 `13`（内含 1 本）隐藏后，根级批量 `1` 仍显示 **共9本**（应 8）；
+      //   DB `book_groups id=11 show=0 bookIds=[68]` ⇒ 正是这条陈旧列。
       if (group.groupId === undefined || !group.show) {
+        group.bookIds = []
         continue
       }
       if (group.isSystem && group.groupName !== '未分组') {
+        group.bookIds = []
         continue
       }
       group.bookIds = await BooksDao.queryBookIds({ type: type, bookGroup: group.groupId })
