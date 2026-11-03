@@ -3,6 +3,7 @@ import BooksDao from './dao/BooksDao'
 // 2026-10-25：`worksListsDao`（书单）随书单功能删除
 import BookmarksDao from './dao/BookmarksDao'
 import readDailyDao from './dao/ReadDailyDao'
+import dbSchemaMigrator from './migration/DbSchemaMigrator'
 
 class DataBase {
   /**
@@ -76,6 +77,13 @@ class DataBase {
     //   保证删入口不丢书；自带 Preferences 标志 ⇒ 只跑一次、失败下次重试。
     //   必须在**建表之后**调用（要 UPDATE 的四张表此时才存在）。
     await BooksDao.migrateBookTypeToShelf()
+    // ★ 2026-11-04（P4a）：schema 版本管理 + 可累加迁移步骤。
+    //   位置**必须在最后一行**：迁移步骤可能依赖表/列已存在（本文件前面的 initXxxTable 已保证）。
+    //   它不替代上面任何 DDL —— 表/列存在性仍由每轮启动的
+    //   `createTable` / `existsTable` / `ensureColumn` 幂等自愈；
+    //   本行只负责"按版本恰好执行一次"的步骤（如分组唯一索引）并把版本号落库。
+    //   `run()` 永不 reject ⇒ 迁移失败也不会卡死 `whenReady()` 与首屏。
+    await dbSchemaMigrator.run()
   }
 }
 
