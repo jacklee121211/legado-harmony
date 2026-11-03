@@ -68,10 +68,103 @@ export class GroupMutation {
    * 删除分组（书随删除，或保留子文件夹由上层已先行处理）
    *
    * ⚠️ 同上：`delGroupById(ids, false)` 关掉底层 emit，避免与 `afterChange` 双发（S8）。
+   *
+   * @param promoteChildrenTo 2026-11-03（Ⅱ-1）新增：≥0 时先把这些分组的**直属子分组**
+   *   `parentId` 改到该目标（= 「保留子文件夹」的"上提一级"），再删分组行；
+   *   全过程**只发一次**结构事件。
+   *   为什么放进入口而不是留在弹窗里：原来弹窗逐个 `BookGroupsDao.updatePartialGroup` 直接写库，
+   *   属"UI 层直写事实"（闸门 `dao-write-in-ui` 计数 6 的来源之一）。
+   *
+   * ⚠️⚠️ **必须改"完整实体"再写，不能用 new BookGroups() 只填 parentId**（2026-11-03 真机踩到）：
+   *   `updatePartialGroup` 按 `getPartialColumn()` 写**全部 9 列**
+   *   （groupName / coverOnly / coverType / coverUrl / groupDescribe / enableRefresh / canUpdate / parentId），
+   *   空实体里 groupName 默认是 `''` ⇒ 会把子分组**名字和封面一起清空**。
+   *   真机证据：T9（id=32）上提后 `group_name` 变空串（改前 `T9`）。
    */
-  static async remove(groupId: number | number[]): Promise<void> {
+  static async remove(groupId: number | number[], promoteChildrenTo: number = -1): Promise<void> {
     const ids: number[] = typeof groupId === 'number' ? [groupId] : groupId
+    if (promoteChildrenTo >= 0) {
+      const tree = await GroupStore.reload()
+      for (const gid of ids) {
+        for (const c of tree.childrenOf(gid)) {
+          const cid: number = c.groupId ?? -1
+          if (cid <= 0 || ids.indexOf(cid) >= 0) {
+            continue
+          }
+          // c 来自 GroupStore（完整实体）⇒ 只改 parentId，其余列原样写回
+          c.parentId = promoteChildrenTo
+          c.updateTime = Date.now()
+          await BookGroupsDao.updatePartialGroup(c)
+        }
+      }
+    }
     await bookGroupUtils.delGroupById(ids, false)
+    await GroupMutation.afterChange([], [], true)
+  }
+
+  /**
+   * 置顶 / 取消置顶（2026-11-03 Ⅱ-1 新增）。
+   *
+   * 原来两处调用点直接 `bookGroupUtil.isTopGroup(...)`（`FolderInfoDialog:410`、
+   * `BookManagePage:1345`）——写库但**不发事件、不刷真源**，所以置顶后要重进才看到顺序变化。
+   * 置顶只改 `isTop`，不改树 ⇒ 按**非结构变更**发 `changedGroupIds=ids`。
+   */
+  static async setTop(groupId: number | number[], isTop: boolean): Promise<void> {
+    const ids: number[] = typeof groupId === 'number' ? [groupId] : groupId
+    if (ids.length === 0) {
+      return
+    }
+    await bookGroupUtils.isTopGroup(ids, isTop)
+    await GroupMutation.afterChange(ids, [], false)
+  }
+
+  /**
+   * 改名 + 换父（2026-11-03 Ⅱ-1 新增）。
+   *
+   * 用于「同名分组移动时选『重命名』」的路径（原名 `renameGroupAndMove` 在弹窗里
+   * 直接 `BookGroupsDao.updatePartialGroup`）。改父 ⇒ **结构变更**，发空数组清选中集。
+   */
+  static async renameAndMove(groupId: number, newName: string, targetParentId: number): Promise<void> {
+    if (groupId <= 0) {
+      return
+    }
+    // ⚠️ 同 remove：必须拿**完整实体**再写（`updatePartialGroup` 写全部 9 列，空实体会清空封面等）
+    const all: BookGroups[] = await BookGroupsDao.search()
+    const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === groupId)
+    if (me === undefined) {
+      return
+    }
+    me.groupName = newName
+    me.parentId = targetParentId
+    me.updateTime = Date.now()
+    await BookGroupsDao.updatePartialGroup(me)
+    await GroupMutation.afterChange([groupId], [], true)
+  }
+
+  /**
+   * 批量恢复父级（2026-11-03 Ⅱ-1 新增）—— 只服务**失败回滚**路径。
+   *
+   * `FolderInfoDialog.applyDissolve` 失败时要把上提过的子分组还原（原先逐个
+   * `BookGroupsDao.updatePartialGroup`）。回滚本身也是结构变化 ⇒ 发一次结构事件。
+   */
+  static async restoreParents(groupIds: number[], parentIds: number[]): Promise<void> {
+    if (groupIds.length === 0) {
+      return
+    }
+    // ⚠️ 同 remove：拿完整实体再写（空实体 patch 会清空 groupName/封面等列）
+    const all: BookGroups[] = await BookGroupsDao.search()
+    for (let i = 0; i < groupIds.length; i++) {
+      if (groupIds[i] <= 0) {
+        continue
+      }
+      const g: BookGroups | undefined = all.find((x: BookGroups): boolean => x.groupId === groupIds[i])
+      if (g === undefined) {
+        continue
+      }
+      g.parentId = parentIds[i] ?? 0
+      g.updateTime = Date.now()
+      await BookGroupsDao.updatePartialGroup(g)
+    }
     await GroupMutation.afterChange([], [], true)
   }
 

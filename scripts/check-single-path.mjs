@@ -92,16 +92,17 @@ const INVENTORY = [
     allow: (rel) => rel.startsWith('database/')
       || rel === 'common/group/GroupMutation.ets'
       || rel === 'common/utils/bookGroupUtils.ets',
-    budget: 6,
+    budget: 0,
     note: 'UI 层不得直接写分组表（实测 6 处：insert 2 + updatePartialGroup 4）；只允许写入口与数据层内部',
   },
   {
     id: 'set-top-direct',
     label: '置顶直连（还没有入口方法）',
     pattern: /bookGroupUtil(s)?\.isTopGroup\s*\(/,
-    allow: (rel) => rel === 'common/utils/bookGroupUtils.ets',
-    budget: 2,
-    note: '后续补 GroupMutation.setTop 再降到 0（实测 2 处：FolderInfoDialog:410 / BookManagePage:1345）',
+    // ⚠️ 写入口自身（`GroupMutation.setTop` 的实现）不算"绕过入口"——与 dao-write-in-ui 同因
+    allow: (rel) => rel === 'common/utils/bookGroupUtils.ets' || rel === 'common/group/GroupMutation.ets',
+    budget: 0,
+    note: '2026-11-03（Ⅱ-1）：已新增 GroupMutation.setTop，两处调用点收口 ⇒ 预算 2→0',
   },
   {
     id: 'new-dialog-controller',

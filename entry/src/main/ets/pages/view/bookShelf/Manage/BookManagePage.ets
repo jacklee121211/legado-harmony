@@ -1342,7 +1342,7 @@ export default struct BookManagePage {
   async manageTop(){
     const top: boolean = this.topTitle === '置顶'
     if (this.bookTypeNumber === 1) {
-      await bookGroupUtil.isTopGroup(this.checkListNumber, top)
+      await GroupMutation.setTop(this.checkListNumber, top)
     } else {
       await booksUtil.isTopBook(this.checkListNumber, top)
     }

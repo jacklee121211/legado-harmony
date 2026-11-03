@@ -407,7 +407,7 @@ export default struct FolderInfoDialog{
   //置顶/取消置顶
   isFolderTop(){
     if (this.itemData.groupId) {
-      bookGroupUtil.isTopGroup(this.itemData.groupId, !this.itemData.isTop)
+      GroupMutation.setTop(this.itemData.groupId, !this.itemData.isTop).catch((e: Error): void => { console.error('[GRP] setTop failed: ' + e.message) })
       this.itemData.isTop = !this.itemData.isTop
     }
 
@@ -795,19 +795,20 @@ export default struct FolderInfoDialog{
           await booksDao.updateBookGroup(b.id, target)
         }
       }
+      let promoteTo: number = -1
       if (keepChildren) {
         // 2026-11-02 第 26 轮（B②）：唯一树真源（见 GroupStore.reload）
+        // 2026-11-03（Ⅱ-1）：这里**只做快照**；真正"上提子分组"由写入口 `remove(ids, parentId)` 完成，
+        //   这样"上提 + 删组"是一次操作、只发一条结构事件（原来弹窗逐个子分组直写 DAO）。
         const tree: GroupTree = await GroupStore.reload()
         for (const c of tree.childrenOf(gid)) {
           snapChildId.push(c.groupId ?? -1)
           snapChildParent.push(c.parentId ?? 0)
-          c.parentId = parentId
-          c.updateTime = Date.now()
-          await BookGroupsDao.updatePartialGroup(c)
         }
+        promoteTo = parentId
       }
-      // 2026-11-03（A2）：走唯一写入口 —— 底层 emit 关掉，由 afterChange 刷真源 + 只发一次
-      await GroupMutation.remove(ids)
+      // 2026-11-03（A2 / Ⅱ-1）：走唯一写入口 —— 底层 emit 关掉，由 afterChange 刷真源 + 只发一次
+      await GroupMutation.remove(ids, promoteTo)
       // 2026-11-02：分组结构已安全变更，最后才真正删除被覆盖的旧书文件
       for (const oldId of pendingDelete) {
         try {
@@ -829,16 +830,14 @@ export default struct FolderInfoDialog{
           console.error(`[GRP-ROLLBACK] 书回滚失败 bookId=${snapBookId[i]}: ${JSON.stringify(e2)}`)
         }
       }
+      // 2026-11-03（Ⅱ-1）：子分组回滚也走写入口（一次批量恢复 + 一条结构事件）
       let rg: number = 0
-      for (let i = 0; i < snapChildId.length; i++) {
+      if (snapChildId.length > 0) {
         try {
-          const patch: BookGroups = new BookGroups()
-          patch.groupId = snapChildId[i]
-          patch.parentId = snapChildParent[i]
-          await BookGroupsDao.updatePartialGroup(patch)
-          rg++
+          await GroupMutation.restoreParents(snapChildId, snapChildParent)
+          rg = snapChildId.length
         } catch (e3) {
-          console.error(`[GRP-ROLLBACK] 子分组回滚失败 gid=${snapChildId[i]}: ${JSON.stringify(e3)}`)
+          console.error(`[GRP-ROLLBACK] 子分组回滚失败: ${JSON.stringify(e3)}`)
         }
       }
       console.error(`[GRP-ROLLBACK] 已回滚 书 ${rb}/${snapBookId.length} 本、分组 ${rg}/${snapChildId.length} 个`)
@@ -859,7 +858,7 @@ export default struct FolderInfoDialog{
     }
     try {
       // 2026-11-02 第 26 轮（B②）：唯一树真源 —— 不再各处自建树（见 GroupStore.reload）
-      const tree: GroupTree = await GroupStore.reload()
+      await GroupStore.reload()  // 2026-11-03（Ⅱ-1）：只需刷真源拿最新 parentId（树本身已不用，上提进写入口）
       const all: BookGroups[] = GroupStore.groups()
       const me: BookGroups | undefined = all.find((g: BookGroups): boolean => g.groupId === gid)
       const parentId: number = me?.parentId ?? 0
@@ -870,17 +869,10 @@ export default struct FolderInfoDialog{
       }
       // ② 子分组：**一律上提一级**（2026-11-01 用户拍板：空目录也保留，不再自动删空子树，
       //    否则会与「空目录一律保留」规则冲突，也会把用户刚建的空文件夹静默吃掉）
-      for (const c of tree.childrenOf(gid)) {
-        const cid: number = c.groupId ?? -1
-        if (cid <= 0) {
-          continue
-        }
-        c.parentId = parentId
-        c.updateTime = Date.now()
-        await BookGroupsDao.updatePartialGroup(c)
-      }
+      // 2026-11-03（Ⅱ-1）：上提动作进写入口（`remove(gid, parentId)`）——
+      //   原来在这里逐个子分组 `BookGroupsDao.updatePartialGroup`，属 UI 直写事实。
       // 2026-11-03（A2）：唯一写入口（刷真源 + 单次事件）
-      await GroupMutation.remove(gid)
+      await GroupMutation.remove(gid, parentId)
       showMessage(`已删除「${this.itemData.groupName ?? ''}」`)
     } catch (e) {
       showMessage('删除失败')
@@ -1114,10 +1106,10 @@ export default struct FolderInfoDialog{
       if (me === undefined) {
         return
       }
-      me.groupName = `${name} (2)`
-      me.parentId = targetId
-      me.updateTime = Date.now()
-      await BookGroupsDao.updatePartialGroup(me)
+            // 2026-11-03（Ⅱ-1）：改名+换父走写入口（一次结构事件）；不再原地改对象 + 直写 DAO
+      await GroupMutation.renameAndMove(gid, `${name} (2)`, targetId)
+
+
       showMessage(`已重命名为「${name} (2)」并移动`)
     } catch (e) {
       showMessage('重命名失败')
@@ -1250,3 +1242,4 @@ export default struct FolderInfoDialog{
   })
 
 }
+

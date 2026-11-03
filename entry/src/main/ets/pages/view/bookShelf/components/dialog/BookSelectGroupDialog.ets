@@ -804,7 +804,7 @@ export default struct BookSelectGroupDialog{
     bookGroups.groupName = newName
     bookGroups.groupType = this.currentIndex
     // ⚠️ 必须 await：紧接着就要重查列表，不等待提交会漏掉刚建的这一组
-    await BookGroupsDao.insert(bookGroups)
+    await GroupMutation.createGroup(bookGroups)
     showMessage(`已添加${newName}分组`)
     // ① 当场重查父弹窗列表（父实例仍存活 ⇒ 这次写入**是有效的**）
     await this.getGroupListAsync()
@@ -920,7 +920,7 @@ export default struct BookSelectGroupDialog{
       bookGroups.groupType = this.currentIndex
       // ⚠️ 必须 await（2026-10-13）：重开弹窗时调用方会**立刻**重查分组列表，
       //    不等待提交就会漏掉刚建的这一组（前端表现仍是"看不到新分组"）
-      await BookGroupsDao.insert(bookGroups)
+      await GroupMutation.createGroup(bookGroups)
       showMessage(`已添加${newName}分组`)
       ShelfRefresh.groups()
       if (this.onGroupCreated !== null) {
@@ -1363,3 +1363,4 @@ export default struct BookSelectGroupDialog{
   }
 
 }
+
