@@ -68,6 +68,22 @@ if (asJson) {
   process.exit(0)
 }
 
+// --check：作为**闸门**用（2026-11-04 C-10 新增）—— 零调用 open 方法必须为 0。
+// ALLOW_DEAD 用于"确认过、但暂时留着"的个别方法（当前为空；加进来必须写原因）。
+const ALLOW_DEAD = []
+const checkMode = process.argv.includes('--check')
+const unexpected = dead.filter((d) => !ALLOW_DEAD.includes(d.name))
+
+if (checkMode) {
+  if (unexpected.length === 0) {
+    console.log(`✅ 零调用 open/show/maybeShow 方法 = 0（扫描 ${files.length} 个文件，定义 ${defs.length} 个）`)
+    process.exit(0)
+  }
+  console.log(`❌ 发现 ${unexpected.length} 个零调用方法（新增死入口：删掉，或加进 ALLOW_DEAD 并写明原因）：`)
+  for (const d of unexpected) console.log(`   ${d.rel}:${d.line}  ${d.name}()`)
+  process.exit(1)
+}
+
 console.log(`扫描 ${files.length} 个 .ets；open/show/maybeShow 方法定义 ${defs.length} 个`)
 console.log(`\n── 疑似零调用（需人工确认：可能被 @BuilderParam / 回调字段间接调用）: ${dead.length} 个 ──`)
 for (const d of dead) console.log(`  ${d.rel}:${d.line}  ${d.name}()`)
