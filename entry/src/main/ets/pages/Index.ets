@@ -666,10 +666,6 @@ struct Main {
     //    正常路径不会走到这里；走到了就说明那一帧 Navigation 没接住，日志会留痕便于复查。
     const top: string | null = AppRouter.topName();
     if (top === RouteName.READER || top === RouteName.PDF_VIEWER) {
-      if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
-        console.info('PDFZOOM', 'entry onBackPress consumed (no reset)');
-        return true;
-      }
       console.warn('[BACK] page-level fallthrough: top=' + top + ' → 自己 pop 并消费（正常应由 NavDestination 处理）');
       AppRouter.pop();
       return true;
@@ -2721,14 +2717,6 @@ struct Main {
         // （SDK `component/nav_destination.d.ts:720`，@since 10）——返回 **true = 消费本次返回**。
         // 真机现象：放大后左右拖动会命中系统侧滑返回、把书划走；
         // 放大中消费返回并给阅读页发"复位"信号；100% 时返回 false ⇒ 原有返回行为不变。
-        .onBackPressed(() => {
-          if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
-            // 只消费、不再发"复位"信号：滑动不能触发回 100%（2026-10-19 用户反馈）
-            console.info('PDFZOOM', 'back consumed (no reset)')
-            return true
-          }
-          return false
-        })
         // customTransition 生效性与分支绑死：普通分支不挂它 ⇒ EXPLODE 完全不受影响
         .customTransition((op: NavigationOperation, isEnter: boolean)
           : Array<NavDestinationTransition> | undefined => {
@@ -2823,14 +2811,6 @@ struct Main {
         // （SDK `component/nav_destination.d.ts:720`，@since 10）——返回 **true = 消费本次返回**。
         // 真机现象：放大后左右拖动会命中系统侧滑返回、把书划走；
         // 放大中消费返回并给阅读页发"复位"信号；100% 时返回 false ⇒ 原有返回行为不变。
-        .onBackPressed(() => {
-          if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
-            // 只消费、不再发"复位"信号：滑动不能触发回 100%（2026-10-19 用户反馈）
-            console.info('PDFZOOM', 'back consumed (no reset)')
-            return true
-          }
-          return false
-        })
         // Step 6：尺寸变化（旋转/分屏）时同步 session，动画计算基准才不基于旧尺寸
         .onSizeChange((_old: SizeOptions, nv: SizeOptions) => {
           if ((param as ReaderRouteParam).longTakeTransitionParam !== undefined) {

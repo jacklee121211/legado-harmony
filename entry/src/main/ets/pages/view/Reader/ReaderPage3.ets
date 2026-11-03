@@ -32,10 +32,8 @@ import syncConfig, { SyncPos, SYNC_V2_ENABLED, ratioToIndex, normEx, excerptKey 
 // ── 新格式（PDF / DOCX / DOC）支持（2026-10-19）──────────────────────────────
 // 解析器：把原始 pdf/docx 变成 ReaderKit 能读的 epub；门禁：doc 只预览
 import { BookSourceResolver } from '../../../common/format/BookSourceResolver';
-import { FMT_MASTER_ENABLED, FMT_ZOOM_ENABLED, FMT_PDF_ENABLED, FMT_PDF_PAGES_PER_CHAPTER, FMT_PDF_FIT_SCALE,
-  isPdfPath, extOf } from '../../../common/format/FormatFlags';
+import { FMT_MASTER_ENABLED, extOf } from '../../../common/format/FormatFlags';
 import { UnsupportedDoc } from '../../../common/utils/UnsupportedDoc';
-import { PdfImporter } from '../../../common/format/PdfImporter';
 import { filePreview } from '@kit.PreviewKit';
 import CommonConstants from '../../../common/constants/CommonConstants';
 import { TtsPrefs, loadTtsPrefs } from '../../../tts/TtsPrefs';
@@ -1322,27 +1320,7 @@ oAnimInitNode 配套） */
   //   · >100% 时盖一层 `monopolizeEvents(true)` 的透明手势层 ⇒ 阅读器的翻页手势收不到
   //     （官方：独占控制生效后"窗口内其他组件上的事件不会响应"），于是"100% 才能翻页"成立；
   //   · 双击 / 双指 / 重置 都在这层里处理，底部显示百分比与「重置」。
-  /**
-   * ⚠️ 2026-11-03（P2/R3）**@deprecated**：PDF 已统一由 `common/reader/ReaderEntry.ets` 判定，
-   *   并一律进 `PdfViewerPage` —— **不再有任何入口把 PDF 推进 ReaderPage3**。
-   *   本状态与围绕它的缩放态（`pdfZoomPct` / `PDF_ZOOM_ACTIVE` / 双击捏合）保留为**兜底**，
-   *   目的是万一将来漏网入口把 pdf 推到这里，`startPlay` 里会打 `[READER-ENTRY]` 告警而非静默双轨。
-   */
-  @State isPdfBook: boolean = false
-  /** 当前正在读的 PDF 页号（0 基）——由 pageShow 的 spine+domPos 反推 */
-  @State pdfPageIdx: number = 0
-  /** 上一次单击的时间戳（PDF 双击判定用；见 content Stack 的 onClick 注释） */
-  private pdfLastTapAt: number = 0
-  /** 是否正在双指捏合（决定 100% 那层手势要不要保活） */
-  @State pdfPinching: boolean = false
-  /** 放大态下侧滑返回被消费后，Index 通过这个 tick 让本页复位到 100% */
-  /** 1000 = 100%（用整数千分比，避免浮点显示抖动） */
-  @State pdfZoomPct: number = 100
-  @State pdfOffX: number = 0
-  @State pdfOffY: number = 0
-  private pdfZoomBase: number = 1
-  private pdfOffBaseX: number = 0
-  private pdfOffBaseY: number = 0
+  // 2026-11-03（R3 收尾）：PDF 缩放状态字段 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
   /** updateHighlight 重入保护（防止 requestLocate 的同步回调形成递归 → 爆栈闪退） */
   private inHighlight: boolean = false
   /** 遮罩色块（测量优先；无测量时回落到模型单块） */
@@ -2553,11 +2531,7 @@ oAnimInitNode 配套） */
     if (!BM_PULL_ENABLED || this.isShowSetting) {
       return
     }
-    // PDF 放大态：下拉书签手势必须让位（2026-10-19 用户要求）——
-    // 放大后手指在页面上拖动是"看细节"，不能顺手把书签下拉拉出来。
-    if (this.isPdfZoomed()) {
-      return
-    }
+    // 2026-11-03（R3 收尾）：isPdfZoomed() 已删除（PDF 放大体系随 PdfViewerPage 独立）
     // 一镜到底转场中不接：此时内容层在 delegate 的缩放/裁切盒里（`CardLongTakeDelegate:142-177`），
     // 再叠一层位移会与飞行几何打架（标志位由 `LongTakeSession:202` 维护）。
     if (AppStorage.get<boolean>(UiMotion.LT_FLAG_TRANSITIONING) === true) {
@@ -4359,23 +4333,10 @@ oAnimInitNode 配套） */
     }
     // 普通书再次进入（可能上一本是 doc）⇒ 复位门禁状态
     this.previewOnlyBody = false
-    // PDF 书 ⇒ 挂上"点图放大"入口（开关 `FMT_ZOOM_ENABLED` 可一键关掉）
-    this.isPdfBook = FMT_MASTER_ENABLED && FMT_PDF_ENABLED && isPdfPath(this.bookData.bookUrl ?? '');
-    // 2026-11-03（P2/R3）：PDF 不再由任何入口进这里（统一 ReaderEntry -> PdfViewerPage）。
-    //   保留判定只作防御：若将来出现漏网入口，这里会打明显告警，避免再次出现两套 PDF 体验并存。
-    if (this.isPdfBook) {
-      console.error('[READER-ENTRY] PDF 误入 ReaderPage3（入口应走 ReaderEntry -> PDF_VIEWER）：'
-        + (this.bookData.bookName ?? ''));
-    }
-    // ⚠️ 缩放态是"另一方天地"，但它是**按书**的：换书/非 PDF 时必须把全局标志清掉，
-    //    否则上一本 PDF 停在 150% 直接返回书架时，`PDF_ZOOM_ACTIVE` 会残留为 true
-    //    ⇒ 下一本 txt 的"右滑返回书架"（CardLongTakeDelegate 的手势）会被误禁。
-    if (!this.isPdfBook) {
-      AppStorage.setOrCreate('PDF_ZOOM_ACTIVE', false);
-    // ★ 同理清掉「无动画档」标志（2026-10-26）：它决定 `Index.onBackPress()` 要不要
-    //   吞掉侧滑返回。若退出时残留 'none'，下一本用其它阅读方式的书**右滑就退不出去**。
+    // 2026-11-03（R3 收尾）：PDF 判定与原地缩放体系已整块删除（PDF 一律进 PdfViewerPage）。
+    // ★ 清掉「无动画档」标志（2026-10-26）：它决定 `Index.onBackPress()` 要不要吞掉侧滑返回。
+    //   若退出时残留 'none'，下一本用其它阅读方式的书**右滑就退不出去**。
     AppStorage.setOrCreate('READER_READ_MODE', '');
-    }
     // ★ 2026-10-13 阅读时长：**记账起点就在这里**。
     //   ⚠️ 位置不能上移：本行之前 `this.bookData` 还是字段初始值 `new Books()`（`:1038`），
     //      `id` 为 0 ⇒ `attach(0)` 会被直接拒掉，计时永远不会开始（真机表现为"时长恒为 0"）。
@@ -5717,11 +5678,7 @@ oAnimInitNode 配套） */
       // 我们的 PDF epub 是「一章 = FMT_PDF_PAGES_PER_CHAPTER 张页图」，每张图是一个顶层节点，
       // 且 ReaderKit 的 domPos 节点号是 **2×图片下标**（真机探测日志：第 1 张 `0#0;@;0`、
       // 第 2 张 `2#0;@;0`）⇒ 图片下标 = floor(node / 2)。
-      if (this.isPdfBook) {
-        const perChap: number = FMT_PDF_PAGES_PER_CHAPTER > 0 ? FMT_PDF_PAGES_PER_CHAPTER : 1
-        const inChap: number = Math.min(perChap - 1, Math.max(0, s[0]))
-        this.pdfPageIdx = (data.resourceIndex ?? 0) * perChap + inChap
-      }
+  // 2026-11-03（R3 收尾）：spine→PDF 页码反推 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
       // ★ 目录号必须跟随**真实翻页**（2026-09-21 真机日志取证）。
       //   在此之前 `syncCatalogIndex()` 全工程只有**一个**调用点 —— `:852` 的
       //   TTS `onChapter` 回调。也就是说**纯默读时目录号永不推进**，
@@ -6496,10 +6453,7 @@ oAnimInitNode 配套） */
     if (this.useManualOrientation) {
       WindowAbility.getInstance().setOrientationDirect(window.Orientation.AUTO_ROTATION);
     }
-    // ★ 退出阅读页 ⇒ 清掉"PDF 放大中"这个全局标志（2026-10-19）：
-    //   它同时被 `CardLongTakeDelegate`（右滑返回手势）与 `Index.onBackPress` 读取，
-    //   若在 150% 直接返回书架而残留为 true，下一本书（尤其非 PDF）的右滑返回会被误禁。
-    AppStorage.setOrCreate('PDF_ZOOM_ACTIVE', false);
+    // 2026-11-03（R3 收尾）：`PDF_ZOOM_ACTIVE` 已不存在（PDF 放大体系删除）
     // ★ 同理清掉「无动画档」标志（2026-10-26）：它决定 `Index.onBackPress()` 要不要
     //   吞掉侧滑返回。若退出时残留 'none'，下一本用其它阅读方式的书**右滑就退不出去**。
     AppStorage.setOrCreate('READER_READ_MODE', '');
@@ -7611,9 +7565,7 @@ oAnimInitNode 配套） */
     if (this.noAnimModeOn()) {
       return; // 目标态就是无动画
     }
-    if (this.isPdfBook) {
-      return;
-    }
+    // （PDF 拦截已随 R3 删除：PDF 不进本页）
     const prev: number = this.readMode;
     this.listenForcedFrom = prev;
     hilog.info(0x0000, 'testTag', 'listen: auto switch readMode %{public}d → %{public}d (noAnim)',
@@ -8408,8 +8360,7 @@ oAnimInitNode 配套） */
       // 不创建组件 = 引擎不会被初始化，翻页/选词/排版全部无从触发，天然满足
       // 「关闭所有预览以外的功能」。下方的说明卡（`PreviewOnlyPanel`）替代它。
       if (!this.previewOnlyBody) {
-        // PDF 原地放大（2026-10-19 用户方案）：缩放直接作用在阅读器本体上，
-        // 不用进出任何"独立图片页"。`pdfZoomPct` 100 时这两个 transform 都是 identity。
+        // PDF 原地放大（2026-10-19 用户方案）已随 R3 删除：PDF 一律进 PdfViewerPage。
         //
         // ── 尺寸绑定方式：**改为跟随官方 ReaderKit 示例**（2026-10-24）─────────────
         // 官方文档（documentId `…/ReadPageComponent_阅读页组件/reader-api-readpagecomponent`）
@@ -8439,13 +8390,8 @@ oAnimInitNode 配套） */
           .height(this.compHeight())
           // 2026-10-31：非 PDF 走外部等比放大（READERKIT_ZOOM），顶部中点为基准；
           //   PDF 保持原来的满宽/双指缩放（中心缩放）。
-          .scale({
-            x: this.readerKitScale(),
-            y: this.readerKitScale(),
-            centerX: '50%',
-            centerY: this.isPdfBook ? '50%' : 0
-          })
-          .translate({ x: this.pdfOffX, y: this.pdfOffY + this.readerKitInfoWinShiftY() })
+          .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+          .translate({ y: this.readerKitInfoWinShiftY() })
       } else {
         this.PreviewOnlyPanel()
       }
@@ -8461,156 +8407,8 @@ oAnimInitNode 配套） */
       // ⇒ 删掉这里的 TapGesture(count:2) 层，双击判定改到我们自己的单击回调里（见下方 content Stack
       //    的 `.onClick`：先立即弹 dock/震动，再按时间戳判第二次点击）。单击恢复零延迟。
       // （下方 >100% 的手势层不受影响：那时不存在单击交互，双击=回 100% 依旧是手势。）
-
-      // ── PDF **100%（全屏阅读态）也能直接双指捏合放大**（2026-10-19 用户要求）──────
-      // 为什么这一层不会像双击手势那样拖慢单击：这里**只挂 2 指手势**。
-      // 官方那条 300ms 延时是"双击 vs 单击"的仲裁（见上一段引文），两指捏合与单指点击
-      // 不存在仲裁关系 ⇒ 单击弹 dock 的延迟不受影响（真机已验：单击即时）。
-      // `HitTestMode.Transparent` = 自己收事件、**兄弟节点也收** ⇒ 单击/左右翻页照旧。
-      // `pdfPinching` 让本层在"捏合把倍率推过 100%"的过程中不被销毁（否则手势会被中断）。
-      if (this.isPdfBook && FMT_ZOOM_ENABLED && !this.previewOnlyBody
-        && this.prepText.length === 0 && this.prepError.length === 0
-        && (this.pdfZoomPct <= 100 || this.pdfPinching)) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#00000000')
-          .hitTestBehavior(HitTestMode.Transparent)
-          .gesture(
-            PinchGesture({ fingers: 2 })
-              .onActionStart(() => {
-                this.pdfPinching = true
-                this.pdfZoomBase = this.pdfZoomPct / 100
-              })
-              .onActionUpdate((event: GestureEvent) => {
-                const v: number = this.pdfZoomBase * event.scale
-                const pct: number = Math.round(v * 100)
-                this.pdfZoomPct = pct < 100 ? 100 : (pct > 500 ? 500 : pct)
-                this.clampPdfOffset()
-                // 捏合过程中就同步标志位：否则"一边捏一边侧滑返回"时 Index 侧还以为没放大
-                this.publishPdfZoomState()
-              })
-              .onActionEnd(() => {
-                this.pdfPinching = false
-                this.pdfZoomBase = this.pdfZoomPct / 100
-                this.publishPdfZoomState()
-                hilog.info(0x0000, 'testTag', 'pdf zoom pinch(100)=%{public}d', this.pdfZoomPct)
-              })
-          )
-      }
-
-      // ── PDF 放大态手势层（2026-10-19，用户要求：**非 100% 时四向滑动都归内容**）──
-      // 真机教训（用户："只有上划可用，左右和下划都失效"）：
-      //   · 下划被 `.priorityGesture` 的下拉书签抢走（已改成放大态 fingers:9 ⇒ 等价关闭）；
-      //   · 左右被 ReaderKit 自己的翻页 pan 抢走 ⇒ 本层改用 **`priorityGesture`**
-      //     （官方语义：同类型手势优先识别），把四向 pan 抢到我们手里；
-      //   · 系统侧滑返回由 `Index.ets` 的 `NavDestination.onBackPressed` 拦截 ——
-      //     官方 FAQ `faqs-arkui-1117` 原文：「该方案**支持拦截系统侧滑**及 NavDestination
-      //     标题栏的返回事件，但不支持拦截 NavPathStack.pop() 操作」。
-      // 本层只在 >100% 且没有正在捏合时创建；100% 时不存在 ⇒ 阅读体验与 txt/epub 一致。
-      if (this.isPdfBook && FMT_ZOOM_ENABLED && !this.previewOnlyBody && this.pdfZoomPct > 100
-        && !this.pdfPinching) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#00000000')
-          .monopolizeEvents(true)
-          .priorityGesture(
-            GestureGroup(GestureMode.Parallel,
-              PinchGesture({ fingers: 2 })
-                .onActionStart(() => {
-                  this.pdfZoomBase = this.pdfZoomPct / 100
-                })
-                .onActionUpdate((event: GestureEvent) => {
-                  const v: number = this.pdfZoomBase * event.scale
-                  const pct: number = Math.round(v * 100)
-                  this.pdfZoomPct = pct < 100 ? 100 : (pct > 500 ? 500 : pct)
-                  this.clampPdfOffset()
-                })
-                .onActionEnd(() => {
-                  this.pdfZoomBase = this.pdfZoomPct / 100
-                  this.publishPdfZoomState()
-                  hilog.info(0x0000, 'testTag', 'pdf zoom pinch=%{public}d', this.pdfZoomPct)
-                }),
-              // 四向平移：上下左右都作用于内容，边界由 clampPdfOffset 夹住
-              PanGesture({ fingers: 1, distance: 8 })
-                .onActionStart(() => {
-                  this.pdfOffBaseX = this.pdfOffX
-                  this.pdfOffBaseY = this.pdfOffY
-                })
-                .onActionUpdate((event: GestureEvent) => {
-                  this.pdfOffX = this.pdfOffBaseX + event.offsetX
-                  this.pdfOffY = this.pdfOffBaseY + event.offsetY
-                  // 软边界：到边仍跟手一点点，体感上就不会觉得"失灵"
-                  this.softClampPdfOffset()
-                })
-                .onActionEnd(() => {
-                  this.snapBackPdfOffset()
-                })
-              // ⚠️ 这里**没有**双击手势（2026-10-19 用户："只要是缩放状态下，除了缩放手势到真正的 100%
-              //    和重置，任何手势都不会触发重置 100%"）。之前这里挂了 `TapGesture({count:2})` 直接
-              //    `resetPdfZoom()`，而"慢速拖动"的前几帧位移不足 → 会被判成两次点击 ⇒ 拖着拖着突然回 100%。
-              //    ⇒ 缩放态是"另一方天地"：只认「双指缩放到 100%」与「重置按钮」两条出口。
-            )
-          )
-      }
-      // >100%：显示百分比 + 「重置」，并提示"复位后才能翻页"。
-      // `!isShowSetting`：dock 展开时让位（否则和 目录/书签/听书/夜间/设置 那排叠在一起）。
-      if (this.isPdfBook && FMT_ZOOM_ENABLED && !this.previewOnlyBody && !this.isShowSetting
-        && this.prepText.length === 0 && this.prepError.length === 0) {
-        Column({ space: 6 }) {
-          if (this.pdfZoomPct > 100) {
-            Text('双指缩放 / 双击放大 · 回到 100% 才能翻页')
-              .fontSize(10)
-              .fontColor(Color.White)
-              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-              .backgroundColor('#66000000')
-              .borderRadius(8)
-          }
-          Row({ space: 10 }) {
-            if (this.pdfZoomPct > 100) {
-              Text(this.pdfZoomPct + '%')
-                .fontSize(13)
-                .fontColor(Color.White)
-                .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-                .backgroundColor('#99000000')
-                .borderRadius(18)
-              Text('重置')
-                .fontSize(13)
-                .fontColor(Color.White)
-                .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-                .backgroundColor('#CC1F6FEB')
-                .borderRadius(18)
-                .onClick(() => {
-                  this.resetPdfZoom("button")
-                })
-            } else {
-              Row({ space: 6 }) {
-                Text('⤢').fontSize(16).fontColor(Color.White)
-                Text('放大').fontSize(12).fontColor(Color.White)
-              }
-              .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-              .backgroundColor('#99000000')
-              .borderRadius(20)
-              .onClick(() => {
-                this.zoomTo(150)
-              })
-            }
-          }
-        }
-        // ⚠️ 定位方式：整条**占满宽度**再右对齐 + 右内边距，不要用 `x:'100%'` + 负 translate
-        //    —— 后者按固定像素估算，内容一变宽（150% 时多出「重置」）右侧就被切掉
-        //    （真机截图 `71-inplace-150.png` 里「重置」只剩半个）。
-        // 2026-10-19（用户反馈：「按钮行太靠上了，覆盖正文；最好移到下面原来 dock 的位置」）：
-        // 竖向下移到 dock 那一带 —— dock 的几何是「底部安全区 + READER_BAR_BOTTOM_GAP + 条高」，
-        // 这里把整块（含 150% 时的提示行）底边贴到 dock 底边之上，正文不再被压。
-        // 同时 dock 展开（`isShowSetting`）时**隐藏本块**，避免与目录/书签那排按钮打架。
-        .width('100%')
-        .alignItems(HorizontalAlign.End)
-        .padding({ right: 16 })
-        .position({ x: 0, y: '100%' })
-        .translate({ y: -(this.bottomRectHeight + READER_BAR_BOTTOM_GAP + 62) })
-      }
+  // 2026-11-03（R3 收尾）：捏合层 + >100% 独占手势层 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
+  // 2026-11-03（R3 收尾）：百分比 + 重置浮层 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 
       // ── 上下滚动阅读层（2026-10-20 新增：阅读方式第三档）────────────────────
       // 位置：**盖在 `ReadPageComponent` 之上、菜单/弹窗之下**。
@@ -8730,9 +8528,9 @@ oAnimInitNode 配套） */
           hlSerial: this.scrollHlSerial,
           fontSerial: this.fontSerial,
           weightOffset: this.scrollWeightOffset(),
-          // dock 展开 / PDF 放大态时关掉本层横向手势 —— 否则会抢走 dock 进度滑条
+          // dock 展开时关掉本层横向手势 —— 否则会抢走 dock 进度滑条
           // 的横向拖动（与本页下拉书签手势 `fingers: 9` 同一套做法，见该处注释）。
-          gestureEnabled: !this.isShowSetting && !this.isPdfZoomed(),
+          gestureEnabled: !this.isShowSetting,
           handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
           // 章标题按 spine→目录映射取（修庆余年 747/748 偏移；上下档与无动画档同源）
           chapterTitleProvider: (spine: number): string => this.chapterTitleForSpine(spine),
@@ -9233,18 +9031,7 @@ oAnimInitNode 配套） */
             // 真机现象：双击放大"失效"。原因是第一下点击已经弹出 dock ⇒ 屏幕被这块 `Blank`
             // 盖住接收点击，第二下落到这里（关 dock），而不会回到 content Stack 的 onClick。
             // ⇒ 两处 onClick（开 dock / 关 dock）都必须做"两次点击配成双击"的判定。
-            if (this.isPdfBook && FMT_ZOOM_ENABLED && this.pdfZoomPct <= 100
-              && Date.now() - this.pdfLastTapAt < 300) {
-              this.pdfLastTapAt = 0
-              this.isShowSetting = false
-              if (this.isShowContentSetting) {
-                this.isShowContentSetting = false
-                this.settingDialog?.close()
-              }
-              this.zoomTo(150)
-              hilog.info(0x0000, 'testTag', 'pdf zoom dbltap=150 (blank pair)')
-              return
-            }
+  // 2026-11-03（R3 收尾）：Blank 单击里的双击放大判定 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
             this.isShowSetting = false
             // ★ 2026-09-23 用户反馈修复：「设置页点开之后，点击阅读器主屏幕，消失，再点主屏幕
             //   **还是设置页**，这个逻辑不对」。原因：关闭菜单时只置了 `isShowSetting`，
@@ -9479,17 +9266,7 @@ oAnimInitNode 配套） */
         // 官方建议（`faqs-arkui-1274`）：「先判定单击事件，跳转之后再判定是否双击」。
         // 所以这里**先立即执行单击动作**（弹 dock + 震动，零延迟），再用时间戳判第二次点击；
         // 命中双击就把刚才那次"弹 dock"撤掉、直接进 150%，全程没有任何手势识别器在等第二次点击。
-        if (this.isPdfBook && FMT_ZOOM_ENABLED && this.pdfZoomPct <= 100) {
-          const now: number = Date.now()
-          if (now - this.pdfLastTapAt < 300) {
-            this.pdfLastTapAt = 0
-            this.isShowSetting = false
-            this.zoomTo(150)
-            hilog.info(0x0000, 'testTag', 'pdf zoom dbltap=150 (from tap pair)')
-            return
-          }
-          this.pdfLastTapAt = now
-        }
+  // 2026-11-03（R3 收尾）：content 单击里的双击放大判定 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
         // 点击拉起菜单栏功能
         this.isShowSetting = true
       })
@@ -9544,7 +9321,7 @@ oAnimInitNode 配套） */
         //     与"PDF 放大态关闭下拉书签"完全同一套做法，工程内已验证）。
         //   为什么关得合理：dock 展开时用户就是在操作 dock（滑条/上一章/下一章/四个页签），
         //   此时不该再让"下拉加书签"抢手势；要加书签先点一下正文收起 dock 即可。
-        fingers: (this.isPdfZoomed() || this.isShowSetting) ? 9 : 1,
+        fingers: this.isShowSetting ? 9 : 1,
         // 2026-10-20：滚动模式扭到**横轴（右滑）** —— 见 `bmPullX` 注释。
         // 竖轴在滚动模式下属于 `List` 滚动，抢走它会把滚动功能弄坏。
         direction: this.scrollModeOn() ? PanDirection.Right : PanDirection.Down,
@@ -10826,7 +10603,6 @@ oAnimInitNode 配套） */
    */
   private scrollModeOn(): boolean {
     return this.readMode === READ_MODE_SCROLL
-      && !this.isPdfBook
       && !this.previewOnlyBody
       && this.prepError.length === 0;
   }
@@ -10841,7 +10617,6 @@ oAnimInitNode 配套） */
    */
   private noAnimModeOn(): boolean {
     return this.readMode === READ_MODE_NONE
-      && !this.isPdfBook
       && !this.previewOnlyBody
       && this.prepError.length === 0;
   }
@@ -10872,10 +10647,7 @@ oAnimInitNode 配套） */
       && m !== READ_MODE_SCROLL && m !== READ_MODE_NONE) {
       m = READ_MODE_FLIP_CURL;
     }
-    if (this.isPdfBook && (m === READ_MODE_SCROLL || m === READ_MODE_NONE)) {
-      hilog.info(0x0000, 'testTag', 'readMode: PDF 不支持自绘阅读（%{public}d），回落到横滑', m);
-      m = READ_MODE_FLIP_SLIDE;
-    }
+    // （PDF 读模式回落已随 R3 删除）
     // 2026-10-31：EPUB/MOBI/AZW3 等只保留原生两档（仿真/横滑）；老书存过 2/3 ⇒ 回落到横滑。
     // 听书内部仍可程序化进无动画（`switchReadMode(READ_MODE_NONE)` 不经过这里）。
     if (!this.selfDrawnFormatAllowed() && (m === READ_MODE_SCROLL || m === READ_MODE_NONE)) {
@@ -10983,10 +10755,7 @@ oAnimInitNode 配套） */
         this.readMode, next);
       return;
     }
-    if (this.isPdfBook && (next === READ_MODE_SCROLL || next === READ_MODE_NONE)) {
-      this.getUIContext().getPromptAction().showToast({ message: 'PDF 请用双指缩放阅读' });
-      return;
-    }
+    // （PDF 切档拦截已随 R3 删除）
     const prev: number = this.readMode;
     this.readMode = next;
     this.saveReadMode(next);
@@ -12021,9 +11790,7 @@ oAnimInitNode 配套） */
    * 若某机型仍需微调，只改 `SELF_DRAWN_DELTA_VP` 一个数（自绘与引擎同时跟随）。
    */
   private readerKitInfoWinShiftY(): number {
-    if (this.isPdfBook) {
-      return 0
-    }
+    // （PDF 整页位移分支已随 R3 删除）
     const d: number = this.densityVp();
     return this.SELF_DRAWN_DELTA_VP * d
   }
@@ -12598,16 +12365,7 @@ oAnimInitNode 配套） */
       this.toastLocate('这一章没有可用的正文文件，已停在原地');
       return;
     }
-    // ── PDF：按页定位 ────────────────────────────────────────────────────────
-    // PDF 的 domPos 是「X = 2×图片下标」（真机探测：第 1 张 `0#0`、第 2 张 `2#0`），
-    // 与正文的「X = 2×块节点+1」不是同一套换算 ⇒ 必须自己拼，不能走 `requestLocate`。
-    if (this.isPdfBook) {
-      const per: number = FMT_PDF_PAGES_PER_CHAPTER > 0 ? FMT_PDF_PAGES_PER_CHAPTER : 1;
-      const page: number = Math.max(0, Math.min(per - 1, Math.round(ratio * (per - 1))));
-      this.lastNavMs = Date.now();
-      this.startPlayAt(spine, `${2 * page}=0#0;@;0`);
-      return;
-    }
+  // 2026-11-03（R3 收尾）：PDF 按页定位（seekToChapterRatio） —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
     // ── 正文：章内比例 → 块节点号 ────────────────────────────────────────────
     // 节点数与 ReaderKit 的块节点 1:1（`tts/ChapterNodes.buildChapterNodes`），
     // 所以「第 ratio 个位置」= `round(ratio × (节点数−1))`，落点误差在 1~2 屏内。
@@ -12750,72 +12508,9 @@ oAnimInitNode 配套） */
     this.anchorValid = true
   }
 
-  /** 当前实际缩放倍率 = 档位 × PDF 满宽基准（见 `FMT_PDF_FIT_SCALE` 的实测推导）。 */
-  private pdfScale(): number {
-    // ⚠️ 必须**按格式隔离**（2026-10-19 用户实测：「除 pdf 外所有格式内容溢出屏幕、异常缩放」）：
-    //    `ReadPageComponent` 是一个共用组件，我把 PDF 的"满宽基准 1.23"直接乘进了通用的
-    //    `scale()` 里，结果 txt/epub/mobi/azw3 全被放大了 1.23 倍 ⇒ 内容溢出。
-    //    PDF 的满宽/缩放只属于 PDF：非 PDF 一律返回 1（= 完全不动，与改造前逐像素一致）。
-    if (!this.isPdfBook) {
-      return 1
-    }
-    return (this.pdfZoomPct / 100) * FMT_PDF_FIT_SCALE
-  }
+  // 2026-11-03（R3 收尾）：pdfScale（PDF 满宽基准） —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 
-  /**
-   * ReaderKit 组件的实际缩放（2026-10-31）。
-   *  · PDF：保持原来的满宽/双指缩放（`pdfScale()`，中心缩放不变）；
-   *  · 非 PDF：`READERKIT_ZOOM`（外部等比放大显示区域），顶部中点为基准。
-   */
-  private readerKitScale(): number {
-    if (this.isPdfBook) {
-      return this.pdfScale()
-    }
-    return READER_ZOOM
-  }
-
-  /** 是否处于"PDF 放大态"（>100%）。许多手势都要据此让位，统一走这里判。 */
-  private isPdfZoomed(): boolean {
-    return this.isPdfBook && this.pdfZoomPct > 100
-  }
-
-  /**
-   * 统一入口：进入放大态（按钮和双击都走它）。
-   *
-   * 顺带把**系统侧滑返回**关掉（用户要求 ③）：放大态下"左右滑动"应该是"恢复 100%"，
-   * 不能一滑就把整本书划走。`UIContext.enableSwipeBack` 官方签名见
-   * `@ohos.arkui.UIContext.d.ts:5489`（`enableSwipeBack(enabled: Optional<boolean>): void`，@since 18）。
-   */
-  private zoomTo(pct: number): void {
-    this.pdfZoomPct = pct
-    this.pdfZoomBase = pct / 100
-    if (pct <= 100) {
-      this.pdfOffX = 0
-      this.pdfOffY = 0
-    }
-    this.clampPdfOffset()
-    this.publishPdfZoomState()
-    // 双保险：这条接口对 NavDestination 侧滑在手机上是否生效没有定论（@syscap 标的是 ArkUI.Circle），
-    // 但它是官方提供里唯一"关侧滑返回"的开关，放大态先关掉；真正的兜底是 Index.onBackPress。
-    try {
-      this.getUIContext().enableSwipeBack(pct <= 100)
-    } catch (e) {
-      // 低版本没有该接口：忽略
-    }
-    hilog.info(0x0000, 'testTag', 'pdf zoom to=%{public}d', pct)
-  }
-
-  /**
-   * 把"是否放大中"同步到 AppStorage，供 `Index.ets` 的 `NavDestination.onBackPressed` 判定：
-   * 放大态下侧滑返回会被**消费掉**并让这里复位 100%（用户要求：放大时不能一滑就把书划走）。
-   *
-   * 为什么不再用 `UIContext.enableSwipeBack(false)`：该接口的 @syscap 是
-   * `SystemCapability.ArkUI.ArkUI.Circle`（见 `@ohos.arkui.UIContext.d.ts:5489` 上下文），
-   * 在手机上对 NavDestination 的侧滑返回不生效（真机实测：放大后横滑仍然把书划走）。
-   */
-  private publishPdfZoomState(): void {
-    AppStorage.setOrCreate('PDF_ZOOM_ACTIVE', this.pdfZoomPct > 100)
-  }
+  // 2026-11-03（R3 收尾）：缩放入口与状态广播 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 
   /**
    * 把"当前是否无动画阅读档"同步到 AppStorage，供 `Index.ets` 的 `onBackPress()` 判定
@@ -12835,78 +12530,9 @@ oAnimInitNode 配套） */
       this.readMode === READ_MODE_NONE ? 'none' : '');
   }
 
-  /**
-   * 把放大后的平移量夹在合理范围（避免把整页拖出屏幕）——
-   * 基准按 100% 时的可视宽高估：宽约 390vp、高约 840vp 的一半随倍数增长。
-   */
-  /** 平移上限（vp）。可视区按 vp 计：页图满宽后内容宽 = 屏宽(391vp)、高 = 506vp（1320×1708 比例） */
-  private pdfMaxOffsetX(): number {
-    return Math.max(0, (319 * this.pdfScale() - 391) / 2)
-  }
+  // 2026-11-03（R3 收尾）：平移夹取/软边界/回弹 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 
-  private pdfMaxOffsetY(): number {
-    return Math.max(0, (506 * this.pdfScale() - 844) / 2)
-  }
-
-  private clampPdfOffset(): void {
-    const maxX: number = this.pdfMaxOffsetX()
-    const maxY: number = this.pdfMaxOffsetY()
-    this.pdfOffX = this.pdfOffX > maxX ? maxX : (this.pdfOffX < -maxX ? -maxX : this.pdfOffX)
-    this.pdfOffY = this.pdfOffY > maxY ? maxY : (this.pdfOffY < -maxY ? -maxY : this.pdfOffY)
-  }
-
-  /**
-   * **带阻尼的软边界**（2026-10-19 用户反馈：「拖到最左侧后再往右划，就失灵了」）。
-   *
-   * 那次"失灵"其实不是手势丢了，而是**已经顶到平移上限、被 clamp 夹死**了 —— 手指还在动、
-   * 画面一动不动，体感就是失灵。这里改成橡皮筋：越界部分只跟 25%，松手再弹回边界。
-   * 这样"到边"是有反馈的（会轻微跟手一下再回弹），不会像死了一样。
-   */
-  private softClampPdfOffset(): void {
-    const maxX: number = this.pdfMaxOffsetX()
-    const maxY: number = this.pdfMaxOffsetY()
-    this.pdfOffX = this.pdfOffX > maxX ? maxX + (this.pdfOffX - maxX) * 0.25
-      : (this.pdfOffX < -maxX ? -maxX + (this.pdfOffX + maxX) * 0.25 : this.pdfOffX)
-    this.pdfOffY = this.pdfOffY > maxY ? maxY + (this.pdfOffY - maxY) * 0.25
-      : (this.pdfOffY < -maxY ? -maxY + (this.pdfOffY + maxY) * 0.25 : this.pdfOffY)
-  }
-
-  /** 松手：把越界的位移弹回边界（弹簧动画，只动 transform） */
-  private snapBackPdfOffset(): void {
-    const maxX: number = this.pdfMaxOffsetX()
-    const maxY: number = this.pdfMaxOffsetY()
-    const outX: boolean = this.pdfOffX > maxX || this.pdfOffX < -maxX
-    const outY: boolean = this.pdfOffY > maxY || this.pdfOffY < -maxY
-    if (!outX && !outY) {
-      return
-    }
-    this.getUIContext().animateTo({
-      duration: 220,
-      curve: Curve.Friction
-    }, () => {
-      this.clampPdfOffset()
-    })
-  }
-
-  /**
-   * 回到 100% —— **唯一的两个出口之一**：点「重置」按钮。
-   * 另一个出口是「双指一直缩到 100%」（在 pinch 的 update 里就把倍率夹成 100，不经过本方法）。
-   *
-   * 用户口径（2026-10-19）：「只要是缩放状态下，除了缩放手势到真正的 100% 和重置，
-   * **任何手势都不会触发重置 100%**；缩放模式就像另一方天地」。
-   * ⇒ 所有手势都不再调用本方法；`reason` 只为日志溯源。
-   */
-  private resetPdfZoom(reason: string): void {
-    this.pdfZoomPct = 100
-    this.pdfZoomBase = 1
-    this.pdfOffX = 0
-    this.pdfOffY = 0
-    this.pdfOffBaseX = 0
-    this.pdfOffBaseY = 0
-    this.publishPdfZoomState()
-    hilog.info(0x0000, 'testTag', 'pdf zoom reset=100 by=%{public}s', reason)
-  }
-
+  // 2026-11-03（R3 收尾）：resetPdfZoom（唯一出口已不存在） —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 
   /**
    * **仅预览格式（.doc）说明卡**（2026-10-19）。

@@ -73,9 +73,6 @@ export struct CardLongTakeDelegate {
     //    `PanGesture({ direction: PanDirection.Right })` 在 `onActionStart` 里直接 `options?.pop()`。
     //   也就是说"从左往右划 = 回书架"本来就是**我们自己的功能**，跟系统手势无关。
     // 用户要求：非 100% 时四向滑动都作用于内容 ⇒ 放大态在这里禁用它；100% 时行为完全不变。
-    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
-      return true;
-    }
     // ── 无动画阅读档：右滑 = "翻上一页"，不是"退出阅读"（2026-10-26）────────────
     // 机理与上面放大态完全一致，见 `readModeFlag` 字段注释（含真机日志原文）。
     if (this.readModeFlag === 'none') {
@@ -94,9 +91,6 @@ export struct CardLongTakeDelegate {
    *   我们的横滑翻页就再也收不到事件。
    */
   private gestureFingers(): number {
-    if (AppStorage.get<boolean>('PDF_ZOOM_ACTIVE') === true) {
-      return 9;
-    }
     if (this.readModeFlag === 'none') {
       return 9;
     }

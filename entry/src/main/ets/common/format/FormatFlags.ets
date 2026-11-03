@@ -40,18 +40,9 @@ export const FMT_PDF_RENDER_WIDTH_PX: number = 1320;
 /** 页图 JPEG 质量 */
 export const FMT_PDF_JPEG_QUALITY: number = 85;
 
-/** 点页面 → 全屏放大查看（Z1 缩放） */
-export const FMT_ZOOM_ENABLED: boolean = true;
+// 2026-11-03（R3 收尾）：FMT_ZOOM_ENABLED 已删除 —— PDF 点图放大只存在于 PdfViewerPage，本开关零引用。
 
-/**
- * PDF「满宽」基准倍率（2026-10-19 真机实测推得）：
- * ReaderKit 的页面左右各有内边距，1320px 宽的页图实际只画到约 **1076px**
- * （实测方法：源图 `p0002.jpg` 里一条黑色通栏条位于 x=116..1203、宽 1088；
- *  该条在 100% 截图上落在 x=193..1084、宽 892 ⇒ 缩放 0.815，
- *  即页图显示宽 ≈ 1320×0.815 ≈ 1076px，两侧各留 ~122px）。
- * ⇒ 1320 / 1076 ≈ 1.227。乘上它，PDF 页的左右边正好贴住屏幕左右边（用户要的"撑满"）。
- */
-export const FMT_PDF_FIT_SCALE: number = 1.23;
+// 2026-11-03（R3 收尾）：FMT_PDF_FIT_SCALE 已删除 —— 它只服务 ReaderPage3 的 PDF 原地缩放，该体系整块移除。
 
 /**
  * PDF 用哪条渲染路径：
@@ -136,3 +127,4 @@ export function importableExts(): string[] {
   }
   return base;
 }
+
