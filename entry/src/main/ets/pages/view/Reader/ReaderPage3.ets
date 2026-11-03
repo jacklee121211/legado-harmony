@@ -51,6 +51,11 @@ import { PageRange, effectiveLineMul, geomSelfContained, geom, cplFor, simulateP
 //   本页只保留调用点；写库 / 发事件 / 改 `@State` 的执行体仍在下方（等 `ReaderSession`）。
 import { ReaderPosition, currentPosition, parseDomPos, domPosFor, clampProgressUnit,
   progressTipX, hasBookmarkInRange } from '../../../common/reader/ReaderProgressIo';
+// 2026-11-04（P3 批 A-4）：**阅读会话状态（5 个非 @State 字段）+ 2 个写库函数**已抽到
+//   `common/reader/ReaderSession.ets`。本页所有读写点改成 `this.session.xxx`；
+//   `pageShow` / `onScrollPos` / `aboutToDisappear` 的调用顺序与时机**一行未动**。
+//   `LocateTarget` / `FlipSearch` 两个类型随会话字段搬过去（类型只留一份），此处 import 引用。
+import ReaderSession, { LocateTarget, FlipSearch } from '../../../common/reader/ReaderSession';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -160,37 +165,9 @@ interface themeItem {
 //   `common/reader/ReaderProgressIo.ets`（类型只留一份），此处用 import 引用。
 //   「当前位置」的唯一表示（ReaderKit 坐标，2026-10-24 新增）。
 
-/** 定位目标（ReaderKit 坐标） */
-interface LocateTarget {
-  spine: number;
-  node: number;
-  char: number;
-  /** true = 自动跟随（不弹 toast） */
-  silent: boolean;
-  /**
-   * true = **禁止"逐页逼近"兜底**（2026-09-21 新增）。
-   *
-   * 背景（真机反馈）：「我的 → 书签」点一条书签跳到阅读页后，**界面点不动、像有蒙版**。
-   * 根因就是本文件的定位兜底：`startPlay` 没落到位时会走 `beginSearch` / `stepSearch`
-   * **逐页翻页逼近**，上限 `s.flips >= 60`（最多连续重排 60 页）。这段时间里阅读器一直在
-   * 重新分页，用户看到的就是"完全没反应"。
-   *
-   * 书签里存的 `chapterPos` 是**当时那一页的块节点号**，一旦与当前排版不符（旧书签尤其如此），
-   * 就必然触发这条兜底 ⇒ 必须给它一个"宁可不准、也不要卡住"的档位。
-   * 置 true 后：落不到目标就**停在当前章**（`finishLocate(target, false)`），不再翻页搜索。
-   */
-  noFallback?: boolean;
-}
-
-/** 翻页搜索兜底：startPlay 未把我们送到目标时，按 (节点,字符) 双坐标逐页逼近 */
-interface FlipSearch {
-  target: LocateTarget;
-  dir: number;      // 1=向后翻 -1=向前翻
-  flips: number;    // 已翻页数（上限保护）
-  fixes: number;    // 已换向校正次数（上限保护）
-  lastNode: number; // 最近一次 pageShow 的页首块节点号（去重防过期数据）
-  lastChar: number; // 最近一次 pageShow 的页内字符偏移
-}
+// 2026-11-04（P3 批 A-4）：`LocateTarget` / `FlipSearch` 两个类型已随会话字段搬到
+//   `common/reader/ReaderSession.ets`（类型只留一份；上面 import 引入）。
+//   两者原来的字段注释（`noFallback` 的"界面点不动像有蒙版"根因说明）一并搬过去。
 
 /**
  * —— ReaderKit domPos 的 X 语义（真机日志 + 原书离线反推，已确证）——
@@ -580,10 +557,13 @@ export default struct ReaderPage3 {
   // builder，而它在本文件里不可达（见该处的说明）；且官方 `ReaderSetting` 里
   // 也没有 margin/padding 字段，改它并不会传给 ReaderKit。
   @State isShowSetting: boolean = false
-  /** 当前页是否已有书签（驱动顶部栏图标实心/空心） */
+  /**
+   * 当前页是否已有书签（驱动顶部栏图标实心/空心）
+   *
+   * ⚠️ 2026-11-04（P3 批 A-4）：它的查库去重键 `bmProbeKey` 已收进 `this.session.bmProbeKey`；
+   *   本字段是 `@State`（驱动渲染）⇒ 按本批判据**留在页面**，不搬进 `ReaderSession`。
+   */
   @State isBookmarked: boolean = false
-  /** 最近一次书签状态探测的位置，避免重复查询 */
-  private bmProbeKey: string = ''
 
   /**
    * 取「当前页首行」文本 —— 存书签用，按用户口径截取**前 10 个字符**。
@@ -600,7 +580,7 @@ export default struct ReaderPage3 {
    * 两者返回的都是同一套「ReaderKit 块节点」模型，下标 = `pageRange.startNode`。
    */
   private async currentPageFirstLine(): Promise<string> {
-    const r = this.pageRange
+    const r = this.session.pageRange
     if (r === null || r.startNode < 0) {
       return ''
     }
@@ -619,62 +599,13 @@ export default struct ReaderPage3 {
     }
   }
 
-  /** 上次写数据库的时刻（节流用，避免每次翻页都落库） */
-  private lastPersistAt: number = 0
-
-  /**
-   * 把阅读进度落到 `books` 表（5 秒节流）。
-   * 见 `BooksDao.stampReadProgress` 注释：这是当前阅读页**唯一的**进度落库点。
-   * 没有它，「我的 → 读过」永远是 0、书架"最近阅读"排序也失效。
-   */
-  private persistReadProgress(): void {
-    try {
-      const id = this.bookData.id ?? 0
-      if (id <= 0) {
-        return // 无 id 的路径（如搜索→详情→直接阅读）无法按 id 更新，跳过
-      }
-      const now = Date.now()
-      if (now - this.lastPersistAt < 5000) {
-        return
-      }
-      this.lastPersistAt = now
-      // 2026-11-03（Ⅴ-1）：写入走阅读器窄口（节流仍在上面判 —— 那是体验参数，不是数据契约）
-      ReaderPorts.saveProgress(ReaderPorts.snapshotOf(this.bookData), this.bookData.durChapterIndex ?? 0,
-        this.bookData.durChapterTitle ?? '', this.bookData.totalChapterNum ?? 0)
-    } catch (e) {
-      // 忽略：落库失败不得影响阅读
-    }
-  }
-
-  /**
-   * 「读完」判定 —— 读到**最后一章**时写 `finishedTime`。
-   *
-   * 口径（2026-09-21 用户拍板）：「打开到最后一章就算读完」。
-   * 为什么放宽：原实现额外要求 `TtsEngine.currentNodeTexts()` 非空、且
-   * `TtsEngine.currentChapter() === durChapterIndex`，也就是**必须开着听书**才可能判定。
-   * 但「读过/读完」的主体场景恰恰是**纯默读**，于是「读完」恒为 0。
-   *
-   * 为什么进度**会回退**却不能只看 `durChapterIndex`：读完后回第一章重看时
-   * `durChapterIndex` 会变小。故写入走 `BooksDao.markFinished()`，其 SQL 带
-   * `AND (finishedTime IS NULL OR finishedTime = 0)` —— **只写一次**，重复到达末章
-   * 不会改时间、也不会重复计数。
-   */
-  private checkFinished(): void {
-    try {
-      const total = this.bookData.totalChapterNum ?? 0
-      const idx = this.bookData.durChapterIndex ?? 0
-      if (total <= 0 || idx < total - 1) {
-        return
-      }
-      // 到了末章 ⇒ 标记读完（SQL 保证只写一次）
-      const id = this.bookData.id ?? 0
-      if (id > 0) {
-        ReaderPorts.markFinished(ReaderPorts.snapshotOf(this.bookData))
-      }
-    } catch (e) {
-      // 忽略：读完判定失败不得影响翻页
-    }
-  }
+  // 2026-11-04（P3 批 A-4）：`lastPersistAt`（进度落库 5 秒节流时间戳）已收进
+  //   `this.session.lastPersistAt`。
+  //
+  //   `persistReadProgress()`（原 630-647 行）与 `checkFinished()`（原 662-677 行）
+  //   两个**写库函数**的整段（含各自的"为什么放宽读完口径 / 为什么走窄口"注释）已搬到
+  //   `common/reader/ReaderSession.ets`，函数体逐字未改（只把 `this.bookData` 改成显式形参 `book`）。
+  //   本页只留调用点，**调用位置与顺序原样**（`pageShow` / `onScrollPos` 各一处）。
 
   /**
    * 阅读会话结束 ⇒ **先落库最终进度，再广播书架刷新**（2026-10-07）。
@@ -754,7 +685,7 @@ export default struct ReaderPage3 {
 
   /** 同步书签图标状态（只在"页范围"变化时查库，避免每次翻页都查） */
   private async syncBookmarkState(): Promise<void> {
-    const r = this.pageRange
+    const r = this.session.pageRange
     // ★ 2026-10-31 坐标同源：目录号必须由**页的 spine** 反推。
     //   书签存的是「目录号 + 页的 spine 节点」；切档瞬间 `durChapterIndex` 可能还没跟上，
     //   直接用它会出现"页在 588、书签按 587 查"的错位（日志 bmProbe idx 与 range 不同章）。
@@ -763,10 +694,10 @@ export default struct ReaderPage3 {
     const s: number = r === null ? -1 : r.startNode
     const e: number = r === null ? -1 : r.endNode
     const key = `${this.bookData.bookName}|${idx}|${s}..${e}`
-    if (key === this.bmProbeKey) {
+    if (key === this.session.bmProbeKey) {
       return
     }
-    this.bmProbeKey = key
+    this.session.bmProbeKey = key
     if (r === null) {
       this.isBookmarked = false
       return
@@ -777,7 +708,7 @@ export default struct ReaderPage3 {
   /** 顶部栏书签图标点击：当前页范围内有则全删、无则存（区间模型，跨档同源） */
   private async toggleBookmark(): Promise<void> {
     const name = this.bookData.bookName
-    const r = this.pageRange
+    const r = this.session.pageRange
     if (r === null || name === undefined || name === null || name.length === 0) {
       return
     }
@@ -802,7 +733,7 @@ export default struct ReaderPage3 {
       this.isBookmarked = ok
       this.getUIContext().getPromptAction().showToast({ message: ok ? '已添加书签' : '添加失败' })
     }
-    this.bmProbeKey = `${name}|${idx}|${r.startNode}..${r.endNode}`  // 状态已知，避免立刻重复查库
+    this.session.bmProbeKey = `${name}|${idx}|${r.startNode}..${r.endNode}`  // 状态已知，避免立刻重复查库
   }
 
   // 2026-09-21 精简：`isShowDownload` / `isShowMoreLayout` / `ParagraphSpacing` /
@@ -1455,9 +1386,10 @@ oAnimInitNode 配套） */
   @State calibWidthRatio: number = HL_DEF_WIDTH_RATIO
   @State calibLineMul: number = HL_DEF_LINE_MUL
   // 精确定位状态机（ReaderKit 坐标系：spine / 块节点 / 节点内字符）
-  private pageRange: PageRange | null = null;
-  private locateTarget: LocateTarget | null = null;
-  private flipSearch: FlipSearch | null = null;
+  // 2026-11-04（P3 批 A-4）：`pageRange` / `locateTarget` / `flipSearch` 三个字段 +
+  //   `lastPersistAt` / `bmProbeKey` 两个节流/去重键一律收进 `ReaderSession`（见该文件头表格）。
+  //   本页只读写 `this.session.xxx`；**没有任何一处改变读写时机**（原字段全部非 @State）。
+  private session: ReaderSession = new ReaderSession();
   private locateTimer: number = -1;
   // ── 应用接续「句内微调」状态（2026-10-24）──────────────────────────────────
   /** 本次进书是否由接续带落点进来（false ⇒ 微调完全跳过） */
@@ -3398,7 +3330,7 @@ oAnimInitNode 配套） */
     if (!this.infoWinPageNoShow) {
       return
     }
-    const r = this.pageRange
+    const r = this.session.pageRange
     if (r === null || this.BookHandler === null) {
       return
     }
@@ -4769,7 +4701,7 @@ oAnimInitNode 配套） */
           // 电脑只是同章内挪了不到一页 ⇒ 这里直接返回（顺带推进水位），不打扰阅读。
           if (SYNC_V2_ENABLED) {
             const ownTitle: string = this.bookData?.durChapterTitle ?? ''
-            const node: number = this.pageRange?.startNode ?? 0
+            const node: number = this.session.pageRange?.startNode ?? 0
             const ownRatio: number = this.anchorNodeCount > 0 ? node / this.anchorNodeCount : -1
             if (syncConfig.pendingWebPos(name, ownTitle, ownRatio) === null) {
               return
@@ -4828,7 +4760,7 @@ oAnimInitNode 配套） */
   private anchorNodeCount: number = 0
 
   private async webSyncAnchors(): Promise<string[]> {
-    const r = this.pageRange
+    const r = this.session.pageRange
     if (r === null || r.startNode < 0) {
       return ['', '']
     }
@@ -4946,7 +4878,7 @@ oAnimInitNode 配套） */
           ratio: chCount > 0 ? chIndex / chCount : -1,
           topEx: a[0],
           botEx: a[1],
-          posRatio: nodeCount > 0 ? (this.pageRange?.startNode ?? 0) / nodeCount : -1,
+          posRatio: nodeCount > 0 ? (this.session.pageRange?.startNode ?? 0) / nodeCount : -1,
           ts: Math.max(Date.now(), prevTs),
           writer: 'phone'
         }
@@ -5187,7 +5119,7 @@ oAnimInitNode 配套） */
    */
   private checkWebSyncAnchorV2(name: string): void {
     const ownTitle: string = this.bookData?.durChapterTitle ?? ''
-    const node: number = this.pageRange?.startNode ?? 0
+    const node: number = this.session.pageRange?.startNode ?? 0
     const ownPosRatio: number = this.anchorNodeCount > 0 ? node / this.anchorNodeCount : -1
     const pending = syncConfig.pendingWebPos(name, ownTitle, ownPosRatio)
     if (pending === null || pending === undefined) {
@@ -5552,7 +5484,7 @@ oAnimInitNode 配套） */
         endNode: endAfter ? e[0] : s[0],
         endChar: endAfter ? e[1] : s[1]
       };
-      this.pageRange = range;
+      this.session.pageRange = range;
       // 书签锚点：用户主动翻页（非程序定位）且新页不再覆盖锚点 ⇒ 释放锚点
       if (this.anchorValid && Date.now() - this.lastNavMs > 500
         && !this.rangeCovers(range, this.anchorNode, this.anchorChar)) {
@@ -5585,11 +5517,11 @@ oAnimInitNode 配套） */
       // 从「我的 → 书签」点进来时的回跳（只尝试一次，见 tryBookmarkJump）
       this.tryBookmarkJump();
       // 「读完」判定（2026-09-21）：读到**最后一章的最后一页**即写入 `finishedTime`。
-      this.checkFinished();
+      this.session.checkFinished(this.bookData);
       // ★ 补写「阅读进度 + 最后阅读时间」到数据库（5 秒节流）。
       //   当前阅读页此前**从不写** `books.durChapterTime` ⇒「我的 → 读过」恒为 0、
       //   书架"最近阅读"排序失效。详见 `BooksDao.stampReadProgress` 的注释。
-      this.persistReadProgress();
+      this.session.persistReadProgress(this.bookData);
       // 节点模型一致性自检：只统计"当前朗读章"的观测，避免上一章的 pageShow 污染
       if (range.spine === TtsEngine.currentChapter()) {
         TtsEngine.reportObservedMaxNode(range.endNode);
@@ -5607,7 +5539,7 @@ oAnimInitNode 配套） */
       // ⚠️ 只靠 locateTarget/flipSearch 判断会误判：跳转超时(700ms)会先清掉 locateTarget，
       // 等 pageShow 迟到时就变成"没请求过" ⇒ 误挂起跟随、而且一挂就不再解除（页面定死）。
       // 所以再加一道"最近 2.5s 内我们发起过跳转"的时间窗。
-      const requested = this.locateTarget !== null || this.flipSearch !== null
+      const requested = this.session.locateTarget !== null || this.session.flipSearch !== null
         || (Date.now() - this.lastNavMs < 2500);
       this.updateHighlight();
       this.onPageShowLocate(range);
@@ -6503,7 +6435,7 @@ oAnimInitNode 配套） */
     TtsEngine.init(context);
     // 阅读器当前位置提供者：开始/恢复播放时锚定"当前页页首"（ReaderKit 坐标）
     TtsEngine.setReaderPositionProvider((): TtsSegmentPos | null => {
-      const r = this.pageRange;
+      const r = this.session.pageRange;
       if (r === null) {
         return null;
       }
@@ -6922,7 +6854,7 @@ oAnimInitNode 配套） */
         return;
       }
     }
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     if (r === null) {
       this.ttsStart();
       return;
@@ -7082,7 +7014,7 @@ oAnimInitNode 配套） */
   }
 
   private rangeText(): string {
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     if (r === null) {
       return 'none';
     }
@@ -7142,7 +7074,7 @@ oAnimInitNode 配套） */
       return;
     }
     this.continueFineTuned = true;
-    // 用本帧真实范围构造 PageRange（不依赖 `this.pageRange` 的赋值时机）
+    // 用本帧真实范围构造 PageRange（不依赖 `this.session.pageRange` 的赋值时机）
     const s: number[] = parseDomPos(data.startDomPos ?? '');
     const e: number[] = parseDomPos(data.endDomPos ?? '');
     const range: PageRange = {
@@ -7173,8 +7105,8 @@ oAnimInitNode 配套） */
     // 这是"四种方式进度统一"的关键接缝：目录跳转、书签回跳、TTS 跟随、沉浸层交接
     // 全都调本方法，这里按当前阅读方式分流 ⇒ 上层调用方**一行都不用改**。
     if (this.selfDrawnModeOn()) {
-      this.locateTarget = null;
-      this.flipSearch = null;
+      this.session.locateTarget = null;
+      this.session.flipSearch = null;
       this.lastNavMs = Date.now();
       this.scrollSeekSpine = spine;
       this.scrollSeekNode = n;
@@ -7186,16 +7118,16 @@ oAnimInitNode 配套） */
       }
       return;
     }
-    const cur = this.locateTarget;
+    const cur = this.session.locateTarget;
     if (cur !== null && cur.spine === spine && cur.node === n && cur.char === c) {
       return; // 同一目标已在定位中，重复触发直接忽略
     }
-    this.flipSearch = null;
+    this.session.flipSearch = null;
     const target: LocateTarget = {
       spine: spine, node: n, char: c, silent: silent, noFallback: noFallback
     };
     // 目标已经在当前页可见：不重排页面（避免无谓跳动），直接确认
-    const cur0 = this.pageRange;
+    const cur0 = this.session.pageRange;
     if (cur0 !== null && cur0.spine === spine && this.rangeCovers(cur0, n, c)) {
       this.updateHighlight();
       if (!silent) {
@@ -7203,7 +7135,7 @@ oAnimInitNode 配套） */
       }
       return;
     }
-    this.locateTarget = target;
+    this.session.locateTarget = target;
     this.lastNavMs = Date.now();
     hilog.info(0x0000, 'testTag', 'locate: → spine=%{public}d node=%{public}d char=%{public}d cur=%{public}s',
       spine, n, c, this.rangeText());
@@ -7232,10 +7164,10 @@ oAnimInitNode 配套） */
     }
     this.locateTimer = setTimeout((): void => {
       this.locateTimer = -1;
-      if (this.locateTarget !== target) {
+      if (this.session.locateTarget !== target) {
         return;
       }
-      this.locateTarget = null;
+      this.session.locateTarget = null;
       if (target.noFallback) {
         // 便利定位（如「我的 → 书签」回跳）不做逐页逼近：
         // 连续重排几十页会让界面长时间无法操作（真机表现为"点不动、像有蒙版"）。
@@ -7243,7 +7175,7 @@ oAnimInitNode 配套） */
         this.finishLocate(target, false);
         return;
       }
-      const r = this.pageRange;
+      const r = this.session.pageRange;
       hilog.warn(0x0000, 'testTag', 'locate: startPlay 未落位，转翻页搜索 (%{public}s)', this.rangeText());
       if (r !== null) {
         this.beginSearch(target, r);
@@ -7255,21 +7187,21 @@ oAnimInitNode 配套） */
 
   /** pageShow 驱动定位状态机 */
   private onPageShowLocate(r: PageRange): void {
-    const t = this.locateTarget;
+    const t = this.session.locateTarget;
     if (t !== null) {
       if (r.spine === t.spine && this.locateHit(r, t.node, t.char)) {
         // 诊断：目标落在页首/页中/页尾——用于确知 startPlay 的落点语义
         const where = r.startNode === t.node
           ? (r.startChar === t.char ? 'HEAD' : 'HEAD-partial')
           : (r.endNode === t.node ? 'TAIL' : 'MIDDLE');
-        this.locateTarget = null;
+        this.session.locateTarget = null;
         hilog.info(0x0000, 'testTag', 'locate: landed node=%{public}d char=%{public}d at %{public}s in %{public}s',
           t.node, t.char, where, this.rangeText());
         this.finishLocate(t, true);
         return;
       }
       // startPlay 没把我们送到目标位置 → 逐页逼近（便利定位则直接放弃，避免卡住界面）
-      this.locateTarget = null;
+      this.session.locateTarget = null;
       if (t.noFallback) {
         hilog.info(0x0000, 'testTag', 'locate: 未落位且 noFallback ⇒ 停在当前章');
         this.finishLocate(t, false);
@@ -7278,7 +7210,7 @@ oAnimInitNode 配套） */
       this.beginSearch(t, r);
       return;
     }
-    if (this.flipSearch !== null) {
+    if (this.session.flipSearch !== null) {
       this.stepSearch(r);
     }
   }
@@ -7294,12 +7226,12 @@ oAnimInitNode 配套） */
       target: t, dir: after ? 1 : -1, flips: 0, fixes: 0,
       lastNode: r.startNode, lastChar: r.startChar
     };
-    this.flipSearch = s;
+    this.session.flipSearch = s;
     this.flipOnce();
   }
 
   private stepSearch(r: PageRange): void {
-    const s = this.flipSearch;
+    const s = this.session.flipSearch;
     if (s === null) {
       return;
     }
@@ -7309,12 +7241,12 @@ oAnimInitNode 配套） */
     s.lastNode = r.startNode;
     s.lastChar = r.startChar;
     if (r.spine === s.target.spine && this.locateHit(r, s.target.node, s.target.char)) {
-      this.flipSearch = null;
+      this.session.flipSearch = null;
       this.finishLocate(s.target, true);
       return;
     }
     if (s.flips >= 60 || s.fixes >= 3) {
-      this.flipSearch = null;
+      this.session.flipSearch = null;
       this.finishLocate(s.target, false);
       return;
     }
@@ -7329,20 +7261,20 @@ oAnimInitNode 配套） */
   }
 
   private flipOnce(): void {
-    const s = this.flipSearch;
+    const s = this.session.flipSearch;
     if (s === null) {
       return;
     }
     s.flips++;
     this.lastNavMs = Date.now();
     setTimeout((): void => {
-      if (this.flipSearch !== s) {
+      if (this.session.flipSearch !== s) {
         return;
       }
       try {
         this.readerComponentController.flipPage(s.dir > 0);
       } catch (e) {
-        this.flipSearch = null;
+        this.session.flipSearch = null;
       }
     }, 120);
   }
@@ -7501,13 +7433,13 @@ oAnimInitNode 配套） */
       this.noteFollowSkip('还没有朗读位置');
       return;
     }
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     if (r !== null && r.spine === seg.spineIndex && this.rangeCovers(r, seg.nodeIndex, seg.charStart)) {
       this.lastFollowNode = seg.nodeIndex;
       this.noteFollowSkip('');
       return; // 已在当前页，无需翻页
     }
-    if (this.locateTarget !== null || this.flipSearch !== null) {
+    if (this.session.locateTarget !== null || this.session.flipSearch !== null) {
       this.noteFollowSkip('上一次定位还在进行');
       return;
     }
@@ -7536,7 +7468,7 @@ oAnimInitNode 配套） */
     if (this.ttsState !== 'stopped') {
       return; // 已在播（用户抢先手动开始）
     }
-    if (this.BookHandler !== null && this.pageRange !== null) {
+    if (this.BookHandler !== null && this.session.pageRange !== null) {
       this.ttsStart();
       return;
     }
@@ -7557,7 +7489,7 @@ oAnimInitNode 配套） */
     let spineIndex: number;
     let startNode = -1;
     let startChar = 0;
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     if (r !== null) {
       spineIndex = r.spine;
       startNode = r.startNode;
@@ -7850,7 +7782,7 @@ oAnimInitNode 配套） */
     this.calibLeft = leftPx / densityPx;
     this.calibWidth = textW / densityPx;
     // 本页每个段落"算出"的起始行 y —— 用来对照"标号该落在哪一段的第一行"
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     const nodes = TtsEngine.currentNodeTexts();
     const marks: number[] = [];
     let base = 0;
@@ -8033,7 +7965,7 @@ oAnimInitNode 配套） */
         p.spineIndex, p.nodeIndex);
       this.requestLocate(p.spineIndex, p.nodeIndex, p.charStart, true);
     }
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     if (r === null || this.ttsState === 'stopped') {
       this.clearHighlight();
       return;
@@ -10588,7 +10520,7 @@ oAnimInitNode 配套） */
     if (nextSelf && !prevSelf) {
       // ── 分页 → 自绘层（滚动 / 无动画）：以"当前页首"为起点 ──────────────────
       // 两档共用同一段算法：坐标同源，只是交给不同的自绘层当初始位置。
-      const r = this.pageRange;
+      const r = this.session.pageRange;
       let spine: number = r !== null ? r.spine
         : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
       let node: number = r !== null ? r.startNode
@@ -10630,8 +10562,8 @@ oAnimInitNode 配套） */
         this.noAnimInitSerial++;
       }
       // 分页侧的定位/搜索全部作废（否则迟到的 pageShow 会把状态又写回去）
-      this.locateTarget = null;
-      this.flipSearch = null;
+      this.session.locateTarget = null;
+      this.session.flipSearch = null;
       if (this.locateTimer >= 0) {
         clearTimeout(this.locateTimer);
         this.locateTimer = -1;
@@ -10665,7 +10597,7 @@ oAnimInitNode 配套） */
       // （实测与机理见 `pagedRestoreSpine` 字段注释）
       this.pagedRestoreSpine = spine;
       this.pagedRestoreNode = node;
-      this.pageRange = null;
+      this.session.pageRange = null;
       this.requestLocate(spine, node, useAnchor ? this.anchorChar : 0, true, true);
     } else if (nextSelf && prevSelf) {
       // ── 自绘层 ↔ 自绘层（滚动 ⇄ 无动画）──────────────────────────────────
@@ -10855,7 +10787,7 @@ oAnimInitNode 配套） */
     //      `@Watch` 回调**运行在状态更新的渲染周期内**；
     //   ② `onAreaChange`（首帧/换页后布局）—— 运行在**布局阶段**。
     //   两者都在"渲染/布局进行中"，而下面这一串会写 `this.bookData`（`durChapterTitle`）
-    //   与 `this.pageRange` 等 `@State` ⇒ ArkUI 判为非法 → Application error → 页面被拆。
+    //   与 `this.session.pageRange` 等 `@State` ⇒ ArkUI 判为非法 → Application error → 页面被拆。
     //   向右滑（回上一页）更容易跨章回退、命中 `durChapterTitle` 重新赋值 ⇒ 只有右滑复现，
     //   与用户描述「从右向左正常、从左向右误触关闭」完全吻合。
     //
@@ -10897,7 +10829,7 @@ oAnimInitNode 配套） */
       endNode: endNode >= node ? endNode : node,
       endChar: endChar > 0 ? endChar : Number.MAX_SAFE_INTEGER
     };
-    this.pageRange = range;
+    this.session.pageRange = range;
     // 书签锚点：用户主动滚动/翻页后新页不再覆盖锚点 ⇒ 释放（程序定位后的 1.5s 内不释放）
     if (this.anchorValid && Date.now() - this.lastNavMs > 500
       && !this.rangeCovers(range, this.anchorNode, this.anchorChar)) {
@@ -10910,8 +10842,8 @@ oAnimInitNode 配套） */
     this.bookData.durChapterTitle =
       this.CatalogList.getData(this.bookData.durChapterIndex)?.catalogName ?? this.bookData.durChapterTitle;
     this.syncBookmarkState();
-    this.checkFinished();
-    this.persistReadProgress();
+    this.session.checkFinished(this.bookData);
+    this.session.persistReadProgress(this.bookData);
     this.writeWebSyncAnchors();
     // 进度落盘（节流）：合成一个与 pageShow 同构的 `PageDataInfo`，
     // 这样"退出再进"用的还是同一条恢复链路（`resourceIndex` + `startDomPos`）。
@@ -10996,7 +10928,7 @@ oAnimInitNode 配套） */
   private publishContinueState(): void {
     // 位置统一走 `currentPosition()`（滚动=实时值 / 分页=pageShow 值）
     const pos: ReaderPosition = currentPosition(this.selfDrawnModeOn(), this.scrollSpine,
-      this.scrollNode, this.bookData.localBookDurChapterPos, this.pageRange);
+      this.scrollNode, this.bookData.localBookDurChapterPos, this.session.pageRange);
     // 双坐标：domPos 与 (node, char) 一并带（对端 domPos 异常时用 node/char 重算）
     this.publishContinueStateWith(pos.spine, domPosFor(pos.node, pos.char),
       pos.node, pos.char, TtsEngine.getState() !== 'stopped');
@@ -11501,7 +11433,7 @@ oAnimInitNode 配套） */
 
   /** 若当前朗读段落在可见区之下，需要把整层上移多少 px（对齐整行，避免半行被切） */
   private immersiveShiftPx(): number {
-    const r = this.pageRange;
+    const r = this.session.pageRange;
     const seg = TtsEngine.currentSegment();
     if (r === null || seg === null || this.measuredParas.length === 0) {
       return 0;
@@ -11880,7 +11812,7 @@ oAnimInitNode 配套） */
       return;
     }
     const idx: number = this.bookData.durChapterIndex ?? 0;
-    const r: PageRange | null = this.pageRange;
+    const r: PageRange | null = this.session.pageRange;
     let ratio: number = 0;
     if (r !== null && this.anchorNodeCache !== null && this.anchorNodeCacheSpine === r.spine
       && this.anchorNodeCache.length > 1) {

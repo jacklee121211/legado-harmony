@@ -7,8 +7,14 @@ import { ShelfRefresh } from '../shelf/ShelfRefresh'
  *
  * ── 为什么必须有它 ───────────────────────────────────────────────────────────
  * 阅读器（`ReaderPage3` / `PdfViewerPage`）原来自己拿 `BooksDao` 写 `books` 表：
- *   · `ReaderPage3:735`（节流保存）、`:799`（退出前补写）、`:765`（读完标记）
+ *   · `ReaderPage3`（历史行号 `:735` 节流保存 / `:799` 退出前补写 / `:765` 读完标记）
  *   · `PdfViewerPage:349`（PDF 换页保存）
+ * ★ 2026-11-04（P3 批 A-4）**审计点已收拢**（下面是改后的真实位置）：
+ *   · `common/reader/ReaderSession.ets:121`（`persistReadProgress`，写调用 `:133`）
+ *   · `common/reader/ReaderSession.ets:155`（`checkFinished`，写调用 `:165`）
+ *   · `ReaderPage3:634`（`flushReadProgressThenNotifyShelf` → `settleOnExit`）
+ *   · `PdfViewerPage:352`（→ `settleOnExit`）
+ *   ⇒ `ReaderPage3` 的写点 **3 → 1**（全仓仍 4 处，但全部经本类窄口，无一处直接碰 `BooksDao`）。
  * 于是"阅读进度"这条事实有 4 个写点，且各自决定是否 `await`、是否广播书架刷新 ——
  * 这正是本项目反复吃亏的模式（同一语义多条写入口）。
  *
