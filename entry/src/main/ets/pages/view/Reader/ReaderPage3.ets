@@ -1322,6 +1322,12 @@ oAnimInitNode 配套） */
   //   · >100% 时盖一层 `monopolizeEvents(true)` 的透明手势层 ⇒ 阅读器的翻页手势收不到
   //     （官方：独占控制生效后"窗口内其他组件上的事件不会响应"），于是"100% 才能翻页"成立；
   //   · 双击 / 双指 / 重置 都在这层里处理，底部显示百分比与「重置」。
+  /**
+   * ⚠️ 2026-11-03（P2/R3）**@deprecated**：PDF 已统一由 `common/reader/ReaderEntry.ets` 判定，
+   *   并一律进 `PdfViewerPage` —— **不再有任何入口把 PDF 推进 ReaderPage3**。
+   *   本状态与围绕它的缩放态（`pdfZoomPct` / `PDF_ZOOM_ACTIVE` / 双击捏合）保留为**兜底**，
+   *   目的是万一将来漏网入口把 pdf 推到这里，`startPlay` 里会打 `[READER-ENTRY]` 告警而非静默双轨。
+   */
   @State isPdfBook: boolean = false
   /** 当前正在读的 PDF 页号（0 基）——由 pageShow 的 spine+domPos 反推 */
   @State pdfPageIdx: number = 0
@@ -4355,6 +4361,12 @@ oAnimInitNode 配套） */
     this.previewOnlyBody = false
     // PDF 书 ⇒ 挂上"点图放大"入口（开关 `FMT_ZOOM_ENABLED` 可一键关掉）
     this.isPdfBook = FMT_MASTER_ENABLED && FMT_PDF_ENABLED && isPdfPath(this.bookData.bookUrl ?? '');
+    // 2026-11-03（P2/R3）：PDF 不再由任何入口进这里（统一 ReaderEntry -> PdfViewerPage）。
+    //   保留判定只作防御：若将来出现漏网入口，这里会打明显告警，避免再次出现两套 PDF 体验并存。
+    if (this.isPdfBook) {
+      console.error('[READER-ENTRY] PDF 误入 ReaderPage3（入口应走 ReaderEntry -> PDF_VIEWER）：'
+        + (this.bookData.bookName ?? ''));
+    }
     // ⚠️ 缩放态是"另一方天地"，但它是**按书**的：换书/非 PDF 时必须把全局标志清掉，
     //    否则上一本 PDF 停在 150% 直接返回书架时，`PDF_ZOOM_ACTIVE` 会残留为 true
     //    ⇒ 下一本 txt 的"右滑返回书架"（CardLongTakeDelegate 的手势）会被误禁。

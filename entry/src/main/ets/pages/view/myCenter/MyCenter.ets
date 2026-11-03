@@ -1,5 +1,6 @@
 import { Attribute } from '../../../common/utils/Attribute'
-import AppRouter, { RouteName, ReadStatisticsRouteParam, ReadStatsRouteParam, ReaderRouteParam, BookManageRouteParam } from '../../../common/router/AppRouter'
+import AppRouter, { RouteName, ReadStatisticsRouteParam, ReadStatsRouteParam, ReaderRouteParam, BookManageRouteParam } from '../../../common/router/AppRouter'
+import { ReaderEntry } from '../../../common/reader/ReaderEntry'
 import { promptAction } from '@kit.ArkUI'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
@@ -187,7 +188,7 @@ export default struct MyCenter {
                   { mode: mode, anchorMs: anchor } as ReadStatsRouteParam)
               },
               onOpenBook: (book: Books): void => {
-                AppRouter.push(RouteName.READER, { bookData: book } as ReaderRouteParam)
+                ReaderEntry.open(this.getUIContext(), book)
               }
             })
           }

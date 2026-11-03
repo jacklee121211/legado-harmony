@@ -27,6 +27,7 @@ import { ThemeItem } from '../../../common/model/Theme'
 import { Haptics } from '../../../common/utils/Haptics'
 import UiMotion from '../../../common/utils/UiMotion'
 import AppRouter, { RouteName, ReaderRouteParam, ReadStatsRouteParam } from '../../../common/router/AppRouter'
+import { ReaderEntry } from '../../../common/reader/ReaderEntry'
 import ReadPeriodPicker from '../../../common/utils/ReadPeriodPicker'
 import readDailyDao, { ReadBucketRow, ReadPeriod, ReadTotalRow } from '../../../database/dao/ReadDailyDao'
 import BooksDao from '../../../database/dao/BooksDao'
@@ -650,7 +651,7 @@ export default struct ReadStatsPage {
     .margin({ top: 14 })
     .onClick(() => {
       Haptics.tap()
-      AppRouter.push(RouteName.READER, { bookData: row.book } as ReaderRouteParam)
+      ReaderEntry.open(this.getUIContext(), row.book)
     })
     .clickEffect(UiMotion.CLICK)
   }
