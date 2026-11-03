@@ -33,7 +33,6 @@ import { image } from '@kit.ImageKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { PreferencesUtil } from '@pura/harmony-utils';
 import { Books } from '../../../database/entities/Books';
-import BooksDao from '../../../database/dao/BooksDao';
 import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao';
 import { AntiPeep } from '../../../common/utils/AntiPeep';
 import { Haptics } from '../../../common/utils/Haptics';
@@ -42,7 +41,7 @@ import MySetConstants from '../../../common/constants/MySetConstants';
 import { OfflineMode } from '../../../common/utils/OfflineMode';
 import { VipManager } from '../../../common/utils/VipManager';
 import { WindowAbility } from '../../../entryability/WindowAbility';
-import { ShelfRefresh } from '../../../common/shelf/ShelfRefresh';
+import ReaderPorts, { ReaderBookSnapshot } from '../../../common/reader/ReaderPorts';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'PdfViewer';
@@ -346,9 +345,10 @@ export default struct PdfViewerPage {
     //   ② 结果就是用户看到的「书架不再排序、看完回到列表位置不变」。
     // ReaderPage3 的做法是 `stampReadProgress(...)` 落库 + `BOOK_IS_BOOK_REFRESHING` 自增触发
     // `BookContent` 的 `@StorageLink@Watch` 重查 —— 这里完全对齐。
-    BooksDao.stampReadProgress(id, idx, this.pageTitle(idx), this.pageCount).then((): void => {
-      const tick: number = ShelfRefresh.books();
-    }).catch((e: Error): void => {
+    // 2026-11-03（Ⅴ-1）：PDF 阅读器也改走**同一个窄口**（`ReaderPorts.settleOnExit`：
+    //   await 写库 → 再广播刷新），不再自己拼 `stampReadProgress + ShelfRefresh` 两行。
+    const snap: ReaderBookSnapshot = ReaderPorts.snapshotOf(this.book);
+    ReaderPorts.settleOnExit(snap, idx, this.pageTitle(idx), this.pageCount).catch((e: Error): void => {
       hilog.warn(DOMAIN, TAG, 'save progress failed %{public}s', e.message);
     });
   }
@@ -1118,3 +1118,4 @@ export default struct PdfViewerPage {
     .backgroundColor(this.pageBg())
   }
 }
+

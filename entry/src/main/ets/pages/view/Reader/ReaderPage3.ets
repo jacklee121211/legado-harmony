@@ -98,7 +98,7 @@ import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent
 import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
 // 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../common/dialog/DialogHost'
-import { ShelfRefresh } from '../../../common/shelf/ShelfRefresh';
+import ReaderPorts from '../../../common/reader/ReaderPorts';
 
 interface ParamsObj {
   bookData: Books,
@@ -732,7 +732,8 @@ export default struct ReaderPage3 {
         return
       }
       this.lastPersistAt = now
-      BooksDao.stampReadProgress(id, this.bookData.durChapterIndex ?? 0,
+      // 2026-11-03（Ⅴ-1）：写入走阅读器窄口（节流仍在上面判 —— 那是体验参数，不是数据契约）
+      ReaderPorts.saveProgress(ReaderPorts.snapshotOf(this.bookData), this.bookData.durChapterIndex ?? 0,
         this.bookData.durChapterTitle ?? '', this.bookData.totalChapterNum ?? 0)
     } catch (e) {
       // 忽略：落库失败不得影响阅读
@@ -762,7 +763,7 @@ export default struct ReaderPage3 {
       // 到了末章 ⇒ 标记读完（SQL 保证只写一次）
       const id = this.bookData.id ?? 0
       if (id > 0) {
-        BooksDao.markFinished(id)
+        ReaderPorts.markFinished(ReaderPorts.snapshotOf(this.bookData))
       }
     } catch (e) {
       // 忽略：读完判定失败不得影响翻页
@@ -792,18 +793,9 @@ export default struct ReaderPage3 {
    * `persistReadProgress()`，退出前这里也会把最终进度补写进去。
    */
   private async flushReadProgressThenNotifyShelf(): Promise<void> {
-    try {
-      const id = this.bookData.id ?? 0
-      if (id > 0) {
-        // 无节流：aboutToDisappear 只走一次，把最后一次翻页后的进度补齐
-        await BooksDao.stampReadProgress(id, this.bookData.durChapterIndex ?? 0,
-          this.bookData.durChapterTitle ?? '', this.bookData.totalChapterNum ?? 0)
-      }
-    } catch (e) {
-      // 落库失败不得阻塞退出流程
-    }
-    // 广播语义与 WifiBookServer.registerImportedBook（传书入库后）一致：自增刷新键
-    const tick: number = ShelfRefresh.books();
+    // 2026-11-03（Ⅴ-1）：退书结算收敛为**一个窄口调用**（内部：await 写库 → 再广播书架刷新）
+    await ReaderPorts.settleOnExit(ReaderPorts.snapshotOf(this.bookData), this.bookData.durChapterIndex ?? 0,
+      this.bookData.durChapterTitle ?? '', this.bookData.totalChapterNum ?? 0)
   }
 
   /** 待跳转的书签目标（-1 = 无）。来自 `readStatistics` 二级菜单点击书签时的 params。 */
@@ -4215,6 +4207,7 @@ oAnimInitNode 配套） */
   }
 
   async aboutToAppear() {
+
     // ── 仅**平板**：阅读页锁定当前方向，禁止自动旋转（2026-10-23 方案 B；2026-10-24 收窄为仅平板）──
     //   根因：ReaderKit 原生 surface 在自动旋转后不重新分配 ⇒ 挤压/空白/行距异常
     //   （截图实证：文字占宽度 65.7% = 竖屏 1840px ÷ 横屏 2800px）。
@@ -13014,3 +13007,4 @@ oAnimInitNode 配套） */
     }
   }
 }
+

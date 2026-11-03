@@ -185,6 +185,15 @@ const INVENTORY = [
     note: '2026-11-03（Ⅳ-1）：FileHandler 已改走适配器；剩 WifiBookServer 的 bookmarksDao.add/remove 2 处（书签还没有适配器，属下一批）',
   },
   {
+    id: 'reader-fact-write',
+    label: '阅读器直写 books 事实（绕过 ReaderPorts）',
+    pattern: /\bBooksDao\.(stampReadProgress|markFinished|update|updateBookGroup|insert|delete)\s*\(/,
+    scope: /(ReaderPage3|PdfViewerPage|ReaderPageNoAnim|ReadPageComponent)\.ets$/,
+    allow: () => false,
+    budget: 0,
+    note: '2026-11-03（Ⅴ-1）：阅读器只允许"进书取快照 / 退书结算"两个窄口（common/reader/ReaderPorts.ets）',
+  },
+  {
     id: 'hidden-state-owner',
     label: '隐藏集合写入点（第二份状态的回归闸门）',
     pattern: /GroupStore\.setHiddenIds\s*\(/,
