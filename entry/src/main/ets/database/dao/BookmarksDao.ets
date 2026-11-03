@@ -74,8 +74,7 @@ class BookmarksDao {
    *
    * ⚠️ **必须显式建表** —— 真机实测（2026-09-21 15:19）报 `no such table: bookmarks`，
    * `add()` 返回 `{"code":14800021}`。根因：`database/index.ets` 的 `initAllTable()`
-   * 只初始化 8 张表（书源/订阅/books/groups/worksLists/bookHistory/rssSources/
-   * bookSourceGroup），**`bookmarks` 不在其中** —— 虽然 `AppDatabase/index.ets:1445`
+   * 只初始化少数几张表，**`bookmarks` 不在其中** —— 虽然 `AppDatabase/index.ets`
    * 已定义好建表语句，但**没有代码去调用它**。
    * 这正是底座"有表无功能"的另一半：表不但没人用，连建都没建。
    */

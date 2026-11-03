@@ -712,7 +712,8 @@ class BooksDao {
     }
   }
 
-  //删除订阅源历史记录
+  // 2026-11-03（P8/L2）：原注释误写「删除订阅源历史记录」（Legado 残留），实际是按 id 批量删
+  //   （BookGroupsDao 删分组 / BooksDao 删书籍）。仅改注释，行为不变。
   async deleteBook(id: number[]) {
     try {
       const predicates = DbUtil.getPredicates(this.TABLE_NAME);
