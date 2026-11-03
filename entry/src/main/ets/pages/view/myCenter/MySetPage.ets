@@ -181,7 +181,6 @@ export default struct MySetPage{
   /** VIP 开通成功后要补开的那个开关（'' = 无待办；用户第 4 点要求） */
   private pendingAntiPeep: string = ''
   /** 「VIP 购买」弹窗控制器（范式与 MyThemeConfigComp.openVip 一致） */
-  private vipDialog: CustomDialogController | null = null
 
   @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
   @StorageLink('topRectHeight') topRectHeight: number = 0
@@ -779,7 +778,6 @@ export default struct MySetPage{
 
   // ── 测试账号（2026-09-28 迁入）────────────────────────────────────────────
   // 登录从「我的」页下线后，测试账号表单（登录 + 彩蛋解锁双职能）迁到本页顶部。
-  private testAccountDialog: CustomDialogController | null = null
 
   /**
    * 「加入QQ群」按钮的 Q 弹缩放值（2026-10-21 新增）。
@@ -910,22 +908,21 @@ export default struct MySetPage{
   }
 
   private openTestAccountDialog(): void {
-    this.testAccountDialog = new CustomDialogController({
+    // 2026-11-04（P4b 批 C-3）：宿主化 —— 不再自持 controller 字段；
+    //   三个回调里的 `this.testAccountDialog?.close() + 置 null` 统一换成 `DialogHost.closeCurrent()`。
+    DialogHost.open(new CustomDialogController({
       builder: TestAccountDialog({
         dark: this.nightOn, // 深浅适配（2026-09-28 用户反馈：黑底黑字修复）
         onClose: (): void => {
-          this.testAccountDialog?.close()
-          this.testAccountDialog = null
+          DialogHost.closeCurrent()
         },
         onUnlocked: (): void => {
           // ⚠️ 先 close 再清引用：只置 null 不 close 会留下关不掉的孤儿弹窗
-          this.testAccountDialog?.close()
-          this.testAccountDialog = null
+          DialogHost.closeCurrent()
           this.showUnlockAlert()
         },
         onLoginOk: (): void => {
-          this.testAccountDialog?.close()
-          this.testAccountDialog = null
+          DialogHost.closeCurrent()
           this.getUIContext().getPromptAction().showToast({ message: '登录成功' })
         }
       }),
@@ -938,10 +935,9 @@ export default struct MySetPage{
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.testAccountDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.testAccountDialog)
+    }))
   }
 
   /** 彩蛋解锁成功弹窗（原「改名解锁」文案，2026-09-28 随入口迁入） */
@@ -1679,13 +1675,14 @@ export default struct MySetPage{
 
   /** 「VIP 购买」弹窗（2026-10-08 新增；范式抄 MyThemeConfigComp.openVip） */
   private openVip(): void {
-    this.vipDialog = new CustomDialogController({
+    // 2026-11-04（P4b 批 C-3）：宿主化 —— 不再自持 controller 字段，关闭走 DialogHost.closeCurrent()；
+    //   onClose 里的两项幂等兜底（AppStorage 对账 + applyPendingAntiPeep）原样保留。
+    DialogHost.open(new CustomDialogController({
       builder: VipDialog({
         dark: NightMode.isDarkSurface(),
         vipOwned: VipManager.isVip(),
         onClose: (): void => {
-          this.vipDialog?.close()
-          this.vipDialog = null
+          DialogHost.closeCurrent()
           // 2026-10-28：「开通VIP」胶囊要「买完关窗立刻变实心皇冠 + VIP」。
           //   IAP 成功路径本身已经在 `IapManager` 里调过 `VipManager.setVip(true)`
           //   （`IapManager.ets:53/69/80`），后者会把值写进 AppStorage 广播键
@@ -1707,10 +1704,9 @@ export default struct MySetPage{
       openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
       cancel: (): void => {
-        this.vipDialog = null
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.vipDialog)
+    }))
   }
 
   /** VIP 开通成功后补开用户刚点的那一层（未开通 / 用户取消 = 什么都不做） */

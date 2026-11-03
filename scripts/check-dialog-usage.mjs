@@ -82,10 +82,18 @@ const CTRL_BUDGET = 63;
  * 宿主化之后每个调用点仍然要 new 一次，所以它**不会降**。本项数的是 struct 里
  * 「`xxx: CustomDialogController` 字段」的**存量** —— 这才是"自持"的真指标。
  *
- * 沿革：2026-11-04 首次实测 = **39** → 批 C-1 宿主化 `MyThemeConfigComp` 三个弹窗后 = **36** → 批 C-2 宿主化 `MyCenter` 两个后 = **34**。
+ * 沿革：2026-11-04 首次实测 = **39** → 批 C-1 宿主化 `MyThemeConfigComp` 三个弹窗后 = **36** →
+ *   批 C-2 宿主化 `MyCenter` 两个后 = **34** → 批 C-3 宿主化 `MySetPage`(2) + `GroupType`(2) +
+ *   `BookContentRefresh`(2) 后 = **39**（新口径下）。
+ *
+ * ⚠️ 2026-11-04 同日**修正过一次统计口径**：上面的"39/36/34"是用旧判据数的，而旧判据
+ *   `if (line.includes('(')) return` 把「`xxx: CustomDialogController = new CustomDialogController({`」
+ *   这种**初始化器字段**全漏掉了（例如 `IndexShelf.shelfSearchDialog`、`BookFolder.groupInfoDialog`、
+ *   `BookContentRefresh.addGroupDialog`…）。改用"只有含 '(' 且**不是** `= new CustomDialogController(` 才排除"之后，
+ *   **真实基线 = 61**，批 C-1~C-3 共宿主化 11 个 ⇒ 现在 = **50**，预算按 50 钉住。
  * 每降一批必须同步改这个数，并把原因写在这里（否则等于自己骗自己）。
  */
-const SELF_HELD_BUDGET = 34;
+const SELF_HELD_BUDGET = 50;
 const SELF_HELD_RE = /^\s*(?:(?:private|public|protected|readonly|static)\s+)*[A-Za-z_$][\w$]*\s*:\s*CustomDialogController\b/;
 
 const args = process.argv.slice(2);
@@ -134,7 +142,8 @@ for (const abs of files) {
   const lines = readFileSync(abs, 'utf8').split(/\r?\n/);
   lines.forEach((line, i) => {
     if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
-    if (line.includes('(')) return; // 形参 / 局部调用不是字段声明
+    // 形参 / 局部调用不是字段声明；但 xxx: CustomDialogController = new CustomDialogController( 这种初始化器字段必须算进来（2026-11-04 修正：原先把它们漏掉了）
+    if (line.includes('(') && !/=\s*new\s+CustomDialogController\s*\(/.test(line)) return;
     if (SELF_HELD_RE.test(line)) selfHeld.push({ file: rel, line: i + 1, text: line.trim() });
   });
 }

@@ -4,7 +4,7 @@
  * @className: BookContentRefresh
  */
 import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../../../common/group/GroupEvents'
-import { showMessage } from '../../../../componets/common/promptShow'
+import { showMessage } from '../../../../componets/common/promptShow'
 import { CountLabel } from '../../../../common/shelf/CountLabel'
 import RefreshComponent from '../../../../componets/common/RefreshComponent'
 import BookFolder from '../BookFolder'
@@ -28,7 +28,7 @@ import FolderCard, { FolderCell } from './FolderCard'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupMutation } from '../../../../common/group/GroupMutation'
-import { GroupTree } from '../../../../common/group/GroupTree'
+import { GroupTree } from '../../../../common/group/GroupTree'
 import { FilteredTree } from '../../../../common/group/FilteredTree'
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
@@ -106,15 +106,15 @@ export default struct BookContentRefresh {
   }
   // ── 2026-11-01：长按任意层级的子分组 → 与主栏同款分组弹窗 ──────────────────
   @State dialogGroupData: BookGroups = new BookGroups()
-  groupInfoDialog: CustomDialogController | null = null
+  // 2026-11-04（P4b 批 C-3）：原 `groupInfoDialog` 字段已删 —— 宿主化后打开时 new、关闭走 closeCurrent()
 
   private openChildGroupDialog(g: BookGroups): void {
     this.dialogGroupData = g
-    this.groupInfoDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: FolderInfoDialog({
         itemData: this.dialogGroupData,
         cancel: (): void => {
-          this.groupInfoDialog?.close()
+          DialogHost.closeCurrent()
         },
         reopen: (): void => {
           this.onFolderChanged()
@@ -127,10 +127,9 @@ export default struct BookContentRefresh {
       customStyle: false,
       cornerRadius: 20,
       cancel: (): void => {
-        this.groupInfoDialog?.close()
+        DialogHost.closeCurrent()
       }
-    })
-    DialogHost.openIf(this.groupInfoDialog)
+    }))
   }
   /** 新建分组时的父级（0 = 根级；分组内新建 = 当前分组 id） */
   private newGroupParentId: number = 0
@@ -199,27 +198,8 @@ export default struct BookContentRefresh {
   }
 
   /** 新建分组弹窗（复用 `addBookTypeDialog`：拒空名/重名，与「移动至」同款材质与动效） */
-  addGroupDialog: CustomDialogController | null = new CustomDialogController({
-    builder: addBookTypeDialog({
-      // 2026-11-01：连续创建 —— 保存后弹窗不关闭，方便一次建多个分组
-      //   （addBookTypeDialog 自带 keepOpen 契约：确定后调 confirm 但不关自己）
-      keepOpen: true,
-      cancel: (): void => {
-        this.addGroupDialog?.close()
-      },
-      confirm: (): void => {
-        this.createGroupFromDialog()
-      }
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    gridCount: 4,
-    customStyle: false,
-    cornerRadius: 20,
-    systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST)
-  })
+  // 2026-11-04（P4b 批 C-3）：原 `addGroupDialog` 字段（初始化器里 new）已删 ——
+  //   宿主化后每次打开时 new、关闭走 DialogHost.closeCurrent()；`keepOpen` 契约不变。
 
   private openAddGroupDialog(parentId: number = 0): void {
     this.newGroupParentId = parentId
@@ -228,7 +208,27 @@ export default struct BookContentRefresh {
       this.addScale = v
     })
     this.newGroupName = ''
-    DialogHost.openIf(this.addGroupDialog)
+    DialogHost.open(new CustomDialogController({
+      builder: addBookTypeDialog({
+        // 2026-11-01：连续创建 —— 保存后弹窗不关闭，方便一次建多个分组
+        //   （addBookTypeDialog 自带 keepOpen 契约：确定后调 confirm 但不关自己）
+        keepOpen: true,
+        cancel: (): void => {
+          DialogHost.closeCurrent()
+        },
+        confirm: (): void => {
+          this.createGroupFromDialog()
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      gridCount: 4,
+      customStyle: false,
+      cornerRadius: 20,
+      systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+      openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+      closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST)
+    }))
   }
 
   /** 确认新建：空名/同级重名拦截 → `addGroup(parentId)` → 广播刷新 + 重算路径 */
@@ -829,7 +829,6 @@ export default struct BookContentRefresh {
     })
   }
 }
-
 
 
 

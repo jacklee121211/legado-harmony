@@ -81,13 +81,14 @@ export default struct groupTypeComponent {
 
   /** 显示分组 chip 的**长按编辑**弹窗（2026-09-25 新增：与隐藏分组同款 FolderInfoDialog） */
   @State editChipGroup: BookGroups | null = null
-  private chipEditDialog: CustomDialogController | null = null
+  // 2026-11-04（P4b 批 C-3）：原 `private chipEditDialog: CustomDialogController | null = null` 已删 ——
+  //   宿主化后打开时 new、关闭走 DialogHost.closeCurrent()。
 
   private openChipEditDialog(): void {
     if (this.editChipGroup === null) {
       return
     }
-    this.chipEditDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: FolderInfoDialog({
         itemData: this.editChipGroup,
         // 真开真关（2026-10-01 用户方案）：子弹窗关闭后由**创建者**重建父弹窗——
@@ -95,8 +96,7 @@ export default struct groupTypeComponent {
         reopen: (): void => { this.reopenChipEditDialog() },
         cancel: (): void => {
           // 2026-10-12：**先真的 close**（旧写法只置 null ⇒ 弹窗留在屏幕上）
-          this.chipEditDialog?.close()
-          this.chipEditDialog = null
+          DialogHost.closeCurrent()
           this.getGroupList()
         }
       }),
@@ -111,12 +111,10 @@ export default struct groupTypeComponent {
       // 2026-10-12：遮罩/返回键路径同样**必须真的 close**（子组件内自己 close 不可靠，
       // 真机两次验证见 `ReaderSaveSchemeDialog.ets:205-208`）
       cancel: (): void => {
-        this.chipEditDialog?.close()
-        this.chipEditDialog = null
+        DialogHost.closeCurrent()
         this.getGroupList()
       },
-    })
-    DialogHost.openIf(this.chipEditDialog)
+    }))
   }
 
   /** 真开真关：重查该分组 → 更新 editChipGroup → **新建 controller** 全新实例打开 */
@@ -231,7 +229,7 @@ export default struct groupTypeComponent {
    *   新建的代价是不能用 `$xxx`（`@Link` 语法在方法里会 `ReferenceError`），
    *   所以参数一律走普通 `@Prop` 的"打开瞬间快照" —— 这正好是本面板需要的语义。
    */
-  private groupPanelDialog: CustomDialogController | null = null
+  // 2026-11-04（P4b 批 C-3）：原 groupPanelDialog 字段已删 —— 宿主化后打开时 new、关闭走 closeCurrent()
   aboutToAppear(): void {
     GroupEvents.subscribe(this.shelfListener)
     // 高亮基准初始化（2026-10-19 二修）：与 `IndexShelf.aboutToAppear` 恢复出的状态对齐
@@ -334,7 +332,7 @@ export default struct groupTypeComponent {
    */
   openGroupPanel(): void {
     this.groupCoverShow = true
-    this.groupPanelDialog = new CustomDialogController({
+    DialogHost.open(new CustomDialogController({
       builder: GroupManageDialog({
         showGroupList: this.groupList,
         currentIndex: this.currentIndex,
@@ -366,8 +364,7 @@ export default struct groupTypeComponent {
         // 点遮罩 / 返回手势关掉：同步标志位（本行不依赖它渲染，只作状态镜像）
         this.groupCoverShow = false
       },
-    })
-    DialogHost.open(this.groupPanelDialog)
+    }))
   }
 
   /**
@@ -479,7 +476,7 @@ export default struct groupTypeComponent {
   /** 关面板（面板里的 ✕ 按钮走这里） */
   private closeGroupPanel(): void {
     this.groupCoverShow = false
-    this.groupPanelDialog?.close()
+    DialogHost.closeCurrent()
   }
 
   // ══════════════════════════════════════════════════════════════════════════
