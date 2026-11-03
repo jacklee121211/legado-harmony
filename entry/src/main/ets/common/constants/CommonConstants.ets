@@ -238,10 +238,8 @@ export default class CommonConstants {
   static readonly BOOK_IS_BOOK_GROUPS_REFRESHING:string = 'BOOK_IS_BOOK_GROUPS_REFRESHING'
   // 2026-11-03（P8/L2）：RSS_SOURCES_GROUP_INIT / RSS_SOURCES_GROUP_LIST_DATA_KEY 已删除 ——
   //   订阅源（RSS）域在本工程从未落地（无表/无页面），这两个键只被启动时写一次、零读取。
-  //系统UA'0-Android', '1-Phone', '2-电脑', '3-自定义'
-  // ⚠️ 2026-11-03 顺路发现：`SYSTEM_UA` 目前**只有写、没有读**（书源 WebView 时代的遗留）。
-  //   不在 L2 范围，已记录待确认，本轮未删。
-  static readonly SYSTEM_UA:string = 'SYSTEM_UA'
+  // 2026-11-03（顺路发现收尾）：SYSTEM_UA 已整链删除 —— 书源 WebView 时代的遗留，只写不读，
+  //   AppStorage 里该键全仓 0 个消费方（证据见 preferences/programDataPreferences.ets 头注释）。
   /**
    * ── 应用市场评分状态（2026-10-18）────────────────────────────────────────
    * 用途：系统已判定"该账号已评价过"时，**不再弹软引导弹窗**，避免无意义打扰。

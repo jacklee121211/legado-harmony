@@ -1,6 +1,4 @@
 /**
- * @author 2008
- * @datetime 2024/7/17 19:30
  * @className: programDataPreferences
  * 程序基础数据定义
  *
@@ -10,27 +8,19 @@
  * `RSS_SOURCES_GROUP_LIST_DATA_KEY` 两个常量，只被 `storage/appData.ets` 启动时写一次，
  * **没有任何读取方**（分组页读的是 `book_groups`）。一并删除。
  *
- * ── 2026-11-03（P8）：`SYSTEM_UA` 部分**暂留** ──────────────────────────────────
- * 「WebView UA」同样是书源时代的遗留：全仓只有写（这里 + `appData` 镜像进 AppStorage），
- * **零读取方**。但删除它不属于 L2（RSS）范围，已记录在
- * `docs/待办-统一清单-2026-11-03.md` 的「顺路发现」里，等确认后再动 —— 本轮不顺手改。
+ * ── 2026-11-03（顺路发现收尾）：`SYSTEM_UA` 也删了 ──────────────────────────────
+ * 「WebView UA」同样是书源时代的遗留，且是**纯死链**（实测）：
+ *   · 写：本文件的 `initWebUADataPreferences` / `updateWebUAData`（Preferences 落盘）
+ *         + `storage/appData.ets` 镜像进 AppStorage；
+ *   · 读：`getWebUAData()` 只有 `appData` 一处调用，取到的值又只写进 AppStorage；
+ *   · AppStorage 里 `SYSTEM_UA` 的消费方：`@StorageProp` / `@StorageLink` / `AppStorage.get`
+ *     **全仓 0 处**（书源 WebView 早已移除，没有任何地方需要 UA）。
+ * ⇒ 整链删除：常量 + 3 个方法 + appData 里的镜像与兜底分支。
+ *
+ * 本类现在是空壳（没有任何成员），保留文件与默认导出是为了不动既有 import 路径；
+ * 将来若要再加「程序级 Preferences」，仍挂这里。
  */
-import CommonConstants from '../common/constants/CommonConstants'
-import bookDataPreferences from '../common/utils/DataPreferencesUtils'
-
 export class programDataPreferences {
-  //WEB UA设置
-  initWebUADataPreferences = () => {
-    bookDataPreferences.shared.set(CommonConstants.SYSTEM_UA, 0)
-  }
-  //更新WEB UA
-  updateWebUAData = (UAIndex:number ) =>{
-    bookDataPreferences.shared.set(CommonConstants.SYSTEM_UA,UAIndex)
-  }
-  //获取WEB UA
-  getWebUAData = () => {
-    return bookDataPreferences.shared.get(CommonConstants.SYSTEM_UA) as number
-  }
 }
 
 const programPreferences = new programDataPreferences()
