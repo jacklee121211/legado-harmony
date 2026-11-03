@@ -1,3 +1,4 @@
+import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../common/group/GroupEvents'
 import CommonConstants from '../../common/constants/CommonConstants'
 import { BooksMutation } from '../../common/books/BooksMutation'
 import { Haptics } from '../../common/utils/Haptics';
@@ -49,6 +50,9 @@ function recordDividerStyle() {
 @CustomDialog
 struct AddBookShelfDialog {
   controller?: CustomDialogController;
+
+  aboutToDisappear(): void {
+  }
 
   build() {
     Row() {
@@ -110,7 +114,14 @@ export default struct BookDetailPage {
   /**
    * 书架公共刷新信号（自增广播）。本页订阅它做**返回重查**（见 onShelfBroadcast）。
    */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('onShelfBroadcast') isBookRefreshing: number = 0
+  @State @Watch('onShelfBroadcast') shelfBooksTick: number = 0
+  /**
+   * 2026-11-03（双轨收口）：由 `GroupEvents` 事件驱动刷新（替代 AppStorage 计数器 + @StorageLink）。
+   * 语义不变：意图命中就把 tick 加一 ⇒ 上面的 `@Watch` 回调照旧触发重查。
+   */
+  private shelfListener: GroupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.refreshBooks) { this.shelfBooksTick++ }
+  }
 
   /**
    * 按 `catalogKeyword` 过滤目录；关键词为空时返回全量。
@@ -159,6 +170,7 @@ export default struct BookDetailPage {
   }
 
   async aboutToAppear() {
+    GroupEvents.subscribe(this.shelfListener)
     // 迁移后参数由 NavDestination 构建器经 `initBook` 注入，这里不再需要 `router.getParams()`。
     // 整体赋给 `@State` ⇒ 触发一次刷新（等价于原来 `aboutToAppear` 里那次赋值）。
     this.bookData = this.initBook

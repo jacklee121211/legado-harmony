@@ -1,3 +1,4 @@
+import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../common/group/GroupEvents'
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
 // ⚠️ 2026-10-20：`BookType` 已不再使用 —— 顶栏 chip 行整体换成官方 `SegmentButton`
@@ -213,7 +214,14 @@ export default struct groupTypeComponent {
    * （例如「分组」从第 3 格跑到第 1 格，`chipSel` 必须跟着改，否则高亮会跳错格）。
    */
   @StorageLink('SHELF_CHIP_ORDER') @Watch('onChipOrderChanged') chipOrderKey: string = '0,1,2'
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('changeRefresh')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+  @State @Watch('changeRefresh') shelfGroupsTick: number = 0
+  /**
+   * 2026-11-03（双轨收口）：由 `GroupEvents` 事件驱动刷新（替代 AppStorage 计数器 + @StorageLink）。
+   * 语义不变：意图命中就把 tick 加一 ⇒ 上面的 `@Watch` 回调照旧触发重查。
+   */
+  private shelfListener: GroupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.refreshGroups) { this.shelfGroupsTick++ }
+  }
   /**
    * 分组管理弹窗控制器。
    * ⚠️ **每次展开都新建**（`openGroupPanel()` 里 `new CustomDialogController`）：
@@ -225,6 +233,7 @@ export default struct groupTypeComponent {
    */
   private groupPanelDialog: CustomDialogController | null = null
   aboutToAppear(): void {
+    GroupEvents.subscribe(this.shelfListener)
     // 高亮基准初始化（2026-10-19 二修）：与 `IndexShelf.aboutToAppear` 恢复出的状态对齐
     //   · 停在「最近」 ⇒ 哨兵；否则用当前分组 id。
     //   为什么不用 `onRecentChip` 直接推导 highlightId：它只是个布尔，推不出"停在哪个分组"；
@@ -614,6 +623,10 @@ export default struct groupTypeComponent {
    */
   private groupIconColor(): string {
     return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : this.theme.mainColor
+  }
+
+  aboutToDisappear(): void {
+    GroupEvents.unsubscribe(this.shelfListener)
   }
 
   build() {

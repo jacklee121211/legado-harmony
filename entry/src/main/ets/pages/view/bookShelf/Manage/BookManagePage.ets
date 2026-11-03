@@ -4,7 +4,7 @@ import { CountLabel } from '../../../../common/shelf/CountLabel'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import { GroupStore } from '../../../../common/group/GroupStore'
-import { GroupEvents, GroupChangedPayload } from '../../../../common/group/GroupEvents'
+import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../../../common/group/GroupEvents'
 // 2026-11-02 第 24 轮：批量隐藏改走唯一写入口（那条路才会发 GroupEvents）
 import { GroupMutation } from '../../../../common/group/GroupMutation'
 import { DialogHost } from '../../../../common/dialog/DialogHost'
@@ -111,7 +111,14 @@ export default struct BookManagePage {
   /** 2026-11-01：是否从「最近」进入（批量管理按页初始化） */
   @State onRecentChip: boolean = false
   // 2026-10-25：`worksLists`（书单）随书单功能删除
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList')BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+  @State @Watch('getGroupList') shelfGroupsTick: number = 0
+  /**
+   * 2026-11-03（双轨收口）：由 `GroupEvents` 事件驱动刷新（替代 AppStorage 计数器 + @StorageLink）。
+   * 语义不变：意图命中就把 tick 加一 ⇒ 上面的 `@Watch` 回调照旧触发重查。
+   */
+  private shelfListener: GroupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.refreshGroups) { this.shelfGroupsTick++ }
+  }
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   /** App 级深浅色：订阅只为深浅切换时触发重绘（取色走 `ShelfColors`） */
@@ -300,6 +307,7 @@ export default struct BookManagePage {
    * 已迁移页面（`BookDetailPage` / `ReaderPage3`）保持**同一种注入惯例**。
    */
   aboutToAppear(): void {
+    GroupEvents.subscribe(this.shelfListener)
     this.currentIndex = this.routeParam.currentIndex
     this.EXHIBIT = this.routeParam.EXHIBIT
     this.bookTypeNumber = this.routeParam.bookTypeNumber
@@ -320,6 +328,7 @@ export default struct BookManagePage {
   }
 
   aboutToDisappear(): void {
+    GroupEvents.unsubscribe(this.shelfListener)
     // 离开可分享页面必须注销监听，否则会出现"在别的页面碰一碰却发出本页选中的书"
     BookShareBridge.get().release(OWNER_MANAGE)
     GroupEvents.unsubscribe(this.groupChangedListener)
@@ -1326,7 +1335,7 @@ export default struct BookManagePage {
    *      ⇒ 分组（`bookTypeNumber === 1`）那条**一个信号都没发**。
    *      而书架侧监听是两个**不同**的键（`grep` 实证）：
    *        · `BOOK_IS_BOOK_REFRESHING`        → 书列表（`BookContent.ets:55`）
-   *        · `BOOK_IS_BOOK_GROUPS_REFRESHING` → 分组卡片（`BookFolder.ets:29`、
+   *        · `shelfGroupsTick` → 分组卡片（`BookFolder.ets:29`、
    *                                              `GroupType.ets:130`）
    *      ⇒ 在管理页给**分组**置顶 ⇒ 书架分组卡片永远停在旧排序。
    *      修法：按类型广播**对应的**键（与 `refreshData()` 里的 case 保持一致）。
@@ -1360,7 +1369,7 @@ export default struct BookManagePage {
     await this.reloadListKeepSelection()
     // ① 广播给身后的书架 —— 按类型发**对应**的键（十修 A）
     if (this.bookTypeNumber === 1) {
-      // 分组：书架看的是 BOOK_IS_BOOK_GROUPS_REFRESHING（BookFolder / GroupType）
+      // 分组：书架看的是 shelfGroupsTick（BookFolder / GroupType）
       ShelfRefresh.groups()
     } else {
       // 书籍 / 书单：书架看的是 BOOK_IS_BOOK_REFRESHING（BookContent）

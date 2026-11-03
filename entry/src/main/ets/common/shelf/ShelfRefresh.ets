@@ -29,24 +29,22 @@ import { GroupEvents } from '../group/GroupEvents'
 
 export class ShelfRefresh {
   /** 分组结构 / 树（`BOOK_IS_BOOK_GROUPS_REFRESHING`）；返回自增后的值，便于调用方保留原有日志 */
+  // 2026-11-03（双轨收口·三）：AppStorage 计数器已无任何订阅方 ⇒ 不再写全局键，只发事件。
+  //   返回 GroupEvents 的全局版本号（调用方只用它打日志，例如 `groupsRefresh=${groupsTick}`）。
   static groups(): number {
-    const v: number = ShelfRefresh.bump(KEY_GROUPS)
-    ShelfRefresh.notifyGroupEvent('groups')
-    return v
+    GroupEvents.emitFromBump('groups')
+    return GroupEvents.version
   }
 
   /** 书籍数据 / 计数（`BOOK_IS_BOOK_REFRESHING`；`isBookRefreshing` 是它的本地别名）；返回自增后的值 */
   static books(): number {
-    const v: number = ShelfRefresh.bump(KEY_BOOKS)
-    ShelfRefresh.notifyGroupEvent('books')
-    return v
+    GroupEvents.emitFromBump('books')
+    return GroupEvents.version
   }
 
   /** 结构变更：分组树 + 书籍可见性都要刷（等价于原来连着两行自增） */
   static structure(): void {
-    ShelfRefresh.bump(KEY_GROUPS)
-    ShelfRefresh.bump(KEY_BOOKS)
-    ShelfRefresh.notifyGroupEvent('both')
+    GroupEvents.emitFromBump('both')
   }
 
   /** 书架排序 / 宫格列表切换（`SHELF_SORT_TICK`） */

@@ -215,7 +215,7 @@ const INVENTORY = [
     id: 'legacy-refresh-consumers',
     label: '旧计数器订阅方（@StorageProp/@StorageLink 两个刷新键）',
     pattern: /@Storage(Prop|Link)\(['"](BOOK_IS_BOOK_GROUPS_REFRESHING|BOOK_IS_BOOK_REFRESHING)['"]\)/,
-    budget: 8,
+    budget: 0,
     note: '2026-11-03（双轨收口·二）：25 → 8。删掉的 17 处全是「只声明不读」的死订阅；剩下 8 处都带 @Watch 回调（真行为），需逐文件迁移并真机验刷新',
   },
   // 2026-11-03（双轨收口）：**事件出口唯一性**闸门。

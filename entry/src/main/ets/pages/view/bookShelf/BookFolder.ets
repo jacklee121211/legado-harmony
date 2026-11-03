@@ -1,3 +1,4 @@
+import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../../common/group/GroupEvents'
 import { it } from '@ohos/hypium'
 import { CountLabel } from '../../../common/shelf/CountLabel'
 import { Haptics } from '../../../common/utils/Haptics';
@@ -54,18 +55,26 @@ export default struct BookFolder {
    */
   @Link GROUP: string
   @Link bookTypeNumber: number
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('getGroupList') BOOK_IS_BOOK_GROUPS_REFRESHING: number = 0
+  @State @Watch('getGroupList') shelfGroupsTick: number = 0
   /**
    * 书籍数据变更（删书 / 移入移出分组 / 导入）→ **只重算"共N本"**（2026-10-06）。
    *
    * 为什么需要它：分组卡片上的"共N本"过去读 `book_groups.bookIds`（陈旧冗余列），
    * 现已改为按 `books.bookGroup` 现算（见 `bookGroupUtil.fillRealBookIds`）；而
-   * 「删书 / 移动书籍」只广播 `BOOK_IS_BOOK_REFRESHING`（在分组 sheet 内删书就是这条路），
+   * 「删书 / 移动书籍」只广播 `shelfBooksTick`（在分组 sheet 内删书就是这条路），
    * 分组卡片若不监听就还停在旧数字 ⇒ 不算"实时"。
    * 走 `refreshGroupCounts`（**不**走 `getGroupList`）：后者会 `replayEntrance()` 重播
    * 整屏入场动画，删一本书就翻一次牌是噪音（同 `BookContent.animateOnNextLoad` 的取舍）。
    */
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('refreshGroupCounts') BOOK_IS_BOOK_REFRESHING: number = 0
+  @State @Watch('refreshGroupCounts') shelfBooksTick: number = 0
+  /**
+   * 2026-11-03（双轨收口）：由 `GroupEvents` 事件驱动刷新（替代 AppStorage 计数器 + @StorageLink）。
+   * 语义不变：意图命中就把 tick 加一 ⇒ 上面的 `@Watch` 回调照旧触发重查。
+   */
+  private shelfListener: GroupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.refreshGroups) { this.shelfGroupsTick++ }
+    if (p.refreshBooks) { this.shelfBooksTick++ }
+  }
   // ── 2026-11-01 多级分组：2×2 预览数据 ──────────────────────────────────
   /** 本页 2×2 预览用的书（每组最多 2 本，一次查询；见 `BooksDao.queryPreviewByGroups`） */
   @State previewBooks: Books[] = []
@@ -128,10 +137,12 @@ export default struct BookFolder {
   }
 
   aboutToDisappear(): void {
+    GroupEvents.unsubscribe(this.shelfListener)
     this.clearEnterTimers()
   }
 
   aboutToAppear(): void {
+    GroupEvents.subscribe(this.shelfListener)
     this.getGroupList()
   }
 

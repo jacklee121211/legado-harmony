@@ -3,6 +3,7 @@
  * @datetime 2024/7/23 12:18
  * @className: BookContentRefresh
  */
+import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../../../common/group/GroupEvents'
 import { showMessage } from '../../../../componets/common/promptShow'
 import { CountLabel } from '../../../../common/shelf/CountLabel'
 import RefreshComponent from '../../../../componets/common/RefreshComponent'
@@ -89,8 +90,16 @@ export default struct BookContentRefresh {
   /** 请求序号：异步重算的竞态保护（旧请求返回时丢弃） */
   private folderToken: number = 0
   // 2026-11-01：分组/书籍刷新广播 → 当前页重算（修「删除/新建子分组后不实时刷新」）
-  @StorageLink('BOOK_IS_BOOK_GROUPS_REFRESHING') @Watch('onShelfRefresh') groupRefreshing: number = 0
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch('onShelfRefresh') bookRefreshing: number = 0
+  @State @Watch('onShelfRefresh') groupRefreshing: number = 0
+  @State @Watch('onShelfRefresh') bookRefreshing: number = 0
+  /**
+   * 2026-11-03（双轨收口）：由 `GroupEvents` 事件驱动刷新（替代 AppStorage 计数器 + @StorageLink）。
+   * 语义不变：意图命中就把 tick 加一 ⇒ 上面的 `@Watch` 回调照旧触发重查。
+   */
+  private shelfListener: GroupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.refreshGroups) { this.groupRefreshing++ }
+    if (p.refreshBooks) { this.bookRefreshing++ }
+  }
 
   private onShelfRefresh(): void {
     this.onFolderChanged()
@@ -252,6 +261,7 @@ export default struct BookContentRefresh {
 
   // ── 2026-11-01 多级分组：路径条 / 子分组行 ──────────────────────────────
   aboutToAppear(): void {
+    GroupEvents.subscribe(this.shelfListener)
     this.onFolderChanged()
   }
 
@@ -617,6 +627,10 @@ export default struct BookContentRefresh {
   /** 路径条左侧「+」：在当前分组下新建子分组 */
   private openAddSubGroup(): void {
     this.openAddGroupDialog(this.bookTypeNumber)
+  }
+
+  aboutToDisappear(): void {
+    GroupEvents.unsubscribe(this.shelfListener)
   }
 
   build() {

@@ -1,3 +1,4 @@
+import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../../../common/group/GroupEvents'
 import { ThemeStorageKey } from '../../../../common/constants/Theme'
 import ShelfPrefs, { SortDir, SortKey } from '../../../../common/utils/ShelfPrefs'
 import BasicDataSource from '../../../../common/LazyIDataSource/BasicDataSource'
@@ -79,6 +80,7 @@ export default struct BookContent {
   @State entranceWaveId: number = 0
 
   async aboutToAppear(): Promise<void> {
+    GroupEvents.subscribe(this.shelfListener)
     // ★★ 2026-10-21：**只在"手里没数据"时才显示 loading** ★★
     // 用户录像反馈：「三段切换，会有一个巨大的加载中一闪而过。」
     // 根因：切档会让 `BookContent` 销毁重建（`BookContentRefresh` 的分支变了），
@@ -146,7 +148,7 @@ export default struct BookContent {
     if (ok > 0) {
       showMessage(`已导入 ${ok} 个文件`)
       // 广播书架刷新（与 WiFi 传书同一信号，见 WifiBookServer:2506）
-      this.isBookRefreshing = this.isBookRefreshing + 1
+      this.shelfBooksTick = this.shelfBooksTick + 1
     }
   }
 
@@ -192,7 +194,14 @@ export default struct BookContent {
    */
   @StorageLink('SHELF_RECENT_CHIP') @Watch('changeBookType') onRecentChip: boolean = true
   //更新数据累加刷新数据页面
-  @StorageLink('BOOK_IS_BOOK_REFRESHING') @Watch("isRefresh")isBookRefreshing: number = 0
+  @State @Watch('isRefresh') shelfBooksTick: number = 0
+  /**
+   * 2026-11-03（双轨收口）：由 `GroupEvents` 事件驱动刷新（替代 AppStorage 计数器 + @StorageLink）。
+   * 语义不变：意图命中就把 tick 加一 ⇒ 上面的 `@Watch` 回调照旧触发重查。
+   */
+  private shelfListener: GroupChangedListener = (p: GroupChangedPayload): void => {
+    if (p.refreshBooks) { this.shelfBooksTick++ }
+  }
   /**
    * dock 切回书架信号（2026-10-12）：Index.ets 的 onAnimationStart 在切到
    * 书架 tab（targetIndex=0 ∧ index≠0）时自增本值 ⇒ @Watch 触发动画波次。
@@ -215,7 +224,7 @@ export default struct BookContent {
     // if (this.booksDataSource.totalCount() > 0){
     //   this.booksDataSource.clear()
     // }
-    if (this.isBookRefreshing >= 0) {
+    if (this.shelfBooksTick >= 0) {
       this.animateOnNextLoad = false
       // 2026-11-01：数据真的变了 ⇒ 缓存标脏（不直接清空；命中判断里会看这个标记）
       this.cacheStale = true
@@ -634,6 +643,10 @@ export default struct BookContent {
         : (item.bookUrl !== undefined && item.bookUrl.length > 0 ? 'u' + item.bookUrl + flag
           : 'n' + item.bookName + '#' + index)
     })
+  }
+
+  aboutToDisappear(): void {
+    GroupEvents.unsubscribe(this.shelfListener)
   }
 
   build() {
