@@ -21,11 +21,82 @@ class BookGroupsDao{
       }
       await DbUtil.createTable(createSql)
       await AppDatabaseUtil.existsTable(this.TABLE_NAME)
-      this.initGroupData()
+      // 2026-11-03：改成 await —— 后面要建唯一索引，必须等系统分组落库完再建，
+      //   否则「空表插入 4 个系统分组」与「建索引」并发时会互相踩（虽然名字不冲突，
+      //   但顺序确定下来更好排查）。initGroupData 内部本来就只有一次 search + 最多 4 insert。
+      await this.initGroupData()
+      await this.ensureSiblingUniqueIndex()
     } catch (err) {
       console.info('TagInfo', JSON.stringify(err))
     }
 
+  }
+
+  /**
+   * 2026-11-03（「分级唯一」落地到库层）：给 `book_groups` 建 `(parentId, groupName)` 唯一索引。
+   *
+   * ── 为什么必须写显式 DDL ────────────────────────────────────────────────────
+   * 快照里的 `indices` 数组**全工程没有任何代码执行**（`doInitAllTable()` 只调各 DAO 的
+   * `initXxxTable()`，它们只跑 `createSql` 建表）。真机实测：设备库 `sqlite_master` 里
+   * `book_groups` 一条自定义索引都没有，连 `books` 的 `index_books_bookName_author` 也不存在
+   * ⇒ 只往快照里加一条索引 = **空操作**，必须在这里显式 `CREATE UNIQUE INDEX`。
+   *
+   * ── 三步（全部幂等，失败只记日志，绝不卡启动）─────────────────────────────────
+   * ① `parentId` 归一：NULL / ''（空串）→ 0。3.0.0 老库里根本没有这一列，
+   *    由 `AppDatabaseUtil.existsTable()` 走 `ALTER TABLE ADD COLUMN` 补上（快照默认值 "0"）；
+   *    但历史脏数据里若存过空串，会让 `hasSiblingNamed(parentId=0, …)` 一条都查不到 ⇒ 先归一。
+   * ② 同父同名去重：**保留先建的那个原名**，后建的顺延 `名 (2)` / `名 (3)` …
+   *    —— 只改名字，不动书、不删组、不并组（对老用户零数据损失）。
+   * ③ `CREATE UNIQUE INDEX IF NOT EXISTS`。
+   *
+   * 为什么要去重才能建索引：3.0.0 时分组按「分类页签（bookType）」分开判重，
+   * 同名分组可以同时存在于「书架 / 漫画」两个页签；后来页签合并（`migrateBookTypeToShelf`）
+   * 把它们归一到同一父级 ⇒ 老库里**可能真的存在同父同名**两行，直接建唯一索引会失败。
+   */
+  async ensureSiblingUniqueIndex(): Promise<void> {
+    const INDEX_NAME: string = 'index_book_groups_parentId_groupName'
+    try {
+      // ① parentId 归一
+      await DbUtil.executeSql(`UPDATE ${this.TABLE_NAME} SET parentId = 0 WHERE parentId IS NULL`)
+      await DbUtil.executeSql(`UPDATE ${this.TABLE_NAME} SET parentId = 0 WHERE typeof(parentId) = 'text' AND TRIM(parentId) = ''`)
+      // ② 同父同名去重（先建的保留原名）
+      const column: ColumnInfo[] = AppDatabaseUtil.getColumn(this.TABLE_NAME)
+      const rows = await DbUtil.querySqlForList<BookGroupDb>(
+        `SELECT * FROM ${this.TABLE_NAME} ORDER BY groupId ASC`, column)
+      const used: Record<string, boolean> = {}
+      let renamed: number = 0
+      for (const r of rows) {
+        const pid: number = r.parentId ?? 0
+        const name: string = (r.groupName ?? '').trim()
+        const key: string = `${pid}|${name}`
+        if (used[key] !== true) {
+          used[key] = true
+          continue
+        }
+        // 冲突：找一个空闲后缀
+        let n: number = 2
+        let candidate: string = `${name} (${n})`
+        while (used[`${pid}|${candidate}`] === true && n <= 99) {
+          n++
+          candidate = `${name} (${n})`
+        }
+        used[`${pid}|${candidate}`] = true
+        const safeName: string = candidate.replace(/'/g, "''")
+        await DbUtil.executeSql(
+          `UPDATE ${this.TABLE_NAME} SET groupName = '${safeName}' WHERE groupId = ${r.groupId}`)
+        renamed++
+        console.info(`[GRP-INDEX] 同父同名去重：groupId=${r.groupId} 「${name}」→「${candidate}」(parentId=${pid})`)
+      }
+      // ③ 建唯一索引
+      await DbUtil.executeSql(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${INDEX_NAME} ON ${this.TABLE_NAME} (parentId, groupName)`)
+      // 常驻一行巡检定痕（不是探针）：运维/排障时能确认"这次启动确实跑过索引迁移"，
+      //   以及老库同父同名被改名的行数（0 = 干净库）。
+      console.info(`[GRP-INDEX] 唯一索引就绪 index=${INDEX_NAME} 去重改名=${renamed} 行`)
+    } catch (e) {
+      // 唯一性不是安全边界：建失败只记日志，绝不能让 doInitAllTable 抛错卡死首屏
+      console.error(`[GRP-INDEX] 建 (parentId, groupName) 唯一索引失败（应用层判定仍然生效）：`, JSON.stringify(e))
+    }
   }
 
   async search(params?:BookGroupTypeParams) {
