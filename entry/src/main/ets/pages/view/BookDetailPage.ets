@@ -5,7 +5,8 @@ import { Haptics } from '../../common/utils/Haptics';
 // `SwipeRefresher` 随「书源 Tab」移除。
 import { router } from '@kit.ArkUI'
 import ImmersiveMaterialUtil, { MaterialButtonModifier } from '../../common/utils/ImmersiveMaterialUtil'
-import AppRouter, { RouteName, ReaderRouteParam } from '../../common/router/AppRouter'
+import AppRouter, { RouteName, ReaderRouteParam } from '../../common/router/AppRouter'
+import { ReaderEntry } from '../../common/reader/ReaderEntry'
 import { FileHandler } from '../../common/utils/FileHandler'
 import { Books } from '../../database/entities/Books'
 import booksUtil from '../../common/utils/booksUtils'
@@ -234,7 +235,7 @@ export default struct BookDetailPage {
                     //   ⇒ 进入阅读页后目录 sheet 仍盖在上面。
                     //   先置 `false` 再 push：sheet 开始收起、阅读页随后入栈。
                     this.isShow = false
-                    AppRouter.push(RouteName.READER, rp)
+                    ReaderEntry.open(this.getUIContext(), rp.bookData, { param: rp })
                   })
                 }
                 // 补 keyGenerator（T10-1 / D-11）：目录可达数千条，默认键是
@@ -293,7 +294,7 @@ export default struct BookDetailPage {
           .onClick(() => { // 跳转到阅读器
             // 迁 Navigation 第 3 期：阅读页已改为 NavDestination，改走路由门面
             const rp: ReaderRouteParam = { bookData: this.bookData };
-            AppRouter.push(RouteName.READER, rp)
+            ReaderEntry.open(this.getUIContext(), rp.bookData, { param: rp })
           })
           .attributeModifier(new MaterialButtonModifier(this.theme.mainColor, '#FFFFFF',
             ImmersiveMaterialUtil.tint(this.theme.mainColor, 0.75)))
@@ -469,7 +470,7 @@ export default struct BookDetailPage {
                   const rp: ReaderRouteParam = {
                     bookData: this.bookData, clickBookCatalogId: item.catalogId
                   };
-                  AppRouter.push(RouteName.READER, rp)
+                  ReaderEntry.open(this.getUIContext(), rp.bookData, { param: rp })
                 })
             }
           }, (item: bookParser.CatalogItem): string => `${item.catalogId}_${item.catalogName}`)

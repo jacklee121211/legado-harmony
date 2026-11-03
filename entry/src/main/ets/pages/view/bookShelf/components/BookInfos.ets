@@ -4,17 +4,12 @@ import { resolveBookCover, coverCorners, stripBookExt } from "../../../../common
 
 import { Haptics } from '../../../../common/utils/Haptics'
 import { Books } from '../../../../database/entities/Books'
-import { router } from '@kit.ArkUI'
-import { BusinessError } from '@kit.BasicServicesKit'
-import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_PDFVIEW, FMT_PDF_USE_SELF_VIEWER,
-  isPdfPath } from '../../../../common/format/FormatFlags'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
-import { ezCustomTransition } from '../../../../common/ezlt'
 import booksDao from '../../../../database/dao/BooksDao'
 import FontConstants from '../../../../common/constants/FontConstants'
 import UiMotion from '../../../../common/utils/UiMotion'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
-import AppRouter, { PdfRouteParam, RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
+import { ReaderEntry, ReaderLaunch } from '../../../../common/reader/ReaderEntry'
 import { shelfEntrance } from '../../../../common/utils/EntranceWave'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B2）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
@@ -105,14 +100,14 @@ export default struct BookInfos {
    * 依据见 `onClick` 里那段注释（真机日志定位的"纯黑阅读器"）。
    * `tries` 上限 8 ≈ 2.2s，防止异常情况下永远不跳。
    */
-  private openReaderWhenIdle(rp: ReaderRouteParam, tries: number): void {
+  private openReaderWhenIdle(launch: ReaderLaunch, tries: number): void {
     if (AppStorage.get<boolean>(UiMotion.LT_FLAG_TRANSITIONING) === true && tries < 8) {
       setTimeout((): void => {
-        this.openReaderWhenIdle(rp, tries + 1)
+        this.openReaderWhenIdle(launch, tries + 1)
       }, UiMotion.LT_CLICK_GUARD_MS)
       return
     }
-    AppRouter.push(RouteName.READER, rp)
+    ReaderEntry.launch(launch)
   }
   bookInfoDialog: CustomDialogController | null = new CustomDialogController({
     builder: BookInfoDialogs({
@@ -280,74 +275,15 @@ export default struct BookInfos {
         UnsupportedDoc.show(this.book, getContext(this) as common.UIAbilityContext, this.getUIContext());
         return;
       }
-      // ── PDF：走**官方 PdfView 组件**页（2026-10-20 用户拍板：以官方为基础，推翻重做）──
-      // 旧方案（页图→epub→ReaderKit）真机实测 234 页 84.6 秒 / 278 页 65.2 秒，全程主线程串行；
-      // 新方案打开即首屏，没有"转换"这一步。开关 `FMT_PDF_USE_PDFVIEW` 置 false 即回退旧路径。
-      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_PDFVIEW
-        && isPdfPath(this.book.bookUrl ?? '')) {
-        // ── PDF 走 NavPathStack + **同一套一镜到底**（2026-10-20 第 2 条反馈修复）──────
-        // 真机现象：「进入动画和其它格式还是不同」。
-        // 根因（代码级）：PDF 分支只 `push(PDF_VIEWER, this.book)`，参数里**没有**
-        //   `longTakeTransitionParam` ⇒ `Index` 的 PDF 分支走系统默认转场；
-        //   而其它格式分支会先 `generateLongTakeParam()` 再放进 `ReaderRouteParam`，
-        //   于是 `LongTakeTransitionDelegate` + `LongTakeSession` 演一镜到底。
-        // ⇒ 这里与下面 READER 分支**完全同款**：拍封面几何 → 随路由带走 → delegate 演飞行。
-        // 任何一步失败（id 失效/量不到）都自然退回系统转场，不阻塞点书。
-        const pp: PdfRouteParam = { bookData: this.book };
-        if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
-          AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60));
-          const ltParam = ezCustomTransition.generateLongTakeParam(
-            this.getUIContext(), this.longtakeId, 4);
-          if (ltParam) {
-            pp.longTakeTransitionParam = ltParam;
-          }
-        }
-        if (!AppRouter.push(RouteName.PDF_VIEWER, pp)) {
-          console.error('open pdf viewer failed: route stack not ready');
-        }
-        return;
-      }
-      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_SELF_VIEWER
-        && isPdfPath(this.book.bookUrl ?? '')) {
-        router.pushUrl({
-          url: 'pages/view/Reader/PdfReaderPage',
-          params: this.book
-        }).catch((e: BusinessError): void => {
-          console.error('open pdf reader failed: ' + JSON.stringify(e));
-        });
-        return;
-      }
-      // todo: 暂时屏蔽书籍详情页
-      // 迁 Navigation 第 3 期：阅读页已改为 NavDestination，改走路由门面。
-      // 2026-09-24：书架→阅读器的"一镜到底"尝试已全部撤除，恢复内置系统转场。
-      // 2026-09-23：一镜到底**正式版**回归 —— 点击瞬间拍下封面几何随路由参数带走，
-      //   并置臂旗 ltArm 让 READER 建成「飞行分支」（机制见 Index.ets 字段区注释）。
-      //   任何一步失败（id 失效/量不到）都自然退回普通转场，不阻塞点书。
-      // 参数类型必须显式声明（ArkTS `arkts-no-untyped-obj-literals` 禁止无类型字面量）。
-      const rp: ReaderRouteParam = { bookData: this.book };
-      // 一镜到底官方库（2026-10-02 迁移 @hmanimations/ezcustomtransition，skill:
-      // hmos-arkui-longtake-transition Step 5）：点击时由 generateLongTakeParam
-      // 按封面组件 id 拍几何并生成转场参数，随路由带给阅读页；
-      // 失败（id 失效等）返回 undefined ⇒ 阅读页走普通分支，不阻塞点书。
-      // 打断/手势/生命周期由官方库 session 管理（自研 lt* 机制已退役）。
-      if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
-        // 2026-10-05（方案 A）：把封面**当前的四角圆角**（书脊式不对称，见 CoverSource）传给
-        // 一镜到底 session —— 否则飞行封面用统一圆角，起飞首帧/落位帧与书架封面圆角对不上。
-        // 60 = 列表封面的显示宽度（与下面 `.borderRadius(coverCorners(60))` 同源同值）。
-        AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60))
-        const longTakeTransitionParam = ezCustomTransition.generateLongTakeParam(
-          this.getUIContext(), this.longtakeId, 4)
-        if (longTakeTransitionParam) {
-          rp.longTakeTransitionParam = longTakeTransitionParam
-        }
-      }
-      // ── 「转场进行中」闸（2026-10-04 真机定位的"纯黑阅读器"防护）─────────────
-      // 现象：快速「打开→返回→立刻再打开」时，第二次打开的正文区全黑（顶/底栏都在）。
-      // 真机日志：命中那几次，新阅读页都是在**上一次返回动画还没跑完**时创建的，且该次
-      // 打开的阅读引擎渲染实例（EWP `CreatePage`）**从未创建** ⇒ XComponent 有 surface
-      // 却没人画 ⇒ 黑。故：转场进行中点书 ⇒ **等转场收尾后再推路由**。
-      // （上一代自研实现也有同款冷却闸，见 Index.ets 的 ltArmReleasedAt 注释与证据链。）
-      this.openReaderWhenIdle(rp, 0)
+      // 2026-11-03（P1 / R1）：`pdf / 其它格式` 的入口判定**已收口到 `ReaderEntry`**。
+      //   本处只保留两件局部职责：
+      //     ① `UnsupportedDoc` 的 .doc/.docx 拦截（需要页面级 context，见上面的 if）
+      //     ② 「转场进行中」闸（`openReaderWhenIdle`）—— 防"纯黑阅读器"，
+      //        它只负责**延后推路由**，不再关心进哪个页面。
+      //   一镜到底几何必须在**点击瞬间**拍（prepare 是同步的）；列表封面圆角 60 / 圆角参数 4。
+      const launch: ReaderLaunch = ReaderEntry.prepare(this.getUIContext(), this.book,
+        { longtakeId: this.longtakeId, coverWidth: 60, longtakeCorner: 4 });
+      this.openReaderWhenIdle(launch, 0)
 
       // clickUtil.preventClick(()=>{
       //   router.pushUrl({
@@ -382,3 +318,5 @@ export default struct BookInfos {
     this.bookInfoDialog?.close()
   }
 }
+
+

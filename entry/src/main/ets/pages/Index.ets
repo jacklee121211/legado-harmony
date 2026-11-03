@@ -18,7 +18,8 @@ import { router } from '@kit.ArkUI'
 import BooksDao from '../database/dao/BooksDao'
 import { Books } from '../database/entities/Books'
 import ImmersiveMaterialUtil from '../common/utils/ImmersiveMaterialUtil'
-import AppRouter, { RouteName } from '../common/router/AppRouter'
+import AppRouter, { RouteName } from '../common/router/AppRouter'
+import { ReaderEntry } from '../common/reader/ReaderEntry'
 import UiMotion from '../common/utils/UiMotion'
 import BookDetailPage from './view/BookDetailPage'
 import ReaderPage3 from './view/Reader/ReaderPage3'
@@ -604,7 +605,7 @@ struct Main {
       // 迁 Navigation 第 3 期：阅读页已改为 NavDestination，改走路由门面。
       // 参数必须用**显式类型**（ArkTS 的 arkts-no-untyped-obj-literals）。
       const rp: ReaderRouteParam = { bookData: book, quickListen: autoListen };
-      if (!AppRouter.push(RouteName.READER, rp)) {
+      if (!ReaderEntry.open(this.getUIContext(), rp.bookData, { param: rp })) {
         showMessage('打开失败：页面栈尚未就绪');
       }
     }).catch((e: BusinessError) => {
@@ -773,7 +774,7 @@ struct Main {
         continueNightMode: p.nightMode,
         continueFlipMode: p.flipMode
       }
-      if (!AppRouter.push(RouteName.READER, rp)) {
+      if (!ReaderEntry.open(this.getUIContext(), rp.bookData, { param: rp })) {
         showMessage('打开失败：页面栈尚未就绪')
         this.continueHandled = false // 失败回滚：保留 pending，等新容器/下次 onPageShow 再试
         return

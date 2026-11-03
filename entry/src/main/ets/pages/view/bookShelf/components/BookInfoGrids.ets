@@ -3,12 +3,7 @@ import { UnsupportedDoc } from '../../../../common/utils/UnsupportedDoc'
 import confirmDialogExample from '../../../../componets/common/confirmDialog'
 import { Haptics } from '../../../../common/utils/Haptics';
 import { Books } from '../../../../database/entities/Books'
-import { router } from '@kit.ArkUI'
-import { BusinessError } from '@kit.BasicServicesKit'
-import { FMT_MASTER_ENABLED, FMT_PDF_ENABLED, FMT_PDF_USE_PDFVIEW, FMT_PDF_USE_SELF_VIEWER,
-  isPdfPath } from '../../../../common/format/FormatFlags'
-import AppRouter, { PdfRouteParam, RouteName, ReaderRouteParam } from '../../../../common/router/AppRouter'
-import { ezCustomTransition } from '../../../../common/ezlt'
+import { ReaderEntry, ReaderLaunch } from '../../../../common/reader/ReaderEntry'
 import BookInfoDialogs from './dialog/BookInfoDialogs'
 import booksDao from '../../../../database/dao/BooksDao'
 import CommonConstants from '../../../../common/constants/CommonConstants'
@@ -110,14 +105,14 @@ export default struct BookInfoGrids{
    * 依据见 `onClick` 里那段注释（真机日志定位的"纯黑阅读器"）。
    * `tries` 上限 8 ≈ 2.2s，防止异常情况下永远不跳。
    */
-  private openReaderWhenIdle(rp: ReaderRouteParam, tries: number): void {
+  private openReaderWhenIdle(launch: ReaderLaunch, tries: number): void {
     if (AppStorage.get<boolean>(UiMotion.LT_FLAG_TRANSITIONING) === true && tries < 8) {
       setTimeout((): void => {
-        this.openReaderWhenIdle(rp, tries + 1)
+        this.openReaderWhenIdle(launch, tries + 1)
       }, UiMotion.LT_CLICK_GUARD_MS)
       return
     }
-    AppRouter.push(RouteName.READER, rp)
+    ReaderEntry.launch(launch)
   }
   onDelete: () => void = () => {
 
@@ -250,63 +245,13 @@ export default struct BookInfoGrids{
         UnsupportedDoc.show(this.book, getContext(this) as common.UIAbilityContext, this.getUIContext());
         return;
       }
-      // PDF ⇒ 官方 PdfView 组件页（2026-10-20，与列表模式 `BookInfos` 同款；理由见其注释）
-      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_PDFVIEW
-        && isPdfPath(this.book.bookUrl ?? '')) {
-        // PDF：NavPathStack + **与其它格式同一套一镜到底**（2026-10-20，与列表模式同款；
-        // 根因见 `BookInfos` 该分支注释：不带 longTakeTransitionParam 就只会走系统默认转场）
-        const pp: PdfRouteParam = { bookData: this.book };
-        if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
-          AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(60));
-          const ltParam = ezCustomTransition.generateLongTakeParam(
-            this.getUIContext(), this.longtakeId, 4);
-          if (ltParam) {
-            pp.longTakeTransitionParam = ltParam;
-          }
-        }
-        if (!AppRouter.push(RouteName.PDF_VIEWER, pp)) {
-          console.error('open pdf viewer failed: route stack not ready');
-        }
-        return;
-      }
-      // 回退分支①：自研图片阅读页（旧实验，默认关）
-      if (FMT_MASTER_ENABLED && FMT_PDF_ENABLED && FMT_PDF_USE_SELF_VIEWER
-        && isPdfPath(this.book.bookUrl ?? '')) {
-        router.pushUrl({
-          url: 'pages/view/Reader/PdfReaderPage',
-          params: this.book
-        }).catch((e: BusinessError): void => {
-          console.error('open pdf reader failed: ' + JSON.stringify(e));
-        });
-        return;
-      }
+      // 2026-11-03（P1 / R1）：pdf 判定收口到 `ReaderEntry`（宫格不再单独判 pdf / 不再有自研回退分支）。
+      //   原先 pdf 分支是**立即推**、其它格式走「转场进行中」闸 ⇒ 两条路径不一致；现在统一进闸。
       clickUtil.preventClick(()=>{
-        // ── 需求第 6 项修复（2026-09-24）──────────────────────────────────────
-        // 原来这里推的是 `RouteName.BOOK_DETAIL`（书籍详情页），与**列表模式**不一致：
-        //   `BookInfos.ets` （列表）推的是 `RouteName.READER`（阅读页）。
-        // 用户原话：「在宫格模式下，点击书籍是进入书籍详情页，这不对，应该直接进入阅读器」。
-        // ⇒ 与列表模式对齐，统一推阅读页。
-        // 参数类型必须显式声明（ArkTS `arkts-no-untyped-obj-literals` 禁止无类型字面量）。
-        // 2026-09-23：一镜到底正式版 —— 机制同 BookInfos.ets（拍几何 + 置臂旗）。
-        //   圆角取 10vp：宫格封面图本身无圆角，圆角是外层 Stack 的 borderRadius(10)。
-        //   longtakeId 为空（搜索浮窗复用）⇒ 不参与一镜到底，走普通转场。
-        const rp: ReaderRouteParam = { bookData: this.book };
-        // 一镜到底官方库（2026-10-02 迁移，与 BookInfos 同款；圆角 10 = 宫格封面圆角）
-        if (UiMotion.longTakeAllowed() && this.longtakeId !== '') {
-          // 2026-10-05（方案 A）：同 BookInfos —— 把封面当前四角圆角传给 session。
-          // 100 = 宫格封面的显示宽度（与下面 `.borderRadius(coverCorners(100))` 同源同值）。
-          AppStorage.setOrCreate(UiMotion.LT_COVER_CORNERS_KEY, coverCorners(100))
-          const longTakeTransitionParam = ezCustomTransition.generateLongTakeParam(
-            this.getUIContext(), this.longtakeId, 10)
-          if (longTakeTransitionParam) {
-            rp.longTakeTransitionParam = longTakeTransitionParam
-          }
-        }
-        // 点书进阅读器的同时通知宿主（搜索浮窗借机关掉自己，2026-09-24 需求第 4 项）
-        this.onBookOpen()
-        // ── 「转场进行中」闸（2026-10-04，同 BookInfos）：转场收尾后再推路由，
-        //    避免新阅读页在旧页面的转场窗口内创建（会导致正文区纯黑）
-        this.openReaderWhenIdle(rp, 0)
+        // 2026-11-03（P1 / R1）：与列表模式同一个入口；宫格封面圆角 100 / 圆角参数 10。
+        const launch: ReaderLaunch = ReaderEntry.prepare(this.getUIContext(), this.book,
+          { longtakeId: this.longtakeId, coverWidth: 100, longtakeCorner: 10 });
+        this.openReaderWhenIdle(launch, 0)
       })
     })
     .gesture(
@@ -394,3 +339,5 @@ export default struct BookInfoGrids{
     console.info('BookRename', `renamed -> ${newName}, broadcast BOOK_IS_BOOK_REFRESHING`)
   }
 }
+
+

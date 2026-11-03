@@ -65,12 +65,9 @@ export const FMT_PDF_FIT_SCALE: number = 1.23;
  */
 export const FMT_PDF_USE_PDFVIEW: boolean = true;
 
-/**
- * PDF 用哪条渲染路径（旧字段，保留兼容）：
- *  false（默认）⇒ PDF 也走「页图 → epub → ReaderPage3」，与 txt/epub 完全同一套体验；
- *  true        ⇒ 走自研图片阅读页 pages/view/Reader/PdfReaderPage（页面尺寸/手势完全可控）。
- */
-  export const FMT_PDF_USE_SELF_VIEWER: boolean = false;
+// 2026-11-03（P1/R2）：FMT_PDF_USE_SELF_VIEWER 与其指向的自研图片阅读页 PdfReaderPage
+// 一并删除 —— 该页 BooksDao.partialUpdate 直写事实、且开关恒为 false（死路）。
+// PDF 只有一条路：FMT_PDF_USE_PDFVIEW → PdfViewerPage（入口统一走 ReaderEntry）。
 
 /** 接收层（分享面板 / 用其他应用打开）是否接收新格式 */
 export const FMT_SHARE_INTAKE_ENABLED: boolean = true;

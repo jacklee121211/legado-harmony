@@ -1,7 +1,6 @@
 {
   "src": [
     "pages/Index",
-    "pages/ShareReceivePage",
-    "pages/view/Reader/PdfReaderPage"
+    "pages/ShareReceivePage"
   ]
 }
