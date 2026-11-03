@@ -151,7 +151,10 @@ class bookGroupUtils{
     }
     const target: number = parentId > 0 ? parentId : 3
     // ── 2026-11-02 回滚快照：记录"哪些书来自哪个分组"，失败按快照逆序恢复 ──────
-    const idsPreview: number[] = mode === 'collapse' ? GroupTree.build(groups).subtreeIds(id) : [id]
+    // 2026-11-03（P6/B1）：树一律取真源（GroupStore.reload 会先刷库再返回），
+    //   不再用调用方传进来的 list 自建树（那会把"筛选视图"和"真源"混为一谈）。
+    const truthTree: GroupTree = await GroupStore.reload()
+    const idsPreview: number[] = mode === 'collapse' ? truthTree.subtreeIds(id) : [id]
     const allBooks: Books[] = await BooksDao.search()
     const bookSnap: Books[] = []
     for (const b of allBooks) {
@@ -161,7 +164,7 @@ class bookGroupUtils{
     }
     try {      if (mode === 'collapse') {
         // 2026-11-01：**全部解散** —— 整棵子树的书全部上提到父级，子树目录行全删
-        const tree: GroupTree = GroupTree.build(groups)
+        const tree: GroupTree = truthTree
         const ids: number[] = tree.subtreeIds(id)
         await BooksDao.moveBooksToGroup(ids, target)
         await BookGroupsDao.deleteBook(ids)

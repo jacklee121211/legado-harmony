@@ -1,4 +1,5 @@
-import { pickerAvatar } from '../../../../../common/utils/photoViewPicker'
+import { pickerAvatar } from '../../../../../common/utils/photoViewPicker'
+import { CountLabel } from '../../../../../common/shelf/CountLabel'
 import { Haptics } from '../../../../../common/utils/Haptics';
 import { NightMode } from '../../../../../common/utils/NightMode'
 import coverInfoImageShow from '../../../coverInfoImageShow'
@@ -183,7 +184,7 @@ export default struct coverInfoDialog{
       }){
         Column(){
           Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
-          Text(`共${0}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
+          Text(CountLabel.books(this.itemData.bookIds?.length ?? 0)).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
         }
         // ── 批量「重置」（2026-10-13，用户要求）──────────────────────────────
         // 语义（用户口径）：范围内**每本书各自**恢复到自己"导入时的那张封面"——

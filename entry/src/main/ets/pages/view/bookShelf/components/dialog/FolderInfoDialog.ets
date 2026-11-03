@@ -1,4 +1,5 @@
-import { Haptics } from '../../../../../common/utils/Haptics';
+import { Haptics } from '../../../../../common/utils/Haptics';
+import { CountLabel } from '../../../../../common/shelf/CountLabel'
 import { NightMode } from '../../../../../common/utils/NightMode'
 import commonInputDialog from '../../../../../componets/common/commonInputDialog'
 import confirmDialogExample from '../../../../../componets/common/confirmDialog'
@@ -276,7 +277,7 @@ export default struct FolderInfoDialog{
       }){
         Column(){
           Text(this.itemData.groupName).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.88)' : 'rgba(0, 0, 0, 0.88)').fontSize(16).fontWeight(500).lineHeight(24)
-          Text(`共${this.realBookCount}本`).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
+          Text(CountLabel.books(this.realBookCount)).fontColor(NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 0.45)' : 'rgba(0, 0, 0, 0.45)').fontWeight(400).lineHeight(20).fontSize(12)
           // ── 2026-11-01：碰一碰 / 隔空传送 标志（用户：弹窗顶部加个标志就行）──
           if (this.shareHint.length > 0) {
             Row({ space: 6 }) {

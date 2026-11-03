@@ -64,10 +64,10 @@ export class GroupStore {
     if (t !== null) {
       return t
     }
-    // `refresh()` 内部一定会 build 出树；这里只是给类型系统一个兜底，正常不会走到
-    const fallback: GroupTree = GroupTree.build(GroupStore._groups)
-    GroupStore._tree = fallback
-    return fallback
+    // 2026-11-03（P6/B1）：删掉兜底建树 —— refresh() 必然已经 build 过（apply 里那句），
+    //   这里原先是永不可达的死代码，却让"全工程有几处建树"这个数字虚高一位。
+    //   真走到这一步只能是 refresh 被改坏，抛错比静默再建一棵树更容易被发现。
+    throw new Error('GroupStore.reload: refresh() 之后仍无树（真源被破坏）')
   }
 
   static isLoaded(): boolean {

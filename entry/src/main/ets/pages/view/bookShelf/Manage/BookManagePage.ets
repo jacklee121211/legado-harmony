@@ -1,4 +1,5 @@
-import bookListManage from './bookManage/bookListManage';
+import bookListManage from './bookManage/bookListManage';
+import { CountLabel } from '../../../../common/shelf/CountLabel'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 import { GroupTree } from '../../../../common/group/GroupTree'
 import { GroupStore } from '../../../../common/group/GroupStore'
@@ -416,7 +417,7 @@ export default struct BookManagePage {
           customLeftBuilder: () => {
             this.selectAll()
           },
-          title:`已选${this.selectedBookCount()}本${this.selectedGroupCount() > 0 ? ` · ${this.selectedGroupCount()}个分组` : ''}`,
+          title: CountLabel.selected(this.selectedBookCount(), this.selectedGroupCount()),
           customRightBuilder: () => {
             this.complete()
           }
@@ -1695,7 +1696,8 @@ export default struct BookManagePage {
   private treeOf(list: BookGroups[]): GroupTree {
     GroupStore.apply(list)
     const t: GroupTree | null = GroupStore.tree()
-    return t !== null ? t : GroupTree.build(list)
+    // 2026-11-03（P6/B1）：`apply(list)` 之后 tree() 必非 null，原来的兜底建树是死代码
+    return t as GroupTree
   }
   private async manageDissolve(): Promise<void> {
     const gids: number[] = []

@@ -1,4 +1,5 @@
-import { it } from '@ohos/hypium'
+import { it } from '@ohos/hypium'
+import { CountLabel } from '../../../common/shelf/CountLabel'
 import { Haptics } from '../../../common/utils/Haptics';
 import BookOverlay from '../../../componets/bookDetail/BookOverlay'
 import { showMessage } from '../../../componets/common/promptShow'
@@ -714,7 +715,7 @@ export default struct BookFolder {
           Text(group.groupName)
             .fontWeight(700)
           Column() {
-            Text(`共${group.bookIds?.length || 0}本`)
+            Text(CountLabel.books(group.bookIds?.length || 0))
               .fontSize(12)
               .fontColor('rgb(174,174,174)')
               .textOverflow({
@@ -748,7 +749,7 @@ export default struct BookFolder {
   private countLabel(item: BookGroups): string {
     const books: number = item.bookIds?.length ?? 0
     const kids: number = this.childGroupsOf(item).length
-    return kids > 0 ? `共${books}本 · ${kids}个分组` : `共${books}本`
+    return CountLabel.groupCard(books, kids)
   }
 
   @State dialogGroupData: BookGroups = new BookGroups()

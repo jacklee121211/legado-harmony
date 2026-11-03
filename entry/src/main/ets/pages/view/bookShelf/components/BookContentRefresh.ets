@@ -3,7 +3,8 @@
  * @datetime 2024/7/23 12:18
  * @className: BookContentRefresh
  */
-import { showMessage } from '../../../../componets/common/promptShow'
+import { showMessage } from '../../../../componets/common/promptShow'
+import { CountLabel } from '../../../../common/shelf/CountLabel'
 import RefreshComponent from '../../../../componets/common/RefreshComponent'
 import BookFolder from '../BookFolder'
 // 2026-10-25：书单功能整体删除（用户口径「书单功能早就没了，能删就删了吧」）
@@ -26,7 +27,8 @@ import FolderCard, { FolderCell } from './FolderCard'
 import BookGroupsDao from '../../../../database/dao/BookGroupsDao'
 import bookGroupUtils from '../../../../common/utils/bookGroupUtils'
 import { GroupMutation } from '../../../../common/group/GroupMutation'
-import { GroupTree } from '../../../../common/group/GroupTree'
+import { GroupTree } from '../../../../common/group/GroupTree'
+import { FilteredTree } from '../../../../common/group/FilteredTree'
 import ShelfPrefs from '../../../../common/utils/ShelfPrefs'
 import { resolveCoverSource, resolveBookCover } from '../../../../common/utils/CoverSource'
 // P4-U1（2026-11-02）：分组+书籍同域滚动的双轨开关
@@ -276,7 +278,7 @@ export default struct BookContentRefresh {
       if (token !== this.folderToken) {
         return
       }
-      const tree: GroupTree = GroupTree.build(all)
+      const tree: GroupTree = FilteredTree.build(all)
       // ⚠️ 2026-11-02 第 25 轮（D9 清理）：删掉 `this.allGroups = all` 与字段 `allGroups`。
       //   它当年是给「子分组卡片算 2×2 格子」留的树快照，2026-11-01 之后实际算格子用的是
       //   下面的 `this.tree`（`cellsOf()` 读 `this.tree`），该字段只写不读（MCP `check` 报 6133）。
@@ -499,7 +501,7 @@ export default struct BookContentRefresh {
     //   要用整棵树取该分组自己的子级，否则孙目录不会被计入（真机：11 有子目录 111 却只显示共1本）
     const kids: number = (g.groupId !== undefined && this.tree !== null)
       ? this.tree.childrenOf(g.groupId).length : 0
-    return kids > 0 ? `共${books}本 · ${kids}个分组` : `共${books}本`
+    return CountLabel.groupCard(books, kids)
   }
   private childBooksOf(g: BookGroups): Books[] {
     const out: Books[] = []

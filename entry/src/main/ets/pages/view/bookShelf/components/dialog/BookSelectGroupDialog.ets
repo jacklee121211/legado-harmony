@@ -24,7 +24,8 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import ImmersiveMaterialUtil, { MaterialColumnModifier } from '../../../../../common/utils/ImmersiveMaterialUtil'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
-import { GroupTree } from '../../../../../common/group/GroupTree'
+import { GroupTree } from '../../../../../common/group/GroupTree'
+import { FilteredTree } from '../../../../../common/group/FilteredTree'
 import { ShelfRefresh } from '../../../../../common/shelf/ShelfRefresh';
 
 /** 树形列表的一行（2026-11-01 多级分组） */
@@ -236,7 +237,7 @@ export default struct BookSelectGroupDialog{
       fp += (g.groupId ?? 0) + ':' + (g.parentId ?? 0) + ':' + (g.groupName ?? '') + ';'
     }
     if (this.treeCache === null || fp !== this.treeFp) {
-      this.treeCache = GroupTree.build(list)
+      this.treeCache = FilteredTree.build(list)
       this.treeFp = fp
     }
     return this.treeCache
@@ -1251,7 +1252,7 @@ export default struct BookSelectGroupDialog{
       // 2026-11-01：与 FolderInfoDialog 的「一起解散 / 子组保留」对齐 ——
       //   子树里**存在后代分组** ⇒ 先问模式；没有任何子分组 ⇒ 直接按保留子目录（等价于只删本行）
       const all: BookGroups[] = await BookGroupsDao.search()
-      const tree: GroupTree = GroupTree.build(all)
+      const tree: GroupTree = FilteredTree.build(all)
       const hasDescendant: boolean = tree.subtreeIds(groupId).length > 1
       if (hasDescendant) {
         const mode: string = await this.askDissolveMode(groupName)

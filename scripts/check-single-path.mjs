@@ -49,7 +49,7 @@ const ROOT = process.cwd();
 const SRC_DIR = join(ROOT, 'entry', 'src', 'main', 'ets');
 
 /** 只许降的预算（每下调一次都要在文件头写沿革） */
-const GROUP_TREE_BUILD_BUDGET = 8;
+const GROUP_TREE_BUILD_BUDGET = 2;
 const WRITE_BYPASS_BUDGET = 0;
 
 /**
@@ -195,6 +195,16 @@ const INVENTORY = [
       || rel === 'common/share/BookShareBridge.ets',
     budget: 13,
     note: '2026-11-03（P3/B4 定性）：存量 13 处（UI 侧删书/加入书架/封面/批量移书），只许降；新代码一律 BooksMutation',
+  },  // 2026-11-03（P6/B2）：计数文案的唯一实现闸门。
+  //   「共N本 · M个分组」「已选N本 · M个分组」这类字符串曾经有 4 份各自拼（其中 coverInfoDialog 那份
+  //   还把数量写死成 0）。现在统一从 `common/shelf/CountLabel.ets` 出，禁止再自己拼。
+  {
+    id: 'count-label-fork',
+    label: '计数文案自己拼（绕过 CountLabel）',
+    pattern: /(共\\\$\{[^}]*\}本 · \\\$\{[^}]*\}个分组|已选\\\$\{[^}]*\}本 · )/,
+    allow: (rel) => rel === 'common/shelf/CountLabel.ets',
+    budget: 0,
+    note: '2026-11-03（P6/B2）：分组卡片/批量顶部/详情小字统一走 CountLabel.groupCard/selected/books',
   },  {
     id: 'boundary-dao-write',
     label: '边界 lane 直写事实（导入/传书/分享/碰一碰）',
