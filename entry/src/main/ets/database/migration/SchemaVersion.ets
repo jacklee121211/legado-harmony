@@ -49,8 +49,15 @@ export interface DbMigrationStep {
  * ⚠️ 加新步骤时：先往 `MigrationSteps.ets` 的数组里追加一步 `toVersion = 2`，
  *    再把这个常量改成 2。**绝不能只改这个常量不补步骤** ——
  *    `DbSchemaMigrator` 会因此拒绝推进版本（防的就是"版本前进、结构没变"）。
+ *
+ * ── 版本史 ────────────────────────────────────────────────────────────────────
+ * v1（2026-11-04）：基线 —— 把 `book_groups` 同级同名唯一索引纳入版本化流程（只委托，不复制）。
+ * v2（2026-11-04）：清理遗留空表 —— `book_history` / `readRecord`：
+ *   **仅当运行期行数为 0** 才 `DROP TABLE IF EXISTS`；>0 行跳过并 warn（绝不删用户数据）。
+ *   这两张表的建表语句已从 `AppDatabase/index.ets` 快照删除、代码零 SQL 引用，
+ *   判据与取证见 `MigrationSteps.ets` 的 `LEFTOVER_TABLES` 注释。
  */
-export const CURRENT_SCHEMA_VERSION: number = 1
+export const CURRENT_SCHEMA_VERSION: number = 2
 
 /** 迁移日志统一前缀（排障用：`hdc hilog | findstr DB-MIGRATE`） */
 export const MIGRATION_TAG: string = 'DB-MIGRATE'
@@ -67,5 +74,9 @@ export const MIGRATION_TAG: string = 'DB-MIGRATE'
  *   ① 启动日志里不再出现 `[DB-MIGRATE]`；
  *   ② 书架 / 分组 / 书签 / 阅读统计四个页面数据正常；
  *   ③ `book_groups` 的同级同名唯一索引仍在（`[GRP-INDEX] 唯一索引就绪` 照常打印）。
+ *
+ * ⚠️ 关掉开关**不会**把已删的遗留表（v2 删过的 `book_history` / `readRecord`）变回来 ——
+ *    这两张表代码已零读写，删掉后不影响任何功能；如确需保留"不删表"的行为，
+ *    关开关必须在**首次以 v2 启动之前**做（或直接删 `MigrationSteps.ets` 里 `toVersion: 2` 那一步）。
  */
 export const ENABLE_SCHEMA_MIGRATION: boolean = true
