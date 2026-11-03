@@ -439,8 +439,7 @@ class bookGroupUtils{
    *    `bookIds`（换封面走 updatePartialGroup）⇒ 不会被写回数据库。
    * ⚠️ 调用方必须是"要显示共N本"的地方；本方法按分组逐条查库（N 次），别放进高频路径。
    */
-  async fillRealBookIds(groups: BookGroups[], type?: number): Promise<void> {
-    for (const group of groups) {
+  async fillRealBookIds(groups: BookGroups[], type?: number): Promise<void> {    for (const group of groups) {
       // 只算会被渲染的卡片：隐藏分组不显示；除「未分组」外的系统单元（分组/全部/本地/书单）
       // 不是"装书的地方"（口径见 BookFolder.build / BookFolderManages.build 的过滤条件）。
       if (group.groupId === undefined || !group.show) {
@@ -451,6 +450,53 @@ class bookGroupUtils{
       }
       group.bookIds = await BooksDao.queryBookIds({ type: type, bookGroup: group.groupId })
     }
+  }
+
+  /**
+   * **子树书籍总数**（自身 + 全部后代分组的 `bookIds` 之和）—— 单实现（2026-11-03）。
+   *
+   * 用途（用户 2026-11-03 定义的口径）：
+   *   · **批量管理**里的分组卡：显示子树累计（"选中它就等于选中这么多本"）；
+   *   · 普通浏览（书架/分组内）：显示**直属**书 + 单独一列"文件夹数"（不走本方法）。
+   *
+   * ⚠️ 前提：传入的 `all` 里每个分组的 `bookIds` 已被 `fillRealBookIds` 填成**直属书**。
+   *    传**未按层级过滤**的全量列表（否则孙级不在 `all` 里 ⇒ 少算）。
+   * ⚠️ 用线性 BFS 而不是建树：卡片数量级（几十个）下更省，也避免再引入一处 `GroupTree.build`。
+   *
+   * @param rootId 根分组 id
+   * @param all    同类型全部分组（已 fill）
+   */
+  subtreeBookCount(rootId: number, all: BookGroups[]): number {
+    if (rootId <= 0) {
+      return 0
+    }
+    let n: number = 0
+    const visited: number[] = []
+    let frontier: number[] = [rootId]
+    let guard: number = 0
+    while (frontier.length > 0 && guard < 500) {
+      const cur: number[] = frontier
+      frontier = []
+      for (const pid of cur) {
+        if (visited.indexOf(pid) >= 0) {
+          continue
+        }
+        visited.push(pid)
+        for (const g of all) {
+          if ((g.groupId ?? -1) !== pid) {
+            continue
+          }
+          n += g.bookIds?.length ?? 0
+        }
+        for (const g of all) {
+          if ((g.parentId ?? 0) === pid && g.groupId !== undefined && visited.indexOf(g.groupId) < 0) {
+            frontier.push(g.groupId)
+          }
+        }
+      }
+      guard++
+    }
+    return n
   }
 }
 let bookGroupUtil = new bookGroupUtils();

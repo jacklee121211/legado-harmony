@@ -100,6 +100,12 @@ export default struct BookManagePage {
   @State checkLists: Record<number, boolean> = {}
   @State checkListNumber:number[] = []
   @State bookGroups:BookGroups[] = [] // 分组
+  /**
+   * 同类型**全部分组**（已 `fillRealBookIds`、未按层级过滤）—— 2026-11-03 用户口径：
+   * 批量管理的「共N本」= **子树累计**（"选中它 = 选中这么多本"），需要后代分组参与求和。
+   * 子层批量会把 `bookGroups` 过滤成"本级 + 直属子级"，孙级只能从本字段取。
+   */
+  @State allGroupsForCount:BookGroups[] = []
   /** 2026-11-01：是否从「最近」进入（批量管理按页初始化） */
   @State onRecentChip: boolean = false
   // 2026-10-25：`worksLists`（书单）随书单功能删除
@@ -192,6 +198,8 @@ export default struct BookManagePage {
       type: this.currentIndex
     })
     await bookGroupUtil.fillRealBookIds(val, this.currentIndex)
+    // 2026-11-03：留一份**未按层级过滤**的全量（已 fill）供"子树累计"计数用
+    this.allGroupsForCount = val.slice()
     // 2026-11-01：过滤"孤儿分组" —— 父级不在结果里（已删/被隐藏）时 GroupTree 会把它
     //   当根级返回，批量管理与移动至都会凭空多出一个同名根分组（真机 212 现象）。
     {
@@ -231,13 +239,20 @@ export default struct BookManagePage {
         val.push(g)
       }
     }
-    // 2026-11-01：自定义分组内只保留该组子树（区块展示用）
+    // 2026-11-03（用户口径）：父层批量**只到"本级 + 直属子级"**，不穿透到孙级。
+    //   为什么：本分组在这里是"全选"角色，子级是可选目标；孙级属于"子级的内部"，
+    //   选中子级就等于选中它内部全部（计数用子树累计表达），再把它列出来既冗余又误导
+    //   （旧实现用 `subtreeIds` ⇒ 真机上进入「1」能看到孙级 111）。
     if (this.bookTypeNumber >= 5) {
-      const t0: GroupTree = this.treeOf(val)
-      const ids: number[] = t0.subtreeIds(this.bookTypeNumber)
+      const keepIds: number[] = [this.bookTypeNumber]
+      for (const g of val) {
+        if ((g.parentId ?? 0) === this.bookTypeNumber && g.groupId !== undefined) {
+          keepIds.push(g.groupId)
+        }
+      }
       const sub: BookGroups[] = []
       for (const g of val) {
-        if (g.groupId !== undefined && ids.indexOf(g.groupId) >= 0) {
+        if (g.groupId !== undefined && keepIds.indexOf(g.groupId) >= 0) {
           sub.push(g)
         }
       }
@@ -249,9 +264,19 @@ export default struct BookManagePage {
     // 2026-11-01：按「父 → 其子 → 孙 → 下一个父」的 DFS 顺序展开（原来平铺，层级看不出来）
     const tree: GroupTree = this.treeOf(val)
     const out: BookGroups[] = []
+    // 2026-11-03：父层批量里**本分组排第一**（它是"全选"行），其余按 DFS
+    if (this.bookTypeNumber >= 5) {
+      for (const g of val) {
+        if (g.groupId === this.bookTypeNumber) {
+          out.push(g)
+        }
+      }
+    }
     const walk = (pid: number): void => {
       for (const g of tree.childrenOf(pid)) {
-        out.push(g)
+        if (out.indexOf(g) < 0) {
+          out.push(g)
+        }
         walk(g.groupId ?? -1)
       }
     }
@@ -471,6 +496,7 @@ export default struct BookManagePage {
               checkGroup:this.checkLists,
               EXHIBIT:this.EXHIBIT,
               bookGroups:this.bookGroups,
+              allGroupsForCount:this.allGroupsForCount,
               onSelect:()=>{
                 this.listenCheckList()
               }
@@ -481,6 +507,7 @@ export default struct BookManagePage {
                 checkGroup:this.checkLists,
                 EXHIBIT:this.EXHIBIT,
                 bookGroups:this.bookGroups,
+                allGroupsForCount:this.allGroupsForCount,
                 // 与书籍块同页 ⇒ 自适应高度（否则把书籍顶到很下面，间距显得极大）
                 fitContent: true,
                 // 本分组角标：当前所在分组 id

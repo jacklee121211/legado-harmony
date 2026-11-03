@@ -25,6 +25,13 @@ export default struct BookFolderManages {
   @Prop currentGroupId: number = 0
   /** 当前页可见书籍（点父分组时要一起勾选） */
   @Prop allBooks: Books[] = []
+  /**
+   * 同类型**全部分组**（已 `fillRealBookIds`、未按层级过滤）—— 2026-11-03。
+   *
+   * 为什么需要它：批量管理的「共N本」口径是**子树累计**（"选中它 = 选中这么多本"）。
+   * 而 `bookGroups` 在子层会被过滤成"本级 + 直属子级"，孙级不在里面 ⇒ 只靠它求和会漏算。
+   */
+  @Prop allGroupsForCount: BookGroups[] = []
   /** App 级深浅色：订阅只为深浅切换时触发重绘 */
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   // ── 宫格列数的两个输入源（2026-10-25 补齐）────────────────────────────────
@@ -239,6 +246,7 @@ export default struct BookFolderManages {
            if (item.show && !item.isSystem) {
              BookFolderInfoManage({
                group:item,
+               allGroups: this.allGroupsForCount,
                checkGroup:this.checkGroup,
                isManage:this.isManage,
                onSelect:()=>{
@@ -264,7 +272,7 @@ export default struct BookFolderManages {
                    BookFolderGridManage({
                      group:item,
                      depth: this.depthOf(item),
-                     allGroups: this.bookGroups,
+                     allGroups: this.allGroupsForCount.length > 0 ? this.allGroupsForCount : this.bookGroups,
                      allBooks: this.allBooks,
                      isCurrent: (item.groupId ?? -1) === this.currentGroupId,
                      originLabel: this.originLabelOf(item),

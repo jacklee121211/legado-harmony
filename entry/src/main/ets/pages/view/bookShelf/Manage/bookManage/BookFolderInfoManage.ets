@@ -6,6 +6,7 @@ import { BookGroups } from '../../../../../database/entities/BookGroups'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
 import { gKey } from '../../../../../common/manage/SelectionKeys'
+import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
 
 /**
  * 文件夹列表_管理页
@@ -15,6 +16,12 @@ export default struct BookFolderInfoManage {
   @Prop group:BookGroups
   @Link checkGroup:Record<number, boolean>
   @Prop isManage:boolean
+  /**
+   * 同类型**全部分组**（已 `fillRealBookIds`，未按层级过滤）。
+   * 2026-11-03：批量里的「共N本」= **子树累计**（用户口径："选中它就等于选中这么多本"），
+   * 所以需要后代分组来求和；只传当前层会导致孙级那本漏算。
+   */
+  @Prop allGroups: BookGroups[] = []
   onSelect:Function = () => {}
   // 主题颜色
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
@@ -72,7 +79,9 @@ export default struct BookFolderInfoManage {
           Text(this.group.groupName)
             .fontWeight(700)
           Column(){
-            Text(`共${this.group.bookIds?.length||0}本`).fontSize(12).fontColor(ShelfColors.textSub())
+            // 2026-11-03：批量管理口径 = 子树累计（原来读直属 bookIds，导致"根级批量比书架少"）
+        Text(`共${bookGroupUtil.subtreeBookCount(this.group.groupId ?? -1,
+          this.allGroups.length > 0 ? this.allGroups : [this.group])}本`).fontSize(12).fontColor(ShelfColors.textSub())
               .textOverflow({
                 overflow:TextOverflow.Ellipsis
               })

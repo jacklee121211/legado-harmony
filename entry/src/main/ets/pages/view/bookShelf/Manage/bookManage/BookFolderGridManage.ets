@@ -6,6 +6,7 @@ import { Books } from '../../../../../database/entities/Books'
 import { bKey, gKey } from '../../../../../common/manage/SelectionKeys'
 import { NightMode, ShelfColors } from '../../../../../common/utils/NightMode'
 import UiMotion from '../../../../../common/utils/UiMotion'
+import bookGroupUtil from '../../../../../common/utils/bookGroupUtils'
 import { resolveCoverSource, coverCorners } from '../../../../../common/utils/CoverSource'
 import { MANAGE_SEL_VERSION_KEY } from './ManageBrush'
 
@@ -30,30 +31,10 @@ export default struct BookFolderGridManage {
   @State checked: boolean = false
   /** 2026-11-01：层级（1 = 顶层分组）。用于外框色边，最多 10 层。 */
   @Prop depth: number = 1
-  /** 子树书籍总数（自身 + 全部后代分组的 bookIds） */
+  /** 子树书籍总数（自身 + 全部后代分组的 bookIds）—— 实现已收敛到 bookGroupUtils（单实现） */
   private subtreeBookCount(): number {
-    let n: number = this.group.bookIds?.length ?? 0
-    const visited: number[] = []
-    let frontier: number[] = [this.group.groupId ?? -1]
-    let guard: number = 0
-    while (frontier.length > 0 && guard < 500) {
-      const cur: number[] = frontier
-      frontier = []
-      for (const pid of cur) {
-        if (visited.indexOf(pid) >= 0) {
-          continue
-        }
-        visited.push(pid)
-        for (const g of this.allGroups) {
-          if ((g.parentId ?? 0) === pid && g.groupId !== undefined && g.groupId !== this.group.groupId) {
-            n += g.bookIds?.length ?? 0
-            frontier.push(g.groupId)
-          }
-        }
-      }
-      guard++
-    }
-    return n
+    return bookGroupUtil.subtreeBookCount(this.group.groupId ?? -1,
+      this.allGroups.length > 0 ? this.allGroups : [this.group])
   }
 
   /** 2026-11-01：是否就是当前所在分组（批量管理里给"本分组"角标） */
