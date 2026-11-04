@@ -205,13 +205,23 @@ export default struct groupTypeComponent {
     if (this.onRecentChip) {
       return
     }
+    const hit = this.groupList.find((g: BookGroups): boolean => (g.groupId ?? -1) === this.bookTypeNumber)
+    if (hit === undefined) {
+      return
+    }
+    // ⚠️ 2026-11-05（用户真机）：**只有系统 chip 才同步**。
+    //   现象：进某个分组（bookTypeNumber = 自定义 id ≥ 5）时，顶部标签从「分组」跳到「最近」。
+    //   根因：`chipSelectedIndex()` 是按"系统 chip 序列"换算下标的，自定义分组不在序列里
+    //   ⇒ 换算落到 0 = 「最近」。而"进分组"本来就不该动 chip（仍在「分组」这个视角里浏览）。
+    //   ⇒ 判据用**名字**（全部 / 分组），未分组·自定义分组一律不同步。
+    const name: string = hit.groupName ?? ''
+    if (name !== '分组' && name !== '全部') {
+      return
+    }
     this.chipHighlightId = this.bookTypeNumber
     this.chipSel = this.chipSelectedIndex()
-    const hit = this.groupList.find((g: BookGroups): boolean => (g.groupId ?? -1) === this.bookTypeNumber)
-    if (hit !== undefined) {
-      this.GROUP = hit.groupName === '分组' ? '分组' : '标签'
-      AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', hit.groupName ?? '')
-    }
+    this.GROUP = name === '分组' ? '分组' : '标签'
+    AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', name)
     ShelfPrefs.setCurrentChipId(this.bookTypeNumber)
   }
 
