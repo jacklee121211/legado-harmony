@@ -3260,7 +3260,9 @@ oAnimInitNode 配套） */
 
   private applyLineHeight(v: number): void {
     this.markFontOverride()
-    this.readerSetting.lineHeight = Math.round(v * 10) / 10
+    // 2026-11-04（S2-c）：行距真源同字号一样已在模型（见 `MIGRATED_SETTING_FIELDS`）。
+    this.settingState.lineHeight = Math.round(v * 10) / 10
+    this.readerSetting.lineHeight = this.settingState.lineHeight
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     this.fontSerial++
     this.schedulePersistReaderSetting()
@@ -4161,6 +4163,7 @@ oAnimInitNode 配套） */
       //   本处属装载期，所以是 `模型 = 刚读到的值`。若写成反向（用模型的旧值覆盖），
       //   用户保存的字号每次进书都会被默认值顶掉 —— 那是回归，不是迁移。
       this.settingState.fontSize = this.readerSetting.fontSize ?? this.settingState.fontSize;
+      this.settingState.lineHeight = this.readerSetting.lineHeight ?? this.settingState.lineHeight;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -5207,10 +5210,11 @@ oAnimInitNode 配套） */
         this.readerSetting.fontPath =
           (g.fontPath === undefined || g.fontPath === null || g.fontPath.length === 0)
             ? SYSTEM_CJK_FONT_PATH : g.fontPath
-        // 2026-11-04（S2-c 样板）：字号真源在模型，这里同步两处（模型 + 页面快照）
+        // 2026-11-04（S2-c）：字号 / 行距真源都在模型，这里同步两处（模型 + 页面快照）
         this.settingState.fontSize = g.fontSize
+        this.settingState.lineHeight = g.lineHeight
         this.readerSetting.fontSize = this.settingState.fontSize
-        this.readerSetting.lineHeight = g.lineHeight
+        this.readerSetting.lineHeight = this.settingState.lineHeight
         changed = true;
       }
     }
@@ -10849,7 +10853,7 @@ oAnimInitNode 配套） */
    *   里的棘轮会把"页面直写点数量"钉住（只许降），并核对本数组与实际直写点一致。
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting`，`settingState` 成为唯一真源。
    */
-  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize'];
+  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
