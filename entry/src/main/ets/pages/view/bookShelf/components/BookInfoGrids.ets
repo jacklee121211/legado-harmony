@@ -222,6 +222,10 @@ export default struct BookInfoGrids{
         // 2026-11-03（P1 / R1）：与列表模式同一个入口；宫格封面圆角 100 / 圆角参数 10。
         const launch: ReaderLaunch = ReaderEntry.prepare(this.getUIContext(), this.book,
           { longtakeId: this.longtakeId, coverWidth: 100, longtakeCorner: 10 });
+        // 2026-11-05 修复：onBookOpen 此前声明后从未被调用 ⇒ 搜索浮窗（ShelfSearchPanel）
+        // 传进来的"进阅读器前关浮窗"回调永远不执行，从阅读器返回后浮窗还挂在书架上。
+        // 书架本体没有传回调（默认空实现），此处调用对书架零影响。
+        this.onBookOpen()
         this.openReaderWhenIdle(launch, 0)
       })
     })
