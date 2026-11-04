@@ -2715,7 +2715,9 @@ oAnimInitNode 配套） */
     // 明确的白/黑选择 = 调色盘一并收起（`customEditOn` 是纯编辑态，见其注释）
     this.customEditOn = false
     this.colorMode = night ? 0 : 1
-    this.readerSetting.nightMode = night
+    // 2026-11-04（S2-c）：nightMode 真源已迁到模型
+    this.settingState.nightMode = night
+    this.readerSetting.nightMode = this.settingState.nightMode
     this.readerSetting.fontColor = night ? '#ffffff' : '#000000'
     this.readerSetting.themeColor = night ? '#202224' : '#FFFFFF'
     this.readerSetting.themeBgImg = ''
@@ -2813,7 +2815,8 @@ oAnimInitNode 配套） */
       // 真正的那个"粉字"存在 `freeFontHex` 里 ⇒ 回自由必须从这里拿回来。
       this.readerSetting.fontColor = this.freeFontHex
     }
-    this.readerSetting.nightMode = dark
+    this.settingState.nightMode = dark
+    this.readerSetting.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
     if (!push) {
       return
@@ -3509,7 +3512,8 @@ oAnimInitNode 配套） */
     if (this.fontAuto) {
       this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
     }
-    this.readerSetting.nightMode = dark
+    this.settingState.nightMode = dark
+    this.readerSetting.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
     NightMode.setReaderNight(dark)
     if (flipped) {
@@ -3628,7 +3632,8 @@ oAnimInitNode 配套） */
     this.readerSetting.themeBgImg = finalPath
     this.readerSetting.themeColor = avgHex
     this.readerSetting.fontColor = nextFont
-    this.readerSetting.nightMode = dark
+    this.settingState.nightMode = dark
+    this.readerSetting.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
     NightMode.setReaderNight(dark)
     if (flipped) {
@@ -3771,7 +3776,8 @@ oAnimInitNode 配套） */
     }
     this.readerSetting.themeColor = ReaderCustomBg.hexOf(rgb)
     this.readerSetting.themeBgImg = ''
-    this.readerSetting.nightMode = this.customBgPrevNight
+    this.settingState.nightMode = this.customBgPrevNight
+    this.readerSetting.nightMode = this.settingState.nightMode
     this.readerSetting.fontColor = this.fontAuto
       ? ReaderCustomBg.contrastFont(rgb)
       : this.customBgPrevFont
@@ -3829,7 +3835,8 @@ oAnimInitNode 配套） */
     if (rgb !== null) {
       const dark = ReaderCustomBg.isDarkBg(rgb)
       const flipped = (this.colorMode === 0) !== dark
-      this.readerSetting.nightMode = dark
+      this.settingState.nightMode = dark
+      this.readerSetting.nightMode = this.settingState.nightMode
       this.colorMode = dark ? 0 : 1
       NightMode.setReaderNight(dark)
       if (flipped) {
@@ -4171,6 +4178,8 @@ oAnimInitNode 配套） */
       this.settingState.fontName = this.readerSetting.fontName ?? this.settingState.fontName;
       this.settingState.fontPath = this.readerSetting.fontPath ?? this.settingState.fontPath;
       this.settingState.fontWeight = this.readerSetting.fontWeight ?? this.settingState.fontWeight;
+      // 外观（S2-c 第三批）：nightMode 已迁；themeColor / themeBgImg 仍在页面。
+      this.settingState.nightMode = this.readerSetting.nightMode ?? this.settingState.nightMode;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4213,7 +4222,9 @@ oAnimInitNode 配套） */
       this.readerSetting.themeBgImg = temp.continueThemeBgImg;
     }
     if (temp.continueNightMode !== undefined) {
-      this.readerSetting.nightMode = temp.continueNightMode;
+      // 2026-11-04（S2-c）：接续属装载期，来源为准 → 灌进模型
+      this.settingState.nightMode = temp.continueNightMode;
+      this.readerSetting.nightMode = this.settingState.nightMode;
     }
     if (temp.continueFlipMode !== undefined && temp.continueFlipMode.length > 0) {
       // ⚠️ 只对**分页两档**回写引擎的 `flipMode`：'0'/'1' 是 ReaderKit 合法取值，
@@ -10159,7 +10170,8 @@ oAnimInitNode 配套） */
         // `setPageConfig` 留在闭包外面：它触发 ReaderKit 重新排版，不该参与动画。
         this.getUIContext().animateTo(UiMotion.motionParam(), () => {
           this.colorMode = next === 0 ? 0 : 1
-          this.readerSetting.nightMode = next === 0
+          this.settingState.nightMode = next === 0
+          this.readerSetting.nightMode = this.settingState.nightMode
           this.readerSetting.fontColor = next === 0 ? '#ffffff' : '#000000'
           this.readerSetting.themeColor = next === 0 ? '#202224' : '#FFFFFF'
         })
@@ -10869,7 +10881,8 @@ oAnimInitNode 配套） */
    *   里的棘轮会把"页面直写点数量"钉住（只许降），并核对本数组与实际直写点一致。
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting`，`settingState` 成为唯一真源。
    */
-  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight'];
+  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
+    'nightMode'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。

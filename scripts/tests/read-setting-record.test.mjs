@@ -275,8 +275,17 @@ test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，�
 // 七、S2-c：字段迁移棘轮（直写点只许降）+ 迁移规范
 // ══════════════════════════════════════════════════════════════════════════════
 
-/** 迁移前实测 67 处直写；迁 fontSize 后为 63 处（其中 2 处是"模型→快照"的合规同步） */
+/** 总直写点基线：迁移前 67；迁移期因为"模型→快照"也要写一行，总数不降反略升 ⇒ 单看它没意义 */
 const RATCHET_DIRECT_WRITES = 63
+/**
+ * **真正的进度计**：还没有迁到模型的字段，其直写点数量（只许降）。
+ *
+ * 为什么不用"直写点总数"当棘轮：迁移期每个已迁字段都要多一行 `readerSetting.X = settingState.X`
+ * （模型 → 页面快照，供 259 个未改的读点使用），于是"总数"在迁移期**不降反升**。
+ * 实测：迁了 6 个字段后总数 63（迁移前 67），其中 21 行是"模型→快照"同步，
+ * 真正还没迁的字段只剩 42 处 —— 这个 42 才是可下降的度量。
+ */
+const RATCHET_UNMIGRATED_WRITES = 42
 
 /**
  * 去掉注释后的页面源码。
@@ -287,7 +296,7 @@ const PAGE_CODE = PAGE_SRC
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/.*$/gm, '$1')
 
-test('棘轮：页面直写 readerSetting 的点数只许降（当前基线 62）', () => {
+test('棘轮：页面直写 readerSetting 的点数只许降（当前基线 63）', () => {
   const direct = (PAGE_CODE.match(/this\.readerSetting\.\w+\s*=[^=]/g) ?? []).length
   assert.ok(direct <= RATCHET_DIRECT_WRITES,
     `直写点从 ${RATCHET_DIRECT_WRITES} 涨到 ${direct} 了：新写点必须走模型或 settingForBoundary()，`
@@ -295,6 +304,22 @@ test('棘轮：页面直写 readerSetting 的点数只许降（当前基线 62�
   // 若降了：提示同步下调基线（这条不是失败，是提醒）
   if (direct < RATCHET_DIRECT_WRITES) {
     console.log(`     ℹ️ 直写点已降到 ${direct}，请把 RATCHET_DIRECT_WRITES 同步下调到 ${direct}`)
+  }
+})
+
+test('进度计：未迁字段的直写点只许降（迁移期的真实进度指标）', () => {
+  let unmigrated = 0
+  for (const raw of PAGE_CODE.split('\n')) {
+    const m = /^this\.readerSetting\.(\w+)\s*=(?!=)\s*(.*)$/.exec(raw.trim())
+    if (!m) continue
+    if (!m[2].startsWith(`this.settingState.${m[1]}`)) unmigrated++
+  }
+  assert.ok(unmigrated <= RATCHET_UNMIGRATED_WRITES,
+    `未迁字段的直写点从 ${RATCHET_UNMIGRATED_WRITES} 涨到 ${unmigrated}：`
+    + `新写点请先迁到模型（或走 settingForBoundary()），不要直接改 @State readerSetting`)
+  console.log(`     ℹ️ 未迁字段直写点 = ${unmigrated}（基线 ${RATCHET_UNMIGRATED_WRITES}，迁完会降到 0）`)
+  if (unmigrated < RATCHET_UNMIGRATED_WRITES) {
+    console.log(`     ℹ️ 已下降，请把 RATCHET_UNMIGRATED_WRITES 同步下调到 ${unmigrated}`)
   }
 })
 
