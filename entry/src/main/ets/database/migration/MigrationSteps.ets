@@ -215,7 +215,22 @@ async function dropLeftoverEmptyTables(): Promise<void> {
  * |---|---|---|---|
  * | 1 | 基线：book_groups 同级同名唯一索引 | 委托 `ensureSiblingUniqueIndex()` 建索引 + 回读校验 | UPDATE 归一/去重可重入；`CREATE UNIQUE INDEX IF NOT EXISTS` |
  * | 2 | 清理遗留空表：book_history / readRecord | 存在性 → `COUNT(*)` → **仅 0 行** 才 `DROP TABLE IF EXISTS`；>0 行跳过并 warn | 表不存在 ⇒ 直接返回；`DROP TABLE IF EXISTS` 对已消失的表不报错 |
+ * | 3 | books(bookName, author) 唯一索引 | `CREATE UNIQUE INDEX IF NOT EXISTS`；失败只记日志、不阻断启动 | `IF NOT EXISTS`；导入侧先改名（批 R-2）保证无重复 |
  */
+// 2026-11-04（决策 3 / 批 R-3）：给 books(bookName, author) 建唯一索引，作为"同名同作者"的最后一道兜底。
+//   为什么现在才加：导入侧（FileHandler.CopyFile / WifiBookServer）已先做改名与撞名拦截（批 R-2），
+//   数据面已证不重复（设备实测 64 本 0 重复；用户手工导入同名两次得到 "江山美色.txt (2)" / "(3)"）。
+//   为什么失败不阻断：老库里若真有历史重复，CREATE UNIQUE INDEX 会抛错；
+//   此时**只记日志、继续启动**，导入侧仍由 BookNaming 改名兜底 —— 宁可少一道兜底，也不能卡死用户。
+export async function bookNameAuthorUniqueIndex(): Promise<void> {
+  const INDEX_NAME: string = 'index_books_bookName_author'
+  try {
+    await DbUtil.executeSql('CREATE UNIQUE INDEX IF NOT EXISTS ' + INDEX_NAME + ' ON books(bookName, author)')
+    console.info('[' + MIGRATION_TAG + '] v3 唯一索引就绪 index=' + INDEX_NAME)
+  } catch (e) {
+    console.error('[' + MIGRATION_TAG + '] v3 建索引失败（不阻断启动；导入侧仍有 BookNaming 改名兜底）', JSON.stringify(e))
+  }
+}
 export const MIGRATION_STEPS: DbMigrationStep[] = [
   {
     toVersion: 1,
@@ -226,5 +241,10 @@ export const MIGRATION_STEPS: DbMigrationStep[] = [
     toVersion: 2,
     name: '清理遗留空表：book_history / readRecord',
     run: dropLeftoverEmptyTables
+  },
+  {
+    toVersion: 3,
+    name: 'books(bookName, author) 唯一索引（同名兜底）',
+    run: bookNameAuthorUniqueIndex
   }
 ]

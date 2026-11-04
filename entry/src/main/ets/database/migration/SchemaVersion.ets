@@ -57,7 +57,7 @@ export interface DbMigrationStep {
  *   这两张表的建表语句已从 `AppDatabase/index.ets` 快照删除、代码零 SQL 引用，
  *   判据与取证见 `MigrationSteps.ets` 的 `LEFTOVER_TABLES` 注释。
  */
-export const CURRENT_SCHEMA_VERSION: number = 2
+export const CURRENT_SCHEMA_VERSION: number = 3
 
 /** 迁移日志统一前缀（排障用：`hdc hilog | findstr DB-MIGRATE`） */
 export const MIGRATION_TAG: string = 'DB-MIGRATE'
