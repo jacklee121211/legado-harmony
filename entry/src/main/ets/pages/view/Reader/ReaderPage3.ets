@@ -2603,7 +2603,8 @@ oAnimInitNode 配套） */
       // 包进 animateTo 后 borderColor/borderWidth 会插值过渡（SDK 依据见日夜切换处）。
       this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
         this.readerSetting.fontColor = item.fontColor;
-        this.readerSetting.themeColor = item.themeColor;
+        this.settingState.themeColor = item.themeColor
+        this.readerSetting.themeColor = this.settingState.themeColor;
         this.readerSetting.themeBgImg = item.themeBgImg;
       })
       // ★ 点了推荐色 = 用户改了自己的那一套 ⇒ **模式归自由** + 归档背景纯色/字色 + 落盘。
@@ -2719,7 +2720,8 @@ oAnimInitNode 配套） */
     this.settingState.nightMode = night
     this.readerSetting.nightMode = this.settingState.nightMode
     this.readerSetting.fontColor = night ? '#ffffff' : '#000000'
-    this.readerSetting.themeColor = night ? '#202224' : '#FFFFFF'
+    this.settingState.themeColor = night ? '#202224' : '#FFFFFF'
+    this.readerSetting.themeColor = this.settingState.themeColor
     this.readerSetting.themeBgImg = ''
     // 焦点（2026-09-25 用户设计）：标准白/黑 ⇒ 圈落到命中的推荐色上
     this.bgFocus = 'preset'
@@ -2806,7 +2808,8 @@ oAnimInitNode 配套） */
     }
     const dark: boolean = ReaderCustomBg.isDarkBg(rgb)
     const flipped: boolean = (this.colorMode === 0) !== dark
-    this.readerSetting.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.readerSetting.themeColor = this.settingState.themeColor
     this.readerSetting.themeBgImg = ''
     if (this.fontAuto) {
       this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
@@ -3503,7 +3506,8 @@ oAnimInitNode 配套） */
    */
   private applyCustomBg(commit: boolean): void {
     const rgb = ReaderCustomBg.make(this.customBgR, this.customBgG, this.customBgB)
-    this.readerSetting.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.readerSetting.themeColor = this.settingState.themeColor
     this.readerSetting.themeBgImg = ''
     const dark: boolean = ReaderCustomBg.isDarkBg(rgb)
     // 只有"日/夜真的翻了"才去动 Ability 配色：`NightMode.sync()` 会调
@@ -3630,7 +3634,8 @@ oAnimInitNode 配套） */
       return
     }
     this.readerSetting.themeBgImg = finalPath
-    this.readerSetting.themeColor = avgHex
+    this.settingState.themeColor = avgHex
+    this.readerSetting.themeColor = this.settingState.themeColor
     this.readerSetting.fontColor = nextFont
     this.settingState.nightMode = dark
     this.readerSetting.nightMode = this.settingState.nightMode
@@ -3774,7 +3779,8 @@ oAnimInitNode 配套） */
       this.setStandardMode(this.customBgPrevNight)
       return
     }
-    this.readerSetting.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
+    this.readerSetting.themeColor = this.settingState.themeColor
     this.readerSetting.themeBgImg = ''
     this.settingState.nightMode = this.customBgPrevNight
     this.readerSetting.nightMode = this.settingState.nightMode
@@ -4180,6 +4186,7 @@ oAnimInitNode 配套） */
       this.settingState.fontWeight = this.readerSetting.fontWeight ?? this.settingState.fontWeight;
       // 外观（S2-c 第三批）：nightMode 已迁；themeColor / themeBgImg 仍在页面。
       this.settingState.nightMode = this.readerSetting.nightMode ?? this.settingState.nightMode;
+      this.settingState.themeColor = this.readerSetting.themeColor ?? this.settingState.themeColor;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4216,7 +4223,9 @@ oAnimInitNode 配套） */
       this.readerSetting.fontColor = temp.continueFontColor;
     }
     if (temp.continueThemeColor !== undefined && temp.continueThemeColor.length > 0) {
-      this.readerSetting.themeColor = temp.continueThemeColor;
+      // 2026-11-04（S2-c）：接续属装载期，来源为准 → 灌进模型
+      this.settingState.themeColor = temp.continueThemeColor;
+      this.readerSetting.themeColor = this.settingState.themeColor;
     }
     if (temp.continueThemeBgImg !== undefined && temp.continueThemeBgImg.length > 0) {
       this.readerSetting.themeBgImg = temp.continueThemeBgImg;
@@ -10173,7 +10182,8 @@ oAnimInitNode 配套） */
           this.settingState.nightMode = next === 0
           this.readerSetting.nightMode = this.settingState.nightMode
           this.readerSetting.fontColor = next === 0 ? '#ffffff' : '#000000'
-          this.readerSetting.themeColor = next === 0 ? '#202224' : '#FFFFFF'
+          this.settingState.themeColor = next === 0 ? '#202224' : '#FFFFFF'
+          this.readerSetting.themeColor = this.settingState.themeColor
         })
         // 收口：模式落盘（`mode` = 0/1，自由那一套原样保留）、Ability 配色、
         // `setPageConfig` 都在这里，且都在动画闭包之外。
@@ -10882,7 +10892,7 @@ oAnimInitNode 配套） */
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting`，`settingState` 成为唯一真源。
    */
   private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
-    'nightMode'];
+    'nightMode', 'themeColor'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。

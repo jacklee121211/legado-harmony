@@ -285,7 +285,7 @@ const RATCHET_DIRECT_WRITES = 63
  * 实测：迁了 6 个字段后总数 63（迁移前 67），其中 21 行是"模型→快照"同步，
  * 真正还没迁的字段只剩 42 处 —— 这个 42 才是可下降的度量。
  */
-const RATCHET_UNMIGRATED_WRITES = 42
+const RATCHET_UNMIGRATED_WRITES = 34
 
 /**
  * 去掉注释后的页面源码。
@@ -375,3 +375,4 @@ test('装载期方向：读持久位后是"持久位 → 模型"，不是"模型
   assert.equal(/this\.readerSetting\.fontSize = this\.settingState\.fontSize;[^]*?loaded as readerCore/.test(after), false,
     '装载期不允许反向覆盖快照')
 })
+
