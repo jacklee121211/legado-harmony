@@ -23,6 +23,8 @@ const TESTS = [
   { file: 'reader-const.test.mjs', name: 'ReaderConst 常量契约（滑条刻度/标定键名/迁移版本/字体族名）' },
   { file: 'book-naming.test.mjs', name: 'BookNaming.nextFreeName（书名 (2) 顺延，对齐分组样板）' },
   { file: 'db-migration.test.mjs', name: '迁移 v2 旧表清理策略（真 SQLite：仅 0 行才 DROP）' },
+  // 2026-11-04 渲染侧 S2-a：设置纯记录层（13 字段形状 + 编解码 + `__ob_` 防线）
+  { file: 'read-setting-record.test.mjs', name: 'ReadSettingRecord 形状/编解码/脏数据回退/__ob_ 防线' },
 ]
 
 let failed = 0
@@ -35,11 +37,19 @@ for (const tst of TESTS) {
   if (!ok) {
     failed++
   }
-  // 摘出子进程的「断言 N 条：通过 X，失败 Y」汇总行，让这里也能看出覆盖面
-  const summary = (r.stdout || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l.startsWith('断言 ')) ?? ''
+  // 摘出子进程的汇总行，让这里也能看出覆盖面。
+  // 两种测试风格并存：① 自建 runner 打「断言 N 条：通过 X，失败 Y」；② `node:test`（tap）
+  //   打「# tests N / # pass N / # fail N」。两种都认，否则 summary 会空成「（exit 0）」。
+  const lines = (r.stdout || '').split('\n').map((l) => l.trim())
+  let summary = lines.find((l) => l.startsWith('断言 ')) ?? ''
+  if (!summary) {
+    const tests = lines.find((l) => l.startsWith('# tests '))
+    const pass = lines.find((l) => l.startsWith('# pass '))
+    const fail = lines.find((l) => l.startsWith('# fail '))
+    if (tests && pass && fail) {
+      summary = `断言 ${tests.replace('# tests ', '')} 条：通过 ${pass.replace('# pass ', '')}，失败 ${fail.replace('# fail ', '')}`
+    }
+  }
   results.push({ ...tst, ok, code: r.status, summary, stdout: r.stdout, stderr: r.stderr })
   console.log(`  ${ok ? '✅' : '❌'} ${tst.file.padEnd(28)} ${summary || `（exit ${r.status}）`}`)
 }

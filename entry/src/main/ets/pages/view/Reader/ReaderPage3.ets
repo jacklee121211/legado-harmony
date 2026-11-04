@@ -68,6 +68,9 @@ import { parseDomPos, domPosFor, clampProgressUnit,
 // 2026-11-04（P3 批 A-5）：**4 个 `publish*` + 退书结算**也搬进同一个文件；入参打包类型
 //   `PublishFacts` 由本页 `publishFacts()` 现取现传（本页仍是这些事实的唯一真源）。
 import ReaderSession, { LocateTarget, FlipSearch, PublishFacts } from '../../../common/reader/ReaderSession';
+// 2026-11-04（渲染侧 S2-a）：设置的**默认值/编解码/校验**收在纯记录层（可单测）。
+//   本页本轮只接"默认值"这一处，字段读写仍在本页（S2-b/c 再逐批迁移，每批可单独回退）。
+import { defaultReadSettingRecord } from '../../../common/reader/ReadSettingRecord';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -1796,36 +1799,25 @@ oAnimInitNode 配套） */
    * 同样每次打开新建（理由同上）。
    */
   private readerBookmarkDialog: CustomDialogController | null = null
-  @State readerSetting: readerCore.ReaderSetting = {
-    // ⚠️ 必须写真实字体族名。平台查询结果（UIContext.getFont().getFontByName）：
-    //   'HarmonyOS Sans'    → /system/fonts/HarmonyOS_Sans.ttf     （仅拉丁字形，342KB）
-    //   'HarmonyOS Sans SC' → /system/fonts/HarmonyOS_Sans_SC.ttf  family = **鸿蒙黑体**（20MB 全字库）
-    // 之前传占位字面量 '系统字体'（归一化成 system）或 'HarmonyOS Sans'，中文都没有字形，
-    // 只能走回退 → targetSdkVersion 19→26 后落到 **HarmonyOS Sans Condensed（窄体）**，
-    // 表现就是"字体窄窄的"。这里直接指名系统中文黑体族名 **鸿蒙黑体**，并把真实文件路径一并给出。
-    fontName: SYSTEM_CJK_FONT_NAME,
-    // ⚠️ 2026-10-12 三次修订（真机日志 19:55:23 定案）：
-    //   清空 `fontPath` **并不能**让引擎退出"自定义字体场景"——卸载重装后实测，
-    //   引擎仍按 `fontName` 拼出 `鸿蒙黑体.ttf` 来 `resourceRequest` 索要字节；
-    //   而当时字体分支只认 `fontPath`（空串）⇒ 必然失败 ⇒ 整篇乱码。
-    //   ⇒ 正解是**两头都做**：① 这里给出可用路径作为兜底；
-    //     ② `loadFontBytes()` 按引擎入参解析 + 用 `getFontByName` 反查系统字体路径。
-    //   机理与官方契约见 `loadFontBytes()` 头注释（documentId reader-setting-font）。
-    fontPath: '/system/fonts/HarmonyOS_Sans_SC.ttf',
-    fontSize: 18,
-    fontColor: '#000000',
-    fontWeight: 400,
-    lineHeight: 1.9,
-    nightMode: false,
-    themeColor: 'rgba(248, 249, 250, 1)',
-    themeBgImg: '',
-    flipMode: '0',
-    scaledDensity: display.getDefaultDisplaySync().scaledDensity > 0 ?
-    display.getDefaultDisplaySync().scaledDensity :
-      1,
-    viewPortWidth: this.windowWidth,
-    viewPortHeight: this.windowHeight
-  };
+  /**
+   * 阅读排版设置（ReaderKit 接口 `readerCore.ReaderSetting`，13 个可选字段）。
+   *
+   * 2026-11-04（渲染侧 S2-a）：**默认值不再写在本文件里**，改由纯记录层
+   * `common/reader/ReadSettingRecord.ets` 的 `defaultReadSettingRecord()` 产出 ——
+   * 那里有单测逐字段钉住默认值（`scripts/tests/read-setting-record.test.mjs`），
+   * 并与 SDK 声明（`@hms.core.readerservice.readerComponent.d.ets:69-200`）的 13 字段对齐。
+   * 本字段仍是页面唯一真源（`@State`），记录层只提供"默认值 / 编解码 / 校验"。
+   *
+   * ⚠️ 字体族名必须写真实族名。平台查询结果（UIContext.getFont().getFontByName）：
+   *   'HarmonyOS Sans'    → /system/fonts/HarmonyOS_Sans.ttf     （仅拉丁字形，342KB）
+   *   'HarmonyOS Sans SC' → /system/fonts/HarmonyOS_Sans_SC.ttf  family = **鸿蒙黑体**（20MB 全字库）
+   * 之前传占位字面量 '系统字体'（归一化成 system）或 'HarmonyOS Sans'，中文都没有字形，
+   * 只能走回退 → targetSdkVersion 19→26 后落到 **HarmonyOS Sans Condensed（窄体）**，
+   * 表现就是"字体窄窄的"。这里直接指名系统中文黑体族名 **鸿蒙黑体**，并把真实文件路径一并给出。
+   */
+  @State readerSetting: readerCore.ReaderSetting = defaultReadSettingRecord(
+    // 运行时三件事实按**同一时刻**取：scaledDensity 的 `>0` 兜底在记录层内部（与原三元等价）
+    display.getDefaultDisplaySync().scaledDensity, this.windowWidth, this.windowHeight);
   private screenDensityCallBack: Callback<number> | null = null;
   private BookHandler: bookParser.BookParserHandler | null = null;
   /**
