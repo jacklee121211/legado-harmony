@@ -180,7 +180,14 @@ export default class ShelfPrefs {
       return;
     }
     try {
-      const v: number = n <= 0 ? 0 : Math.round(n);
+      // 2026-11-04（批 C-16）：**写入也要夹取**，与 `getUserColumns()` 的夹取口径完全一致。
+      //   旧写法只做 `n <= 0 ? 0 : Math.round(n)`，上界不夹 ⇒ 传 99 会把 99 存进 Preferences
+      //   并推进 AppStorage；而书架 `BookContent` 是用 `@StorageProp(KEY_GRID_COLUMNS_STORAGE)`
+      //   直接订阅的，**不经过 getUserColumns 的夹取** ⇒ 列数真的会变成 99（布局崩）。
+      //   读夹取、写不夹取属于"两处口径不同"，这里统一到读侧。
+      const raw: number = Math.round(n);
+      const v: number = raw <= 0 ? 0 : (raw < ShelfPrefs.COLUMNS_MIN ? ShelfPrefs.COLUMNS_MIN
+        : (raw > ShelfPrefs.COLUMNS_MAX ? ShelfPrefs.COLUMNS_MAX : raw));
       PreferencesUtil.putSync(ShelfPrefs.K_GRID_COLUMNS, v, ShelfPrefs.PREF_NAME);
       // 同步到 AppStorage：书架 `BookContent` 用 `@StorageProp` 订阅它 ⇒ 改完立即重排，
       // 不必等下次进书架（否则用户拖完滑块回书架还是旧列数）。

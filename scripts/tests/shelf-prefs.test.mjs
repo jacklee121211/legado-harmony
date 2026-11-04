@@ -164,19 +164,22 @@ ShelfPrefs.setUserColumns(7)
 t.check('写后读 + 取值端到端一致（set 7 ⇒ get 7 ⇒ effective 7）',
   ShelfPrefs.getUserColumns() === 7 && ShelfPrefs.effectiveColumns(ShelfPrefs.getUserColumns(), 'sm') === 7,
   '证据：ShelfPrefs.ets:178-190 + :163-175 + :197-202')
-// ⚠️ 语义可疑点（已报告，未改源码）：**写侧不夹、读侧夹**是两套口径。
-//    setUserColumns 只做 `n <= 0 ? 0 : Math.round(n)`（:183），不夹 COLUMNS_MIN/MAX；
-//    夹取只发生在 getUserColumns（:170-171）。
-//    ⇒ 若有人（非当前滑块 UI）写进 99：本会话 AppStorage 拿到 99 ⇒ BookContent 真的 lanes(99)；
-//      重启后 EntryAbility.ets:583 用 getUserColumns() 回填 ⇒ 变成 8。同一设置跨重启不一致。
+// 2026-11-04（批 C-16）：下面这组断言原本记录的是「已知缺陷：写侧不夹取」。
+//   缺陷已修复（setUserColumns 现在与 getUserColumns 同一夹取口径），因此断言改为**期望夹取后的值**。
+//   这条改动本身就是回归闸门：谁把写侧夹取去掉，这 4 条立刻红。
 reset()
 ShelfPrefs.setUserColumns(99)
-t.eq('已知缺陷：写侧不夹取 ⇒ 落盘 99', prefStore.get(ShelfPrefs.K_GRID_COLUMNS), 99,
-  '证据：ShelfPrefs.ets:183 `n <= 0 ? 0 : Math.round(n)`（无 MIN/MAX 夹取）—— 已报告')
-t.eq('已知缺陷：同一设置本会话 AppStorage=99 ⇒ lanes(99)', appStorageStore.get(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE), 99,
-  '证据：ShelfPrefs.ets:185-187 写未夹取值；消费端 BookContent.ets:733 `effectiveColumns(userGridColumns, …)`')
-t.eq('已知缺陷：重启后读回 8（读侧夹）⇒ 同一设置跨重启不一致', ShelfPrefs.getUserColumns(), 8,
-  '证据：ShelfPrefs.ets:170-171 读侧夹取；回填点 EntryAbility.ets:583 —— 已报告')
+t.eq('写 99 ⇒ 落盘夹到 COLUMNS_MAX（8）', prefStore.get(ShelfPrefs.K_GRID_COLUMNS), ShelfPrefs.COLUMNS_MAX,
+  '证据：ShelfPrefs.ets setUserColumns 内 `raw > COLUMNS_MAX ? COLUMNS_MAX : raw`（批 C-16 新增）')
+t.eq('写 99 ⇒ AppStorage 同步也是 8（本会话 lanes 不会变 99）',
+  appStorageStore.get(ShelfPrefs.KEY_GRID_COLUMNS_STORAGE), ShelfPrefs.COLUMNS_MAX,
+  '证据：AppStorage.setOrCreate 写的是夹取后的 v')
+t.eq('写 99 后读回 8（读/写口径一致，跨重启不再变化）', ShelfPrefs.getUserColumns(), ShelfPrefs.COLUMNS_MAX,
+  '证据：setUserColumns 与 getUserColumns 使用同一 MIN/MAX 夹取')
+reset()
+ShelfPrefs.setUserColumns(1)
+t.eq('写 1 ⇒ 抬到 COLUMNS_MIN（不许塌成 1 列）', prefStore.get(ShelfPrefs.K_GRID_COLUMNS), ShelfPrefs.COLUMNS_MIN,
+  '证据：setUserColumns 内 `raw < COLUMNS_MIN ? COLUMNS_MIN : raw`（批 C-16 新增）')
 
 // ═══ 6. 端到端：空库时「唯一取值入口」= 自动档 ══════════════════════════════
 t.group('6. 端到端（空库 = 自动档，不出现"一进书架列数乱跳"）')
