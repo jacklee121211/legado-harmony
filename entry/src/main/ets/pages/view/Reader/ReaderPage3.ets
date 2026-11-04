@@ -4555,12 +4555,21 @@ oAnimInitNode 配套） */
       // WifiBookServer.locateToc），因为只有服务端同时持有"目录标题"和"正在下发的正文串"。
       // P3 批 A-5：取标题的循环从 `publishBookToc` 移到此处（同一时刻、同一取数口径），
       //   写盘与比较逻辑在 `ReaderSession.publishBookToc(bookName, titles)`。
-      const tocTitles: string[] = [];
-      const tocCount: number = this.CatalogList.totalCount();
-      for (let ti = 0; ti < tocCount; ti++) {
-        tocTitles.push(this.CatalogList.getData(ti)?.catalogName ?? '');
+      // ⚠️ 必须**自带 try/catch**（2026-11-04 复查补）：原来这整段（含 `totalCount()` /
+      //   `getData(i)` / 书名读取）在 `publishBookToc` **自己的** try 里，出错只打一行
+      //   `publishBookToc failed: …` 就返回；若裸露在此处，它会落进下面 `startPlay` 的
+      //   大 catch —— 那个 catch 会**提示并退回书架**（"绝不把用户留在黑屏里"）⇒
+      //   目录快照发布失败会把用户踢出阅读页，属行为变化。日志文案与原来逐字一致。
+      try {
+        const tocTitles: string[] = [];
+        const tocCount: number = this.CatalogList.totalCount();
+        for (let ti = 0; ti < tocCount; ti++) {
+          tocTitles.push(this.CatalogList.getData(ti)?.catalogName ?? '');
+        }
+        this.session.publishBookToc(this.bookData?.bookName ?? '', tocTitles);
+      } catch (e) {
+        hilog.error(0x0000, 'testTag', `publishBookToc failed: ${(e as Error).message}`)
       }
-      this.session.publishBookToc(this.bookData?.bookName ?? '', tocTitles);
       // 注：目录过滤数据源已随弹窗改造搬到 `ReaderCatalogDialog` 内部 ——
       //     它在每次打开时从 `CatalogList.getOriginDataArray()` 重新构建，这里不需要再同步。
       hilog.info(0x0000, 'testTag', 'catalog list length: ' + this.CatalogList.totalCount());
