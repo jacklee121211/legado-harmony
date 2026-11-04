@@ -23,6 +23,8 @@ const CHECKS = [
   { script: 'audit-appstorage.mjs', args: ['--check'], name: 'AppStorage 键预算（80，只许降）' },
   // 零调用 open/show 方法（死入口）：新增死入口会让 CI 变红
   { script: 'audit-dead-open-methods.mjs', args: ['--check'], name: '死入口（零调用 open 方法）' },
+  // 零 import 死文件（新增死文件即红；预算 13 只许降）
+  { script: 'audit-dead-files.mjs', args: ['--check'], name: '死文件（零 import，预算 13 只许降）' },
   // P5 纯函数单测（2026-11-03）：GroupTree / CountLabel / ShelfCollection / ShelfPrefs。
   // 入口是 tests/run-all.mjs —— 它串跑 tests/*.test.mjs 四个文件（各自可独立执行）。
   // 这四个测试用 `node:module.stripTypeScriptTypes` 直接执行 `entry/src/main/ets/**` 的**真源码**
