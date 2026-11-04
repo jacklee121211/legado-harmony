@@ -142,19 +142,8 @@ export default struct BookInfoGrids{
       space:8
     }) {
       Stack(){
-        if (this.book.isLocalBook){
-          Text('本地')
-            .fontColor('#FFEDD4')
-            .fontWeight(FontConstants.FONT_WEIGHT_400)
-            .fontSize(9)
-            .padding(3)
-            .backgroundColor('#523000')
-            .zIndex(1)
-            .borderRadius({
-              topRight: 6,
-              bottomLeft: 6,
-            })
-        }
+        // 2026-11-05：封面「本地」角标已删除（用户口径：本地只保留 最近/全部/分组，
+        //   不再标"本地书"；`book.isLocalBook` 字段本身保留，仅不再有 UI 角标）。
         Stack(){
           if (this.book.isTop){
             Text('置顶')

@@ -234,7 +234,7 @@ export default struct groupTypeComponent {
   private sortSystemChips(list: BookGroups[]): BookGroups[] {
     // 2026-11-03（P10/L3）：「书单」已从单位名清单移除 —— 它的数据行在本工程从未创建
     //   （真机 DB ook_groups 只有 全部/分组/未分组/本地 四条 isSystem 行），书单功能本体也已删除。
-    const order: string[] = ['全部', '本地', '分组', '未分组']
+    const order: string[] = ['全部', '分组', '未分组']
     const systems: BookGroups[] = []
     for (const name of order) {
       // 2026-11-03（P10/L3）：「书单」分支已删除 —— 本工程从未创建过 `书单` 这行 isSystem 数据
@@ -243,13 +243,6 @@ export default struct groupTypeComponent {
       // ── 2026-10-19 需求第 4 条：「本地」入口屏蔽 ──────────────────────────
       // 用户原话：「以前我们是有书源功能的，现在只有本地，所以这个功能意义就不大了，
       //   我们可以直接把入口屏蔽掉也行。筛选能力作为保留完全可以。」
-      // ⇒ 只在**渲染层**跳过它；`BooksDao.buildWhereClause` 对 `bookGroup = 4` 的
-      //   `bookGroup = 4 or isLocalBook = true` 筛选逻辑**原样保留**，
-      //   将来做筛选器/恢复入口时可一键复用（不改数据库、不删行）。
-      // 回退：删掉下面这个 continue 即恢复入口。
-      if (name === '本地') {
-        continue
-      }
       // ── 2026-10-20：删除「未分组」chip ─────────────────────────────────────
       // 用户原话：「其实未分组也可以删除，因为在分组中有未分组的置顶目录」。
       // ⇒ 只删**顶栏入口**；`bookGroup = 3`（未分组）的筛选口径与
@@ -271,7 +264,7 @@ export default struct groupTypeComponent {
 
   /** 五个系统基础单元识别（锁定改名/删除/长按编辑，见各入口守卫） */
   private isLockedUnit(item: BookGroups): boolean {
-    return item.isSystem && ['全部', '本地', '分组', '未分组'].includes(item.groupName ?? '')
+    return item.isSystem && ['全部', '分组', '未分组'].includes(item.groupName ?? '')
   }
 
   // 2026-11-04（P4b 批 C-5）：`openGroupPanel` / `closeGroupPanel` 已删除 —— 全仓零调用方

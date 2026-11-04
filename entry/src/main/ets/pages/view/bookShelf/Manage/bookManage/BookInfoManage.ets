@@ -66,19 +66,7 @@ export default struct BookInfoManage{
         space:20
       }){
         Stack(){
-          if (this.bookData.isLocalBook){
-            Text('本地')
-              .fontColor('#FFEDD4')
-              .fontWeight(FontConstants.FONT_WEIGHT_400)
-              .fontSize(9)
-              .padding(3)
-              .backgroundColor('#523000')
-              .zIndex(1)
-              .borderRadius({
-                topRight: 6,
-                bottomLeft: 6,
-              })
-          }
+        // 2026-11-05：封面「本地」角标已删除（用户口径：不再标本地书）
           Stack(){
             if (this.bookData.isTop){
               Text('置顶').fontColor(Color.White).fontWeight(FontConstants.FONT_WEIGHT_400).fontSize(9).padding(3).borderRadius(5)

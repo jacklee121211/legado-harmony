@@ -82,6 +82,23 @@ export default struct FolderCard {
       } else {
         Row().width('100%').height('100%').borderRadius(4).backgroundColor(this.emptyColor())
       }
+      // ── 2026-11-05（用户要求）：格子左上角角标，一眼分清「分组 / 书籍」 ────────────
+      // 只在**分组域宫格**（role='card'）里画；role='cell'（书籍宫格里的嵌套格子）不画。
+      // 亮/暗双档：暗底白字 + 亮底深字，都压一层半透明底保证任何封面颜色下的对比度。
+      if (this.role === 'card') {
+        Text(cell.isFolder ? '分组' : '书籍')
+          .fontSize(9)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(NightMode.isDarkSurface() ? '#FFFFFF' : '#FFEDD4')
+          .padding({ left: 3, right: 3, top: 1, bottom: 1 })
+          .backgroundColor(NightMode.isDarkSurface()
+            ? 'rgba(0, 0, 0, 0.55)'
+            : 'rgba(82, 48, 0, 0.78)')
+          .borderRadius({ topLeft: 4, bottomRight: 4 })
+          .position({ x: 0, y: 0 })
+          .hitTestBehavior(HitTestMode.None)
+          .zIndex(2)
+      }
     }
     .layoutWeight(1)
     .height('100%')
