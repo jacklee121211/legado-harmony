@@ -616,7 +616,6 @@ struct Main {
    * `readerActive` 优先，两边算出来是同一个答案，谁调都不会打架。
    */
   onNightModeChanged(): void {
-    NightMode.setMainTab(this.currentTabIndex)
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
   }
 
@@ -1017,7 +1016,6 @@ struct Main {
     // 快捷方式在 onCreate 里就写好了标记，所以这里也消费一次（幂等，见 consumeQuickAction）。
     this.consumeQuickAction();
     // ★ 回前台/回到本页时重新对一次配色（例如用户是在阅读器里切的夜间，返回时本页可能没被重建）
-    NightMode.setMainTab(this.currentTabIndex)
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
     // 退出阅读页面后恢复系统亮度
     BrightnessUtil.setBrightness('default', -1)
@@ -1111,7 +1109,6 @@ struct Main {
     //测试颜色模块
     testGetColorFunction();
     // ★ 首帧前就把配色对齐（冷启动时夜间开关可能已经是持久化的 true）
-    NightMode.setMainTab(this.currentTabIndex)
     // 听书解锁位：与 ReaderPage3:3140 同源（@StorageLink 初值 false，必须从 Preferences 拉）
     this.listenUnlocked = ListenUnlock.isUnlocked()
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
@@ -1946,7 +1943,6 @@ struct Main {
         ListenSession.setExpanded(false)
         // ★ 页签变了 ⇒ 重新算配色并下发：书架（0）= 深色档、主题(1)/设置(2)/我的(3) = 浅色档。
         //   规则与依据见 `NightMode.desiredDark()`。
-        NightMode.setMainTab(targetIndex)
         // ⚠️ 2026-10-09 回退：这里**恢复为同步调用**。
         //   曾经为"切页签圆形闪"把它延后 340ms，但真机日志证明闪的成因是
         //   **迷你栏节点被高频重建**（`dock node rebuilt` 约 2 次/秒，且与切页签无关），
@@ -2004,7 +2000,11 @@ struct Main {
       })
     })
     .enabled(this.ltNavEnabled)
-    // ★ 书架 NavBar 可见性变化 ⇒ 记录书架层可见性（保留键位）。
+    // ★ 2026-11-04（决策 2B）：书架 NavBar 可见性回调已**整段删除** ——
+    //   它只做一件事：`NightMode.setHomeVisible()` 写 `navHomeVisible` 键；而那个键全仓**零读取点**
+    //   （`node scripts/audit-appstorage.mjs` 显示「读 0 写 2」）⇒ 纯 no-op 写入，已随键一起删除。
+    //   ⚠️ 下面这段历史原因仍然有效，只是不再需要这个回调：
+    //   书架 NavBar 可见性变化时**不能**调 `NightMode.sync()`。
     //   ⚠️ 2026-09-24 屏闪修复：这里**不能再调 `NightMode.sync()`**。
     //   真机日志（2026-09-23 日志2）实证：push 阅读器时 `NavBar Visible State Change
     //   true -> false`（28.411）与 `SetAbilityColorMode colorMode: 1`（28.412）同帧 ——
@@ -2013,9 +2013,6 @@ struct Main {
     //   对非阅读页它本来就是视觉 no-op（`desiredDark()` 不读 HOME_KEY，
     //   见 NightMode.ets「保留键位，暂不参与裁决」注释）⇒ 删掉只去 bug、不改行为。
     //   阅读器的配色翻转已由 `ReaderPage3.aboutToAppear` 的延迟块（转场结束后）负责。
-    .onNavBarStateChange((isVisible: boolean) => {
-      NightMode.setHomeVisible(isVisible)
-    })
     .navDestination(this.appRoutes)
     .onAppear(() => {
       // 把 Navigation 的页面栈交给路由门面：后续迁移的页面通过 `AppRouter` 入栈/出栈。

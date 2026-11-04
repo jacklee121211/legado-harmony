@@ -56,8 +56,8 @@
  * （切分类 / 切分组 / dock 切回书架都会重播）。
  */
 export class EntranceWave {
-  /** AppStorage 键：动画速度档位（0~6；3 = 默认 0.75x，0 = 关闭；映射见 `speedMultiplier()`） */
-  static readonly SPEED_KEY: string = 'shelfAnimSpeed';
+  // 2026-11-04（决策 1B）：原 `SPEED_KEY = 'shelfAnimSpeed'` 已删 —— 设置项 2026-10-19 已整项移除，
+  //   全仓零写入点 ⇒ 读到的永远是默认档。动画速度现已**写死 0.75x**（原默认档 3）。
 
   /** 基准参数（标准速度下的值，会被 speedMultiplier 缩放） */
   static readonly STEP_MS_BASE: number = 48;
@@ -128,9 +128,10 @@ export class EntranceWave {
    * @returns 倍率（0~1.5），默认 0.75（档位 3）
    */
   static speedMultiplier(): number {
-    const level: number = AppStorage.get<number>(EntranceWave.SPEED_KEY) ?? 3;
-    const clamped = Math.max(0, Math.min(6, level));
-    return clamped * 0.25;
+    // 2026-11-04（决策 1B）：原来读 AppStorage 的 `shelfAnimSpeed`，但那个键**零写入点**
+    //   （设置项 2026-10-19 已整项移除）⇒ 读到的永远是默认档 3。现直接写死 0.75（= 档位 3 × 0.25），
+    //   行为与原默认值完全一致；要恢复可调，需先在设置页重新加回写入点再改这里。
+    return 0.75;
   }
 
   private startTs: number = 0;

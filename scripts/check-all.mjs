@@ -20,7 +20,7 @@ const CHECKS = [
   // 事件合并语义的逻辑测试（复刻 GroupEvents.emitFromBump 算法，4 条断言）
   { script: 'verify-group-event-coalescing.mjs', name: '事件合并逻辑（4 断言）' },
   // AppStorage 键预算（ratchet，只许降）：新增全局键会让 CI 变红
-  { script: 'audit-appstorage.mjs', args: ['--check'], name: 'AppStorage 键预算（82，只许降）' },
+  { script: 'audit-appstorage.mjs', args: ['--check'], name: 'AppStorage 键预算（80，只许降）' },
   // 零调用 open/show 方法（死入口）：新增死入口会让 CI 变红
   { script: 'audit-dead-open-methods.mjs', args: ['--check'], name: '死入口（零调用 open 方法）' },
   // P5 纯函数单测（2026-11-03）：GroupTree / CountLabel / ShelfCollection / ShelfPrefs。

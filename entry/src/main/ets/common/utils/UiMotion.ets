@@ -299,8 +299,9 @@ export default class UiMotion {
     if (!UiMotion.MOTION_ENABLED) {
       return 0;
     }
-    const level: number = AppStorage.get<number>('shelfAnimSpeed') ?? 3;
-    const mult = level * 0.25;
+    // 2026-11-04（决策 1B）：原来读 `AppStorage('shelfAnimSpeed')`，该键**零写入点**（设置项已移除）
+    //   ⇒ 恒为默认档 3。现写死 mult = 0.75（与默认档等价），结果仍为 Math.round(380 / 0.75)。
+    const mult = 0.75;
     return mult <= 0 ? 0 : Math.round(380 / mult);
   }
 

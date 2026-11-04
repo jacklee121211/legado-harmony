@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url'
 //      `docs/重梳-测绘-2026-11-04.md`。
 // 以后新增 AppStorage 键会直接让 node scripts/check-all.mjs 变红；要加键必须同步调这个数，
 // 并在 PR 里说明「为什么不能用事件 / 局部状态」。
-const KEY_BUDGET = 82
+const KEY_BUDGET = 80
 const checkMode = process.argv.includes('--check')
 const listMode = process.argv.includes('--list')
 

@@ -66,9 +66,7 @@ export class NightMode {
   /** 阅读器当前的日/夜间（true=夜间；仅 readerActive 时有意义） */
   static readonly READER_NIGHT_KEY: string = 'readerNight';
   /** 当前底部页签下标（0 = 书架，1 = 我的）；由 `pages/Index.ets` 维护（保留键位，暂不参与裁决） */
-  static readonly TAB_KEY: string = 'mainTabIndex';
   /** 书架 NavBar 可见性（`Navigation.onNavBarStateChange` 维护；保留键位，暂不参与裁决） */
-  static readonly HOME_KEY: string = 'navHomeVisible';
 
   /** 上一次真正下发给 UIAbility 的配色（`-99` = 还没下发过） */
   private static applied: number = -99;
@@ -124,8 +122,6 @@ export class NightMode {
     AppStorage.setOrCreate<number>(NightMode.SYS_KEY, ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
     AppStorage.setOrCreate<boolean>(NightMode.READER_KEY, false);
     AppStorage.setOrCreate<boolean>(NightMode.READER_NIGHT_KEY, false);
-    AppStorage.setOrCreate<number>(NightMode.TAB_KEY, 0);
-    AppStorage.setOrCreate<boolean>(NightMode.HOME_KEY, true);
     // 派生值初值（内存键，覆盖磁盘上的旧布尔残留）
     AppStorage.setOrCreate<boolean>(NightMode.KEY, false);
   }
@@ -179,15 +175,7 @@ export class NightMode {
     AppStorage.setOrCreate<boolean>(NightMode.READER_NIGHT_KEY, night);
   }
 
-  /** 标记当前底部页签（保留写入点；当前裁决不使用） */
-  static setMainTab(index: number): void {
-    AppStorage.setOrCreate<number>(NightMode.TAB_KEY, index);
-  }
 
-  /** 标记书架 NavBar 可见性（保留写入点；当前裁决不使用） */
-  static setHomeVisible(visible: boolean): void {
-    AppStorage.setOrCreate<boolean>(NightMode.HOME_KEY, visible);
-  }
 
   /**
    * 当前界面**是否应该**是深色。规则见类头注释。纯函数，无副作用。
