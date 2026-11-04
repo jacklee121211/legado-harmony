@@ -284,8 +284,13 @@ const RATCHET_DIRECT_WRITES = 63
  * （模型 → 页面快照，供 259 个未改的读点使用），于是"总数"在迁移期**不降反升**。
  * 实测：迁了 6 个字段后总数 63（迁移前 67），其中 21 行是"模型→快照"同步，
  * 真正还没迁的字段只剩 42 处 —— 这个 42 才是可下降的度量。
+ *
+ * 迁移流水（实测，每次 = 该字段的赋值点数）：
+ *   fontSize / lineHeight / fontName / fontPath / fontWeight / nightMode → 42
+ *   themeColor（8）→ 34
+ *   themeBgImg（10：9 运行期 + 1 装载期接续）→ 24
  */
-const RATCHET_UNMIGRATED_WRITES = 34
+const RATCHET_UNMIGRATED_WRITES = 24
 
 /**
  * 去掉注释后的页面源码。

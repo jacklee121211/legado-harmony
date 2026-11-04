@@ -2605,7 +2605,9 @@ oAnimInitNode 配套） */
         this.readerSetting.fontColor = item.fontColor;
         this.settingState.themeColor = item.themeColor
         this.readerSetting.themeColor = this.settingState.themeColor;
-        this.readerSetting.themeBgImg = item.themeBgImg;
+        // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
+        this.settingState.themeBgImg = item.themeBgImg
+        this.readerSetting.themeBgImg = this.settingState.themeBgImg;
       })
       // ★ 点了推荐色 = 用户改了自己的那一套 ⇒ **模式归自由** + 归档背景纯色/字色 + 落盘。
       //   ⚠️ 必须放在 animateTo 之后：闭包已把三个值改成刚点的推荐色，才能记成新回退点。
@@ -2722,7 +2724,9 @@ oAnimInitNode 配套） */
     this.readerSetting.fontColor = night ? '#ffffff' : '#000000'
     this.settingState.themeColor = night ? '#202224' : '#FFFFFF'
     this.readerSetting.themeColor = this.settingState.themeColor
-    this.readerSetting.themeBgImg = ''
+    // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（标准白/黑 ⇒ 无背景图）
+    this.settingState.themeBgImg = ''
+    this.readerSetting.themeBgImg = this.settingState.themeBgImg
     // 焦点（2026-09-25 用户设计）：标准白/黑 ⇒ 圈落到命中的推荐色上
     this.bgFocus = 'preset'
     if (!push) {
@@ -2810,7 +2814,9 @@ oAnimInitNode 配套） */
     const flipped: boolean = (this.colorMode === 0) !== dark
     this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
     this.readerSetting.themeColor = this.settingState.themeColor
-    this.readerSetting.themeBgImg = ''
+    // 2026-11-04（S2-c 第六批）：自由模式纯色 ⇒ 无背景图（同 applyStandardAppearance）
+    this.settingState.themeBgImg = ''
+    this.readerSetting.themeBgImg = this.settingState.themeBgImg
     if (this.fontAuto) {
       this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
     } else if (this.freeFontHex.length > 0) {
@@ -3060,7 +3066,9 @@ oAnimInitNode 配套） */
           const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
           if (this.bgCustomId.length > 0 && ReaderTexture.customById(ctx, this.bgCustomId) === null) {
             this.bgCustomId = ''
-            this.readerSetting.themeBgImg = ''
+            // 2026-11-04（S2-c 第六批）：在用的自定义背景被删 ⇒ 清背景图（走模型）
+            this.settingState.themeBgImg = ''
+            this.readerSetting.themeBgImg = this.settingState.themeBgImg
             this.applyCustomBg(true)
           }
         },
@@ -3508,7 +3516,9 @@ oAnimInitNode 配套） */
     const rgb = ReaderCustomBg.make(this.customBgR, this.customBgG, this.customBgB)
     this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
     this.readerSetting.themeColor = this.settingState.themeColor
-    this.readerSetting.themeBgImg = ''
+    // 2026-11-04（S2-c 第六批）：自定义纯色 ⇒ 无背景图（走模型）
+    this.settingState.themeBgImg = ''
+    this.readerSetting.themeBgImg = this.settingState.themeBgImg
     const dark: boolean = ReaderCustomBg.isDarkBg(rgb)
     // 只有"日/夜真的翻了"才去动 Ability 配色：`NightMode.sync()` 会调
     // `ctx.setColorMode()`（一次系统级重涂），绝不能每帧调。
@@ -3565,7 +3575,9 @@ oAnimInitNode 配套） */
         this.schemeLog('applyTextureBg custom missing -> 回落纯色')
         // 源图已被删除 ⇒ 回落纯色，绝不让页面挂死
         this.bgCustomId = ''
-        this.readerSetting.themeBgImg = ''
+        // 2026-11-04（S2-c 第六批）：源图已被删除 ⇒ 清背景图并回落纯色（走模型）
+        this.settingState.themeBgImg = ''
+        this.readerSetting.themeBgImg = this.settingState.themeBgImg
         this.applyCustomBg(true)
         return
       }
@@ -3578,7 +3590,9 @@ oAnimInitNode 配套） */
     }
     const tex = ReaderTexture.byId(ctx, this.bgTexId)
     if (tex === null || this.bgTexId <= 0) {
-      this.readerSetting.themeBgImg = ''
+      // 2026-11-04（S2-c 第六批）：材质 id 非法/不存在 ⇒ 清背景图并回落纯色（走模型）
+      this.settingState.themeBgImg = ''
+      this.readerSetting.themeBgImg = this.settingState.themeBgImg
       this.applyCustomBg(true)
       return
     }
@@ -3633,7 +3647,8 @@ oAnimInitNode 配套） */
       this.schemeLog('composed IDEMPOTENT-SKIP: 状态已等于目标（点方案时=该方案本已生效）')
       return
     }
-    this.readerSetting.themeBgImg = finalPath
+    this.settingState.themeBgImg = finalPath
+    this.readerSetting.themeBgImg = this.settingState.themeBgImg
     this.settingState.themeColor = avgHex
     this.readerSetting.themeColor = this.settingState.themeColor
     this.readerSetting.fontColor = nextFont
@@ -3781,7 +3796,9 @@ oAnimInitNode 配套） */
     }
     this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
     this.readerSetting.themeColor = this.settingState.themeColor
-    this.readerSetting.themeBgImg = ''
+    // 2026-11-04（S2-c 第六批）：恢复 prev 那一套 = 纯色 ⇒ 无背景图（走模型）
+    this.settingState.themeBgImg = ''
+    this.readerSetting.themeBgImg = this.settingState.themeBgImg
     this.settingState.nightMode = this.customBgPrevNight
     this.readerSetting.nightMode = this.settingState.nightMode
     this.readerSetting.fontColor = this.fontAuto
@@ -4184,9 +4201,11 @@ oAnimInitNode 配套） */
       this.settingState.fontName = this.readerSetting.fontName ?? this.settingState.fontName;
       this.settingState.fontPath = this.readerSetting.fontPath ?? this.settingState.fontPath;
       this.settingState.fontWeight = this.readerSetting.fontWeight ?? this.settingState.fontWeight;
-      // 外观（S2-c 第三批）：nightMode 已迁；themeColor / themeBgImg 仍在页面。
+      // 外观（S2-c 第三批）：nightMode 已迁；themeColor 已迁（第五批）；themeBgImg 已迁（第六批）。
       this.settingState.nightMode = this.readerSetting.nightMode ?? this.settingState.nightMode;
       this.settingState.themeColor = this.readerSetting.themeColor ?? this.settingState.themeColor;
+      // 背景图（S2-c 第六批）：装载期方向 = 持久位 → 模型（写反则用户存的材质背景每次进书都丢）
+      this.settingState.themeBgImg = this.readerSetting.themeBgImg ?? this.settingState.themeBgImg;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4228,7 +4247,9 @@ oAnimInitNode 配套） */
       this.readerSetting.themeColor = this.settingState.themeColor;
     }
     if (temp.continueThemeBgImg !== undefined && temp.continueThemeBgImg.length > 0) {
-      this.readerSetting.themeBgImg = temp.continueThemeBgImg;
+      // 2026-11-04（S2-c 第六批）：接续属装载期，来源为准 → 灌进模型（再同步快照）
+      this.settingState.themeBgImg = temp.continueThemeBgImg;
+      this.readerSetting.themeBgImg = this.settingState.themeBgImg;
     }
     if (temp.continueNightMode !== undefined) {
       // 2026-11-04（S2-c）：接续属装载期，来源为准 → 灌进模型
@@ -10900,7 +10921,7 @@ oAnimInitNode 配套） */
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting` 与 `syncFromExcept`，`settingState` 成为唯一真源。
    */
   private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
-    'nightMode', 'themeColor'];
+    'nightMode', 'themeColor', 'themeBgImg'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
@@ -10920,7 +10941,7 @@ oAnimInitNode 配套） */
    *   · **已迁字段**（在登记表里）以**模型**为准 —— 跳过，不从页面快照回灌；
    *   · **未迁字段**从页面快照回灌 —— 否则快照会丢值。
    * 然后 `settingState.snapshot()` 取**纯对象**（逐字段拷贝，天然不含 `__ob_`）。
-   * 真源**逐步**从 `@State readerSetting` 转给模型（当前 7/13），258+ 个读点仍读页面快照 ⇒ **行为零变化**。
+   * 真源**逐步**从 `@State readerSetting` 转给模型（当前 8/13），258+ 个读点仍读页面快照 ⇒ **行为零变化**。
    *
    * ── 零行为变化 ──────────────────────────────────────────────────────────────
    * `snapshot()` 只做逐字段拷贝，**不改任何值**；`pickReadSettingFields()` 再按白名单兜一次
