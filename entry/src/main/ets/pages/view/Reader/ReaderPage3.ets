@@ -3220,8 +3220,11 @@ oAnimInitNode 配套） */
   /** 应用字体（弹窗回调）：写 readerSetting → 引擎重排 → 高亮标尺重算 */
   private applyFont(name: string, path: string): void {
     this.markFontOverride()
-    this.readerSetting.fontName = name
-    this.readerSetting.fontPath = path
+    // 2026-11-04（S2-c）：字体族名/路径真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
+    this.settingState.fontName = name
+    this.settingState.fontPath = path
+    this.readerSetting.fontName = this.settingState.fontName
+    this.readerSetting.fontPath = this.settingState.fontPath
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     // ★★ 关键修复（2026-10-20）：ArkUI 侧必须**同步注册**新族名 ★★
     // 缺陷现场：这里原来只有上面三行 —— 引擎拿到了 `fontName/fontPath`（它自己按
@@ -4164,6 +4167,10 @@ oAnimInitNode 配套） */
       //   用户保存的字号每次进书都会被默认值顶掉 —— 那是回归，不是迁移。
       this.settingState.fontSize = this.readerSetting.fontSize ?? this.settingState.fontSize;
       this.settingState.lineHeight = this.readerSetting.lineHeight ?? this.settingState.lineHeight;
+      // 字体三件套同理（S2-c 第二批）：整体赋值会绕过模型，必须把持久位的值灌回模型。
+      this.settingState.fontName = this.readerSetting.fontName ?? this.settingState.fontName;
+      this.settingState.fontPath = this.readerSetting.fontPath ?? this.settingState.fontPath;
+      this.settingState.fontWeight = this.readerSetting.fontWeight ?? this.settingState.fontWeight;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4183,14 +4190,18 @@ oAnimInitNode 配套） */
     // ❌ 不带：`fontSize` / `lineHeight` —— 屏幕比例不同，真正影响体验的只有这两个；
     //    对端**完全不碰**，没设置过就用它自己的默认值。
     // ❌ 也不带 `scaledDensity` / `viewPortWidth` / `viewPortHeight`（设备度量）。
+    // 2026-11-04（S2-c）：装载期方向 —— 接续参数为准 → 同步进模型（模型再回写快照，见下方统一段）
     if (temp.continueFontName !== undefined && temp.continueFontName.length > 0) {
-      this.readerSetting.fontName = temp.continueFontName;
+      this.settingState.fontName = temp.continueFontName;
+      this.readerSetting.fontName = this.settingState.fontName;
     }
     if (temp.continueFontPath !== undefined && temp.continueFontPath.length > 0) {
-      this.readerSetting.fontPath = temp.continueFontPath;
+      this.settingState.fontPath = temp.continueFontPath;
+      this.readerSetting.fontPath = this.settingState.fontPath;
     }
     if (temp.continueFontWeight !== undefined && temp.continueFontWeight > 0) {
-      this.readerSetting.fontWeight = temp.continueFontWeight;
+      this.settingState.fontWeight = temp.continueFontWeight;
+      this.readerSetting.fontWeight = this.settingState.fontWeight;
     }
     if (temp.continueFontColor !== undefined && temp.continueFontColor.length > 0) {
       this.readerSetting.fontColor = temp.continueFontColor;
@@ -5172,7 +5183,9 @@ oAnimInitNode 配套） */
         // ⚠️ 'HarmonyOS Sans' 已是字体管理弹窗里的合法系统字体（2026-09-26），不再当占位值重置
         if (fn === undefined || fn === null || fn.length === 0 || fn === '系统字体'
           || fn === 'system') {
-          this.readerSetting.fontName = SYSTEM_CJK_FONT_NAME;
+          // 2026-11-04（S2-c）：迁移写点也要走模型（迁移属"装载期"，值以迁移结果为准）
+          this.settingState.fontName = SYSTEM_CJK_FONT_NAME;
+          this.readerSetting.fontName = this.settingState.fontName;
           // ⚠️ 2026-10-12：这里**原来会写系统字体绝对路径**，正是乱码的源头之一
           //   （旧书迁到 v1 时被种下 `fontPath=/system/fonts/…`）。
           //   现在只给族名，路径留空；下面的 v2 迁移会再把存量脏值清一遍。
@@ -5188,7 +5201,8 @@ oAnimInitNode 配套） */
       //     的入参解析形成双保险。
       if (ver < 2 && (this.readerSetting.fontPath === undefined
         || this.readerSetting.fontPath === null || this.readerSetting.fontPath.length === 0)) {
-        this.readerSetting.fontPath = SYSTEM_CJK_FONT_PATH;
+        this.settingState.fontPath = SYSTEM_CJK_FONT_PATH;
+        this.readerSetting.fontPath = this.settingState.fontPath;
         changed = true;
         hilog.info(0x0000, 'testTag', 'rs-migrate: v1->v2 restore fontPath %{public}s',
           SYSTEM_CJK_FONT_PATH);
@@ -5205,12 +5219,14 @@ oAnimInitNode 配套） */
       && !ReaderFontLib.fontInOverride(bookName)) {
       const g = ReaderFontLib.loadFontGlobal()
       if (g !== null) {
-        this.readerSetting.fontName = g.fontName
+        // 2026-11-04（S2-c）：字体三件套 + 字号 / 行距真源都在模型，这里同步两处
+        this.settingState.fontName = g.fontName
         // 全局记录里若 fontPath 为空，补系统中文黑体路径（与 v2 迁移同策略）
-        this.readerSetting.fontPath =
+        this.settingState.fontPath =
           (g.fontPath === undefined || g.fontPath === null || g.fontPath.length === 0)
             ? SYSTEM_CJK_FONT_PATH : g.fontPath
-        // 2026-11-04（S2-c）：字号 / 行距真源都在模型，这里同步两处（模型 + 页面快照）
+        this.readerSetting.fontName = this.settingState.fontName
+        this.readerSetting.fontPath = this.settingState.fontPath
         this.settingState.fontSize = g.fontSize
         this.settingState.lineHeight = g.lineHeight
         this.readerSetting.fontSize = this.settingState.fontSize
@@ -10853,7 +10869,7 @@ oAnimInitNode 配套） */
    *   里的棘轮会把"页面直写点数量"钉住（只许降），并核对本数组与实际直写点一致。
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting`，`settingState` 成为唯一真源。
    */
-  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight'];
+  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。

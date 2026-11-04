@@ -319,9 +319,11 @@ test('迁移规范：已迁字段在页面里只能"模型→快照"单向写，
         continue
       }
       const rest = line.slice(at + prefix.length)
-      const m = /^[ \t]*=[ \t]*(.*)$/.exec(rest)
+      // `=(?!=)`：只认赋值；否则 `=== / ==` 比较会被误判成写点（实测把
+      // `if (… && this.readerSetting.fontPath === undefined` 判成了违规）。
+      const m = /^[ \t]*=(?!=)[ \t]*(.*)$/.exec(rest)
       if (m === null) {
-        continue // 不是赋值（可能是读或注释残留）
+        continue // 不是赋值（比较运算 / 纯读取）
       }
       const rhs = m[1]
       if (rhs.startsWith(`this.settingState.${f}`)) {
