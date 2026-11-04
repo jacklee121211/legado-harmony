@@ -21,6 +21,7 @@ const TESTS = [
   { file: 'shelf-collection.test.mjs', name: 'ShelfCollection.resolve / batchEntryGroup' },
   { file: 'shelf-prefs.test.mjs', name: 'ShelfPrefs.effectiveColumns（sm/md/lg/xl + 手动档）' },
   { file: 'reader-const.test.mjs', name: 'ReaderConst 常量契约（滑条刻度/标定键名/迁移版本/字体族名）' },
+  { file: 'book-naming.test.mjs', name: 'BookNaming.nextFreeName（书名 (2) 顺延，对齐分组样板）' },
 ]
 
 let failed = 0
