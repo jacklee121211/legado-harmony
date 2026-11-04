@@ -128,7 +128,8 @@ class booksUtils{
   }
   // （2026-10-13 删除 `getOrder()`：「更新排序 / 手动排序」已无 UI 入口，
   //   排序档只剩「最近阅读」一档 ⇒ 这套"标签 → 序号"的映射没有存在意义。
-  //   证据：`IndexSearchType.ets:28-29`（下拉弹窗 2026-10-01 已删）。
+  //   依据：用户 2026-10-01 拍板删除排序下拉弹窗（承接它的 `IndexSearchType`
+  //   组件已于 2026-11-04 批 C-18 作为零引用死文件删除）。
   //   `BooksDao.search/searchPage` 已改为直接判 `order !== undefined`。）
 }
 let booksUtil = new booksUtils();

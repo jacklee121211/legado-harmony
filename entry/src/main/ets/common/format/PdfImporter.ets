@@ -139,7 +139,9 @@ export class PdfImporter {
       const m: pdfService.PdfMatrix = new pdfService.PdfMatrix();
       m.x = 0;
       m.y = 0;
-      // matrix 的 width/height 是**缩放比**（SDK d.ts 原文 + 真机实测，见 PdfPageCache 注释）
+      // matrix 的 width/height 是**缩放比**（SDK d.ts 原文 + 2026-10-19 真机实证：
+      // 传原始点尺寸 = 缩放 1 时，612×792pt 的内容 1:1 画进 1320×1708 画布，
+      // 只占左上角约 46%，看起来像"整页被缩成 1/3"）
       const coverZoom: number = tw / Math.max(1, pw);
       m.width = pw * coverZoom;
       m.height = ph * coverZoom;
@@ -222,8 +224,8 @@ export class PdfImporter {
         const ph: number = page.getHeight();
         const tw: number = FMT_PDF_RENDER_WIDTH_PX;
         const th: number = Math.max(1, Math.round(tw * ph / Math.max(1, pw)));
-        // ⚠️ matrix 的 width/height 是**相对原始页的缩放比**（SDK d.ts 原文 + 真机实测，
-        // 见 PdfPageCache 同处注释）；后两个参数才是画布像素。
+        // ⚠️ matrix 的 width/height 是**相对原始页的缩放比**（SDK d.ts 原文 + 2026-10-19
+        // 真机实证：传原始点尺寸 = 缩放 1 时内容只占左上角约 46%）；后两个参数才是画布像素。
         // 旧写法 matrix 传原始点尺寸 ⇒ 整页只有 1:1 点大小，画在画布左上角（看起来"缩成 1/3"）。
         const zoom: number = tw / Math.max(1, pw);
         const m: pdfService.PdfMatrix = new pdfService.PdfMatrix();

@@ -181,9 +181,11 @@ class BooksDao {
   async search(param?:BooksTypeSearchParams) {
     let order = param?.order;
     // ── 2026-10-13 清理死代码：「更新排序 / 手动排序」已无 UI 入口 ──────────────
-    // 证据：`IndexSearchType.ets:28-29` 原文
-    //   「2026-10-01（用户）：「最近阅读」的排序弹窗（更新排序/手动排序）功能已废，
+    // 证据：用户 2026-10-01 拍板原文
+    //   「「最近阅读」的排序弹窗（更新排序/手动排序）功能已废，
     //     直接删除——标题恢复为纯文字（无下拉箭头、无点击、无 popup）。」
+    // （2026-11-04 批 B：原引用 `IndexSearchType.ets:28-29` —— 那个组件已作为死文件删除，
+    //   原话在此**逐字留档**；排序档只剩 `'最近阅读'` 一档，本方法语义不变。）
     // 且全工程只有 `newAddShelf.ets:100` 给过 `searchValue` 赋值（那是搜索关键词，
     // 不是排序）⇒ 书架链上 `searchValue` 恒为 `'最近阅读'`。
     // ⇒ 原来那套 `getOrder()` + `switch(sort)` 三选一恒走 case 0，case 1/2 是死分支。
@@ -1205,8 +1207,11 @@ class BooksDao {
   /**
    * 回退说明（「删掉漫画/有声书两个页签」这一版改动）：
    *  · 代码侧 —— `git checkout` 本文件 + `database/index.ets` + `IndexShelf.ets` +
-   *    `readStatistics.ets` + `readTabs.ets` + `groupTypePanel.ets` + `BookBodyContent.ets`，
+   *    `readStatistics.ets` + `groupTypePanel.ets` + `BookBodyContent.ets`，
    *    即可恢复三页签（`IndexShelf.titleArray` 是唯一入口清单）。
+   *    ⚠️ 还差一个文件：`componets/myCenter/readTabs.ets` 已于 2026-11-04（批 C-18）作为
+   *    **零引用死文件**删除 ⇒ 恢复三页签要连同它从**本批之前的提交**里取回
+   *    （`git checkout <那个提交> -- entry/src/main/ets/componets/myCenter/readTabs.ets`）。
    *  · 数据侧 —— 下面的 UPDATE 是**原地覆盖、不可逆**。所以迁移**之前**已把「将被改动的
    *    主键 + 原 bookType」序列化进 Preferences（键 `bookTypeMergedToShelfV1_backup`）。
    *    要还原：取出该 JSON，按 id 逐条 `UPDATE books SET bookType = ?` 即可

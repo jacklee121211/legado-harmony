@@ -239,7 +239,10 @@ export default class CommonConstants {
   // 2026-11-03（P8/L2）：RSS_SOURCES_GROUP_INIT / RSS_SOURCES_GROUP_LIST_DATA_KEY 已删除 ——
   //   订阅源（RSS）域在本工程从未落地（无表/无页面），这两个键只被启动时写一次、零读取。
   // 2026-11-03（顺路发现收尾）：SYSTEM_UA 已整链删除 —— 书源 WebView 时代的遗留，只写不读，
-  //   AppStorage 里该键全仓 0 个消费方（证据见 preferences/programDataPreferences.ets 头注释）。
+  //   AppStorage 里该键全仓 0 个消费方：`@StorageProp` / `@StorageLink` / `AppStorage.get`
+  //   三种读法 grep `SYSTEM_UA` 均 0 命中，写法只有「Preferences 落盘 + 镜像进 AppStorage」
+  //   两处，且两者已随本批删除。（2026-11-04 批 C-18：原先挂在外面的证据文件
+  //   `preferences/programDataPreferences.ets` 已作为零引用死文件删除，此处就地自证。）
   /**
    * ── 应用市场评分状态（2026-10-18）────────────────────────────────────────
    * 用途：系统已判定"该账号已评价过"时，**不再弹软引导弹窗**，避免无意义打扰。

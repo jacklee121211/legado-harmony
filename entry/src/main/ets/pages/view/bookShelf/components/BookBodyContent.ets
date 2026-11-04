@@ -9,7 +9,8 @@ import { NightMode } from '../../../../common/utils/NightMode'
 // 2026-10-13：三胶囊共用的「可调玻璃」配方（唯一真源）
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 // ⚠️ 2026-10-20「终极简化」后本文件不再需要的 import（全部删除，避免未使用告警）：
-//   · IndexSearchType —— 「喵阅」「列表/宫格」文字按钮已删（后者搬进三横弹窗）
+//   · IndexSearchType —— 「喵阅」「列表/宫格」文字按钮已删（后者搬进三横弹窗）；
+//     该组件本身已于 2026-11-04 批 C-18 作为零引用死文件整体删除。
 //   · AppRouter / RouteName / BookManageRouteParam —— 「管理」文字按钮已删
 //     （用户：「管理直接删除就行，因为在更多里面有入口」⇒ 「⋯」里的「批量管理」同页）
 //   · ShelfColors —— 只剩 `NightMode` 在用
@@ -30,7 +31,8 @@ export default struct BookBodyContent {
    * ⇒ 它从「最近阅读」（一个**看起来像功能**的名字）改成品牌名「喵阅」，且**纯文字、不可点**。
    *   真正的「最近」功能已迁到分组行第一个 chip（见 `GroupType` 的虚拟 chip）。
    * ⚠️ 注意它与 `searchValue` 是两回事：`searchValue` 用于 chip 高亮判定
-   *   （`IndexSearchType.chipFg` 比较 `searchValue === title`），本字段只负责**显示**。
+   *   （**旧的** chip 组件用纯函数比较 `searchValue === title` 决定字色；该组件
+   *   已于 2026-11-04 批 C-18 删除，判定式留在这里只作语义留档），本字段只负责**显示**。
    */
   @State title: string = '喵阅'
   /**

@@ -333,8 +333,9 @@ export class ShelfColors {
    * ⇒ WCAG 对比度 **1.36:1**（黄主题最差 1.02:1；大字粗体门槛也要 3:1）。
    * 同一个 `mainColor` 压在浅底 `#FFFFFF` 上也只有 2.2–3.8:1 ⇒ 主标题一律走本方法：
    * 日间近黑（压在彩带上 8.6:1）、夜间近白（14.9:1）。
-   * ⚠️ 取值与 `IndexSearchType.chipFg()`、`BookMark` 的 `isBackground=false` 分支
-   *    逐字一致（那两处可后续并入本方法，本次未动以免扩大改动面）。
+   * ⚠️ 取值与**已删除的两个 chip 组件**（`IndexSearchType` 的 `chipFg()`、`BookMark` 的
+   *    `isBackground=false` 分支；两者均于 2026-11-04 批 C-18 作为零引用死文件删除）
+   *    逐字一致 —— 当年那两处就是抄这两行，故本方法是这套取值**唯一的现役实现**。
    */
   static textMain(): string {
     return NightMode.isDarkSurface() ? 'rgba(248, 249, 250, 1)' : 'rgba(0, 0, 0, 1.00)';
