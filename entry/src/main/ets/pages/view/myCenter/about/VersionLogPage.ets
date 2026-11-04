@@ -29,14 +29,22 @@ export default struct VersionLogPage {
             ForEach(VERSION_LOGS, (entry: VersionEntry) => {
               Column({ space: 10 }) {
                 Row({ space: 8 }) {
+                  // ⚠️ 2026-11-05 修「日期溢出」：原来两个 Text 都没有宽度约束，
+                  //   版本号标题一长就整行占满（还会换行），把日期挤到卡片外面
+                  //   （真机 dump：版本 [121,328][1153,454] 换行 2 行，日期 [1180,368][1320,415]
+                  //    右缘直接顶到屏幕 1320，而卡片内容右界只有 1199）。
+                  //   ⇒ 版本号 `layoutWeight(1)` 吃剩余宽（可自由换行），日期 `flexShrink(0)`
+                  //     先按自身内容量出宽度、不参与压缩；行内竖向顶对齐，标题换行时日期停在首行。
                   Text(entry.version)
                     .fontSize(16).fontWeight(600)
                     .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
                   if (entry.date !== '') {
-                    Text(entry.date).fontSize(12).opacity(0.45)
+                    Text(entry.date).fontSize(12).opacity(0.45).flexShrink(0)
                   }
                 }
                 .width('100%')
+                .alignItems(VerticalAlign.Top)
 
                 ForEach(entry.items, (item: string, idx: number) => {
                   Row({ space: 8 }) {

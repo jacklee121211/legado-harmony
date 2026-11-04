@@ -14,13 +14,13 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V3.0.12'
+export const APP_VERSION_FALLBACK: string = 'V3.0.13'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.12 阅读器版式跨设备对齐与亮暗隔离',
-    date: '2026-11-01',
+    version: 'V3.0.13',
+    date: '2026-11-04',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -88,8 +88,6 @@ export const VERSION_LOGS: VersionEntry[] = [
       '电脑阅读与手机的进度、书签单向隔离，互不覆盖',
       '平板 / 2in1 横屏时 TXT 阅读方式进一步精简为横滑 / 上下 / 无动画（去掉仿真）',
       '自绘档字重按屏幕密度自动补偿，不同设备观感一致',
-      '折叠屏展开 / 折叠切换更平滑，减少重复重排',
-      '阅读器底部栏、专属弹窗与内部控件（进度胶囊、设置面板、目录/书签按钮、睡眠定时、「正在排版…」占位）改为自绘显式底色，四档外观一致，系统深色与页面切换时不再发黑',
     ]
   },
 ]
