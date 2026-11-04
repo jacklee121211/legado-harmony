@@ -1028,9 +1028,12 @@ export class WifiBookServer {
                 console.info(`${TAG} device paired, total=${webCredential.deviceCount()}`);
                 WifiBookServer.notify();
                 // 令牌只经 Cookie 下发（HttpOnly ⇒ 页面脚本读不到，降低 XSS 影响）
+                // 2026-11-05 修复：respondRaw 的 setCookie 参数只收 cookie-pair，
+                // 头名 `Set-Cookie: ` 由出口统一拼 —— 这里多传一层前缀，实发头变成
+                // `Set-Cookie: Set-Cookie: mr_dev=...`，浏览器直接丢弃该 Cookie。
                 WifiBookServer.respondRaw(client, 200, 'text/html; charset=utf-8',
                     WifiBookServer.pairOkPageBytes(token), noopClose,
-                    `Set-Cookie: ${DEVICE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
+                    `${DEVICE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
                 return;
             }
             console.error(`${TAG} pair code rejected from ${ip}`);
@@ -1070,9 +1073,10 @@ export class WifiBookServer {
             // **无 Cookie 化（2026-10-06）**：令牌直接放进响应体（页面存 localStorage 并附到
             // 每个请求）——Set-Cookie 仍下发作为兼容冗余，但不再依赖它（真机实证有浏览器
             // 不回传 Cookie ⇒ "配对成功却进不去"）。
+            // setCookie 参数只收 cookie-pair（头名由 respondRaw 统一拼，2026-11-05 修复双前缀）
             WifiBookServer.respondRaw(client, 200, 'application/json; charset=utf-8',
                 WifiBookServer.textBytes(JSON.stringify({ ok: true, msg: 'paired', token: token })), noopClose,
-                `Set-Cookie: ${DEVICE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
+                `${DEVICE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
             return;
         }
         console.error(`${TAG} pair code rejected from ${ip}`);
