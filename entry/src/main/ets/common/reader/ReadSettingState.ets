@@ -18,11 +18,11 @@
 //     仅会通知property关联的组件进行刷新」「需通过 new 操作符实例化后，才具备被观测变化的能力」
 //   「@Trace不支持观察Function类型的数据」⇒ 本类**不放回调/方法字段**，方法只是普通成员函数。
 //
-// ── 当前状态（2026-11-04 S2-c(6) 后，8/13 字段已是真源）────────────────────────
+// ── 当前状态（2026-11-04 S2-c(7) 后，9/13 字段已是真源）────────────────────────
 // · **已迁字段**（`ReaderPage3.MIGRATED_SETTING_FIELDS`）：fontSize / lineHeight / fontName /
-//   fontPath / fontWeight / nightMode / themeColor / themeBgImg —— 这 8 个字段以本类为准，
+//   fontPath / fontWeight / nightMode / themeColor / themeBgImg / flipMode —— 这 9 个字段以本类为准，
 //   运行期写入口先改本类、再同步回页面 `readerSetting` 的快照；装载期（读持久位/接续/全局记录）相反。
-// · **未迁字段**（flipMode / scaledDensity / viewPortWidth / viewPortHeight）：
+// · **未迁字段**（scaledDensity / viewPortWidth / viewPortHeight）：
 //   本类只是镜像，边界处由 `syncFromExcept()` 从页面快照回灌。
 // · 全部迁完后：删掉 `syncFromExcept` 与页面 `@State readerSetting`，本类即唯一真源。
 //

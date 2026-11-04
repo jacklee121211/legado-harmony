@@ -4206,6 +4206,10 @@ oAnimInitNode 配套） */
       this.settingState.themeColor = this.readerSetting.themeColor ?? this.settingState.themeColor;
       // 背景图（S2-c 第六批）：装载期方向 = 持久位 → 模型（写反则用户存的材质背景每次进书都丢）
       this.settingState.themeBgImg = this.readerSetting.themeBgImg ?? this.settingState.themeBgImg;
+      // 翻页方式（S2-c 第七批）：装载期方向 = 持久位 → 模型。注意它只是**引擎侧投影**，
+      //   "读方式"的真源仍是按书持久化的 `ReaderMode_<书名>`（见 `loadReadMode()` 注释），
+      //   这里只保证"边界出口拿到的是持久位里那份值"，避免下面 loadReadMode 之前就被默认值顶上。
+      this.settingState.flipMode = this.readerSetting.flipMode ?? this.settingState.flipMode;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4260,7 +4264,9 @@ oAnimInitNode 配套） */
       // ⚠️ 只对**分页两档**回写引擎的 `flipMode`：'0'/'1' 是 ReaderKit 合法取值，
       //   '2'（滚动）/ '3'（无动画）是自绘档，写进引擎会被当非法值。
       if (temp.continueFlipMode === '0' || temp.continueFlipMode === '1') {
-        this.readerSetting.flipMode = temp.continueFlipMode;
+        // 2026-11-04（S2-c 第七批）：接续属装载期，来源为准 → 灌进模型（再同步快照）
+        this.settingState.flipMode = temp.continueFlipMode;
+        this.readerSetting.flipMode = this.settingState.flipMode;
       }
       // ⚠️⚠️ 只改 `readerSetting.flipMode` **不生效**（2026-10-23 真机日志定案）：
       //   `loadReadMode()`（:3947 调用）优先读**按书持久化**的
@@ -10358,8 +10364,11 @@ oAnimInitNode 配套） */
     }
     this.readMode = m;
     // 分页两档要和引擎的 `flipMode` 对齐（滚动/无动画档不改它，保留上次的分页偏好）
+    // 2026-11-04（S2-c 第七批）：属**装载期派生** —— 来源是持久位/默认值推出的 `m`，
+    //   方向仍是"来源 → 模型"，再由模型同步回快照（写反会让引擎拿到旧的翻页方式）。
     if (m === READ_MODE_FLIP_CURL || m === READ_MODE_FLIP_SLIDE) {
-      this.readerSetting.flipMode = m === READ_MODE_FLIP_SLIDE ? '1' : '0';
+      this.settingState.flipMode = m === READ_MODE_FLIP_SLIDE ? '1' : '0';
+      this.readerSetting.flipMode = this.settingState.flipMode;
     }
     hilog.info(0x0000, 'testTag', 'readMode loaded: %{public}d (flipMode=%{public}s)',
       m, this.readerSetting.flipMode);
@@ -10538,7 +10547,9 @@ oAnimInitNode 配套） */
     } else if (!nextSelf && prevSelf) {
       // ── 自绘层 → 分页：让引擎定位到自绘层的位置 ────────────────────────────
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
-        this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
+        // 2026-11-04（S2-c 第七批）：运行期 = 模型为准 → 快照（必须在下行边界出口之前）
+        this.settingState.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
+        this.readerSetting.flipMode = this.settingState.flipMode;
         try {
           this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
@@ -10593,7 +10604,9 @@ oAnimInitNode 配套） */
     } else {
       // ── 分页 → 分页（0↔1）：只改引擎 flipMode ─────────────────────────────
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
-        this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
+        // 2026-11-04（S2-c 第七批）：运行期 = 模型为准 → 快照（必须在下行边界出口之前）
+        this.settingState.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
+        this.readerSetting.flipMode = this.settingState.flipMode;
         try {
           this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
@@ -10921,7 +10934,7 @@ oAnimInitNode 配套） */
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting` 与 `syncFromExcept`，`settingState` 成为唯一真源。
    */
   private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
-    'nightMode', 'themeColor', 'themeBgImg'];
+    'nightMode', 'themeColor', 'themeBgImg', 'flipMode'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
@@ -10941,7 +10954,7 @@ oAnimInitNode 配套） */
    *   · **已迁字段**（在登记表里）以**模型**为准 —— 跳过，不从页面快照回灌；
    *   · **未迁字段**从页面快照回灌 —— 否则快照会丢值。
    * 然后 `settingState.snapshot()` 取**纯对象**（逐字段拷贝，天然不含 `__ob_`）。
-   * 真源**逐步**从 `@State readerSetting` 转给模型（当前 8/13），258+ 个读点仍读页面快照 ⇒ **行为零变化**。
+   * 真源**逐步**从 `@State readerSetting` 转给模型（当前 9/13），258+ 个读点仍读页面快照 ⇒ **行为零变化**。
    *
    * ── 零行为变化 ──────────────────────────────────────────────────────────────
    * `snapshot()` 只做逐字段拷贝，**不改任何值**；`pickReadSettingFields()` 再按白名单兜一次

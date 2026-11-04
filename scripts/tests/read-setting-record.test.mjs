@@ -289,8 +289,9 @@ const RATCHET_DIRECT_WRITES = 63
  *   fontSize / lineHeight / fontName / fontPath / fontWeight / nightMode → 42
  *   themeColor（8）→ 34
  *   themeBgImg（10：9 运行期 + 1 装载期接续）→ 24
+ *   flipMode（4：2 运行期 switchReadMode + 接续 + loadReadMode 派生）→ 20
  */
-const RATCHET_UNMIGRATED_WRITES = 24
+const RATCHET_UNMIGRATED_WRITES = 20
 
 /**
  * 去掉注释后的页面源码。
