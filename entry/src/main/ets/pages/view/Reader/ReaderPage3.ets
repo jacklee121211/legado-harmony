@@ -73,7 +73,7 @@ import { parseDomPos, domPosFor, clampProgressUnit,
 import ReaderSession, { LocateTarget, FlipSearch, PublishFacts } from '../../../common/reader/ReaderSession';
 // 2026-11-04（渲染侧 S2-a）：设置的**默认值/编解码/校验**收在纯记录层（可单测）。
 //   本页本轮只接"默认值"这一处，字段读写仍在本页（S2-b/c 再逐批迁移，每批可单独回退）。
-import { defaultReadSettingRecord, pickReadSettingFields } from '../../../common/reader/ReadSettingRecord';
+import { defaultReadSettingRecord, pickReadSettingFields, ReadSettingRecord } from '../../../common/reader/ReadSettingRecord';
 // 2026-11-04（渲染侧 S2-b-2）：设置的响应式模型壳。⚠️ 必须是**普通成员**（不加 @State/@Prop/@Link）——
 //   官方 `arkts-v1-v2-mixusage` 限制条件 2：「V2->V1，V1不支持用装饰器接收@ObservedV2装饰的class，否则编译报错。」
 //   本轮只把它当"镜子"用（边界上映像 + 取快照），真源仍是本页 `@State readerSetting`。
@@ -2098,7 +2098,7 @@ oAnimInitNode 配套） */
   private commitCustomColor(): void {
     Haptics.tap()
     if (this.fontTarget) {
-      // 2026-11-04（S2-c 第九批）：fontColor 真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
+      // 2026-11-04（S2-c 第九批）：fontColor 真源已迁到模型（`ReadSettingState.fontColor`）
       this.settingState.fontColor = this.customFontHex()
       this.readerSetting.fontColor = this.settingState.fontColor
       this.fontAuto = false
@@ -2609,7 +2609,7 @@ oAnimInitNode 配套） */
         this.readerSetting.fontColor = this.settingState.fontColor;
         this.settingState.themeColor = item.themeColor
         this.readerSetting.themeColor = this.settingState.themeColor;
-        // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
+        // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（`ReadSettingState.themeBgImg`）
         this.settingState.themeBgImg = item.themeBgImg
         this.readerSetting.themeBgImg = this.settingState.themeBgImg;
       })
@@ -3242,7 +3242,7 @@ oAnimInitNode 配套） */
   /** 应用字体（弹窗回调）：写 readerSetting → 引擎重排 → 高亮标尺重算 */
   private applyFont(name: string, path: string): void {
     this.markFontOverride()
-    // 2026-11-04（S2-c）：字体族名/路径真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
+    // 2026-11-04（S2-c）：字体族名/路径真源已迁到模型（`ReadSettingState.fontName/fontPath`）
     this.settingState.fontName = name
     this.settingState.fontPath = path
     this.readerSetting.fontName = this.settingState.fontName
@@ -3285,7 +3285,7 @@ oAnimInitNode 配套） */
 
   private applyLineHeight(v: number): void {
     this.markFontOverride()
-    // 2026-11-04（S2-c）：行距真源同字号一样已在模型（见 `MIGRATED_SETTING_FIELDS`）。
+    // 2026-11-04（S2-c）：行距真源同字号一样已在模型（`ReadSettingState.lineHeight`）。
     this.settingState.lineHeight = Math.round(v * 10) / 10
     this.readerSetting.lineHeight = this.settingState.lineHeight
     this.readerComponentController.setPageConfig(this.settingForBoundary())
@@ -10954,58 +10954,31 @@ oAnimInitNode 配套） */
   }
 
   /**
-   * 已从 `@State readerSetting` 迁到 `@ObservedV2` 模型（`settingState`）的字段（2026-11-04 渲染侧 S2-c）。
-   *
-   * ⚠️ **迁移期的真实做法是"双写"，不是"把读点全改掉"**（这一点与最初设想不同，写清避免误解）：
-   * · **运行期写点**（用户改设置）：`this.settingState.X = v;` 紧跟 `this.readerSetting.X = this.settingState.X;`
-   *   —— 模型是真源，页面 `readerSetting` 保一份**快照**供 259 个未改的读点使用；
-   * · **装载期写点**（读持久位 / 接续参数 / 全局字体记录 / 迁移补丁）：方向相反，`模型 = 来源值`；
-   * · 每个已迁字段因此会**多出一行** `readerSetting.X = settingState.X`，所以"页面直写点总数"在迁移期不降。
-   *
-   * 两道棘轮（`scripts/tests/read-setting-record.test.mjs`）：
-   * · `RATCHET_DIRECT_WRITES`：直写点总数不许**增长**；
-   * · `RATCHET_UNMIGRATED_WRITES`：**未迁字段**的直写点数（真正的进度计，只许降，迁完为 0）。
-   *   每迁一个字段必须同步下调它，否则测试会提示但不会红（提醒型）。
-   *
-   * 全部迁完后：删掉这个数组、删掉 `@State readerSetting` 与 `syncFromExcept`，`settingState` 成为唯一真源。
-   */
-  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
-    'nightMode', 'themeColor', 'themeBgImg', 'flipMode', 'scaledDensity', 'viewPortWidth', 'viewPortHeight',
-    'fontColor'];
-
-  /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
    *
    * ── 为什么要有它 ────────────────────────────────────────────────────────────
    * 本页有 **16 处** `setPageConfig(...)` 与 **6 处** `putSync('ReaderSetting_<书名>', ...)`，
-   * 它们都在"把设置交给外部"这一侧。将来设置改由 `@ObservedV2` 模型承载时
-   * （S2-b-2，依据 `docs/渲染侧-S1-设置模型取证与决策-2026-11-04.md` §3.1），
-   * **模型实例绝不能直接交给引擎或 Preferences**：
+   * 它们都在"把设置交给外部"这一侧。设置的真源是 `@ObservedV2` 模型（`settingState`），
+   * 但**模型实例绝不能直接交给引擎或 Preferences**：
    *   · 引擎要的是 `readerCore.ReaderSetting` 纯接口对象；
    *   · Preferences 会由平台侧序列化，而 V2 会生成 `__ob_` 前缀键
-   *     （官方 FAQ `faqs-arkui-1587`）⇒ 写出脏数据（本工程历史上已被污染过一次，见 `:4133-4144`）。
-   * ⇒ 把所有边界收敛到这**一个**方法，将来只改这里一处就够。
+   *     （官方 FAQ `faqs-arkui-1587`）⇒ 写出脏数据（本工程历史上已被污染过一次）。
+   * ⇒ 把所有边界收敛到这**一个**方法。
    *
-   * ── 迁移期（S2-c 起）的真实流程 ─────────────────────────────────────────────
-   * `settingState.syncFromExcept(this.readerSetting, this.MIGRATED_SETTING_FIELDS)`：
-   *   · **已迁字段**（在登记表里）以**模型**为准 —— 跳过，不从页面快照回灌；
-   *   · **未迁字段**从页面快照回灌 —— 否则快照会丢值。
-   * 然后 `settingState.snapshot()` 取**纯对象**（逐字段拷贝，天然不含 `__ob_`）。
-   * 真源**逐步**从 `@State readerSetting` 转给模型（当前 9/13），258+ 个读点仍读页面快照 ⇒ **行为零变化**。
-   *
-   * ── 零行为变化 ──────────────────────────────────────────────────────────────
-   * `snapshot()` 只做逐字段拷贝，**不改任何值**；`pickReadSettingFields()` 再按白名单兜一次
-   * （防御性：万一将来有人往模型里塞了非 13 字段的东西），不满足时**原样返回入参**。
+   * ── 当前实现（S2-c(10) 起，脚手架已拆）───────────────────────────────────────
+   * 13 个字段全部以模型为准 ⇒ **不再需要** `syncFromExcept(...)` 把页面快照回灌进来
+   * （那一步在迁移期是必需的，迁完就变成"陈旧快照盖掉模型"的隐患，已删除）。
+   * 这里只做 `snapshot()`（逐字段拷贝的纯对象，天然不含 `__ob_`）+ 白名单兜底。
    */
   private settingForBoundary(): readerCore.ReaderSetting {
-    // 2026-11-04（S2-c）：迁移期同步 —— 已迁字段（见 `MIGRATED_SETTING_FIELDS`）以模型为准，
-    //   未迁字段从页面快照回灌。全部迁完后这里只剩 `snapshot()`，本页 `@State readerSetting` 可删。
-    this.settingState.syncFromExcept(this.readerSetting, this.MIGRATED_SETTING_FIELDS);
-    const picked: Object | null = pickReadSettingFields(this.settingState.snapshot());
-    if (picked === null) {
-      return this.readerSetting;
-    }
-    return picked as readerCore.ReaderSetting;
+    // ⚠️ 不能写 `const snap: readerCore.ReaderSetting = snapshot()`：`snapshot()` 返回记录层的
+    //   `ReadSettingRecord`，ArkTS 禁止结构化类型互赋（实测报 `arkts-no-structural-typing`）。
+    //   ⇒ 类型声明用 `ReadSettingRecord`，最后统一 `as readerCore.ReaderSetting`。
+    const snap: ReadSettingRecord = this.settingState.snapshot();
+    const picked: Object | null = pickReadSettingFields(snap);
+    // `picked === null` 只在"13 字段类型不合规"时发生；`snapshot()` 逐字段显式拷贝，
+    // 类型由模型声明保证 ⇒ 事实上不可达。真到了这里也返回**同一份纯对象**（绝不返回模型实例）。
+    return (picked === null ? snap : picked) as readerCore.ReaderSetting;
   }
 
   /** 把滚动位置写成与 `pageShow` 同构的 `PageDataInfo` 并落盘 */

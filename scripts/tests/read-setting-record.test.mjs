@@ -264,11 +264,20 @@ test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，�
   // 反向断言：不许出现带装饰器的持有形态
   assert.equal(/(@State|@Prop|@Link|@StorageLink)\s+settingState/.test(PAGE_SRC), false,
     '模型实例不能加任何 V1 装饰器')
-  // 边界出口必须过一遍模型（S2-b-2/S2-c 的"迁移期同步"）
-  assert.match(PAGE_SRC, /this\.settingState\.syncFromExcept\(this\.readerSetting, this\.MIGRATED_SETTING_FIELDS\)/,
-    '边界投影应先把当前值同步进模型（跳过已迁字段）')
-  assert.match(PAGE_SRC, /pickReadSettingFields\(this\.settingState\.snapshot\(\)\)/,
+  // 边界出口必须**只**取模型快照（S2-c(10) 起脚手架已拆：不再有 syncFromExcept 回灌）
+  //   注：`ReaderPage3` 的注释里仍保留 "不再需要 syncFromExcept(...)" 这类历史说明
+  //   ⇒ 这里剔掉注释再断言，避免把"说明性文字"当成调用。
+  const CODE = PAGE_SRC
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  assert.equal(/syncFromExcept/.test(CODE), false,
+    '迁移脚手架 syncFromExcept 应已删除（13 字段全迁完后它就是"陈旧快照盖掉模型"的隐患）')
+  assert.equal(/MIGRATED_SETTING_FIELDS/.test(CODE), false,
+    '迁移登记表 MIGRATED_SETTING_FIELDS 应已删除')
+  assert.match(PAGE_SRC, /pickReadSettingFields\(snap\)/,
     '边界必须取模型快照后再走白名单兜底')
+  assert.match(PAGE_SRC, /this\.settingState\.snapshot\(\)/,
+    '边界出口的唯一数据来源必须是模型快照')
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -334,13 +343,11 @@ test('进度计：未迁字段的直写点只许降（迁移期的真实进度�
   }
 })
 
-test('迁移规范：已迁字段在页面里只能"模型→快照"单向写，不能再出现直写', () => {
-  const migrated = /private MIGRATED_SETTING_FIELDS: string\[\] = \[([^\]]*)\]/.exec(PAGE_SRC)
-  assert.ok(migrated, '找不到 MIGRATED_SETTING_FIELDS 数组（迁移登记处）')
-  const fields = migrated[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter((s) => s.length > 0)
-  assert.ok(fields.length >= 1, '至少应有一个字段已迁（本轮样板 = fontSize）')
+test('迁移完成：13 个字段在页面里的写点只能"模型→快照"单向写（不再有直写）', () => {
+  // S2-c(10) 起 13 字段全部是模型真源 ⇒ 直接拿 SDK 字段集合逐个查，不再依赖迁移登记表。
+  assert.ok(SDK_FIELDS.length === 13)
 
-  for (const f of fields) {
+  for (const f of SDK_FIELDS) {
     // ① 不允许 `this.readerSetting.<f> = 任意其它值`（只允许 `= this.settingState.<f>`）
     //   ⚠️ 这里**刻意不用正则**：本字段迁移检查我连续写错两版正则
     //     （`\s*` 含换行导致跨行误判；`String.raw` 里 `[ \t]` 变成"反斜杠+t" 字符集），
@@ -369,9 +376,10 @@ test('迁移规范：已迁字段在页面里只能"模型→快照"单向写，
       }
     }
     assert.equal(badHits.length, 0,
-      `字段 ${f} 已迁到模型，页面里的写点必须写成 "this.readerSetting.${f} = this.settingState.${f}"；`
+      `字段 ${f} 已是模型真源，页面里的写点必须写成 "this.readerSetting.${f} = this.settingState.${f}"；`
       + `违规 ${badHits.length} 处：${badHits.join(' | ')}`)
-    // ② 必须存在"模型 → 快照"的同步（否则 259 个读点会读到旧值）
+    // ② `@State readerSetting` 仍是快照 ⇒ 每个字段至少要有 1 处"模型 → 快照"同步，
+    //    否则页面里那 200+ 个读点会读到旧值。
     assert.ok(okHits.length > 0, `字段 ${f} 缺少"模型 → 页面快照"的同步语句`)
   }
 })

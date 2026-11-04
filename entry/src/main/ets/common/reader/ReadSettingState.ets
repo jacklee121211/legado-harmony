@@ -18,14 +18,18 @@
 //     仅会通知property关联的组件进行刷新」「需通过 new 操作符实例化后，才具备被观测变化的能力」
 //   「@Trace不支持观察Function类型的数据」⇒ 本类**不放回调/方法字段**，方法只是普通成员函数。
 //
-// ── 当前状态（2026-11-04 S2-c(9) 后，**13/13 字段已是真源**）─────────────────────
-// · **已迁字段** = `ReaderCore.ReaderSetting` 全部 13 个（`ReaderPage3.MIGRATED_SETTING_FIELDS`）：
+// ── 当前状态（2026-11-04 S2-c(10) 后，**13/13 字段已是真源**）─────────────────────
+// · **已迁字段** = `readerCore.ReaderSetting` 全部 13 个：
 //   fontName / fontSize / fontWeight / fontColor / fontPath / lineHeight / nightMode /
 //   themeColor / themeBgImg / flipMode / scaledDensity / viewPortWidth / viewPortHeight。
 //   运行期写入口先改本类、再同步回页面 `readerSetting` 的快照（供未改的读点使用）；
 //   装载期与设备度量类来源（持久位/接续/全局记录/窗口/系统密度）方向相反：来源 → 本类 → 快照。
 // · **未迁字段**：无。进度计（`RATCHET_UNMIGRATED_WRITES`）= 0。
-// · 剩余收尾：删掉 `syncFromExcept` 与页面 `@State readerSetting`（独立批次，见状态卡 §2）。
+// · **迁移脚手架已拆**（S2-c(10)）：`syncFromExcept()` 与 `ReaderPage3.MIGRATED_SETTING_FIELDS`
+//   已删除 —— 边界出口不再从页面快照回灌，杜绝"陈旧快照盖掉模型"这一类隐患。
+// · 仍保留：页面 `@State readerSetting`（纯快照）。删它需要先解决两件事，见施工记录 §90.4：
+//   ① 25+ 处把它当**参数**传给 `geom()` / `scrollFontFamily()` 等纯函数（改传本类实例有 `__ob_` 外溢风险）；
+//   ② V1 `@Component` 读 V2 `@Trace` 驱动 UI 刷新这一能力尚未真机验证。
 //
 // ── `__ob_` 陷阱（官方原文）──────────────────────────────────────────────────
 // documentId `FAQ/UI框架/组件使用/ObservedV2与_Trace装饰的对象key都带有_ob_导致反序列化异常/faqs-arkui-1587`：
@@ -80,65 +84,6 @@ export class ReadSettingState {
     this.scaledDensity = rec.scaledDensity
     this.viewPortWidth = rec.viewPortWidth
     this.viewPortHeight = rec.viewPortHeight
-  }
-
-  /**
-   * 迁移期同步（S2-c）：把页面快照里的字段灌进模型，**但跳过本类已经成为真源的字段**。
-   *
-   * ── 为什么需要"跳过"──────────────────────────────────────────────────────
-   * 字段是**分批**从 `@State readerSetting` 迁到本类的（一次全迁要动 67 处写点，风险过高）。
-   * 迁移期内：
-   *   · 已迁字段（在 `keep` 里）以**本类**为准 —— 页面那份只是快照，回灌会把它覆盖掉；
-   *   · 未迁字段仍以页面为准 —— 需要镜像进来，否则快照会丢值。
-   *
-   * ⚠️ 这是**临时形态**。全部字段迁完后本方法应删除，`snapshot()` 直接就是唯一真源。
-   * @param src 页面当前的 `readerSetting`
-   * @param keep 已迁字段名（本类为准，不从 src 回灌）
-   */
-  syncFromExcept(src: Object | null | undefined, keep: string[]): void {
-    const base: ReadSettingRecord = defaultReadSettingRecord(
-      this.scaledDensity > 0 ? this.scaledDensity : 1, this.viewPortWidth, this.viewPortHeight)
-    const rec: ReadSettingRecord = fromReadSettingRecord(src, base)
-    const skip = (k: string): boolean => keep.indexOf(k) >= 0
-    if (!skip('fontName')) {
-      this.fontName = rec.fontName
-    }
-    if (!skip('fontSize')) {
-      this.fontSize = rec.fontSize
-    }
-    if (!skip('fontWeight')) {
-      this.fontWeight = rec.fontWeight
-    }
-    if (!skip('fontColor')) {
-      this.fontColor = rec.fontColor
-    }
-    if (!skip('fontPath')) {
-      this.fontPath = rec.fontPath
-    }
-    if (!skip('lineHeight')) {
-      this.lineHeight = rec.lineHeight
-    }
-    if (!skip('nightMode')) {
-      this.nightMode = rec.nightMode
-    }
-    if (!skip('themeColor')) {
-      this.themeColor = rec.themeColor
-    }
-    if (!skip('themeBgImg')) {
-      this.themeBgImg = rec.themeBgImg
-    }
-    if (!skip('flipMode')) {
-      this.flipMode = rec.flipMode
-    }
-    if (!skip('scaledDensity')) {
-      this.scaledDensity = rec.scaledDensity
-    }
-    if (!skip('viewPortWidth')) {
-      this.viewPortWidth = rec.viewPortWidth
-    }
-    if (!skip('viewPortHeight')) {
-      this.viewPortHeight = rec.viewPortHeight
-    }
   }
 
   /**
