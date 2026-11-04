@@ -87,8 +87,8 @@ import { NightMode } from '../../../common/utils/NightMode';
 import { TtsControlPanel } from '../../../components/tts/TtsControlPanel';
 // ── 自定义背景色（2026-09-25 新增）─────────────────────────────────────────────
 // `ReaderCustomBg`：色彩数学 + 按书/全局持久化（文件头有"背景色是渲染还是图片"的取证）；
-// `ReaderBgPalette`：无极调色盘组件（纯 UI + 取色回调，不碰持久化）；
-// `HapticTick`：滑条/调色盘的线性震动（与听书面板同源的已验证实现）。
+// `ReaderBgPalette`（无极调色盘）与 `HapticTick`（滑条线性震动）2026-11-04 R-2-b 起
+//   只被 `ReaderCustomColorBlock.ets` 使用 —— 页面这两个 import 已随之删除。
 import { ReaderCustomBg, ReaderBgRecord, SchemeV3,
   BG_BLUR_TIERS, BG_BLUR_RADIUS_DEFAULT } from '../../../common/utils/ReaderCustomBg';
 import { ReaderTexture, ComposeResult } from '../../../common/utils/ReaderTexture';
@@ -112,7 +112,7 @@ import { VipDialog } from '../../../componets/myCenter/VipDialog';
 import { VipManager } from '../../../common/utils/VipManager';
 // ── 离线模式（2026-10-13 新增）：隐藏阅读器内依赖网络的入口 ──
 import { OfflineMode } from '../../../common/utils/OfflineMode';
-import { ReaderBgPalette } from './ReaderBgPalette';
+import { ReaderCustomColorBlock } from './ReaderCustomColorBlock';
 // ── 上下滚动阅读（2026-10-20 新增：阅读方式第三档）──────────────────────────
 // ReaderKit 只有仿真/横滑两档（`flipMode` '0'/'1'，SDK 全文无滚动字段），
 // 这一档由我们自己用 ArkUI 铺段落实现，见 `ReaderScrollView.ets` 文件头。
@@ -125,7 +125,6 @@ import { buildChapterNodes } from '../../../tts/ChapterNodes';
 // 分页算法与沉浸听读层共用 `ReaderPager.paginateNodes()`（唯一实现，防漂移）。
 import { ReaderPageNoAnim, ChapterCacheEntry } from './ReaderPageNoAnim';
 import { paginateNodes, PaginateResult } from './ReaderPager';
-import { HapticTick } from '../../../common/utils/HapticTick';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics';
 import MySetConstants from '../../../common/constants/MySetConstants';
@@ -1939,10 +1938,8 @@ oAnimInitNode 配套） */
   private customBgTouched: boolean = false
   /** 上次真正下发 `setPageConfig` 的时刻（节流用，见 `CUSTOM_BG_APPLY_GAP_MS`） */
   private customBgAppliedAt: number = 0
-  /** RGB 滑条轨道的实测宽度（vp）—— 气泡按滑块位置定位用（普通字段即可：读取发生在重建时） */
-  private bgSliderW: number = 0
-  /** 当前正在拖动、需要显示气泡的通道（-1 = 不显示；0/1/2 = R/G/B） */
-  @State bgTipCh: number = -1
+  // 2026-11-04（R-2-b）：`bgSliderW` / `bgTipCh` / `bgTipX()` / `onCustomBgSliderChange()` 已随
+  //   「自定义颜色」块搬进 `ReaderCustomColorBlock.ets`（纯视图层状态，离开该块无意义）。
 
   // ── 材质背景（2026-09-25 新增，同日按用户意见二次改造）──────────────────────
   // 用户原话：「取消材质混合，没用，直接取消，**自定义就是自定义，背景就是背景
@@ -2032,42 +2029,9 @@ oAnimInitNode 配套） */
   @State customFontR: number = 0
   @State customFontG: number = 0
   @State customFontB: number = 0
-
-  /**
-   * 气泡左上角 x（相对滑条轨道左边缘，vp）。
-   *
-   * 算法照抄官方 FAQ `faqs-arkui-1198` 的 `calculateExactPosition`：
-   *   滑块中心 = 百分比 × (轨道宽 − 滑块宽) + 滑块宽 / 2；
-   *   气泡 x   = clamp(滑块中心 − 气泡宽 / 2, 0, 轨道宽 − 气泡宽)（夹在轨道内，不出界）。
-   * 轨道宽还没测到（=0）时返回 0，气泡先贴在左端，下一帧测到就归位。
-   */
-  private bgTipX(value: number): number {
-    const w = this.bgSliderW
-    if (!(w > 0)) {
-      return 0
-    }
-    const blockW = 22
-    const tipW = 44
-    const percent = ReaderCustomBg.clamp(value, 0, 255) / 255
-    const center = percent * (w - blockW) + blockW / 2
-    return Math.max(0, Math.min(center - tipW / 2, w - tipW))
-  }
-
-  /**
-   * 三条 RGB 滑条的 `onChange` 收口：气泡显隐 + **草稿**更新 + 线性震动。
-   *
-   * · `Begin / Moving / Click` ⇒ 显示气泡（内容 = 当前数字，随 @State 实时刷新）；
-   * · 2026-09-25 用户改版（保存键方案）：滑条**只改草稿**（背景草稿或字色草稿，
-   *   按 `fontTarget` 分流），**不再直接生效** —— 按「保存」按钮才应用到引擎并落盘。
-   *   这就是"焦点问题"的最终解：圈永远标着最后一次被「保存」的东西。
-   */
-  private onCustomBgSliderChange(mode: SliderChangeMode, channel: number): void {
-    const dragging: boolean = mode === SliderChangeMode.Begin
-      || mode === SliderChangeMode.Moving
-      || mode === SliderChangeMode.Click
-    this.bgTipCh = dragging ? channel : -1
-    HapticTick.tick()
-  }
+  // 2026-11-04（R-2-b）：`bgTipX()` / `onCustomBgSliderChange()` / `draftR/G/B()` / `setDraft()`
+  //   已随「自定义颜色」块搬进 `ReaderCustomColorBlock.ets`（纯草稿助手，只有那块在用）。
+  //   页面保留：`customBgHex()` / `customFontHex()`（落盘链路）与全部播种点。
 
   /** 当前自定义背景色的 HEX（预览块 / 落盘都用它） */
   private customBgHex(): string {
@@ -2082,30 +2046,8 @@ oAnimInitNode 配套） */
   // ── 调色盘草稿读写（2026-09-25 保存键方案）────────────────────────────────
   // 调色盘/RGB 滑条永远只写**草稿**（背景草稿 customBgRGB 或字色草稿 customFontRGB，
   // 按 `fontTarget` 分流）；引擎与持久化只认「保存」按钮的 `commitCustomColor()`。
-
-  private draftR(): number {
-    return this.fontTarget ? this.customFontR : this.customBgR
-  }
-
-  private draftG(): number {
-    return this.fontTarget ? this.customFontG : this.customBgG
-  }
-
-  private draftB(): number {
-    return this.fontTarget ? this.customFontB : this.customBgB
-  }
-
-  private setDraft(r: number, g: number, b: number): void {
-    if (this.fontTarget) {
-      this.customFontR = r
-      this.customFontG = g
-      this.customFontB = b
-    } else {
-      this.customBgR = r
-      this.customBgG = g
-      this.customBgB = b
-    }
-  }
+  // 2026-11-04（R-2-b）：`draftR/G/B()` / `setDraft()` 已搬进 `ReaderCustomColorBlock`
+  //   （草稿用 @Link 双向共享，页面写的 6 个播种点直接写字段）。
 
   /**
    * 「保存」按钮（2026-09-25 用户设计）：把草稿变成正式选择。
@@ -9515,297 +9457,32 @@ oAnimInitNode 配套） */
         }
       })
 
-      // ══ 自定义颜色（2026-09-25 用户改版：保存键方案 + 背景/文字滑块）══════════
-      // 三轮布局反馈：「颜色预览和编号放到现在保存的位置，开关放在自定义颜色后面，
-      //   保存放在现在开关的位置，删除保存后面的说明…**还是两边对齐**」。
-      // 四轮反馈：「**自定义颜色关闭的时候，颜色预览以及保存按钮都没被隐藏**」
-      // ⇒ 第二行（预览+色值+保存）与"背景/文字"滑块都是**自定义模式的配套件**，
-      //   开关关着时一并隐藏（调色盘本来就藏着，留着它们只会误导）。
-      Column({ space: 8 }) {
-        Row({ space: 10 }) {
-          Text('自定义颜色')
-            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-          // ── 自定义颜色开关（进入/退出自定义颜色模式），紧贴标签（用户指定）────
-          if (VipManager.isVip()) {
-            Toggle({ type: ToggleType.Switch, isOn: this.customEditVisible() })
-              .selectedColor('#007DFF')
-              .onChange((value: boolean) => {
-                Haptics.tap();
-                this.toggleCustomBg(value)
-              })
-          } else {
-            // 会员化（2026-09-28）：免费用户看到锁定样式的假开关，点击 → VIP 弹窗
-            //（不用真 Toggle：避免"点了先弹开又弹回"的视觉回弹问题）
-            Stack({ alignContent: Alignment.End }) {
-              Row()
-                .width(40)
-                .height(22)
-                .borderRadius(11)
-                .backgroundColor('rgba(128, 128, 128, 0.45)')
-              Row()
-                .width(18)
-                .height(18)
-                .borderRadius(9)
-                .backgroundColor(Color.White)
-                .margin({ right: 2 })
-            }
-            .onClick(() => {
-              Haptics.tap();
-              this.openVipDialog()
-            })
-          }
-          // 调色盘相关区块的显隐：**已应用**或**展开编辑中**都显示（见 customEditOn 注释）
-          if (this.customEditVisible()) {
-            Blank()
-            // ── "背景 / 文字"滑块：切调色盘的编辑目标（用户口中的"通过滑块切换"）────
-            Text('背景')
-              .fontSize(12)
-              .fontColor(!this.fontTarget ? '#007DFF'
-                : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)'))
-            Toggle({ type: ToggleType.Switch, isOn: this.fontTarget })
-              .selectedColor('#007DFF')
-              .onChange((value: boolean) => {
-                Haptics.tap();
-                this.fontTarget = value
-              })
-            Text('文字')
-              .fontSize(12)
-              .fontColor(this.fontTarget ? '#007DFF'
-                : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)'))
-          }
+      // ══ 自定义颜色（2026-11-04 渲染侧 R-2-b：**视图**已抽到 `ReaderCustomColorBlock.ets`）══
+      // ⚠️ 草稿（6 个 RGB + `fontTarget`）真值仍在**页面**，组件用 `@Link` 双向共享；
+      //   生效 / 落盘 / 持圈 / 会员门禁全部回页面执行 —— 为什么不是"草稿搬进组件"（方案 ii）
+      //   的取证与取舍见该组件文件头。
+      ReaderCustomColorBlock({
+        customBgR: $customBgR,
+        customBgG: $customBgG,
+        customBgB: $customBgB,
+        customFontR: $customFontR,
+        customFontG: $customFontG,
+        customFontB: $customFontB,
+        fontTarget: $fontTarget,
+        colorMode: this.colorMode,
+        editVisible: this.customEditVisible(),
+        focused: this.isCustomBgFocused(),
+        isVip: VipManager.isVip(),
+        onToggleCustom: (on: boolean): void => {
+          this.toggleCustomBg(on)
+        },
+        onOpenVip: (): void => {
+          this.openVipDialog()
+        },
+        onCommit: (): void => {
+          this.commitCustomColor()
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        if (this.customEditVisible()) {
-          Row({ space: 10 }) {
-          // ── 预览块 = 当前编辑目标（背景/文字）的草稿色；「保存」确认后持橙圈 ──
-          Column()
-            .width(22)
-            .height(22)
-            .borderRadius(11)
-            .backgroundColor(this.fontTarget ? this.customFontHex() : this.customBgHex())
-            .borderWidth(this.isCustomBgFocused() ? 2 : 1)
-            .borderColor(this.isCustomBgFocused()
-              ? '#ff6600'
-              : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.35)' : 'rgba(0, 0, 0, 0.25)'))
-          Text(this.fontTarget ? this.customFontHex() : this.customBgHex())
-            .fontSize(12)
-            .fontColor(this.isCustomBgFocused()
-              ? '#ff6600'
-              : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)'))
-            Blank()
-            // ── 保存按钮（用户指定放右端）：确认草稿 = 应用 + 落盘 + 持焦 ─────────
-            Button('保存')
-              .fontSize(13)
-              .fontColor(Color.White)
-              .backgroundColor('#007DFF')
-              .borderRadius(18)
-              .height(34)
-              .padding({ left: 14, right: 14 })
-              .clickEffect(UiMotion.CLICK)
-              .onClick(() => {
-                Haptics.tap();
-                this.commitCustomColor()
-              })
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-        }
-      }
-      .width('100%')
-
-      if (this.customEditVisible()) {
-        // 左：无极调色盘（横向色相 × 纵向明暗的连续色域，任意点都能取到确定颜色）
-        // 右：R / G / B 三条 0-255 滑块（与字号/行距同款 Slider，带气泡 + 线性震动）
-        // ⚠️ 2026-09-25 保存键方案：调色盘/滑条**只写草稿**（按 fontTarget 分流），
-        //    不碰引擎 —— 按「保存」才应用。草稿存哪（背景 or 文字）由 setDraft 收口。
-        Row({ space: 14 }) {
-          ReaderBgPalette({
-            paletteR: this.draftR(),
-            paletteG: this.draftG(),
-            paletteB: this.draftB(),
-            onPick: (r: number, g: number, b: number): void => {
-              this.setDraft(r, g, b)
-            },
-            onCommit: (): void => {
-              // 抬手不做任何"生效"—— 确认权在「保存」按钮（用户最终裁定）
-            }
-          })
-
-          Column({ space: 4 }) {
-            // ── 气泡：为什么**不用**系统 `Slider.showTips(true, …)` ────────────────
-            // 官方 FAQ 原文（documentId
-            //   `FAQ/UI框架/组件使用/Slider组件自定义气泡开发/faqs-arkui-1198`）：
-            //   「**场景二**：动态内容更新需求。如何实现一个带刻度的 Slider 组件，
-            //     **在滑块滑动过程中，Slider 气泡可动态更新 UI 内容**？」
-            //   解决思路原文：「气泡实现方式：可使用 `showTips(false)` **关闭系统气泡**，
-            //     选择系统 Popup 组件或自定义组件比如 Text 模拟气泡。」
-            //     「关键增强：将气泡实现方式升级为 Popup 组件，通过 @Builder 自定义丰富的气泡内容；
-            //      在 Slider 的 onChange 回调中，**实时同步更新气泡内容**，实现 UI 的动态刷新。」
-            // ⇒ 官方把"滑动中气泡内容实时更新"明确归为**需要自己实现**的场景
-            //   ⇒ 所以这里按官方方案自己画：`Stack` 层叠 + `Text` 模拟气泡 + `position` 定位
-            //     + `SliderChangeMode` 控显隐；位置沿用官方 `calculateExactPosition` 的思路
-            //     （滑块中心 − 气泡半宽，再夹进轨道范围内）。
-            // ── R ──────────────────────────────────────────────────────────
-            Row({ space: 6 }) {
-              Text('R')
-                .fontSize(12)
-                .width(14)
-                .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-              Stack() {
-                Slider({
-                  value: this.draftR(),
-                  min: 0,
-                  max: 255,
-                  step: 1,
-                  style: SliderStyle.InSet
-                })
-                  .selectedColor(this.sliderSelectedColor())
-                  .blockSize({ width: 22, height: 22 })
-                  .borderRadius(20)
-                  .padding({ left: 6, right: 6 })
-                  .width('100%')
-                  .showTips(false)
-                  // 取轨道实测宽度（vp）给气泡定位用；`Area.width` 的官方说明见
-                  // `…\ets\component\common.d.ts:20062`（`onAreaChange`）。
-                  .onAreaChange((oldArea: Area, newArea: Area) => {
-                    this.bgSliderW = Number(newArea.width)
-                  })
-                  .onChange((value: number, mode: SliderChangeMode) => {
-                    Haptics.tick();
-                    this.setDraft(Math.round(value), this.draftG(), this.draftB())
-                    this.onCustomBgSliderChange(mode, 0)
-                  })
-                if (this.bgTipCh === 0) {
-                  Text(`${this.draftR()}`)
-                    .fontSize(12)
-                    .fontColor('#FFFFFF')
-                    .backgroundColor('#007DFF')
-                    .borderRadius(6)
-                    .width(44)
-                    .textAlign(TextAlign.Center)
-                    .padding({ top: 3, bottom: 3 })
-                    .position({ x: this.bgTipX(this.draftR()), y: -26 })
-                    // 气泡只负责显示，绝不能吃掉落手指（否则滑条拖不动）
-                    .hitTestBehavior(HitTestMode.None)
-                }
-              }
-              .layoutWeight(1)
-              Text(`${this.draftR()}`)
-                .fontSize(12)
-                .width(30)
-                .textAlign(TextAlign.End)
-                .fontColor('#007DFF')
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Center)
-
-            // ── G ──────────────────────────────────────────────────────────
-            Row({ space: 6 }) {
-              Text('G')
-                .fontSize(12)
-                .width(14)
-                .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-              Stack() {
-                Slider({
-                  value: this.draftG(),
-                  min: 0,
-                  max: 255,
-                  step: 1,
-                  style: SliderStyle.InSet
-                })
-                  .selectedColor(this.sliderSelectedColor())
-                  .blockSize({ width: 22, height: 22 })
-                  .borderRadius(20)
-                  .padding({ left: 6, right: 6 })
-                  .width('100%')
-                  .showTips(false)
-                  .onChange((value: number, mode: SliderChangeMode) => {
-                    Haptics.tick();
-                    this.setDraft(this.draftR(), this.draftG(), this.draftB())
-                    this.onCustomBgSliderChange(mode, 1)
-                  })
-                if (this.bgTipCh === 1) {
-                  Text(`${this.draftG()}`)
-                    .fontSize(12)
-                    .fontColor('#FFFFFF')
-                    .backgroundColor('#007DFF')
-                    .borderRadius(6)
-                    .width(44)
-                    .textAlign(TextAlign.Center)
-                    .padding({ top: 3, bottom: 3 })
-                    .position({ x: this.bgTipX(this.draftG()), y: -26 })
-                    .hitTestBehavior(HitTestMode.None)
-                }
-              }
-              .layoutWeight(1)
-              Text(`${this.draftG()}`)
-                .fontSize(12)
-                .width(30)
-                .textAlign(TextAlign.End)
-                .fontColor('#007DFF')
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Center)
-
-            // ── B ──────────────────────────────────────────────────────────
-            Row({ space: 6 }) {
-              Text('B')
-                .fontSize(12)
-                .width(14)
-                .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-              Stack() {
-                Slider({
-                  value: this.draftB(),
-                  min: 0,
-                  max: 255,
-                  step: 1,
-                  style: SliderStyle.InSet
-                })
-                  .selectedColor(this.sliderSelectedColor())
-                  .blockSize({ width: 22, height: 22 })
-                  .borderRadius(20)
-                  .padding({ left: 6, right: 6 })
-                  .width('100%')
-                  .showTips(false)
-                  .onChange((value: number, mode: SliderChangeMode) => {
-                    Haptics.tick();
-                    this.setDraft(this.draftR(), this.draftG(), Math.round(value))
-                    this.onCustomBgSliderChange(mode, 2)
-                  })
-                if (this.bgTipCh === 2) {
-                  Text(`${this.draftB()}`)
-                    .fontSize(12)
-                    .fontColor('#FFFFFF')
-                    .backgroundColor('#007DFF')
-                    .borderRadius(6)
-                    .width(44)
-                    .textAlign(TextAlign.Center)
-                    .padding({ top: 3, bottom: 3 })
-                    .position({ x: this.bgTipX(this.draftB()), y: -26 })
-                    .hitTestBehavior(HitTestMode.None)
-                }
-              }
-              .layoutWeight(1)
-              Text(`${this.draftB()}`)
-                .fontSize(12)
-                .width(30)
-                .textAlign(TextAlign.End)
-                .fontColor('#007DFF')
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Center)
-          }
-          .layoutWeight(1)
-          // 与左侧色盘同高（色盘 = 116vp），三行在高度内均分 ⇒ 视觉上对齐
-          .height(116)
-          .justifyContent(FlexAlign.SpaceBetween)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-
-      }
+      })
 
       // ── 底部按钮行（2026-09-25 用户四轮反馈统一）：同步全局**不再隐藏** ─────────
       // 用户原话：「全局同步不再隐藏，在自定义颜色没有开启的时候，与翻页按钮并存，
