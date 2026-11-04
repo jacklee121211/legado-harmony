@@ -91,6 +91,14 @@ export function report(stateNow: GuardState): void {
   const r = nextState(state, failures, stateNow)
   failures = r.failures
   if (r.state === state) {
+    // 2026-11-05 修复竞态：第 3 次失败排下的 600ms "断线"去抖定时器，若窗口内收到
+    // 成功上报，这里会因 r.state === state 早退而不清定时器 ⇒ 恢复后定时器照样把
+    // state 掰成 'offline'，误弹"与手机断开"红条（直到下一次成功上报才消失）。
+    // 成功即撤掉挂起的定时器；'unauth' 路径无需处理（定时器回调里有 state!=='unauth' 闸）。
+    if (r.state === 'ok' && timer !== null) {
+      window.clearTimeout(timer)
+      timer = null
+    }
     return
   }
   if (r.state === 'offline') {
