@@ -1,5 +1,10 @@
-import { display, router, LengthMetrics, promptAction, window,
-  CapsuleSegmentButtonV2, SegmentButtonV2Items, SegmentButtonV2ItemOptions } from '@kit.ArkUI';
+import { display, window,
+  SegmentButtonV2Items, SegmentButtonV2ItemOptions } from '@kit.ArkUI';
+// 2026-11-04（渲染侧 R-1）：去掉 4 个未使用符号 ——
+//   · `CapsuleSegmentButtonV2` 随「背景模糊」视图搬到 `ReaderBlurBlock.ets`（本次抽出）；
+//   · `router` / `LengthMetrics` / `promptAction` 是**存量死 import**（全文件零使用，仅命中 import 行
+//     与一条提到 `router.getParams()` 的注释）。它们此前没被 MCP 报出来，是因为该 import 是**多行**语句
+//     —— 与 §74.6 记录的"多行 import 不报未使用符号"是同一个工具盲点。
 // 2026-09-21 精简：以下三个 import 随其唯一使用处（底栏「换源/净化」注释块
 // 与不可达的 `sourceView()`/`purificationView()`/`LayoutMoreDialog()` builder）一并移除。
 import BookmarkPorts from '../../../common/reader/BookmarkPorts';
@@ -20,6 +25,9 @@ import { ReaderBookmarkDialog } from './ReaderBookmarkDialog'
 // 听书面板（2026-09-23 从 `bindSheet` 迁出成 @CustomDialog，理由见该文件头注释）
 import { ReaderListenDialog, LISTEN_DIALOG_BOTTOM_GAP } from './ReaderListenDialog'
 import { ReaderSettingDialog, SETTING_DIALOG_BOTTOM_GAP } from './ReaderSettingDialog'
+// 2026-11-04（渲染侧 R-1）：「背景模糊」区块的**视图**抽到本组件；状态与副作用仍在本页
+//   （`bgBlurOn` / `bgBlurRadius` 是页面 @State，写入后还要 `applyTextureBg` + `saveCustomBg`）。
+import { ReaderBlurBlock } from './ReaderBlurBlock'
 // 「保存此颜色方案」确认弹窗（2026-09-26 新增；配方与睡眠定时弹窗同款）
 import { ReaderSaveSchemeDialog } from './ReaderSaveSchemeDialog'
 import { showMessage } from '../../../componets/common/promptShow'
@@ -9357,66 +9365,51 @@ oAnimInitNode 配套） */
       // 行结构 / 标签字色 / Toggle 样式（'#007DFF'）与下面「自定义颜色」行完全一致。
       // 纯色/自定义颜色：纯色模糊仍是同一纯色，无需换图（texId=0 时开关只改状态）。
       // 回退：关掉开关即回原图路径；磁盘缓存在 cacheDir/readerbg/blur，可整体删除。
-      Column({ space: 8 }) {
-        Row({ space: 10 }) {
-          Text('背景模糊')
-            .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-          Toggle({ type: ToggleType.Switch, isOn: this.bgBlurOn })
-            .selectedColor('#007DFF')
-            .onChange((value: boolean) => {
-              Haptics.tap();
-              this.bgBlurOn = value
-              // 材质背景要换图（模糊版 ⇄ 原图）；纯色模糊 = 原样，无需动引擎。
-              // ⚠️ 2026-10-06 修复（用户实测："用自定义材质时档位失效、关掉也无效"）：
-              //   条件必须**同时**判自定义材质（`bgCustomId`）—— 自定义材质走的是
-              //   `bgCustomId` + `bgTexId = 0`（见 `pickCustom`），旧写法只判 `bgTexId > 0`
-              //   ⇒ 用自定义材质时开关进不了 `applyTextureBg()`。
-              //   真机日志证据（`Downloads\2.md`）：预设材质依次生成并发布了
-              //   `blur/t1_1320x2848_r30|r18|r12|r6.jpg` 四张缓存图，而自定义材质只有
-              //   `blur/cu1791301678558_1320x2848_r6.jpg` 一张，之后再无任何
-              //   `LTBOOK publish page bg` ⇒ 档位/关开都没有重新下发。
-              // ⚠️ 2026-10-08 再补一道：必须**同时**处于自由模式 —— 日/夜模式下
-              //   `bgTexId/bgCustomId` 仍存着"自由那一套的材质"（刻意不清，见 setStandardMode），
-              //   不判模式的话，在标准白底上调模糊会把材质图**顶到屏幕上**。
-              if (this.themeMode === ReaderCustomBg.MODE_FREE
-                && (this.bgTexId > 0 || this.bgCustomId.length > 0)) {
-                this.applyTextureBg()
-              }
-              this.saveCustomBg()
-            })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        if (this.bgBlurOn) {
-          Row({ space: 10 }) {
-            Text('强度')
-              .fontSize(12)
-              .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)')
-            CapsuleSegmentButtonV2({
-              items: this.bgBlurSegItems,
-              selectedIndex: this.bgBlurTierIndex(),
-              $selectedIndex: (index: number) => {
-                Haptics.tap();
-                this.bgBlurRadius = BG_BLUR_TIERS[index]
-                // 选档即换图（磁盘缓存命中零等待；未命中的档现场生成一次）
-                // ⚠️ 同开关：必须同时判自定义材质（`bgCustomId`）与**自由模式**
-                //   （2026-10-06 用户实测 + 2026-10-08 模式收口，详见上面开关处注释）。
-                if (this.themeMode === ReaderCustomBg.MODE_FREE
-                  && (this.bgTexId > 0 || this.bgCustomId.length > 0)) {
-                  this.applyTextureBg()
-                }
-                this.saveCustomBg()
-              }
-            })
-              .layoutWeight(1)
+      // ── 2026-11-04（渲染侧 R-1）：**视图**已抽到 `ReaderBlurBlock.ets` ──────────
+      // 抽出的是"长什么样 + 拨动/选档两个事实"，**不是状态也不是副作用**：
+      //   · 开关值 `bgBlurOn`、档位 `bgBlurRadius` 仍是本页 `@State`（单一真源在本页）；
+      //   · 两段 `onChange` / `$selectedIndex` 的**语句顺序原样**搬进下面两个回调：
+      //     触感 → 写状态 → 条件换图（`applyTextureBg`）→ 落盘（`saveCustomBg`）。
+      // 这样时序一行未动，且组件拿不到 `applyTextureBg/saveCustomBg`（依赖单向）。
+      ReaderBlurBlock({
+        colorMode: this.colorMode,
+        bgBlurOn: this.bgBlurOn,
+        items: this.bgBlurSegItems,
+        selectedIndex: this.bgBlurTierIndex(),
+        onToggle: (value: boolean): void => {
+          Haptics.tap();
+          this.bgBlurOn = value
+          // 材质背景要换图（模糊版 ⇄ 原图）；纯色模糊 = 原样，无需动引擎。
+          // ⚠️ 2026-10-06 修复（用户实测："用自定义材质时档位失效、关掉也无效"）：
+          //   条件必须**同时**判自定义材质（`bgCustomId`）—— 自定义材质走的是
+          //   `bgCustomId` + `bgTexId = 0`（见 `pickCustom`），旧写法只判 `bgTexId > 0`
+          //   ⇒ 用自定义材质时开关进不了 `applyTextureBg()`。
+          //   真机日志证据（`Downloads\2.md`）：预设材质依次生成并发布了
+          //   `blur/t1_1320x2848_r30|r18|r12|r6.jpg` 四张缓存图，而自定义材质只有
+          //   `blur/cu1791301678558_1320x2848_r6.jpg` 一张，之后再无任何
+          //   `LTBOOK publish page bg` ⇒ 档位/关开都没有重新下发。
+          // ⚠️ 2026-10-08 再补一道：必须**同时**处于自由模式 —— 日/夜模式下
+          //   `bgTexId/bgCustomId` 仍存着"自由那一套的材质"（刻意不清，见 setStandardMode），
+          //   不判模式的话，在标准白底上调模糊会把材质图**顶到屏幕上**。
+          if (this.themeMode === ReaderCustomBg.MODE_FREE
+            && (this.bgTexId > 0 || this.bgCustomId.length > 0)) {
+            this.applyTextureBg()
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
+          this.saveCustomBg()
+        },
+        onPickTier: (index: number): void => {
+          Haptics.tap();
+          this.bgBlurRadius = BG_BLUR_TIERS[index]
+          // 选档即换图（磁盘缓存命中零等待；未命中的档现场生成一次）
+          // ⚠️ 同开关：必须同时判自定义材质（`bgCustomId`）与**自由模式**
+          //   （2026-10-06 用户实测 + 2026-10-08 模式收口，详见上面开关处注释）。
+          if (this.themeMode === ReaderCustomBg.MODE_FREE
+            && (this.bgTexId > 0 || this.bgCustomId.length > 0)) {
+            this.applyTextureBg()
+          }
+          this.saveCustomBg()
         }
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
+      })
 
       // ══ 自定义颜色（2026-09-25 用户改版：保存键方案 + 背景/文字滑块）══════════
       // 三轮布局反馈：「颜色预览和编号放到现在保存的位置，开关放在自定义颜色后面，
