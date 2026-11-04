@@ -18,13 +18,14 @@
 //     仅会通知property关联的组件进行刷新」「需通过 new 操作符实例化后，才具备被观测变化的能力」
 //   「@Trace不支持观察Function类型的数据」⇒ 本类**不放回调/方法字段**，方法只是普通成员函数。
 //
-// ── 当前状态（2026-11-04 S2-c(7) 后，9/13 字段已是真源）────────────────────────
-// · **已迁字段**（`ReaderPage3.MIGRATED_SETTING_FIELDS`）：fontSize / lineHeight / fontName /
-//   fontPath / fontWeight / nightMode / themeColor / themeBgImg / flipMode —— 这 9 个字段以本类为准，
-//   运行期写入口先改本类、再同步回页面 `readerSetting` 的快照；装载期（读持久位/接续/全局记录）相反。
-// · **未迁字段**（scaledDensity / viewPortWidth / viewPortHeight）：
-//   本类只是镜像，边界处由 `syncFromExcept()` 从页面快照回灌。
-// · 全部迁完后：删掉 `syncFromExcept` 与页面 `@State readerSetting`，本类即唯一真源。
+// ── 当前状态（2026-11-04 S2-c(9) 后，**13/13 字段已是真源**）─────────────────────
+// · **已迁字段** = `ReaderCore.ReaderSetting` 全部 13 个（`ReaderPage3.MIGRATED_SETTING_FIELDS`）：
+//   fontName / fontSize / fontWeight / fontColor / fontPath / lineHeight / nightMode /
+//   themeColor / themeBgImg / flipMode / scaledDensity / viewPortWidth / viewPortHeight。
+//   运行期写入口先改本类、再同步回页面 `readerSetting` 的快照（供未改的读点使用）；
+//   装载期与设备度量类来源（持久位/接续/全局记录/窗口/系统密度）方向相反：来源 → 本类 → 快照。
+// · **未迁字段**：无。进度计（`RATCHET_UNMIGRATED_WRITES`）= 0。
+// · 剩余收尾：删掉 `syncFromExcept` 与页面 `@State readerSetting`（独立批次，见状态卡 §2）。
 //
 // ── `__ob_` 陷阱（官方原文）──────────────────────────────────────────────────
 // documentId `FAQ/UI框架/组件使用/ObservedV2与_Trace装饰的对象key都带有_ob_导致反序列化异常/faqs-arkui-1587`：

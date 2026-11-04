@@ -2098,7 +2098,9 @@ oAnimInitNode 配套） */
   private commitCustomColor(): void {
     Haptics.tap()
     if (this.fontTarget) {
-      this.readerSetting.fontColor = this.customFontHex()
+      // 2026-11-04（S2-c 第九批）：fontColor 真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
+      this.settingState.fontColor = this.customFontHex()
+      this.readerSetting.fontColor = this.settingState.fontColor
       this.fontAuto = false
       // 手动选字色 = 用户改了自己的那一套 ⇒ 模式归自由 + 字色归档（2026-10-08）。
       // `freeBgHex` 只在背景不是材质时跟随现状（材质时它必须是空串，见 applyFreeAppearance）。
@@ -2145,7 +2147,8 @@ oAnimInitNode 配套） */
       return
     }
     this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
-      this.readerSetting.fontColor = ReaderCustomBg.hexOf(rgb)
+      this.settingState.fontColor = ReaderCustomBg.hexOf(rgb)
+      this.readerSetting.fontColor = this.settingState.fontColor
       this.fontAuto = false
       this.customFontR = rgb.r
       this.customFontG = rgb.g
@@ -2602,7 +2605,8 @@ oAnimInitNode 配套） */
       // 主题切换过渡动效（2026-09-21）：选中圈三个值是 @State 一级属性，
       // 包进 animateTo 后 borderColor/borderWidth 会插值过渡（SDK 依据见日夜切换处）。
       this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
-        this.readerSetting.fontColor = item.fontColor;
+        this.settingState.fontColor = item.fontColor
+        this.readerSetting.fontColor = this.settingState.fontColor;
         this.settingState.themeColor = item.themeColor
         this.readerSetting.themeColor = this.settingState.themeColor;
         // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（见 `MIGRATED_SETTING_FIELDS`）
@@ -2721,7 +2725,8 @@ oAnimInitNode 配套） */
     // 2026-11-04（S2-c）：nightMode 真源已迁到模型
     this.settingState.nightMode = night
     this.readerSetting.nightMode = this.settingState.nightMode
-    this.readerSetting.fontColor = night ? '#ffffff' : '#000000'
+    this.settingState.fontColor = night ? '#ffffff' : '#000000'
+    this.readerSetting.fontColor = this.settingState.fontColor
     this.settingState.themeColor = night ? '#202224' : '#FFFFFF'
     this.readerSetting.themeColor = this.settingState.themeColor
     // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（标准白/黑 ⇒ 无背景图）
@@ -2818,11 +2823,13 @@ oAnimInitNode 配套） */
     this.settingState.themeBgImg = ''
     this.readerSetting.themeBgImg = this.settingState.themeBgImg
     if (this.fontAuto) {
-      this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
+      this.settingState.fontColor = ReaderCustomBg.contrastFont(rgb)
+      this.readerSetting.fontColor = this.settingState.fontColor
     } else if (this.freeFontHex.length > 0) {
       // 自定义字色：切日/夜时 `readerSetting.fontColor` 被写成黑/白（并随 pageShow 落盘），
       // 真正的那个"粉字"存在 `freeFontHex` 里 ⇒ 回自由必须从这里拿回来。
-      this.readerSetting.fontColor = this.freeFontHex
+      this.settingState.fontColor = this.freeFontHex
+      this.readerSetting.fontColor = this.settingState.fontColor
     }
     this.settingState.nightMode = dark
     this.readerSetting.nightMode = this.settingState.nightMode
@@ -2900,7 +2907,8 @@ oAnimInitNode 配套） */
     if (e.fontKind === ReaderCustomBg.FONT_KIND_HEX) {
       const f = ReaderCustomBg.parseColor(e.fontHex)
       if (f !== null) {
-        this.readerSetting.fontColor = ReaderCustomBg.hexOf(f)
+        this.settingState.fontColor = ReaderCustomBg.hexOf(f)
+        this.readerSetting.fontColor = this.settingState.fontColor
         this.fontAuto = false
         // 「自由那一套」的字色同步归档：切日/夜后回自由要靠它（2026-10-08）
         this.freeFontHex = ReaderCustomBg.hexOf(f)
@@ -3524,7 +3532,8 @@ oAnimInitNode 配套） */
     // `ctx.setColorMode()`（一次系统级重涂），绝不能每帧调。
     const flipped: boolean = (this.colorMode === 0) !== dark
     if (this.fontAuto) {
-      this.readerSetting.fontColor = ReaderCustomBg.contrastFont(rgb)
+      this.settingState.fontColor = ReaderCustomBg.contrastFont(rgb)
+      this.readerSetting.fontColor = this.settingState.fontColor
     }
     this.settingState.nightMode = dark
     this.readerSetting.nightMode = this.settingState.nightMode
@@ -3651,7 +3660,8 @@ oAnimInitNode 配套） */
     this.readerSetting.themeBgImg = this.settingState.themeBgImg
     this.settingState.themeColor = avgHex
     this.readerSetting.themeColor = this.settingState.themeColor
-    this.readerSetting.fontColor = nextFont
+    this.settingState.fontColor = nextFont
+    this.readerSetting.fontColor = this.settingState.fontColor
     this.settingState.nightMode = dark
     this.readerSetting.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
@@ -3801,9 +3811,10 @@ oAnimInitNode 配套） */
     this.readerSetting.themeBgImg = this.settingState.themeBgImg
     this.settingState.nightMode = this.customBgPrevNight
     this.readerSetting.nightMode = this.settingState.nightMode
-    this.readerSetting.fontColor = this.fontAuto
+    this.settingState.fontColor = this.fontAuto
       ? ReaderCustomBg.contrastFont(rgb)
       : this.customBgPrevFont
+    this.readerSetting.fontColor = this.settingState.fontColor
     this.colorMode = this.customBgPrevNight ? 0 : 1
     // 模式与"自由那一套"同步收口（2026-10-08）：开关关掉 = 屏幕回到 prev* 那一套
     // ⇒ 模式/记录必须跟着走，否则按钮文案与下次进书会与眼睛看到的不一致
@@ -4210,6 +4221,14 @@ oAnimInitNode 配套） */
       //   "读方式"的真源仍是按书持久化的 `ReaderMode_<书名>`（见 `loadReadMode()` 注释），
       //   这里只保证"边界出口拿到的是持久位里那份值"，避免下面 loadReadMode 之前就被默认值顶上。
       this.settingState.flipMode = this.readerSetting.flipMode ?? this.settingState.flipMode;
+      // 设备度量三件套（S2-c 第八批）：装载期先把模型对齐到持久位那份值，
+      //   随后 `startPlay()` 的 boot 视口校准与 `refreshScaledDensity()` 会用**设备真值**
+      //   再覆盖一次（见 `applyViewportNow()` 注释）。写反会让排版尺寸永久停在旧值。
+      this.settingState.scaledDensity = this.readerSetting.scaledDensity ?? this.settingState.scaledDensity;
+      this.settingState.viewPortWidth = this.readerSetting.viewPortWidth ?? this.settingState.viewPortWidth;
+      this.settingState.viewPortHeight = this.readerSetting.viewPortHeight ?? this.settingState.viewPortHeight;
+      // 字色（S2-c 第九批）：装载期 = 持久位 → 模型
+      this.settingState.fontColor = this.readerSetting.fontColor ?? this.settingState.fontColor;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4243,7 +4262,9 @@ oAnimInitNode 配套） */
       this.readerSetting.fontWeight = this.settingState.fontWeight;
     }
     if (temp.continueFontColor !== undefined && temp.continueFontColor.length > 0) {
-      this.readerSetting.fontColor = temp.continueFontColor;
+      // 2026-11-04（S2-c 第九批）：接续属装载期，来源为准 → 灌进模型（再同步快照）
+      this.settingState.fontColor = temp.continueFontColor;
+      this.readerSetting.fontColor = this.settingState.fontColor;
     }
     if (temp.continueThemeColor !== undefined && temp.continueThemeColor.length > 0) {
       // 2026-11-04（S2-c）：接续属装载期，来源为准 → 灌进模型
@@ -4584,8 +4605,10 @@ oAnimInitNode 配套） */
           hilog.info(0x0000, 'testTag',
             'startPlay: viewPort STALE %{public}d x %{public}d -> corrected to %{public}d x %{public}d',
             this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight, bootW, bootH);
-          this.readerSetting.viewPortWidth = bootW;
-          this.readerSetting.viewPortHeight = bootH;
+          this.settingState.viewPortWidth = bootW;
+          this.settingState.viewPortHeight = bootH;
+          this.readerSetting.viewPortWidth = this.settingState.viewPortWidth;
+          this.readerSetting.viewPortHeight = this.settingState.viewPortHeight;
         }
         // 方向状态与密度同源刷新：`aboutToAppear` 里已调 `syncReaderViewSize()` 更新组件尺寸，
         // 这里补齐 `readerSetting` 一侧，保证两者**同一时刻指向同一对值**（防撕裂）。
@@ -5212,7 +5235,9 @@ oAnimInitNode 配套） */
     if (sysScaled > 0 && this.readerSetting.scaledDensity !== sysScaled) {
       hilog.info(0x0000, 'testTag', 'rs-migrate: scaledDensity %{public}s -> %{public}s',
         String(this.readerSetting.scaledDensity), String(sysScaled));
-      this.readerSetting.scaledDensity = sysScaled;
+      // 2026-11-04（S2-c 第八批）：迁移属"装载期"，设备真值 → 模型 → 快照
+      this.settingState.scaledDensity = sysScaled;
+      this.readerSetting.scaledDensity = this.settingState.scaledDensity;
       changed = true;
     }
 
@@ -5683,8 +5708,13 @@ oAnimInitNode 配套） */
       return;
     }
     // ① 立即同步视口参数，保证之后任何 setPageConfig 都自带正确尺寸
-    this.readerSetting.viewPortWidth = w;
-    this.readerSetting.viewPortHeight = h;
+    //   2026-11-04（S2-c 第八批）：运行期口径 = **外部真值（窗口）→ 模型 → 快照**。
+    //   注意这不是"用户改设置"，但来源仍是页面之外的系统真值，所以与装载期同向；
+    //   绝不能写成"模型 → 窗口"（那会让排版尺寸永远停在进书那一刻）。
+    this.settingState.viewPortWidth = w;
+    this.settingState.viewPortHeight = h;
+    this.readerSetting.viewPortWidth = this.settingState.viewPortWidth;
+    this.readerSetting.viewPortHeight = this.settingState.viewPortHeight;
     // ①' 密度跟着刷新（旋转 / 2in1 窗口缩放后 scaledDensity 可能变，
     //    旧实现只在字段初始化时算一次 ⇒ 一直是旧值，px↔vp 换算基准就错了）
     this.refreshScaledDensity();
@@ -5745,7 +5775,9 @@ oAnimInitNode 配套） */
       const d = display.getDefaultDisplaySync();
       const sd: number = d.scaledDensity > 0 ? d.scaledDensity : 1;
       if (this.readerSetting.scaledDensity !== sd) {
-        this.readerSetting.scaledDensity = sd;
+        // 2026-11-04（S2-c 第八批）：设备真值 → 模型 → 快照（同 applyViewportNow 的口径）
+        this.settingState.scaledDensity = sd;
+        this.readerSetting.scaledDensity = this.settingState.scaledDensity;
         hilog.info(0x0000, 'testTag', 'refreshScaledDensity -> %{public}f', sd);
       }
     } catch (e) {
@@ -5999,8 +6031,11 @@ oAnimInitNode 配套） */
       if (this.readerSetting.viewPortWidth != w ||
         this.readerSetting.viewPortHeight != h) {
         // 当窗口大小更改时，更新当前页面视区大小。
-        this.readerSetting.viewPortWidth = w;
-        this.readerSetting.viewPortHeight = h;
+        // 2026-11-04（S2-c 第八批）：外部真值（窗口）→ 模型 → 快照，再由边界出口下发
+        this.settingState.viewPortWidth = w;
+        this.settingState.viewPortHeight = h;
+        this.readerSetting.viewPortWidth = this.settingState.viewPortWidth;
+        this.readerSetting.viewPortHeight = this.settingState.viewPortHeight;
         try {
           this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
@@ -10208,7 +10243,8 @@ oAnimInitNode 配套） */
           this.colorMode = next === 0 ? 0 : 1
           this.settingState.nightMode = next === 0
           this.readerSetting.nightMode = this.settingState.nightMode
-          this.readerSetting.fontColor = next === 0 ? '#ffffff' : '#000000'
+          this.settingState.fontColor = next === 0 ? '#ffffff' : '#000000'
+          this.readerSetting.fontColor = this.settingState.fontColor
           this.settingState.themeColor = next === 0 ? '#202224' : '#FFFFFF'
           this.readerSetting.themeColor = this.settingState.themeColor
         })
@@ -10934,7 +10970,8 @@ oAnimInitNode 配套） */
    * 全部迁完后：删掉这个数组、删掉 `@State readerSetting` 与 `syncFromExcept`，`settingState` 成为唯一真源。
    */
   private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
-    'nightMode', 'themeColor', 'themeBgImg', 'flipMode'];
+    'nightMode', 'themeColor', 'themeBgImg', 'flipMode', 'scaledDensity', 'viewPortWidth', 'viewPortHeight',
+    'fontColor'];
 
   /**
    * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。

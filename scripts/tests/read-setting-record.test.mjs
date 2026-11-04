@@ -290,8 +290,13 @@ const RATCHET_DIRECT_WRITES = 63
  *   themeColor（8）→ 34
  *   themeBgImg（10：9 运行期 + 1 装载期接续）→ 24
  *   flipMode（4：2 运行期 switchReadMode + 接续 + loadReadMode 派生）→ 20
+ *   scaledDensity / viewPortWidth / viewPortHeight（2 + 3 + 3）→ 12
+ *   fontColor（12，此前一直漏登记 —— 见施工记录 §89）→ **0**
+ *
+ * ⚠️ 2026-11-04：本值已到 0，即 13 个字段全部迁完。此时**不要**把这条棘轮删掉：
+ *    它仍是"有人新写 `this.readerSetting.X = 非模型值`"的防线（新写点必须走模型或边界出口）。
  */
-const RATCHET_UNMIGRATED_WRITES = 20
+const RATCHET_UNMIGRATED_WRITES = 0
 
 /**
  * 去掉注释后的页面源码。
