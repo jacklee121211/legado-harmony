@@ -2263,7 +2263,7 @@ export struct TtsControlPanel {
     // ⚠️ 2026-10-28 按用户要求**删除「沉浸听读」开关**：
     //   听书已经统一锁死在无动画档（见 ReaderPage3.enterListenMode 与 switchReadMode 的拦截），
     //   高亮一直走自绘 Span，沉浸层永远不激活 ⇒ 这个开关已经没有作用，留着只会误导。
-    //   TtsPrefs.immersiveListen 字段保留（旧配置迁移用），immersiveActive() 恒 false。
+    //   TtsPrefs.immersiveListen 字段保留（旧配置迁移用）；沉浸听读层 2026-11-05 已整体退役。
 
           // 音色选择
           if (this.showVoices && !this.compactMode) {

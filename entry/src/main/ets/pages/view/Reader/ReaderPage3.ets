@@ -55,7 +55,7 @@ import { HL_DEV_DEFAULT, HL_ADVANCE_RATIO, HL_INDENT_SLOTS, PROGRESS_UNIT_PER_PC
 import { PageRange, effectiveLineMul, geomSelfContained, geom, cplFor, simulatePage,
   scrollLineHeightFp, scrollIndentFp, arkFontName, selfDrawnFontWeight, scrollFontFamily,
   scrollWeightOffset, scrollTopInsetVp,
-  scrollBottomInsetVp, densityVp, textAreaLeftVp, immersiveBudgetPx,
+  scrollBottomInsetVp, densityVp, textAreaLeftVp,
   SELF_DRAWN_DELTA_VP } from '../../../common/reader/ReaderCalibMath';
 // 2026-11-04（P3 批 A-3）：**进度 / 书签 IO 的纯计算与读取投影**已抽到
 //   `common/reader/ReaderProgressIo.ets`（无 `this.`、不写 DB/AppStorage、不改 `@State`）。
@@ -124,9 +124,7 @@ import { buildChapterNodes } from '../../../tts/ChapterNodes';
 // BookPageIndex 已删除：页码改为纯估算（方案 A，不扫全书）
 // ── 无动画阅读（2026-10-26 新增：阅读方式第四档）────────────────────────────
 // 与上下滚动是"一母同胞"：同一套自绘排版，只是把"连续行流"按页容量切开。
-// 分页算法与沉浸听读层共用 `ReaderPager.paginateNodes()`（唯一实现，防漂移）。
 import { ReaderPageNoAnim, ChapterCacheEntry } from './ReaderPageNoAnim';
-import { paginateNodes, PaginateResult } from './ReaderPager';
 // ── 全局震动反馈 + 听书入口解锁（2026-09-25 新增）─────────────────────────────
 import { Haptics } from '../../../common/utils/Haptics';
 import MySetConstants from '../../../common/constants/MySetConstants';
@@ -275,8 +273,6 @@ const SYSTEM_CJK_FONT_PATH: string = '/system/fonts/HarmonyOS_Sans_SC.ttf';
  * ⇒ 约定：**`fontPath` 只用来承载"用户自己导入的沙箱字体文件"**，
  *   系统字体一律只给 `fontName`（族名）。下面 `migrateReaderSetting()` 的 v2 迁移负责清洗存量值。
  */
-
-/** 沉浸听读：章节固定分页的页高预算已由 immersiveBudgetPx() 提供 */
 
 /**
  * 目录 / 书签弹窗**底边离屏幕底边的留白**（vp）。
@@ -951,42 +947,11 @@ export default struct ReaderPage3 {
   private anchorChar: number = 0
   private anchorValid: boolean = false
 
-  /** 当前显示的沉浸页号（-1 = 未定） */
-  @State immPageIdx: number = -1
-  /** 手动翻页期间暂停自动跟随（8s 兜底；点「回到朗读」立即解除） */
-  @State immManual: boolean = false
-  private immManualAt: number = 0
-  /** 可观察的"沉浸可渲染"标志：currentNodeTexts() 是静态字段，不放进状态里
-   *  ArkUI 就不会重估 if 分支（表现为"必须点一下播放键才变沉浸"）。 */
-  @State immReady: boolean = false
-  /**
-   * "已点击朗读、首声还没出来"的窗口（2026-10-10 新增）。
-   *
-   * 由来（真机反馈）：点击播放后**不立刻进沉浸**，要等出声才进。
-   * 根因：`TtsState` 只有 `stopped/playing/paused`（`TtsEngine.ets:666`），而闸门是
-   * `ttsState !== 'stopped'`（本文件 `immersiveActive()`）——引擎只在**首块真正开播**时
-   * 才 `setState('playing')`（`TtsEngine.ets:1913`）。AI 时代这里被"说话人识别"阻塞到 6~10s，
-   * 所以现象被放大成"明显不进沉浸"。
-   *
-   * ⚠️ 为什么不给 `TtsState` 加 `'preparing'`：那是共享枚举，阅读器/听书 Dock/书架圆钮
-   *    全都读它，加值的爆炸半径远大于本页一个本地标志位。
-   */
-  @State ttsStarting: boolean = false
-  /**
-   * 本次朗读的**起始块节点**（-1 = 未知）。给"准备中提前锚定沉浸页"用：
-   * 点击瞬间队列还没建（`currentNodeTexts()` 仍为 null），只能在 `onChapter`
-   * （`buildQueue` 完成后回调，实测距点击约 141ms）才拿得到节点表。
-   */
-  @State pendingStartNode: number = -1
-  /** 章节固定分页缓存：页 → 段列表（段 = [节点号, 起始字符, 结束字符]，可段中切断）/ 节点 → 页号 */
-  private immPages: number[][][] = []
-  private immPageOfNode: number[] = []
-  private immPagesKey: string = ''
-  /** 句序号：让"当前段"的 ForEach key 每句都变（否则 ArkUI 复用旧组件，高亮不会移动） */
-  @State immSegSerial: number = 0
-  /** 最近一次朗读位置（退出沉浸/停止时用来把阅读器同步过去） */
-  private lastAudioPos: TtsSegmentPos | null = null
-  private wasImmersive: boolean = false
+  // 2026-11-05：沉浸听读层（ImmersiveListenLayer 及其全套分页/跟随状态）整体退役 ——
+  // `immersiveActive()` 以 `false && …` 恒不可达（2026-10-28 听书统一锁无动画后写死），
+  // 层永不渲染，却仍随每次换章整章分页（onChapter → ensureImmersivePages）。
+  // 相关 @State（immPageIdx/immManual/immReady/ttsStarting/pendingStartNode/immPages/
+  // immSegSerial/lastAudioPos/wasImmersive）一并删除；听书跟随走 autoFollowTts。
   /**
    * 进书时听书已在播 ⇒ 等**第一次 pageShow**再跑「定位到朗读处」。
    * 为什么不能当场跑：`aboutToAppear` 时 ReaderKit 还在 `startPlay()`，`pageRange` 为 null，
@@ -5534,19 +5499,16 @@ oAnimInitNode 配套） */
       //     `locate: startPlay 未落位，转翻页搜索 (none)`）。
       //   而 pageShow 是 ReaderKit 自己"排版完成"的信号 ⇒ 只有这时定位才有效。
       //
-      // 为什么必须做：只把 `ttsState/immReady` 拉回来，**底下的 ReaderKit 页并没有翻到朗读处**
-      //   ⇒ ① 高亮落在错误的页上（用户反馈"进度高亮还是慢"）；
-      //      ② 退出听书后沉浸层撤掉，露出的是一张没排版好的底页 ⇒ **黑屏**。
+      // 为什么必须做：光把 `ttsState` 拉回来，**底下的 ReaderKit 页并没有翻到朗读处**
+      //   ⇒ 高亮落在错误的页上（用户反馈"进度高亮还是慢"）。
       //   这里复用阅读器**自己的**跟随链路 `autoFollowTts()`（走 `requestLocate`），
       //   不再自造第二套定位。
       if (this.pendingTtsRestoreFollow) {
         this.pendingTtsRestoreFollow = false;
-        this.immSegSerial++;
-        this.syncImmersivePage();
         this.autoFollowTts();
         hilog.info(0x0000, 'testTag',
-          'tts restore-follow on first pageShow: spine=%{public}d immPage=%{public}d',
-          TtsEngine.currentChapter(), this.immPageIdx);
+          'tts restore-follow on first pageShow: spine=%{public}d',
+          TtsEngine.currentChapter());
       }
       if (!requested && TtsEngine.getState() === 'playing' && !this.followSuspended) {
         const seg = TtsEngine.currentSegment();
@@ -6440,22 +6402,14 @@ oAnimInitNode 配套） */
           return;
         }
         this.ttsState = s;
-        // 首声已出来（playing）或暂停/停止 ⇒ "准备中"窗口结束
-        if (s !== 'stopped') {
-          this.ttsStarting = false;
-        }
         // ★ 听书开始 ⇒ 自动切到「无动画」（幂等，playing/paused 反复触发不会重复切）
         //   只在真正开播时切，暂停不切（用户可能只是歇一会儿，页面上别乱动）
         if (s === 'playing') {
           this.enterListenMode();
         }
         if (s === 'stopped') {
-          this.ttsStarting = false;
           this.ttsSegText = '';
           this.ttsSegTotal = 0;
-          this.immPageIdx = -1;
-          this.immPagesKey = '';
-          this.immReady = false;
           this.followSuspended = false;
           // ★ 听书结束 ⇒ 还原进入前的档位，并定位回"刚才朗读到的那一段"
           this.exitListenMode();
@@ -6465,19 +6419,6 @@ oAnimInitNode 配套） */
       onChapter: (spineIndex: number, title: string): void => {
         this.ttsSpineIndex = spineIndex;
         this.ttsChapterTitle = title;
-        this.immPageIdx = -1; // 换章：重新分页并重新锚定
-        this.immPagesKey = '';
-        this.immReady = TtsEngine.currentNodeTexts() !== null; // 让沉浸层立刻出现（可观察状态）
-        // ★ 2026-10-10 提前锚定：此时 `buildQueue` 已完成（节点表可用），
-        //   把沉浸页直接定位到**本次朗读的起始块**，这样"准备中"窗口内也能渲染出正确正文
-        //   ——否则 `immCurPage()` 会返回 `[]`，沉浸层只剩一层背景色（见 `immersiveActive()` 注释）。
-        if (this.ttsStarting && this.immPageIdx < 0 && this.pendingStartNode >= 0) {
-          this.ensureImmersivePages();
-          const pn: number = this.pendingStartNode;
-          if (pn < this.immPageOfNode.length) {
-            this.immPageIdx = this.immPageOfNode[pn];
-          }
-        }
         // 只同步目录下标；真正的翻章（startPlay）由定位流程按精确坐标执行
         this.syncCatalogIndex(spineIndex);
       },
@@ -6487,20 +6428,11 @@ oAnimInitNode 配套） */
         this.ttsSegText = text;
         this.ttsCharInSentence = 0;
         this.ttsSentenceLen = text.length;
-        this.immSegSerial++;
-        if (!this.immReady && TtsEngine.currentNodeTexts() !== null) {
-          this.immReady = true;
-        }
-        const cur = TtsEngine.currentSegment();
-        if (cur !== null) {
-          this.lastAudioPos = cur;
-        }
         // 应用接续（2026-10-24）：听书每推进一句就刷新接续落点。
         // 官方体验建议要求同步「阅读**及听书**进度」，这是听书侧唯一的可靠打点
         // （`onProgress` 是句内逐字符，太密；这里按句触发，频率刚好）。
         this.session.publishListenState(this.publishFacts());
         this.scrollMiniBar(0);
-        this.syncImmersivePage();
         this.updateHighlight();
         // 页级自动跟随：朗读推进到当前页之外时才翻页（silent，不弹 toast）
         this.autoFollowTts();
@@ -6521,181 +6453,30 @@ oAnimInitNode 配套） */
     //
     // 为什么必须显式拉：`ttsState` 的初值是 `'stopped'`（本文件 `@State ttsState`），
     //   而它只在引擎的 `onState` 回调里被写。播放中状态**没有变化** ⇒ 不会重新回调
-    //   ⇒ 不拉的话页面会停在 `'stopped'`：沉浸听读不出现、迷你条不出现、
+    //   ⇒ 不拉的话页面会停在 `'stopped'`：迷你条不出现、
     //   书架与阅读器显示的就不是同一个状态（正是用户要的"一模一样"反例）。
     const curState: TtsState = TtsEngine.getState();
 
     // ⚠️ 同样必须叠加"在听的是不是本页这本"：在听 A 时打开 B，
-    //   B 不能把 A 的听书状态当成自己的（否则 B 会渲染 A 的沉浸听读，退出时黑屏）。
+    //   B 不能把 A 的听书状态当成自己的（否则状态会串台）。
     if (curState !== 'stopped' && this.listeningThisBook()) {
       this.ttsState = curState;
       this.ttsSpineIndex = TtsEngine.currentChapter();
       this.ttsChapterTitle = TtsEngine.getChapterTitle();
-      this.immPageIdx = -1;
-      this.immPagesKey = '';
-      this.immReady = TtsEngine.currentNodeTexts() !== null;
       this.syncCatalogIndex(this.ttsSpineIndex);
-      const curSeg = TtsEngine.currentSegment();
-      if (curSeg !== null) {
-        this.lastAudioPos = curSeg;
-      }
       this.updateHighlight();
-      // ★★ 2026-10-09 用户反馈修复：进书**立刻把与朗读位置对应的那一页渲染出来** ★★
-      //   症状原文：「点击圆形播放之后，点击对应书籍，进去是空白的，直到下一句播放，
-      //   整个页面才加载出来」。
-      //   根因：沉浸听读的内容由 `immPages[immPageIdx]` 决定（见 `build()` 的沉浸层），
-      //   而这两样只在 `onSegment` 回调里被推进：
-      //       this.immSegSerial++;        ← 自增才触发沉浸层重绘（`key` 里带它，见 build）
-      //       this.syncImmersivePage();   ← 算页并设 immPageIdx
-      //   ⇒ 只回拉数据、不跑这两步，首帧就是空页，要等**下一句**播完才补齐。
-      //   这里补跑同样的两步（幂等，重复调用无副作用），空白窗口从"一整句"缩到 0。
-      this.immSegSerial++;
-      this.syncImmersivePage();
       // 底下的 ReaderKit 页还需要翻到朗读处 —— 但必须等第一次 pageShow（那时排版才完成），
       // 这里只置旗标，真正的定位在 pageShow 回调里跑（见那里的注释）。
       this.pendingTtsRestoreFollow = true;
       hilog.info(0x0000, 'testTag',
-        'tts state restored on enter: state=%{public}s spine=%{public}d immPage=%{public}d',
-        curState, this.ttsSpineIndex, this.immPageIdx);
+        'tts state restored on enter: state=%{public}s spine=%{public}d',
+        curState, this.ttsSpineIndex);
     }
   }
 
-  // ---------- 沉浸听读：**章节固定分页** ----------
-  // "一页"必须是确定的：用当前排版参数把整章预先切成固定页；
-  // 朗读只负责"跳到包含当前段的那一页"，页面内容不随朗读漂移。
-  // （之前的"滑动窗口 + 锚点"会让页边界随朗读变化 ⇒ 用户说不清自己在第几页、
-  //   从本页开始时上面还会多冒出一段"上一页衔接"。）
-  private ensureImmersivePages(): void {
-    const nodes = TtsEngine.currentNodeTexts();
-    if (nodes === null) {
-      this.immPages = [];
-      this.immPageOfNode = [];
-      this.immPagesKey = '';
-      return;
-    }
-    const key = `${TtsEngine.currentChapter()}:${this.settingState.fontSize}`
-      + `:${this.settingState.lineHeight.toFixed(1)}:${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}`
-      + `:${this.calibWidthRatio.toFixed(3)}`;
-    if (key === this.immPagesKey && this.immPages.length > 0) {
-      return;
-    }
-    const g = geom(this.projectSetting(), effectiveLineMul(this.autoLineMul, this.calibLineMul));
-    const cpl = cplFor(
-      Math.max(1, (this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth)
-        * this.calibWidthRatio), g[2]);
-    const maxLines = Math.max(1, Math.floor(immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx) / Math.max(1, g[3])));
-    // ★ 行粒度分页（与 ReaderKit 一致：可在段落中间断页）
-    //   此前按"整段"切页：当"已用行数 + 整段行数 > 上限"时只能提前关页，
-    //   大段落会白白浪费半页（实测 estLines=6/12 = 50%），观感就是每页占屏比例乱跳。
-    //   改成按行填满：每页精确 maxLines 行，只有本章末页才会不满。
-    // ⚠️ 2026-10-26：算法**抽到 `ReaderPager.paginateNodes()`**，与无动画阅读层共用同一份
-    //   （两份实现会漂移 ⇒「上下 ↔ 无动画」互切时页边界对不上）。
-    //   这里的 `gapLines = 0` 走的正是**抽出前的原分支**，行为逐字等价、零变化。
-    const res: PaginateResult = paginateNodes(nodes, cpl, maxLines, 0);
-    const pages: number[][][] = res.pages;
-    const map: number[] = res.pageOfNode;
-    this.immPages = pages;
-    this.immPageOfNode = map;
-    this.immPagesKey = key;
-    hilog.info(0x0000, 'testTag', 'imm: pages=%{public}d maxLines=%{public}d cpl=%{public}d 行高=%{public}spx',
-      pages.length, maxLines, cpl, g[3].toFixed(1));
-    for (let pi = 0; pi < pages.length && pi < 40; pi++) {
-      const pg = pages[pi];
-      let est = 0;
-      let chars = 0;
-      for (let k = 0; k < pg.length; k++) {
-        const sg = pg[k];
-        const tx = nodes[sg[0]].substring(sg[1], sg[2]);
-        chars += tx.length;
-        est += Math.max(1, Math.ceil((tx.length + (sg[1] === 0 ? HL_INDENT_SLOTS : 0)) / cpl));
-      }
-      hilog.info(0x0000, 'testTag', 'imm-page %{public}d: segs=%{public}d estLines=%{public}d chars=%{public}d',
-        pi + 1, pg.length, est, chars);
-    }
-  }
-
-  /** 当前显示的页的段列表（段 = [节点号, 起始字符, 结束字符]） */
-  private immCurPage(): number[][] {
-    this.ensureImmersivePages();
-    const p = this.immPageIdx;
-    return p >= 0 && p < this.immPages.length ? this.immPages[p] : [];
-  }
-
-  /** 朗读所在的页号（-1 = 未知） */
-  private immAudioPage(): number {
-    const seg = TtsEngine.currentSegment();
-    if (seg === null || this.immPageOfNode.length === 0) {
-      return -1;
-    }
-    const n = seg.nodeIndex;
-    return n >= 0 && n < this.immPageOfNode.length ? this.immPageOfNode[n] : -1;
-  }
-
-  /** 跟随：只有朗读跑出当前页时才翻到朗读所在页（页是固定的，不会漂） */
-  private syncImmersivePage(): void {
-    if (!this.ttsPrefs.immersiveListen) {
-      return;
-    }
-    this.ensureImmersivePages();
-    const ap = this.immAudioPage();
-    if (ap < 0) {
-      return;
-    }
-    if (this.immPageIdx < 0) {
-      this.immPageIdx = ap;
-      return;
-    }
-    if (this.immManual) {
-      // 手动翻页期间**不**把视图拽回朗读位置（此前重构时丢了这段保护，
-      // 导致"一翻页、下一句就被拉回"）；①朗读回到当前页 或 ②手动浏览超时 ⇒ 恢复跟随。
-      if (ap === this.immPageIdx) {
-        this.immManual = false;
-      } else if (Date.now() - this.immManualAt > 8000) {
-        this.immManual = false;
-        hilog.info(0x0000, 'testTag', 'imm: auto-resume following (manual browse timeout)');
-      }
-      if (this.immManual) {
-        return;
-      }
-    }
-    if (ap !== this.immPageIdx) {
-      this.immPageIdx = ap;
-      hilog.info(0x0000, 'testTag', 'imm: follow page=%{public}d total=%{public}d',
-        ap, this.immPages.length);
-    }
-  }
-
-  /** 沉浸模式下手动翻页（点左侧=上一页 / 右侧=下一页），步长正好一页 */
-  private immPage(dir: number): void {
-    this.ensureImmersivePages();
-    if (this.immPages.length === 0) {
-      return;
-    }
-    const cur = this.immPageIdx < 0 ? 0 : this.immPageIdx;
-    const next = Math.max(0, Math.min(this.immPages.length - 1, cur + dir));
-    if (next === cur) {
-      return;
-    }
-    this.immPageIdx = next;
-    this.immManual = true; // 手动翻页后暂停自动跟随（8s 兜底 / 或点「回到朗读」解除）
-    this.immManualAt = Date.now();
-    hilog.info(0x0000, 'testTag', 'imm: manual page=%{public}d/%{public}d', next + 1, this.immPages.length);
-  }
-
-  /** 回到朗读所在页 */
-  private immBackToAudio(): void {
-    const ap = this.immAudioPage();
-    this.immManual = false;
-    if (ap >= 0) {
-      this.immPageIdx = ap;
-    }
-    this.updateHighlight();
-  }
-
-  /** 退出听书：停止朗读（沉浸层随之消失，回到普通阅读模式；下次进听书仍是沉浸） */
+  /** 退出听书：停止朗读，回到普通阅读模式 */
   private exitListening(): void {
     this.followSuspended = false;
-    this.immPageIdx = -1;
     TtsEngine.stop('');
     // 停掉「睡眠定时剩余量」的刷新定时器（避免销毁后回调引用已销毁页面）
     this.stopSleepTicker();
@@ -6823,20 +6604,6 @@ oAnimInitNode 配套） */
   /** 从阅读器当前页页首重新开始朗读（停掉旧流，重新合成播放） */
   private playFromCurrentPage(): void {
     this.followSuspended = false;
-    // 沉浸模式：用户看到的"这一页"是我们自绘的固定页，取它的第一段。
-    // 被盖住的 ReaderKit 页会被自动跟随保持在**朗读位置**上，拿它当"本页"就会永远跳回正在读的那句。
-    if (this.immersiveActive()) {
-      const pg = this.immCurPage();
-      if (pg.length > 0) {
-        const a = pg[0][0]; // 本页第一个段的节点号（从本页开始读）
-        this.lastNavMs = Date.now();
-        this.lastFollowNode = a;
-        hilog.info(0x0000, 'testTag', 'play-from-page(immersive): spine=%{public}d node=%{public}d char=%{public}d page=%{public}d',
-          TtsEngine.currentChapter(), a, pg[0][1], this.immPageIdx + 1);
-        TtsEngine.seekToChapter(TtsEngine.currentChapter(), a, pg[0][1]);
-        return;
-      }
-    }
     const r = this.session.pageRange;
     if (r === null) {
       this.ttsStart();
@@ -7322,12 +7089,10 @@ oAnimInitNode 配套） */
   // 设计：仿真/横滑档（ReaderKit 排版的 Chromium 引擎）开听书 → 自动切到「无动画」
   //      → 退出听书 → 还原原档并定位回"刚才朗读到的那一段"。
   //
-  // 为什么这样做（三条真机实证）：
-  //   ① 自绘档的高亮是 `Span.textBackgroundStyle` **直接画在正文里**，天然贴合；
-  //      而 ReaderKit 的高亮很差，当年才做了「沉浸听读层」去补（`ImmersiveListenLayer`）。
-  //   ② `immersiveActive()` 在自绘档恒返回 false（`ReaderPage3.ets:10795`）
-  //      ⇒ 切到无动画后沉浸层自然不出现，不需要额外收尾。
-  //   ③ 无动画档的听书跟随（`autoFollowTts` → `requestLocate`）已验证可自动翻页。
+  // 为什么这样做（真机实证）：
+  //   ① 自绘档的高亮是 `Span.textBackgroundStyle` **直接画在正文里**，天然贴合
+  //      （曾经的「沉浸听读层」`ImmersiveListenLayer` 即为此而生，2026-11-05 已整体退役）。
+  //   ② 无动画档的听书跟随（`autoFollowTts` → `requestLocate`）已验证可自动翻页。
 
   /**
    * 听书开始 ⇒ 自动切到「无动画」。
@@ -7496,24 +7261,11 @@ oAnimInitNode 配套） */
     //   替换、音频却还在走"的中间态。根因链与判据见 `ListenSession.beginExclusive()`。
     ListenSession.beginExclusive(this.bookData.bookName, this.bookData.bookUrl ?? '',
       this.bookData.id ?? -1);
-    // ── 提前进沉浸（2026-10-10）──────────────────────────────────────────────
-    // 点击即置"准备中"并记下起始块节点；真正的沉浸页锚定放在 `onChapter`
-    // （那时 `buildQueue` 已完成、节点表才存在）。
-    this.ttsStarting = true;
-    this.pendingStartNode = startNode;
-    // 安全阀：20 秒内既没出声、也没进入任何非 stopped 状态（启动静默失败）⇒ 自动收回，
-    // 绝不把界面留在"沉浸但无声"的状态。
-    setTimeout((): void => {
-      if (this.ttsState === 'stopped') {
-        this.ttsStarting = false;
-      }
-    }, 20000);
-    // ⚠️ 必须用 ffectiveBookPath（可能指向转译版），否则与 ReaderKit 排版的正文不同源
+    // ⚠️ 必须用 effectiveBookPath（可能指向转译版），否则与 ReaderKit 排版的正文不同源
       TtsEngine.startStandalone(context, this.effectiveBookPath, spineIndex, this.ttsPrefs,
       this.bookData.bookName, startNode, startChar)
       .catch((e: Object) => {
         hilog.error(0x0000, 'testTag', 'tts start failed: %{public}s', JSON.stringify(e));
-        this.ttsStarting = false;
       });
   }
 
@@ -7932,21 +7684,8 @@ oAnimInitNode 配套） */
     //   也不需要测量通道 ⇒ 直接算句内字符区间交给自绘组件。）
     if (this.selfDrawnModeOn()) {
       this.clearHighlight();
-      this.wasImmersive = false;
       this.updateScrollHighlight();
       return;
-    }
-    // 沉浸 → 普通 的切换：把阅读器同步到当前朗读位置。
-    // ⚠️ 必须**先**更新 wasImmersive 再触发 requestLocate，否则 requestLocate 里的同步
-    //    回调会再次进入这里、判定条件依旧成立 ⇒ 无限递归。
-    const nowImm = this.immersiveActive();
-    const justLeftImmersive = this.wasImmersive && !nowImm;
-    this.wasImmersive = nowImm;
-    if (justLeftImmersive && this.lastAudioPos !== null) {
-      const p = this.lastAudioPos;
-      hilog.info(0x0000, 'testTag', 'immersive off: sync reader to spine=%{public}d node=%{public}d',
-        p.spineIndex, p.nodeIndex);
-      this.requestLocate(p.spineIndex, p.nodeIndex, p.charStart, true);
     }
     const r = this.session.pageRange;
     if (r === null || this.ttsState === 'stopped') {
@@ -8133,10 +7872,10 @@ oAnimInitNode 配套） */
       // 位置：**盖在 `ReadPageComponent` 之上、菜单/弹窗之下**。
       //  · 为什么不替换掉 `ReadPageComponent`：它在下方保持存活，切回仿真/横滑时是
       //    "换一层"而不是"重建引擎" ⇒ 三种方式互切零黑屏、零重排版等待；
-      //  · 为什么不与沉浸层并存：`immersiveActive()` 在自绘档恒 false（见该方法注释），
-      //    自绘组件自带句内高亮，天然满足"边听边看"，不需要那层自绘分页。
+      //  · 自绘组件自带句内高亮（`Span.textBackgroundStyle`），天然满足"边听边看"
+      //    （曾经的沉浸听读层 2026-11-05 已整体退役）。
       // 排版参数（字体/字号/行高/缩进/背景）全部取自 `readerSetting` 与标定值，
-      // 与引擎、与沉浸听读层**同源**，所以几种方式看起来是同一本书、同一个版式。
+      // 与引擎**同源**，所以几种方式看起来是同一本书、同一个版式。
       if (this.scrollModeOn() && this.bookHandlerReady) {
         ReaderScrollView({
           fontName: scrollFontFamily(this.projectSetting()),
@@ -8343,17 +8082,6 @@ oAnimInitNode 配套） */
           .borderRadius(4)
           .position({ x: this.hlLeft, y: this.hlTop })
           .hitTestBehavior(HitTestMode.None)
-      }
-
-      // 沉浸听读层（可选）：自绘本页 + 句内高亮画在文字内部；整层穿透触摸
-      // ⚠️ 2026-10-24 PuraX 外屏：**刻意不给它加 `!outerMinimal` 门**。
-      //   原因（工程既有真机事故，见 AGENTS.md §7 / 本文件 aboutToDisappear 注释）：
-      //   「退出听书后沉浸层撤掉，露出的是一张**没排版好的底页** ⇒ 黑屏」。
-      //   折叠到外屏时若正在沉浸听读，强行不渲染这一层就会复现同一个黑屏。
-      //   而这一层本身画的就是**正文 + 句内高亮**，观感上就是"在读的书"，
-      //   留在外屏不违背"取消听书模块"（取消的是**入口/面板/迷你条**，不是这一层）。
-      if (this.immersiveActive()) {
-        this.ImmersiveListenLayer()
       }
 
       // ── 「正在排版…」占位（2026-10-09）──────────────────────────────────────
@@ -10242,8 +9970,8 @@ oAnimInitNode 配套） */
     } else if (nextSelf && prevSelf) {
       // ── 自绘层 ↔ 自绘层（滚动 ⇄ 无动画）──────────────────────────────────
       // 同一套坐标、同一份版式 ⇒ 直接把现有位置交给目标层即可，**不碰引擎**。
-      // 这正是用户要的"天然自然过渡"：两边版式参数由同一批方法算出，页边界由同一个
-      // `paginateNodes()` 切，所以落在同一段上，不跳。
+      // 这正是用户要的"天然自然过渡"：两边版式参数由同一批方法算出，页边界由同一套
+      // `EngineLines` 行数据切，所以落在同一段上，不跳。
       let spine: number = this.scrollSpine;
       let node: number = this.scrollNode;
       if (useAnchor) {
@@ -10858,202 +10586,6 @@ oAnimInitNode 配套） */
     }
   }
 
-  /**
-   * 沉浸听读**不跟 ReaderKit 的"页"走，而是跟章节走**：
-   * 以当前朗读段为锚点连续渲染一串段落（窗口），朗读往前走窗口跟着走。
-   * 这样①底部永远有字填满、②高亮永不丢失、③根本不需要翻页。
-   *
-   * ⚠️ 必须叠加 `listeningThisBook()`：否则在听 A 时打开 B，B 会被渲染成 A 的沉浸听读。
-   */
-  private immersiveActive(): boolean {
-    // ⚠️ 自绘层（滚动 / 无动画）**不用**沉浸听读层：自绘组件本身就是原生 Text 排版，
-    //   高亮直接画在文字里（`Span.textBackgroundStyle`），天然满足"边听边看"。
-    //   所以这里必须返回 false —— 否则沉浸层会盖在自绘层上，把阅读体验整个吃掉。
-    if (this.selfDrawnModeOn()) {
-      return false;
-    }
-    // ⚠️ 2026-10-28：「沉浸听读」开关已删除，且听书统一锁死无动画
-    //    ⇒ 本层恒不激活（保留代码只为兼容旧字段/回滚，见 nterListenMode 注释）。
-    const base: boolean = false && this.immReady && this.listeningThisBook();
-    if (!base) {
-      return false;
-    }
-    if (this.ttsState !== 'stopped') {
-      return true;
-    }
-    // 准备中（已点朗读、首声未出）：**只有已能定位到要读的那一页**才提前进沉浸。
-    // 为什么加这个条件：`immCurPage()` 在 `immPageIdx < 0` 时返回 `[]`（本文件 :4697-4701）
-    // ⇒ 没有锚点就进沉浸会渲染出**一整层纯背景色**（闪色），比晚一点进更糟。
-    return this.ttsStarting && this.immPageIdx >= 0;
-  }
-
-  private immNodeText(nodeIdx: number): string {
-    const nodes = TtsEngine.currentNodeTexts();
-    return nodes !== null && nodeIdx < nodes.length ? nodes[nodeIdx] : '';
-  }
-
-  /** 段的渲染文本（sg = [节点号, 起始, 结束]，可段中切断） */
-  private immSegText(sg: number[]): string {
-    return this.immNodeText(sg[0]).substring(sg[1], sg[2]);
-  }
-
-  /** 该段若属于"当前朗读段"，返回句子在**该段渲染文本**中的字符区间；否则 [-1,-1] */
-  private immSegRange(sg: number[]): number[] {
-    const seg = TtsEngine.currentSegment();
-    if (seg === null || seg.nodeIndex !== sg[0]) {
-      return [-1, -1];
-    }
-    const p = this.immSegText(sg);
-    const s = this.ttsSegText.trim();
-    if (p.length === 0 || s.length === 0) {
-      return [-1, -1];
-    }
-    const guess = Math.max(0, Math.min(seg.charStart - sg[1], p.length));
-    let at = p.indexOf(s, Math.max(0, guess - 6));
-    if (at < 0) {
-      at = p.indexOf(s);
-    }
-    if (at < 0) {
-      at = guess;
-    }
-    return [at, Math.min(p.length, at + s.length)];
-  }
-
-  private immBefore(sg: number[]): string {
-    const rg = this.immSegRange(sg);
-    return rg[0] < 0 ? '' : this.immSegText(sg).substring(0, rg[0]);
-  }
-
-  private immHl(sg: number[]): string {
-    const rg = this.immSegRange(sg);
-    return rg[0] < 0 ? '' : this.immSegText(sg).substring(rg[0], rg[1]);
-  }
-
-  private immAfter(sg: number[]): string {
-    const rg = this.immSegRange(sg);
-    return rg[0] < 0 ? '' : this.immSegText(sg).substring(rg[1]);
-  }
-
-  /**
-   * 沉浸听读层：整屏不透明底（连阅读器的页脚装饰一起盖掉）+ 章节窗口文字 + 句内高亮。
-   * 整层（含每个子节点）HitTestMode.None ⇒ 翻页/菜单手势照旧穿透到下层阅读器。
-   */
-  @Builder
-  ImmersiveListenLayer() {
-    Stack() {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(this.settingState.themeColor)
-        .hitTestBehavior(HitTestMode.None)
-
-      Column() {
-        ForEach(this.immCurPage(), (sg: number[]) => {
-          if (this.immSegRange(sg)[0] >= 0) {
-            Text() {
-              Span(this.immBefore(sg))
-              Span(this.immHl(sg))
-                .textBackgroundStyle({ color: 'rgba(0, 125, 255, 0.20)', radius: 4 })
-              Span(this.immAfter(sg))
-            }
-            .fontSize(this.settingState.fontSize)
-            .lineHeight(this.settingState.lineHeight * this.settingState.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
-            .textIndent(sg[1] === 0 ? this.settingState.fontSize * HL_INDENT_SLOTS : 0)
-            .fontColor(this.settingState.fontColor)
-            .fontFamily(scrollFontFamily(this.projectSetting()))
-            .fontWeight(this.settingState.fontWeight + scrollWeightOffset(this.projectSetting()))
-            .width('100%')
-            .hitTestBehavior(HitTestMode.None)
-          } else {
-            Text(this.immSegText(sg))
-              .fontSize(this.settingState.fontSize)
-              .lineHeight(this.settingState.lineHeight * this.settingState.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
-              .textIndent(sg[1] === 0 ? this.settingState.fontSize * HL_INDENT_SLOTS : 0)
-              .fontColor(this.settingState.fontColor)
-              .fontFamily(scrollFontFamily(this.projectSetting()))
-              .fontWeight(this.settingState.fontWeight + scrollWeightOffset(this.projectSetting()))
-              .width('100%')
-              .hitTestBehavior(HitTestMode.None)
-          }
-        }, (sg: number[]) => this.immSegRange(sg)[0] >= 0
-          ? `imm-${sg[0]}-${sg[1]}-s${this.immSegSerial}`
-          : `imm-${sg[0]}-${sg[1]}`)
-      }
-      .width(this.textAreaWidthVp())
-      .height(immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx) / densityVp())
-      .clip(true)
-      .position({
-        x: textAreaLeftVp(this.projectSetting(), this.windowWidth, this.calibWidthRatio),
-        y: this.calibTopPx / densityVp()
-      })
-      .hitTestBehavior(HitTestMode.None)
-
-      // 手势层：沉浸模式下**由我们接管**手势。
-      // 下层阅读器虽然也在翻页，但它被不透明层盖住 ⇒ 用户看不到任何变化（这就是"点了没反应"）。
-      // 左/右 = 窗口前后翻一屏；中间 = 打开听书面板。
-      Row() {
-        Column()
-          .width('32%')
-          .height('100%')
-          .onClick(() => {
-            Haptics.tap();
-            this.immPage(-1);
-          })
-        Column()
-          .width('36%')
-          .height('100%')
-          .onClick(() => {
-            Haptics.tap();
-            // 中间区域 = 打开听书面板
-            this.openListenDialog();
-          })
-        Column()
-          .width('32%')
-          .height('100%')
-          .onClick(() => {
-            Haptics.tap();
-            this.immPage(1);
-          })
-      }
-      .width('100%')
-      .height('100%')
-      // ★ 内容保护内边距（2026-09-22，与听书面板同一处问题）：
-      //   本 sheet 内容层有 `borderRadius` + `clip`（见 bindSheet options 与
-      //   内容层样式），不设 padding 时贴边的列表项会被圆弧切掉。
-      //   留出左右 16 / 底部 16，让内容全部落在圆角之内。
-      .padding({ left: 16, right: 16, bottom: 16 })
-    }
-    .width('100%')
-    .height('100%')
-  }
-
-  /** 若当前朗读段落在可见区之下，需要把整层上移多少 px（对齐整行，避免半行被切） */
-  private immersiveShiftPx(): number {
-    const r = this.session.pageRange;
-    const seg = TtsEngine.currentSegment();
-    if (r === null || seg === null || this.measuredParas.length === 0) {
-      return 0;
-    }
-    const curIdx = seg.nodeIndex - r.startNode;
-    if (curIdx < 0) {
-      return 0;
-    }
-    let bottom = 0;
-    for (let k = 0; k <= curIdx && k < this.measuredParas.length; k++) {
-      const ls = this.measuredParas[k];
-      if (ls.length > 0) {
-        const last = ls[ls.length - 1];
-        bottom += last.top + last.height;
-      }
-    }
-    const budget = immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx);
-    if (bottom <= budget) {
-      return 0;
-    }
-    const linePx = Math.max(1, geom(this.projectSetting(), effectiveLineMul(this.autoLineMul, this.calibLineMul))[3]);
-    return Math.ceil((bottom - budget) / linePx) * linePx;
-  }
-
   /** 朗读迷你条：底部悬浮，当前句（随语速前滚）+ 播放/暂停（已翻走时变「从此页开始」）+ 展开面板 */
   @Builder
   TtsMiniBar() {
@@ -11098,18 +10630,6 @@ oAnimInitNode 配套） */
           .onClick(() => {
             Haptics.tap();
             this.miniBarPrimary();
-          })
-      } else if (this.immPageIdx >= 0 && this.immPageIdx !== this.immAudioPage()) {
-        // 沉浸模式手动翻屏后：一键回到正在朗读的位置
-        Text('回到朗读')
-          .fontSize(11)
-          .fontColor('rgba(255,255,255,0.85)')
-          .backgroundColor('rgba(255,255,255,0.18)')
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .borderRadius(8)
-          .onClick(() => {
-            Haptics.tap();
-            this.immBackToAudio();
           })
       }
 

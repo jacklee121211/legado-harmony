@@ -411,13 +411,4 @@ export function textAreaLeftVp(setting: readerCore.ReaderSetting, windowWidth: n
   return Math.max(0, (vw - textW) / 2) / densityPx;
 }
 
-/** 沉浸听读可见高度（px）：**按整屏**算，不按阅读器自身高度。
- *  实测（2026-09-20）：阅读器的 web 视图只有 2150px，而窗口是 2848px；
- *  若用阅读器高度算预算，沉浸层只占上方 3/4，底部空出一大块（截图为证）。 */
-export function immersiveBudgetPx(windowHeight: number, bottomRectHeight: number,
-  calibTopPx: number): number {
-  const disp = display.getDefaultDisplaySync();
-  const fullPx = disp.height > 0 ? disp.height : windowHeight;
-  const reserveVp = 24 + bottomRectHeight + 46; // 浮条下距 + 浮条高度 + 2vp 余量
-  return Math.max(120, fullPx - calibTopPx - reserveVp * densityVp());
-}
+// 2026-11-05：`immersiveBudgetPx()` 已随沉浸听读层整体退役（唯一消费者删除，全工程零引用）。
