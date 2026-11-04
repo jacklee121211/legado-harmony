@@ -77,7 +77,7 @@ dead.sort((a, b) => b.lines - a.lines)
 // RATCHET（2026-11-04 首次实测 = 13 个 / 918 行 → 批 C-14 删 6 个后 = 7 个 / 649 行，明细见 docs §68/§69）：
 //   只许降不许升 —— 新长出来的死文件会让 CI 变红。
 //   每删掉一个必须同步下调这个数，并把原因写进 docs。
-const DEAD_FILE_BUDGET = 7
+const DEAD_FILE_BUDGET = 5
 
 if (checkMode) {
   if (dead.length <= DEAD_FILE_BUDGET) {
