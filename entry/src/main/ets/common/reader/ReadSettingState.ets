@@ -18,11 +18,13 @@
 //     仅会通知property关联的组件进行刷新」「需通过 new 操作符实例化后，才具备被观测变化的能力」
 //   「@Trace不支持观察Function类型的数据」⇒ 本类**不放回调/方法字段**，方法只是普通成员函数。
 //
-// ── 本轮（S2-b-2）的范围：只做"镜子"，不抢真源 ───────────────────────────────
-// · 真源仍是页面 `@State readerSetting`（259 个读写点一行未动）；
-// · 本类只在**边界**被调用：`assignFrom(当前置)` 镜像进来 → `snapshot()` 取纯对象交出去；
-// · 这样既让本类真正跑在热路径上（证明它能承载 13 字段、且 `__ob_` 外壳不会泄漏到边界），
-//   又保证"渲染/行为"完全不变。S2-c 才把写点逐步改为直接改本类，并由它驱动 UI。
+// ── 当前状态（2026-11-04 S2-c(5) 后，7/13 字段已是真源）────────────────────────
+// · **已迁字段**（`ReaderPage3.MIGRATED_SETTING_FIELDS`）：fontSize / lineHeight / fontName /
+//   fontPath / fontWeight / nightMode / themeColor —— 这 7 个字段以本类为准，
+//   运行期写入口先改本类、再同步回页面 `readerSetting` 的快照；装载期（读持久位/接续/全局记录）相反。
+// · **未迁字段**（themeBgImg / flipMode / scaledDensity / viewPortWidth / viewPortHeight）：
+//   本类只是镜像，边界处由 `syncFromExcept()` 从页面快照回灌。
+// · 全部迁完后：删掉 `syncFromExcept` 与页面 `@State readerSetting`，本类即唯一真源。
 //
 // ── `__ob_` 陷阱（官方原文）──────────────────────────────────────────────────
 // documentId `FAQ/UI框架/组件使用/ObservedV2与_Trace装饰的对象key都带有_ob_导致反序列化异常/faqs-arkui-1587`：

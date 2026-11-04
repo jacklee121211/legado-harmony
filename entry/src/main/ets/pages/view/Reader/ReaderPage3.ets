@@ -10886,10 +10886,18 @@ oAnimInitNode 配套） */
   /**
    * 已从 `@State readerSetting` 迁到 `@ObservedV2` 模型（`settingState`）的字段（2026-11-04 渲染侧 S2-c）。
    *
-   * ⚠️ 每迁一个字段：① 把它加进这个数组；② 该字段**所有**读点改读 `this.settingState.X`；
-   *   ③ 该字段**所有**写点改写成 `this.settingState.X = …`；④ 单测 `read-setting-record.test.mjs`
-   *   里的棘轮会把"页面直写点数量"钉住（只许降），并核对本数组与实际直写点一致。
-   * 全部迁完后：删掉这个数组、删掉 `@State readerSetting`，`settingState` 成为唯一真源。
+   * ⚠️ **迁移期的真实做法是"双写"，不是"把读点全改掉"**（这一点与最初设想不同，写清避免误解）：
+   * · **运行期写点**（用户改设置）：`this.settingState.X = v;` 紧跟 `this.readerSetting.X = this.settingState.X;`
+   *   —— 模型是真源，页面 `readerSetting` 保一份**快照**供 259 个未改的读点使用；
+   * · **装载期写点**（读持久位 / 接续参数 / 全局字体记录 / 迁移补丁）：方向相反，`模型 = 来源值`；
+   * · 每个已迁字段因此会**多出一行** `readerSetting.X = settingState.X`，所以"页面直写点总数"在迁移期不降。
+   *
+   * 两道棘轮（`scripts/tests/read-setting-record.test.mjs`）：
+   * · `RATCHET_DIRECT_WRITES`：直写点总数不许**增长**；
+   * · `RATCHET_UNMIGRATED_WRITES`：**未迁字段**的直写点数（真正的进度计，只许降，迁完为 0）。
+   *   每迁一个字段必须同步下调它，否则测试会提示但不会红（提醒型）。
+   *
+   * 全部迁完后：删掉这个数组、删掉 `@State readerSetting` 与 `syncFromExcept`，`settingState` 成为唯一真源。
    */
   private MIGRATED_SETTING_FIELDS: string[] = ['fontSize', 'lineHeight', 'fontName', 'fontPath', 'fontWeight',
     'nightMode', 'themeColor'];
@@ -10907,12 +10915,12 @@ oAnimInitNode 配套） */
    *     （官方 FAQ `faqs-arkui-1587`）⇒ 写出脏数据（本工程历史上已被污染过一次，见 `:4133-4144`）。
    * ⇒ 把所有边界收敛到这**一个**方法，将来只改这里一处就够。
    *
-   * ── 本轮（S2-b-2）的变化：过一遍响应式模型 ───────────────────────────────────
-   * 先 `settingState.assignFrom(this.readerSetting)` 把当前值镜像进 `@ObservedV2` 模型，
-   * 再 `settingState.snapshot()` 取**纯对象**（逐字段拷贝，天然不含 `__ob_`）。
-   * 真源仍是 `@State readerSetting`（259 个读写点一行未动）⇒ **行为零变化**；
-   * 这样做的目的是让模型真跑在热路径上，证明它能承载 13 字段且不把 `__ob_` 泄漏到边界。
-   * S2-c 才把写点逐步改为直接改模型、并由模型驱动 UI。
+   * ── 迁移期（S2-c 起）的真实流程 ─────────────────────────────────────────────
+   * `settingState.syncFromExcept(this.readerSetting, this.MIGRATED_SETTING_FIELDS)`：
+   *   · **已迁字段**（在登记表里）以**模型**为准 —— 跳过，不从页面快照回灌；
+   *   · **未迁字段**从页面快照回灌 —— 否则快照会丢值。
+   * 然后 `settingState.snapshot()` 取**纯对象**（逐字段拷贝，天然不含 `__ob_`）。
+   * 真源**逐步**从 `@State readerSetting` 转给模型（当前 7/13），258+ 个读点仍读页面快照 ⇒ **行为零变化**。
    *
    * ── 零行为变化 ──────────────────────────────────────────────────────────────
    * `snapshot()` 只做逐字段拷贝，**不改任何值**；`pickReadSettingFields()` 再按白名单兜一次

@@ -253,6 +253,9 @@ export function hasLeakedObservingKeys(o: Object | null | undefined): boolean {
   return json.indexOf('__ob_') >= 0
 }
 
-// TODO（S2-b 之后再定，本轮**不擅自引入**）：字号 / 行距 / 缩放的合法区间夹取。
-//   工程已有一次教训（`ShelfPrefs.setUserColumns` 写入不夹取，见 docs §71），但那次的区间来自
-//   用户可见滑条；这里的区间目前散在 UI（滑条 min/max）与迁移函数里，需先取证再收口，避免两套规则。
+// TODO（**未定，属待决策项**，本轮不擅自引入）：
+//   字号 / 行距 / 缩放的**合法区间夹取**该收在哪一层？
+//   现状：区间只写在 UI 滑条（`ReaderFontDialog` 的 min/max）与 `migrateReaderSetting()` 里，
+//   本记录层**不做**夹取 —— 一旦在这里加，就会出现"UI 一套、模型一套"两份规则。
+//   工程先例：`ShelfPrefs.setUserColumns` 曾因"写侧不夹取"出过缺陷（docs §71）。
+//   ⇒ 迁移完成、UI 只剩模型一个入口时再决定（届时夹取放本记录层才没有歧义）。
