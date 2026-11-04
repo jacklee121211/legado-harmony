@@ -316,7 +316,7 @@ struct Main {
    */
   @State ltCoverShot: image.PixelMap | null = null
   /**
-   * 「内容页长什么样」——由 `ReaderPage3.publishLtPageBg()` 发布（键名同时写在
+   * 「内容页长什么样」——由 `ReaderSession.publishLtPageBg()` 发布（键名同时写在
    * `UiMotion.LT_PAGE_BG_KEY` / `LT_PAGE_IMG_KEY` 上）。
    * ⚠️ 这里的装饰器参数必须是**字符串字面量**（ArkTS 限制）⇒ 与 UiMotion 里那两个常量
    * 是"两处同一份真相"，改一处必须同步改另一处。
@@ -2615,7 +2615,7 @@ struct Main {
                       Stack() {
                         // ── 页色书体块（七轮 LT_PAGE_BG 底衬）───────────────────────
                         // 飞行层里"内容页"的化身：与真阅读器底色/材质同源
-                        //（ReaderPage3.publishLtPageBg 发布）⇒ 落地交换时底色连续。
+                        //（ReaderSession.publishLtPageBg 发布）⇒ 落地交换时底色连续。
                         if (UiMotion.LT_PAGE_BG && this.ltPageBg !== '') {
                           Column()
                             .width('100%')
@@ -2624,7 +2624,7 @@ struct Main {
                             .hitTestBehavior(HitTestMode.None)
                         }
                         if (UiMotion.LT_PAGE_BG && this.ltPageImg !== '') {
-                          // 自定义背景材质：与引擎用的同一张图（沙箱 URI，见 ReaderPage3.publishLtPageBg）
+                          // 自定义背景材质：与引擎用的同一张图（沙箱 URI，见 ReaderSession.publishLtPageBg）
                           Image(this.ltPageImg)
                             .width('100%')
                             .height('100%')

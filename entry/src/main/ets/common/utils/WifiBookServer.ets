@@ -2072,7 +2072,7 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
      * ReaderKit **不提供任何字符偏移**（`CatalogItem` 只有 catalogId/catalogName/href/
      * resourceFile 等，见 SDK `@hms.core.readerservice.bookParser.d.ts:197-268`）；若在服务端
      * 算，就必须保证"算偏移用的那串文本"与"网页收到的那串"逐字一致，否则偏移全错。
-     * ⇒ 改成：手机端只发布**标题**（它已有，零成本；`ReaderPage3.publishBookToc`），
+     * ⇒ 改成：手机端只发布**标题**（它已有，零成本；`ReaderSession.publishBookToc`），
      *   **字符区间由前端在它手里那份正文上算** —— `web/src/toc.ts` 的 `locateToc`，
      *   纯函数、有单测（含"书首目录块"陷阱与三种放弃条件）。风险从结构上消失，
      *   算法也第一次能被本地验证。

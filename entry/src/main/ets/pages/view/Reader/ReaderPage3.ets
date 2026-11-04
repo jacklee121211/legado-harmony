@@ -49,13 +49,17 @@ import { PageRange, effectiveLineMul, geomSelfContained, geom, cplFor, simulateP
 // 2026-11-04（P3 批 A-3）：**进度 / 书签 IO 的纯计算与读取投影**已抽到
 //   `common/reader/ReaderProgressIo.ets`（无 `this.`、不写 DB/AppStorage、不改 `@State`）。
 //   本页只保留调用点；写库 / 发事件 / 改 `@State` 的执行体仍在下方（等 `ReaderSession`）。
-import { ReaderPosition, currentPosition, parseDomPos, domPosFor, clampProgressUnit,
+// 2026-11-04（P3 批 A-5）：`currentPosition` / `ReaderPosition` 的**唯一调用方**（接续态发布）
+//   已搬进 `ReaderSession` ⇒ 本页不再 import 这两个符号（MCP 6133 实测为新增未使用）。
+import { parseDomPos, domPosFor, clampProgressUnit,
   progressTipX, hasBookmarkInRange } from '../../../common/reader/ReaderProgressIo';
 // 2026-11-04（P3 批 A-4）：**阅读会话状态（5 个非 @State 字段）+ 2 个写库函数**已抽到
 //   `common/reader/ReaderSession.ets`。本页所有读写点改成 `this.session.xxx`；
 //   `pageShow` / `onScrollPos` / `aboutToDisappear` 的调用顺序与时机**一行未动**。
 //   `LocateTarget` / `FlipSearch` 两个类型随会话字段搬过去（类型只留一份），此处 import 引用。
-import ReaderSession, { LocateTarget, FlipSearch } from '../../../common/reader/ReaderSession';
+// 2026-11-04（P3 批 A-5）：**4 个 `publish*` + 退书结算**也搬进同一个文件；入参打包类型
+//   `PublishFacts` 由本页 `publishFacts()` 现取现传（本页仍是这些事实的唯一真源）。
+import ReaderSession, { LocateTarget, FlipSearch, PublishFacts } from '../../../common/reader/ReaderSession';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -74,7 +78,10 @@ import { ReaderTextureDialog } from './ReaderTextureDialog';
 import { ReaderFontLib } from '../../../common/utils/ReaderFontLib';
 import { ReaderFontDialog } from './ReaderFontDialog';
 // ── 应用接续 / 无缝流转（2026-10-24）：把当前阅读态登记给 EntryAbility.onContinue ──
-import { ContinueBridge, ContinuePayload } from '../../../common/utils/ContinueBridge';
+// 2026-11-04（P3 批 A-5）：`ContinuePayload` 与 `ContinueBridge.publish` 的唯一调用方
+//   （`publishContinueStateWith`）已搬进 `ReaderSession` ⇒ 本页只留 `ContinueBridge`
+//   （`aboutToDisappear` 里仍要 `ContinueBridge.leaveReader`）。
+import { ContinueBridge } from '../../../common/utils/ContinueBridge';
 import { ReaderSchemeDialog } from './ReaderSchemeDialog';
 // ── 按键翻页（2026-10-07）：音量键翻页，开关在 设置-功能-「音量键翻页」（2026-10-19：原「按键翻页」组已删）──
 import { ReaderKeyTurn } from '../../../common/utils/ReaderKeyTurn';
@@ -115,7 +122,10 @@ import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent
 import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
 // 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../common/dialog/DialogHost'
-import ReaderPorts from '../../../common/reader/ReaderPorts';
+// 2026-11-04（P3 批 A-5）：本页**不再** import `ReaderPorts` —— 它在本页最后一个写点
+//   （`flushReadProgressThenNotifyShelf` → `settleOnExit`）已随函数搬进 `ReaderSession`。
+//   ⇒ `ReaderPage3` 对 `books` 事实的写点从 1 处降为 **0 处**（审计点：`ReaderSession` 3 处 +
+//   `PdfViewerPage` 1 处，全部经 `ReaderPorts` 窄口）。
 
 interface ParamsObj {
   bookData: Books,
@@ -607,33 +617,10 @@ export default struct ReaderPage3 {
   //   `common/reader/ReaderSession.ets`，函数体逐字未改（只把 `this.bookData` 改成显式形参 `book`）。
   //   本页只留调用点，**调用位置与顺序原样**（`pageShow` / `onScrollPos` 各一处）。
 
-  /**
-   * 阅读会话结束 ⇒ **先落库最终进度，再广播书架刷新**（2026-10-07）。
-   *
-   * ── 缺口 ────────────────────────────────────────────────────────────────
-   * 书架列表的唯一数据刷新通道是 AppStorage 键 `BOOK_IS_BOOK_REFRESHING`
-   * （`BookContent` `@StorageLink+@Watch` ⇒ 重查数据库，排序 SQL 为
-   * `isTop DESC, durChapterTime DESC`，见 `BooksDao.searchPage`）。本页写进度的
-   * `persistReadProgress()` 只落库、从不广播；而阅读页是 NavDestination，
-   * pop 回书架时宿主 `Index.onPageShow()` **不会触发**（Index.ets :331 注释已实证）
-   * ⇒ 「看完书回书架，刚读的书不置顶、'读到第X章'停在旧值」，要手动下拉刷新。
-   *
-   * ── 为什么必须 await 落库完成后再广播 ────────────────────────────────────
-   * `stampReadProgress` 是异步 UPDATE；先广播后落库的话，书架重查会读到**旧行**
-   * （与 `BooksDao.ets` 「网络导入竞态」注释同一坑：信号到了、行还没写进去 ⇒
-   * 界面不更新，要等下次）。所以这里 await 到 UPDATE 提交再自增广播键。
-   *
-   * ── 调用点 ──────────────────────────────────────────────────────────────
-   * `aboutToDisappear()`（pop 转场结束、组件销毁时触发，见 Index.ets LTBOOK
-   * 日志注记 onDisappear 晚于 transition finish）——此时书架刚可见，重查在落地后
-   * 一两帧内完成，与下拉刷新同量级开销。兜底语义：即使 5 秒节流吞掉了最后一次
-   * `persistReadProgress()`，退出前这里也会把最终进度补写进去。
-   */
-  private async flushReadProgressThenNotifyShelf(): Promise<void> {
-    // 2026-11-03（Ⅴ-1）：退书结算收敛为**一个窄口调用**（内部：await 写库 → 再广播书架刷新）
-    await ReaderPorts.settleOnExit(ReaderPorts.snapshotOf(this.bookData), this.bookData.durChapterIndex ?? 0,
-      this.bookData.durChapterTitle ?? '', this.bookData.totalChapterNum ?? 0)
-  }
+  // 2026-11-04（P3 批 A-5）：`flushReadProgressThenNotifyShelf()` 已搬到
+  //   `common/reader/ReaderSession.ets`（连"缺口 / 为什么必须 await 落库后再广播 /
+  //   调用点"三段说明一起搬过去）。**调用点仍在 `aboutToDisappear()` 原行、仍不 await** ——
+  //   转场结束不能被落库拖住；"await 后再广播"是那个方法**内部**的顺序。
 
   /** 待跳转的书签目标（-1 = 无）。来自 `readStatistics` 二级菜单点击书签时的 params。 */
   private bmJumpIndex: number = -1
@@ -2607,7 +2594,7 @@ oAnimInitNode 配套） */
       //   ⚠️ 2026-10-08：改为**无条件**调用（旧代码只在 `customBgOn || customEditOn` 时才调
       //     ⇒ 日/夜下点推荐色模式不落盘，退出再进退回标准白/黑，与用户看到的不一致）。
       this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
-      this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+      this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
       this.readerComponentController.setPageConfig(this.readerSetting);
     })
   }
@@ -2722,7 +2709,7 @@ oAnimInitNode 配套） */
     }
     NightMode.setReaderNight(night)
     this.syncAbilityColorMode()
-    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
   }
 
@@ -2818,7 +2805,7 @@ oAnimInitNode 配套） */
     if (flipped) {
       this.syncAbilityColorMode()
     }
-    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
   }
 
@@ -3505,7 +3492,7 @@ oAnimInitNode 配套） */
     const now: number = Date.now()
     if (commit || now - this.customBgAppliedAt >= CUSTOM_BG_APPLY_GAP_MS) {
       this.customBgAppliedAt = now
-      this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+      this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
       this.readerComponentController.setPageConfig(this.readerSetting)
     }
     if (commit) {
@@ -3621,7 +3608,7 @@ oAnimInitNode 配套） */
     if (flipped) {
       this.syncAbilityColorMode()
     }
-    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
     // ── 后台预生成全部 5 档（含当前档，磁盘命中零成本）⇒ 之后拖动条切档零等待 ──
     if (this.bgBlurOn && finalPath.length > 0) {
@@ -3781,7 +3768,7 @@ oAnimInitNode 配套） */
     // 焦点：恢复色恰好是最后一次应用的方案 ⇒ 圈落回「更多方案」按钮；否则落推荐色
     this.bgFocus = (this.schemeFocusBg.length > 0
       && this.schemeFocusBg === hex) ? 'scheme' : 'preset'
-    this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.readerSetting)
     this.customBgTouched = true
     this.saveCustomBg()
@@ -3960,51 +3947,9 @@ oAnimInitNode 配套） */
     this.applyStandardAppearance(this.themeMode === ReaderCustomBg.MODE_NIGHT, false)
   }
 
-  /**
-   * 把「内容页长什么样」发布给书架→阅读器一镜到底的飞行层（七轮 2026-09-30）。
-   *
-   * ── 为什么需要 ────────────────────────────────────────────────────────────
-   * 真机日志（`Downloads\2.md`）实证：返回一开始 NavDestination 就进 `onHidden`
-   * （22:07:16.894），而我们的自定义转场 22:07:16.895 才起 ⇒ 阅读器的 RS surface
-   * 那一层不再合成（截图逐像素也证明：飞行书盒子内部能看到书架自己的黑色标题字）
-   * ⇒ 飞行层裁剪层是"空的"，没被封面盖住的地方直接漏出书架定格图
-   * （用户原话："原位有一本书在，然后我们的书关闭动画缩放完又落在上面了"）。
-   * 飞行层拿不到 `readerSetting`（它是本页私有状态）⇒ 由本页把页面外观发布到 AppStorage，
-   * 飞行层照它铺一层底衬（见 `Index.ets` 飞行分支的裁剪层 / `UiMotion.LT_PAGE_BG`）。
-   *
-   * ── 调用点 ────────────────────────────────────────────────────────────────
-   * 每个**真正改页面外观**的地方，紧挨着既有的 `setPageConfig(...)`：
-   * 推荐色、自定义颜色、材质/纹理背景、日夜标准色、`aboutToAppear` 首次下发。
-   * 幂等、无副作用（只写两个 AppStorage 字符串）。
-   */
-  private publishLtPageBg(): void {
-    if (!UiMotion.LT_PAGE_BG) {
-      return
-    }
-    // 背景图：`themeBgImg` 是**沙箱路径**（见 applyTextureBg / applyComposedBg）；
-    // ⚠️ `Image` **不接受裸沙箱路径**，必须转成沙箱 URI —— 官方 FAQ
-    // `FAQ/UI框架/组件使用/Image组件如何读入沙箱内的图片/faqs-arkui-154` 原文：
-    //   「Image组件**不能直接传入应用沙箱路径**，需要传入应用沙箱URI。…调用
-    //    `fileUri.getUriFromPath` 方法将沙箱路径转化为沙箱 URI，传入之后即可正常显示沙箱图片。」
-    // （API：`fileUri.getUriFromPath(path: string): string`，SDK `@ohos.file.fileuri.d.ts`，
-    //   @since 15，会抛 401 ⇒ 必须包 try/catch。）
-    // 非绝对路径（例如 themeBgImg 里存的是 rawfile 名）一律不发布图片，只留纯色底。
-    const raw: string = this.readerSetting.themeBgImg ?? ''
-    let img: string = ''
-    if (raw.startsWith('/')) {
-      try {
-        img = fileUri.getUriFromPath(raw)
-      } catch (e) {
-        img = ''
-        hilog.info(0x0000, 'testTag', 'LTBOOK publish page bg img uri failed: %{public}s',
-          (e as BusinessError)?.message ?? 'error')
-      }
-    }
-    AppStorage.setOrCreate(UiMotion.LT_PAGE_BG_KEY, this.readerSetting.themeColor ?? '')
-    AppStorage.setOrCreate(UiMotion.LT_PAGE_IMG_KEY, img)
-    hilog.info(0x0000, 'testTag', 'LTBOOK publish page bg color=%{public}s img=%{public}s',
-      this.readerSetting.themeColor ?? '', img)
-  }
+  // 2026-11-04（P3 批 A-5）：`publishLtPageBg()` 已搬到 `common/reader/ReaderSession.ets`
+  //   （连"为什么需要 / 调用点"注释一起搬）。本页 7 处调用点原样保留位置，只改成
+  //   `this.session.publishLtPageBg(this.readerSetting)` —— 仍**同步**，下一行仍是 `setPageConfig`。
 
   async aboutToAppear() {
 
@@ -4595,7 +4540,7 @@ oAnimInitNode 配套） */
       //   onPageDataNeedUpdate 不再触发 ⇒ Draw Cur Page 不执行 ⇒ XComponent 无帧黑屏，
       //   真机日志 2026-09-27 01:57）。加粗（正文）暂无安全注入点，诚实搁置。
       this.readerComponentController.registerBookParser(this.BookHandler);
-      this.publishLtPageBg()   // 七轮：发布内容页外观给飞行层（见该方法注释）
+      this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
       this.readerComponentController.setPageConfig(this.readerSetting);
       // 应用接续观测（2026-10-24）：**真正下发给引擎**的落点是什么。
       // 与 `startPlay from CONTINUE/LOCAL` 那两行对起来看，就能区分
@@ -4608,7 +4553,14 @@ oAnimInitNode 配套） */
       // 电脑端拿这份标题列表，在**与 /book 完全同一串解码文本**上按顺序定位 ⇒ 两端章号/百分比
       // 首次真正对齐（旧实现各切各的，只能靠 12~20 字模糊匹配）。字符偏移由服务端算（见
       // WifiBookServer.locateToc），因为只有服务端同时持有"目录标题"和"正在下发的正文串"。
-      this.publishBookToc();
+      // P3 批 A-5：取标题的循环从 `publishBookToc` 移到此处（同一时刻、同一取数口径），
+      //   写盘与比较逻辑在 `ReaderSession.publishBookToc(bookName, titles)`。
+      const tocTitles: string[] = [];
+      const tocCount: number = this.CatalogList.totalCount();
+      for (let ti = 0; ti < tocCount; ti++) {
+        tocTitles.push(this.CatalogList.getData(ti)?.catalogName ?? '');
+      }
+      this.session.publishBookToc(this.bookData?.bookName ?? '', tocTitles);
       // 注：目录过滤数据源已随弹窗改造搬到 `ReaderCatalogDialog` 内部 ——
       //     它在每次打开时从 `CatalogList.getOriginDataArray()` 重新构建，这里不需要再同步。
       hilog.info(0x0000, 'testTag', 'catalog list length: ' + this.CatalogList.totalCount());
@@ -4794,46 +4746,10 @@ oAnimInitNode 配套） */
     }
   }
 
-  /**
-   * 发布目录标题快照（M3 单源目录，2026-10-05）。
-   *
-   * 目的：让电脑端与手机端**用同一份章节划分**（现在两端各切各的：手机 ReaderKit、
-   * 网页空行+标题正则 ⇒ 章号/百分比/书签位置全都对不上，只能靠文本模糊匹配）。
-   *
-   * 为什么只发布"标题"而字符偏移交给服务端算：详见 WifiBookServer.locateToc 注释 ——
-   * 只有在服务端才能在**正在下发的那一串解码文本**上定位，避免"两端口径不同 ⇒ 偏移全错"。
-   * 只在标题数组变化时写盘（开书高频，避免每次都写）。
-   */
-  private publishBookToc(): void {
-    try {
-      const name: string = this.bookData?.bookName ?? ''
-      if (name === '') {
-        return
-      }
-      const n: number = this.CatalogList.totalCount()
-      if (n <= 0) {
-        return
-      }
-      const titles: string[] = []
-      for (let i = 0; i < n; i++) {
-        titles.push(this.CatalogList.getData(i)?.catalogName ?? '')
-      }
-      const key: string = `BookToc_${name}`
-      const next: string = JSON.stringify(titles)
-      let prev = ''
-      try {
-        prev = PreferencesUtil.getSync(key, '') as string
-      } catch (e) {
-        prev = ''
-      }
-      if (prev !== next) {
-        PreferencesUtil.putSync(key, next)
-        hilog.info(0x0000, 'testTag', 'bookToc published: %{public}d titles', n)
-      }
-    } catch (e) {
-      hilog.error(0x0000, 'testTag', `publishBookToc failed: ${(e as Error).message}`)
-    }
-  }
+  // 2026-11-04（P3 批 A-5）：`publishBookToc()` 已搬到 `common/reader/ReaderSession.ets`
+  //   （连"为什么只发布标题 / 为什么交给服务端算偏移"注释一起搬）。
+  //   唯一结构性变化：原来方法内部自己循环 `this.CatalogList` 取标题，现在由**调用点**在
+  //   同一时刻建好数组传入（取数时机与内容逐项一致，`totalCount()` 早退口径改由数组长度判定）。
 
   /**
    * pageShow 挂点：把手机当前位置写进**手机自己的位置槽**（v2 双端同步，见 SyncConfig）。
@@ -5430,7 +5346,7 @@ oAnimInitNode 配套） */
       this.tryContinueFineTune(data);
       // 应用接续（2026-10-24）：每次翻页把"此刻读到哪儿"登记到 AppStorage，
       // 供 `EntryAbility.onContinue()` 打包进 wantParam（不落盘，微秒级）。
-      this.publishContinueState();
+      this.session.publishContinueState(this.publishFacts());
       this.bookData.durChapterTitle = this.CatalogList.getData(this.bookData.durChapterIndex)?.catalogName ?? this.bookData.durChapterTitle;
       this.bookData.totalChapterNum = this.CatalogList.totalCount();
       // ── 空书名守卫（2026-10-05，审计 H12）───────────────────────────────────
@@ -6281,8 +6197,9 @@ oAnimInitNode 配套） */
     // ★ 退出阅读 ⇒ 最终进度落库 + 广播书架刷新（2026-10-07）：
     //   书架只认 `BOOK_IS_BOOK_REFRESHING` 广播重查，而本页原先只写库不广播、
     //   宿主 Index 的 onPageShow 又不因 NavDestination pop 触发 ⇒ 回书架不重排。
-    //   await 落库后再广播的原因见 flushReadProgressThenNotifyShelf 注释。
-    this.flushReadProgressThenNotifyShelf();
+    //   await 落库后再广播的原因见 ReaderSession.flushReadProgressThenNotifyShelf 注释。
+    // ★ 本行**不 await**（P3 批 A-5 原样保留）：转场结束不能被落库拖住。
+    this.session.flushReadProgressThenNotifyShelf(this.bookData);
     // ★ 页面销毁：两个 UI 刷新器必须显式停掉（2026-10-07）。
     //   旧实现只在「退出听书」(`exitListening`) 里停 sleepTicker，而 `aboutToDisappear`
     //   既没停 sleepTicker 也没停 infoTicker ⇒ 组件销毁后回调仍可能打到已销毁页面上。
@@ -6515,7 +6432,7 @@ oAnimInitNode 配套） */
         // 应用接续（2026-10-24）：听书每推进一句就刷新接续落点。
         // 官方体验建议要求同步「阅读**及听书**进度」，这是听书侧唯一的可靠打点
         // （`onProgress` 是句内逐字符，太密；这里按句触发，频率刚好）。
-        this.publishListenState();
+        this.session.publishListenState(this.publishFacts());
         this.scrollMiniBar(0);
         this.syncImmersivePage();
         this.updateHighlight();
@@ -10397,8 +10314,8 @@ oAnimInitNode 配套） */
     }
     hilog.info(0x0000, 'testTag', 'readMode loaded: %{public}d (flipMode=%{public}s)',
       m, this.readerSetting.flipMode);
-    // 无动画档要吞掉系统侧滑返回（见 `publishReadModeFlag` 注释）
-    this.publishReadModeFlag();
+    // 无动画档要吞掉系统侧滑返回（见 `ReaderSession.publishReadModeFlag` 注释）
+    this.session.publishReadModeFlag(this.readMode === READ_MODE_NONE);
   }
 
   /** 落盘阅读方式 */
@@ -10495,8 +10412,8 @@ oAnimInitNode 配套） */
     const prev: number = this.readMode;
     this.readMode = next;
     this.saveReadMode(next);
-    // 切档后立刻刷新"是否要吞掉系统侧滑返回"的标志（见 `publishReadModeFlag` 注释）
-    this.publishReadModeFlag();
+    // 切档后立刻刷新"是否要吞掉系统侧滑返回"的标志（见 `ReaderSession.publishReadModeFlag` 注释）
+    this.session.publishReadModeFlag(this.readMode === READ_MODE_NONE);
     hilog.info(0x0000, 'testTag', 'switchReadMode %{public}d → %{public}d', prev, next);
     // ★ 2026-11-01 修「切换动画档后状态栏冒出来且不消失」：
     //   系统栏显隐原先**只在进页那一刻**下发一次（`aboutToAppear` 的延迟块）与
@@ -10876,7 +10793,7 @@ oAnimInitNode 配套） */
     // ⚠️ 不能挂在 `persistScrollProgress()` 里 —— 那个被 `SCROLL_PERSIST_GAP_MS`
     //   节流，快速滚动时接续会上报旧位置（真机日志 01:18:00 实证：上报成了章首）。
     //   这里只写 AppStorage（微秒级、不落盘），不需要节流。
-    this.publishContinueState();
+    this.session.publishContinueState(this.publishFacts());
   }
 
   /**
@@ -10912,103 +10829,30 @@ oAnimInitNode 配套） */
    *   的 `currentPosition()`，本页只留上面这份口径说明与调用点。
    */
 
-  /**
-   * 应用接续（无缝流转，2026-10-24）：把"此刻读到哪儿 + 用什么排版"登记到
-   * `ContinueBridge`（AppStorage，不落盘），供 `EntryAbility.onContinue()` 打包进
-   * `wantParam` 送到对端。
-   *
-   * ── 带什么 / 不带什么（用户 2026-10-24 拍板）─────────────────────────────
-   * ✅ 带：字体、字重、字色、主题色、背景、日/夜、翻页模式、进度（双坐标）
-   * ❌ 不带：字号、行距 —— 每块屏幕按自己的尺寸排版，**布局不变**
-   *
-   * 调用点：`pageShow`（分页模式每次翻页）、`onScrollPos` 尾部（滚动模式每次滚动）。
-   * ⚠️ 滚动模式**不能**挂在 `persistScrollProgress()` 里 —— 那个被
-   *   `SCROLL_PERSIST_GAP_MS` 节流，快速滚动时会上报旧位置（真机日志 01:18:00 实证）。
-   */
-  private publishContinueState(): void {
-    // 位置统一走 `currentPosition()`（滚动=实时值 / 分页=pageShow 值）
-    const pos: ReaderPosition = currentPosition(this.selfDrawnModeOn(), this.scrollSpine,
-      this.scrollNode, this.bookData.localBookDurChapterPos, this.session.pageRange);
-    // 双坐标：domPos 与 (node, char) 一并带（对端 domPos 异常时用 node/char 重算）
-    this.publishContinueStateWith(pos.spine, domPosFor(pos.node, pos.char),
-      pos.node, pos.char, TtsEngine.getState() !== 'stopped');
-  }
+  // 2026-11-04（P3 批 A-5）：`publishContinueState` / `publishListenState` /
+  //   `publishContinueStateWith` 三个**接续态发布**方法已搬到
+  //   `common/reader/ReaderSession.ets`（连"带什么 / 不带什么 / 为什么必须报 readMode"注释一起搬）。
+  //   本页 3 处调用点（`pageShow` / `onScrollPos` 尾部 / TTS `onSentence`）位置与时机原样，
+  //   只改成 `this.session.publishContinueState(this.publishFacts())` 这种显式入参写法。
+  //
+  //   `publishFacts()` 是本页新增的**唯一**入参打包处（把 `@State` 与自绘层实时位置
+  //   在同一时刻读成 `PublishFacts`）；本页仍是这些事实的**唯一真源**。
 
   /**
-   * 听书进度上报（2026-10-24 新增）。
+   * 出站发布用的页面事实快照（P3 批 A-5）。
    *
-   * 官方《常见接续场景体验建议》对「新闻阅读」类明确要求同步「阅读**及听书**进度」。
-   * `TtsEngine.currentSegment()` 给的是同一套 ReaderKit 坐标（spine / 块节点 / 节点内字符），
-   * 用 `domPosFor(node, char)` 换算成字符级 DOM 锚点 ⇒ 对端能精确落到"正在听的那句"。
-   *
-   * 调用点：TTS 的「按句推进」回调（`onSentence` 分支）—— 每推进一句刷新一次，
-   * 频率与听书进度显示一致，不额外增加唤醒。
+   * 只做"当次调用读到的值"打包，**不是**第二份状态：`@State bookData` 在 `aboutToAppear`
+   * 会被整体替换（`:4202` / `:4203`），所以绝不把它交给 `ReaderSession` 持有。
    */
-  private publishListenState(): void {
-    // ⚠️ 用公开的 `getState()`，不要用 `TtsEngine.isPlaying()`（那是 private）
-    if (TtsEngine.getState() === 'stopped') {
-      return;
-    }
-    const seg: TtsSegmentPos | null = TtsEngine.currentSegment();
-    if (seg === null || seg.spineIndex < 0) {
-      return;
-    }
-    this.publishContinueStateWith(seg.spineIndex,
-      domPosFor(seg.nodeIndex, seg.charStart ?? 0),
-      seg.nodeIndex, seg.charStart ?? 0, true);
-  }
-
-  /** 用指定落点发布接续态（阅读/听书分支共用；`listen` 仅用于标记来源） */
-  private publishContinueStateWith(spineIndex: number, domPos: string,
-    nodeIndex: number, charOffset: number, listen: boolean): void {
-    const name: string = this.bookData.bookName ?? '';
-    if (name.length === 0) {
-      return;
-    }
-    let bgJson: string = '';
-    try {
-      const rec: ReaderBgRecord | null = ReaderCustomBg.loadBook(name);
-      if (rec !== null) {
-        const s: string = JSON.stringify(rec);
-        bgJson = s.length <= 4000 ? s : '';
-      }
-    } catch (e) {
-      bgJson = '';
-    }
-    const payload: ContinuePayload = {
-      bookName: name,
-      bookUrl: this.bookData.bookUrl ?? '',
-      chapterTitle: this.bookData.durChapterTitle ?? '',
-      spineIndex: spineIndex,
-      domPos: domPos,
-      nodeIndex: nodeIndex,
-      charOffset: charOffset,
-      // ✅ 带：字体/字重/字色/主题色/背景/日夜/翻页模式
-      // ❌ 不带：字号/行距（屏幕比例不同，真正影响体验的只有这两个）
-      fontName: this.readerSetting.fontName ?? '',
-      fontPath: this.readerSetting.fontPath ?? '',
-      fontWeight: this.readerSetting.fontWeight ?? 0,
-      fontColor: this.readerSetting.fontColor ?? '',
-      themeColor: this.readerSetting.themeColor ?? '',
-      themeBgImg: this.readerSetting.themeBgImg ?? '',
-      nightMode: this.readerSetting.nightMode === true,
-      // ⚠️⚠️ 2026-10-24 修（真机日志定案）：**必须报 `readMode`，不能报 `readerSetting.flipMode`**。
-      //   事故（`docs/日志.md` 00:12:41）：源端在**上下滚动**档接续，对端收到 `flipMode=1`
-      //   ⇒ 变成横滑。
-      //   根因：`loadReadMode()` 里只有分页两档会回写 `readerSetting.flipMode`
-      //     （`if (m === CURL || m === SLIDE) { … }`），**滚动档不回写** ⇒ 滚动时
-      //     `readerSetting.flipMode` 仍是上一次分页的旧值（'0'/'1'），于是上报的是脏数据。
-      //   真正的权威状态是 `@State readMode`
-      //   （0=仿真 / 1=横滑 / 2=滚动 / 3=无动画，见 `READ_MODE_*` 常量）。
-      //   '3' 的跨版本兼容（2026-10-26 用户拍板"支持就支持，不支持就降级"）：
-      //   老版本对端把 '3' 解析成仿真（`applyContinue` 里三元链的兜底），
-      //   不崩溃、只是降级 —— 对端升级后自然就是无动画。
-      flipMode: String(this.readMode),
-      bgJson: bgJson,
-      sessionId: '',
-      listenMode: listen
+  private publishFacts(): PublishFacts {
+    return {
+      book: this.bookData,
+      setting: this.readerSetting,
+      readMode: this.readMode,
+      selfDrawn: this.selfDrawnModeOn(),
+      scrollSpine: this.scrollSpine,
+      scrollNode: this.scrollNode
     };
-    ContinueBridge.publish(payload);
   }
 
   /** 把滚动位置写成与 `pageShow` 同构的 `PageDataInfo` 并落盘 */
@@ -11920,23 +11764,10 @@ oAnimInitNode 配套） */
 
   // 2026-11-03（R3 收尾）：缩放入口与状态广播 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 
-  /**
-   * 把"当前是否无动画阅读档"同步到 AppStorage，供 `Index.ets` 的 `onBackPress()` 判定
-   * （2026-10-26 新增）。
-   *
-   * 为什么必须走 AppStorage 而不是本页自己的判断：真机日志实证
-   * （`Documents\日志` 18:30:42.579）—— 右滑时 `PAN RACC, T: Stack`（系统侧滑返回）
-   * 抢走手势，紧接着 `isPopPage: 1` 把整本书 pop 掉，而 `NavDestination.onBackPressed`
-   * **根本没被触发**（日志无 `PDFZOOM` 行）⇒ 侧滑返回只在 `@Entry` 页面层可拦。
-   * 本页的 `priorityGesture` 对它无效（那是系统级识别器，不是组件树父手势）。
-   *
-   * ⚠️ 取值只用 `'none'` / `''` 两种：`''` = 不是无动画档（不拦返回）。
-   *    仿真/横滑由引擎自己处理左右滑、上下滚动档右滑是加书签，都不该吞掉整页返回。
-   */
-  private publishReadModeFlag(): void {
-    AppStorage.setOrCreate('READER_READ_MODE',
-      this.readMode === READ_MODE_NONE ? 'none' : '');
-  }
+  // 2026-11-04（P3 批 A-5）：`publishReadModeFlag()` 已搬到 `common/reader/ReaderSession.ets`
+  //   （连"为什么必须走 AppStorage / 取值只有 'none' 与 '' 两种"注释一起搬）。
+  //   ⚠️ 判定仍在**本页**：`this.readMode === READ_MODE_NONE` 用的是本页模块常量，且
+  //   `noAnimModeOn()` 的口径（多"非预览格式 + 无转换错误"两条件）**不能**顶替这个判定。
 
   // 2026-11-03（R3 收尾）：平移夹取/软边界/回弹 —— PDF 已统一进 PdfViewerPage，此段不可达，已删除。
 

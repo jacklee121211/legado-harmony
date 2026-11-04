@@ -10,7 +10,7 @@ import UiMotion from '../../../common/utils/UiMotion';
 
 const TAG: string = 'EZLT';
 
-// 书脸兜底色：阅读器主题色（ReaderPage3.publishLtPageBg）尚未发布时的过渡色
+// 书脸兜底色：阅读器主题色（ReaderSession.publishLtPageBg）尚未发布时的过渡色
 const FALLBACK_PAGE_BG: ResourceColor = '#F8F9FA';
 
 // 手势返回时缩放的下限（官方契约同款）：拖到 0.5 即视为已充分返回
@@ -90,7 +90,7 @@ export class LongTakeSession {
   private cardItemInfo_px: RectInfo_px = new RectInfo_px();
 
   // ── 效果层视觉字段（CardLongTakeDelegate 消费；全部 @Observed 驱动重绘）────
-  /** 书体块底色（阅读器页底色同源，ReaderPage3.publishLtPageBg 持续发布） */
+  /** 书体块底色（阅读器页底色同源，ReaderSession.publishLtPageBg 持续发布） */
   public pageBodyColor: ResourceColor = FALLBACK_PAGE_BG;
 
   /** 书体块背景图（阅读器自定义材质，沙箱 URI；空 = 纯色） */
@@ -310,7 +310,7 @@ export class LongTakeSession {
     this.applyClosedAtSlot();
     this.coverPerspective = UiMotion.LT_COVER_PERSPECTIVE;
     this.lift = 0;
-    // 书体块取阅读器真实底色/材质（ReaderPage3.publishLtPageBg 持续发布到 AppStorage）
+    // 书体块取阅读器真实底色/材质（ReaderSession.publishLtPageBg 持续发布到 AppStorage）
     this.pageBodyColor = AppStorage.get<ResourceColor>(UiMotion.LT_PAGE_BG_KEY) ?? FALLBACK_PAGE_BG;
     this.pageBodyImg = AppStorage.get<string>(UiMotion.LT_PAGE_IMG_KEY) ?? '';
     this.transitionParam.options?.onEnterTransitionStart?.();

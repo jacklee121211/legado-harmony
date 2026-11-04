@@ -9,8 +9,8 @@
  *     `BookDetailPage.ets:404-406` 记录）；
  *   · 「读过」只用 `Books.durChapterTime > 0` 判"是否读过"（`BooksDao.countRead()`），
  *     **没有任何时长概念**；
- *   · 唯一与"时间"有关的落库点是 `ReaderPage3.persistReadProgress()`（5 秒节流，
- *     只写章号），以及退出时的 `flushReadProgressThenNotifyShelf()`。
+ *   · 唯一与"时间"有关的落库点是 `ReaderSession.persistReadProgress()`（5 秒节流，
+ *     只写章号），以及退出时的 `ReaderSession.flushReadProgressThenNotifyShelf()`。
  *
  * ⇒ 本类接管"进书 → 前台停留多久 → 落到 `readDaily` 日粒度表"这条链。
  *

@@ -43,7 +43,7 @@ export struct ReadDataCard {
   @StorageProp(ThemeStorageKey.THEME) theme: ThemeItem = {} as ThemeItem
   @StorageLink(NightMode.KEY) nightOn: boolean = false
   /**
-   * 书架公共刷新信号：阅读器退出时会自增（`flushReadProgressThenNotifyShelf`），
+   * 书架公共刷新信号：阅读器退出时会自增（`ReaderSession.flushReadProgressThenNotifyShelf`），
    * 删书/改名/换封面也会自增 ⇒ 本卡必须跟着重查，否则读完书回到「我的」数字是旧的。
    */
   @StorageLink(CommonConstants.BOOK_IS_BOOK_REFRESHING) @Watch('onDataTick') dataTick: number = 0

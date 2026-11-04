@@ -12,6 +12,7 @@
 // ⚠️ **本批不搬**（留 `ReaderPage3.ets`，A-3 的硬边界）：
 //   · `persistReadProgress` / `checkFinished` / `flushReadProgressThenNotifyShelf`
 //     —— 写 `books` 表（经 `ReaderPorts`）+ 广播书架刷新；
+//     ✅ 2026-11-04（P3 批 A-4/A-5）三者**均已搬进 `common/reader/ReaderSession.ets`**。
 //   · `toggleBookmark` —— 写/删书签行（`BookmarkPorts.removeByTime` / `add`）+ toast +
 //     改 `@State isBookmarked`；
 //   · `syncBookmarkState` —— 读库 + 改 `@State isBookmarked`，且查库去重键
@@ -91,7 +92,7 @@ export interface ReaderPosition {
  *
  * ── 谁应该调它 ────────────────────────────────────────────────────────────
  * 任何"需要知道用户此刻读到哪儿"的功能，**一律调本方法**，不要直接读上面三个字段：
- * · 应用接续（`publishContinueState`）✅ 已迁移
+ * · 应用接续（`publishContinueState`）✅ 已迁移（2026-11-04 A-5：它本身已搬进 `ReaderSession`）
  * · 书签新增 / 双端同步锚点 / 阅读统计 / TTS 回跳
  *   （这些目前各自读 `pageRange` 或 `localBookDurChapterPos`，**属历史实现**，
  *     行为已验证，暂不强改；但**新增功能必须走本方法**。）
@@ -102,6 +103,8 @@ export interface ReaderPosition {
  * · 两者都拿不到 ⇒ 兜底 `pageRange` 的页首；再不行 ⇒ `(0,0,0)`
  *
  * ⚠️ 不要在这里做节流/缓存：调用方语义就是"要此刻的准确位置"。
+ *
+ * 2026-11-04（P3 批 A-5）：本函数现在唯一的调用方是 `ReaderSession.publishContinueState()`。
  *
  * @param selfDrawn 是否处于**任一自绘阅读层**（原 `this.selfDrawnModeOn()`）
  * @param scrollSpine 自绘层实时章节号（原 `this.scrollSpine`）

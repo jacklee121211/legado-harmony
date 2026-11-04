@@ -15,6 +15,12 @@ import { ShelfRefresh } from '../shelf/ShelfRefresh'
  *   · `ReaderPage3:634`（`flushReadProgressThenNotifyShelf` → `settleOnExit`）
  *   · `PdfViewerPage:352`（→ `settleOnExit`）
  *   ⇒ `ReaderPage3` 的写点 **3 → 1**（全仓仍 4 处，但全部经本类窄口，无一处直接碰 `BooksDao`）。
+ * ★ 2026-11-04（P3 批 A-5）**审计点再收拢**（`flushReadProgressThenNotifyShelf` 也搬进 `ReaderSession`）：
+ *   · `common/reader/ReaderSession.ets:133`（`persistReadProgress` → `saveProgress`）
+ *   · `common/reader/ReaderSession.ets:165`（`checkFinished` → `markFinished`）
+ *   · `common/reader/ReaderSession.ets`（`flushReadProgressThenNotifyShelf` → `settleOnExit`）
+ *   · `PdfViewerPage:352`（→ `settleOnExit`）
+ *   ⇒ `ReaderPage3` 的写点 **1 → 0**（该文件已不 import 本类）；全仓仍 4 处，全经本类窄口。
  * 于是"阅读进度"这条事实有 4 个写点，且各自决定是否 `await`、是否广播书架刷新 ——
  * 这正是本项目反复吃亏的模式（同一语义多条写入口）。
  *
@@ -29,7 +35,7 @@ import { ShelfRefresh } from '../shelf/ShelfRefresh'
  *   因为"多久落一次库"是阅读体验参数，不是数据契约；
  * · `markFinished` 的"只写一次"由 `BooksDao` 的 SQL 保证（`finishedTime IS NULL OR = 0`）；
  * · 退出结算必须 **先 await 写库、再自增刷新键**（`ShelfRefresh.books()`），
- *   否则书架重查会读到旧行（2026-10-07 已踩，见 `flushReadProgressThenNotifyShelf` 原注释）。
+ *   否则书架重查会读到旧行（2026-10-07 已踩，见 `ReaderSession.flushReadProgressThenNotifyShelf` 注释）。
  */
 export interface ReaderBookSnapshot {
   /** `books.id`；<=0 表示这次进书没有可写的实体行（搜索→详情→直接阅读等路径） */
