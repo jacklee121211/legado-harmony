@@ -221,8 +221,8 @@ function ensureEngineFont(family: string, path: string): void {
   registeredFonts.add(key);
 }
 
-/** 用引擎排一段文本，返回每一行的度量 */
-function layoutLines(src: string, style: LineStyle): text.LineMetrics[] {
+/** 用引擎排一段文本，返回排好的 `Paragraph`（度量与逐行绘制都从它取） */
+function layoutLines(src: string, style: LineStyle): text.Paragraph {
   const fc: text.FontCollection = text.FontCollection.getGlobalInstance();
   const families: string[] = splitFamilies(style.fontFamily);
   if (style.fontPath.length > 0 && families.length > 0) {
@@ -264,7 +264,7 @@ function layoutLines(src: string, style: LineStyle): text.LineMetrics[] {
   b.addText(src);
   const para: text.Paragraph = b.build();
   para.layoutSync(Math.max(1, style.widthPx));
-  return para.getLineMetrics();
+  return para;
 }
 
 /** 由正文 style 派生**标题 style**（字号/行高同比放大、字重加粗、不缩进） */
@@ -317,7 +317,7 @@ export function buildEngineLines(nodes: string[], style: LineStyle,
     const src: string = indent + raw;
     let metrics: text.LineMetrics[] = [];
     try {
-      metrics = layoutLines(src, segStyle);
+      metrics = layoutLines(src, segStyle).getLineMetrics();
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'layout failed para=%{public}d: %{public}s',
         i, e instanceof Error ? e.message : JSON.stringify(e));
@@ -363,6 +363,26 @@ export function buildEngineLines(nodes: string[], style: LineStyle,
     }
   }
   return out;
+}
+
+/**
+ * [直绘] 组出引擎**排版输入文本**（缩进规则的唯一出处）。
+ * 分页（`buildEngineLines`）与直绘（`buildPaintParagraph`）都用它取源文本，
+ * 保证两边喂给引擎的字符串逐字一致 ⇒ 断行不会分叉。
+ */
+export function engineSourceText(raw: string, isTitle: boolean): string {
+  return isTitle ? raw : INDENT_CHARS + raw;
+}
+
+/**
+ * [直绘] 按与分页**完全同参**的样式重排一个段落，返回可 `paint` 的 `Paragraph`。
+ *
+ * ⚠️ 必须传分页用的同一份 `LineStyle`（同宽/同字号/同字距/同 strut）：
+ *    同一个引擎、同一份输入 ⇒ 断行**确定性相同**，直绘与分页逐字一致。
+ * 标题段用 `titleStyleOf`（大字号/加粗/无缩进/无字距），与分页同一条分支。
+ */
+export function buildPaintParagraph(src: string, style: LineStyle, isTitle: boolean): text.Paragraph {
+  return layoutLines(src, isTitle ? titleStyleOf(style) : style);
 }
 
 /**

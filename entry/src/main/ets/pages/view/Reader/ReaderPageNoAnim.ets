@@ -63,6 +63,14 @@ import { paginateNodes, PaginateResult } from './ReaderPager';
 import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP } from './EngineLines';
 // 字重补偿与滚动层**必须共用同一个函数**（否则两档互切时字会突然变粗/变细）
 import { scrollFontWeight } from './ReaderScrollView';
+// 阶段 1 PoC：引擎直绘组件（见其文件头；默认关，验收后阶段 2 才切默认）
+import { ReaderPageNoAnimCanvas } from './ReaderPageNoAnimCanvas';
+
+/**
+ * 阶段 1 PoC 渲染开关：true = 当前页改由 `ReaderPageNoAnimCanvas`（引擎直绘）画。
+ * ⚠️ 只为 A/B 像素对比用（翻转后重装即可），默认必须 false——老路径仍是唯一权威。
+ */
+const POC_CANVAS_MODE: boolean = false;
 
 const TAG: string = 'NoAnimReader';
 const DOMAIN: number = 0x0000;
@@ -1176,6 +1184,19 @@ export struct ReaderPageNoAnim {
   }
 
   /**
+   * PoC 直绘用：段落全文（`chapTexts` 缓存）。
+   * ⚠️ 直绘必须用**整段**文本重排——页首是段落中段时，只喂半段会断出不同的行。
+   */
+  private paraTextOf(paraIndex: number): string {
+    const spine: number = this.spineOfPage();
+    const texts: string[] | undefined = this.chapTexts.get(spine);
+    if (texts === undefined || paraIndex < 0 || paraIndex >= texts.length) {
+      return '';
+    }
+    return texts[paraIndex];
+  }
+
+  /**
    * 点击正文某一行。
    *
    * ⚠️ 非听书状态**必须直接 return**（不 `Haptics`、不改状态）：
@@ -1334,6 +1355,23 @@ export struct ReaderPageNoAnim {
         .height('100%')
         .justifyContent(FlexAlign.Center)
       } else if (this.ready) {
+        if (POC_CANVAS_MODE) {
+          // ── 阶段 1 PoC：引擎直绘（只画字；点击/长按/横滑手势仍由下方触摸分区承担）──
+          // 验收：[CANVASPROBE] 的行 y 与老渲染 dump 的 Text 节点 y 逐行一致、截图逐像素对齐。
+          ReaderPageNoAnimCanvas({
+            lines: this.curLines(),
+            style: this.buildLineStyle(),
+            paraText: (pi: number): string => this.paraTextOf(pi),
+            fontColor: this.fontColor,
+            bgColor: this.bgColor,
+            bgUri: this.bgUri,
+            sideInsetVp: this.sideInsetVp,
+            topInsetVp: this.topInsetVp,
+            bottomInsetVp: this.bottomInsetVp,
+            containerWvp: this.containerW,
+            containerHvp: this.containerH
+          })
+        } else {
         // ── 正文：**只渲染当前这一页** ─────────────────────────────────────────
         // 为什么不用 List/LazyForEach：一页最多十几段，直接 ForEach 更快；
         // 而且"换页 = 整块重建"正是无动画语义（这里没有任何滚动容器可以做跟手/惯性）。
@@ -1354,6 +1392,7 @@ export struct ReaderPageNoAnim {
           top: this.topInsetVp,
           bottom: this.bottomInsetVp
         })
+        }
 
         // ── 触摸分区：左 1/3 上一页 / 中 1/3 拉菜单 / 右 1/3 下一页 ─────────────
         // 点击是**主交互**（用户 2026-10-26：「主要以点击为主，横滑是附加」），
