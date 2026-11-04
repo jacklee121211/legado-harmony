@@ -1,4 +1,4 @@
-import bookListManage from './bookManage/bookListManage';
+import bookListManage from './bookManage/bookListManage';
 import { BooksMutation } from '../../../../common/books/BooksMutation'
 import { CountLabel } from '../../../../common/shelf/CountLabel'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
@@ -225,6 +225,14 @@ export default struct BookManagePage {
           continue
         }
         if ((g.groupId ?? -1) === pid) {
+          continue
+        }
+        // ⚠️ 2026-11-05（用户真机 BUG②）：**被隐藏的分组不进批量管理树**。
+        //   现象：隐藏分组仍列在这里、显示「共0本」（隐藏后组内书不再计入）。
+        //   口径：批量管理是"对可见书架做批量操作"的地方；隐藏分组要用它得先去
+        //   「分组管理」恢复（那里有 eye/eye_slash 图标，见 BookSelectGroupDialog.groupRow）。
+        //   ⚠️ `allGroupsForCount` 仍是全量（子树累计计数不能少）。
+        if (!g.show) {
           continue
         }
         kept.push(g)
@@ -787,9 +795,19 @@ export default struct BookManagePage {
   /**
    * 按钮项间距（vp）：手机沿用 `MANAGE_DOCK_ITEM_SPACE`（28，真机调过的值）；
    * 非手机放大到 64 —— 平板上 4~5 个按钮若还用 28，会挤在条中央一小坨（实测 189vp / 817vp）。
+   *
+   * ⚠️ 2026-11-05（用户真机 BUG⑤）：「批量管理在根目录（祖架构）下，底部 dock 图标超了」。
+   *   根目录分组态这一行有 **6 个**按钮（置顶/移动至/隐藏/解散/删除/分享），
+   *   手机 28vp 间距 + 原「隐藏分组」4 字标签 ⇒ 整组宽过条宽被截。
+   *   两条一起改：① 文案「隐藏分组」→「隐藏」（同 `buttonListInfo5`）；
+   *   ② 6 项时手机间距 28 → 20。5 项及以下仍是 28（那是真机调过的观感值，不动）。
    */
   private dockItemSpace(): number {
-    return this.isPhoneDevice() ? this.MANAGE_DOCK_ITEM_SPACE : 64
+    if (!this.isPhoneDevice()) {
+      return 64
+    }
+    const n: number = this.bookTypeNumber === 1 ? this.buttonListInfo5.length : this.buttonListInfo4.length
+    return n >= 6 ? 20 : this.MANAGE_DOCK_ITEM_SPACE
   }
 
   /**
@@ -1075,7 +1093,10 @@ export default struct BookManagePage {
   @State buttonListInfo5:buttonList[] = [
     new buttonList(1,'置顶',$r('sys.symbol.pin')),
     new buttonList(2,'移动至',$r('sys.symbol.folder')),
-    new buttonList(4,'隐藏分组',$r('sys.symbol.eye_slash')),
+    // 2026-11-05（用户真机 BUG⑤）：文案「隐藏分组」→「隐藏」—— 根目录 6 项时 4 字标签
+    //   把整组顶出条外；2 字与同排其它项一致（同排动作都是对选中的分组/书籍生效，
+    //   「隐藏」语义已足够，且 id=4 的 switch 分发不变）。
+    new buttonList(4,'隐藏',$r('sys.symbol.eye_slash')),
     // 2026-11-02：分组区新增「解散」（书保留并归还上级；有子目录时弹三级选择）
     new buttonList(7,'解散',$r('sys.symbol.minus_circle')),
     new buttonList(5,'删除',$r('sys.symbol.trash')),
@@ -1258,10 +1279,22 @@ export default struct BookManagePage {
   private async currentSelection(): Promise<ShareSelection | null> {
     const checked = new Set<number>(this.checkListNumber)
     // 2026-11-01：选中分组 = 选中该分组（含全部子孙分组）里的所有书籍
+    //
+    // ⚠️⚠️ 2026-11-05（用户真机严重 BUG③）：**必须用全量分组建树**。
+    //   旧实现用 `this.bookGroups` 建树，而它已经是"父层只留本级 + 直属子级"的**过滤后**
+    //   列表（见 `getGroupList()` 的两段过滤）⇒ `tree.subtreeIds(id)` 只能收集到**列出来的
+    //   那几层**，孙级及以下根本不在树里 ⇒ 选「2」分享出去只有 2 的直属书，
+    //   2 里那个「3」的三本书全丢。
+    //   用户口径（原话）：「选择一个子分组…分享的话，应该是其中所有的书籍都被选定作为目标，
+    //   不管他内部有多少层子分组」。
+    //   ⇒ 改用 `allGroupsForCount`（`getGroupList()` 里保留的**未按层级过滤**全量）。
+    //   ⚠️ 隐藏分组不参与：隐藏 = 不在架上，它的书不该被悄悄分享出去。
+    const source: BookGroups[] = (this.allGroupsForCount.length > 0
+      ? this.allGroupsForCount : this.bookGroups).filter((g: BookGroups): boolean => g.show)
     const groupIds: number[] = []
-    if (this.bookGroups.length > 0) {
-      const tree: GroupTree = this.treeOf(this.bookGroups)
-      for (const g of this.bookGroups) {
+    if (source.length > 0) {
+      const tree: GroupTree = this.treeOf(source)
+      for (const g of source) {
         const id: number = g.groupId ?? -1
         if (id > 0 && checked.has(id)) {
           for (const s of tree.subtreeIds(id)) {

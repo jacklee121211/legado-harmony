@@ -428,7 +428,13 @@ export default struct BookContentRefresh {
         out.push({ isFolder: true, cover: c !== null ? c : $rawfile('cover_defaults/c1.svg') })
       }
     }
-    for (const b of this.subtreeBooksOf(g)) {
+    // ⚠️ 2026-11-05（用户真机）：**只取本组直属书**，不再"逐层透视"。
+    //   用户原话：「1 里面有一本直属书、一个分组 2，2 里面又有分组 3，此时 1 的宫格会显示
+    //     2/3/直属书，这不对，宫格预览只显示下一级」。
+    //   旧实现用 `subtreeBooksOf()`（本组 + 全部后代的书）⇒ 孙分组的书被穿进爷卡片，
+    //   卡片上看到的和点进去的列表对不上。现在与副标题 `childCountLabel` 同口径：
+    //   子分组看 `tree.childrenOf`（直接子级），书看 `childBooksOf`（bookGroup === 本组）。
+    for (const b of this.childBooksOf(g)) {
       if (out.length >= 4) {
         break
       }
@@ -444,23 +450,10 @@ export default struct BookContentRefresh {
     return out
   }
 
-  /**
-   * 2026-11-01：某分组的**子树**书籍（自身 + 全部后代）。
-   * 四宫格预览要"逐层透视"：11 自己 1 本 + 111 里 1 本 ⇒ 应显示 2 张封面。
-   */
-  private subtreeBooksOf(g: BookGroups): Books[] {
-    const out: Books[] = []
-    if (this.tree === null || g.groupId === undefined) {
-      return out
-    }
-    const ids: number[] = this.tree.subtreeIds(g.groupId)
-    for (const b of this.childPreviews) {
-      if (ids.indexOf(b.bookGroup ?? 0) >= 0) {
-        out.push(b)
-      }
-    }
-    return out
-  }
+  // 2026-11-05：`subtreeBooksOf()`（子树透视取书）**已删除** ——
+  //   宫格预览口径改为"只看下一级"（见 `cellsOf` 里的注释），它已无调用者。
+  //   若将来又要"穿透预览"，先回来看用户这条口径：
+  //   「1 里面有一本直属书、一个分组 2，2 里面又有分组 3 …宫格预览只显示下一级」。
 
   /** 子分组卡片：统一组件 role='card'（与主栏同源） */
   @Builder

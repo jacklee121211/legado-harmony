@@ -70,8 +70,17 @@ export default struct ShareGuideTip {
   @State private frames: ImageFrameInfo[] = []
   @State private text1: string = ''
   @State private text2: string = ''
-  /** 一轮动画时长（ms）；2 轮后淡出 */
-  private readonly roundDuration: number = 2600
+  /**
+   * 一轮动画时长（ms）；2 轮后淡出。
+   *
+   * ⚠️ 2026-11-05（用户真机 BUG②）：「批量管理下点任何元素，顶部都会触发碰一碰动画，
+   *   动画时间过长甚至影响操作」—— 原来是 **2600**，总展示 `2600×2 + 400 = 5600ms`，
+   *   五秒多一直挡着顶部操作区。用户口径：**最长 1 秒**。
+   *   ⇒ 改 400：总展示 `400×2 + 200 = 1000ms`。
+   *   ⚠️ 下面两处必须一起读：`L149` 的 `roundDuration * 2 + 200`（总时长）与
+   *     `L159` 的 `.duration(roundDuration)`（单圈插值时长），都吃这个常量。
+   */
+  private readonly roundDuration: number = 400
   /**
    * 根节点显式高度（vp）= 动画高 44 + 上下 padding 4+4 = 52。
    *
@@ -146,7 +155,8 @@ export default struct ShareGuideTip {
     this.hideTimer = setTimeout((): void => {
       this.visible = false
       this.hideTimer = -1
-    }, this.roundDuration * 2 + 400)
+      // 2026-11-05（用户真机 BUG②）：总展示 = 两圈 + 200ms 淡出余量 = 1000ms（原 5600ms）
+    }, this.roundDuration * 2 + 200)
   }
 
   build() {

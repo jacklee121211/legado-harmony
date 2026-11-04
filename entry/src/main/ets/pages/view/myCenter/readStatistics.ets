@@ -10,6 +10,7 @@ import { Books } from '../../../database/entities/Books';
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil';
 import AppRouter, { ReadStatisticsRouteParam } from '../../../common/router/AppRouter';
 import { ShelfColors } from '../../../common/utils/NightMode';
+import UiMotion from '../../../common/utils/UiMotion';
 import { resolveBookCover } from '../../../common/utils/CoverSource';
 import { ThemeStorageKey } from '../../../common/constants/Theme';
 import { ThemeItem } from '../../../common/model/Theme';
@@ -155,18 +156,25 @@ export default struct readStatistics {
   @Builder delBottom() {
     Column() {
       Row() {
-        // 删除用强调红（与全工程"危险操作"同色系）
+        // 2026-11-05：底改成危险红实底 ⇒ 字必须转白（红字压红底会看不见）
         Text("删除")
           .fontSize(15)
           .fontWeight(500)
-          .fontColor('#E84026')
+          .fontColor('#FFFFFF')
       }
       .justifyContent(FlexAlign.Center)
       .width('100%')
       .height(48)
       .borderRadius(24)
-      .backgroundColor(ShelfColors.card())
-      .shadow({ radius: 16, color: 'rgba(0, 0, 0, 0.12)', offsetX: 0, offsetY: 4 })
+      // ⚠️ 2026-11-05（用户真机 BUG⑥）：「亮色下完全看不到删除按钮」。
+      //   第一版我改成 `rgba(232,64,38,0.10)` 淡红底 —— 0.10 的红压在近白页底上等于白，**无效**；
+      //   原来是 `ShelfColors.card()`（#FFFFFF）压 `ShelfColors.pageBg()`（近白渐变）⇒ 顺色。
+      //   ⇒ 危险操作按"最强辨识"处理：**实底危险红 + 白字**（红底白字在两档底色上都成立，
+      //   不依赖主题渐变，也不靠 alpha 猜）；阴影改成同色系，浮起感与页面分层。
+      //   ⚠️ 这是全工程**唯一**的危险浮条实现（grep `#E84026` 只有本处与行内红字），
+      //   将来别的地方要危险浮条，就抄这一份、别另调颜色。
+      .backgroundColor('#E84026')
+      .shadow({ radius: 16, color: 'rgba(232, 64, 38, 0.32)', offsetX: 0, offsetY: 4 })
       .onClick(() => {
         Haptics.tap();
         this.deleteList()
@@ -259,20 +267,30 @@ export default struct readStatistics {
 
   // 2026-11-03（P9/L4）：原来的 serviceDialog（WebDAV 目录下那个只当确认框用的组件）已整体删除；
   //   删除确认改用工程统一确认弹窗 TitleContentDialog（渲染成「确定删除吗？」+ 取消/确认）。
+  // ⚠️ 2026-11-05（用户真机 BUG⑥）：「删除弹窗也奇怪、太透明」—— 两处都不合规，按
+  //   `docs/标准-弹窗与按钮统一规范.md` §2.2 的标准配方改正：
+  //   ① `customStyle: true` **必须为 false**：SDK 原文（`custom_dialog_controller.d.ts:130-134`）
+  //      「customStyle: true 时圆角为 0、背景**透明**」⇒ 材质无处附着 = 全透明事故（文档 §2.2 记过）；
+  //   ② 补 `width` / `cornerRadius` / 开合动画（官方 NOTE：动画期间页面不响应触摸 ⇒ 用 SPRING_FAST）。
+  //   ③ `content` 原来为空串 ⇒ 只剩标题+按钮，改成一句问句 + 一句后果（与其它确认弹窗同句式）。
+  //   ⚠️ 文案必须是静态的：CustomDialogController 参数在创建瞬间固化。
   clearInfoDel: CustomDialogController | null = new CustomDialogController({
     builder: TitleContentDialog({
-      title: '删除',
-      content: '',
+      title: '删除阅读记录',
+      content: '将清空当前列表的阅读记录，且无法恢复。',
       cancel: () => { this.onCancel() },
       confirm: () => { this.onAccept() }
     }),
     cancel: this.exitApp,
     autoCancel: true,
     alignment: DialogAlignment.Center,
-    offset: { dx: 0, dy: 20 },
-    customStyle: true,
+    width: '80%',
+    cornerRadius: 25,
+    customStyle: false,
     // 确认弹窗的材质走官方 options 渠道（`TitleContentDialog` 是工程统一确认弹窗）。
     systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+    openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+    closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
   })
 
   aboutToAppear(): void {

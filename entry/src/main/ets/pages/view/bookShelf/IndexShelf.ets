@@ -138,9 +138,19 @@ export default struct IndexShelf {
    * （`BookGroupsDao.ets:221`）⇒ 分组=1 / 全部=2 / 未分组=3 / 本地=4 / 书单=5，
    * 与 `BookContentRefresh` 里 `bookTypeNumber === 1` 判「分组页」的口径**完全一致**。
    * 「最近」态下 `bookTypeNumber` 保持上次的值 ⇒ 必须同时排除 `onRecentChip`。
+   *
+   * ⚠️ 2026-11-05（用户真机 BUG④）：**进到任意自定义分组里也要能开「分组管理」**。
+   *   用户原话：「分组管理应该应用到任何的分组内，而不是只在祖架构、根目录」。
+   *   自定义分组的 id 从 5 起（系统单元占 1~5，见上）⇒ 判据放宽成
+   *   `=== 1 || >= 5`（`未分组`/`本地`/`书单` 这些系统单元仍不算"分组语境"）。
+   *   ⚠️ 本方法**只**决定「更多」菜单里是否出现「分组管理」这一项（唯一调用点是
+   *   `visibleMoreList()`），不影响任何渲染分支 —— 所以放宽是安全的。
    */
   private inGroupState(): boolean {
-    return !this.onRecentChip && this.bookTypeNumber === 1
+    if (this.onRecentChip) {
+      return false
+    }
+    return this.bookTypeNumber === 1 || this.bookTypeNumber >= 5
   }
 
   /** 当前实际渲染的「更多」菜单项（分组管理只在分组状态下出现） */

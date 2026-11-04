@@ -434,6 +434,19 @@ export default struct BookSelectGroupDialog{
         if (this.oldGroupId === (row.group.groupId ?? -1)) {
           Text('当前').fontSize(11).fontColor('rgb(174,174,174)')
         }
+        // ⚠️ 2026-11-05（用户真机 BUG①）：「被隐藏的分组在分组管理的树状中没有 eye 图标」
+        //   —— 分组管理（`isManageMode`）会把隐藏分组也列出来（L308 的过滤条件刻意放行），
+        //   但这一行原来只画 文件夹/名称/路径/箭头，**看不出哪一行是隐藏的**。
+        //   口径与 `groupTypePanel` 一致（SDK 符号表核实过，不猜）：
+        //     `sys.symbol.eye` = 睁眼 = 未隐藏；`sys.symbol.eye_slash` = 闭眼 = 已隐藏。
+        //   只在分组管理里画（移动至/移动分组用不到这层信息，画了反而挤）。
+        if (this.isManageMode) {
+          SymbolGlyph(row.group.show ? $r('sys.symbol.eye') : $r('sys.symbol.eye_slash'))
+            .fontSize(16)
+            .fontColor([row.group.show
+              ? (NightMode.isDarkSurface() ? 'rgba(248,249,250,0.72)' : 'rgba(0,0,0,0.55)')
+              : 'rgb(174,174,174)'])
+        }
       }
       .layoutWeight(1)
       .height('100%')
