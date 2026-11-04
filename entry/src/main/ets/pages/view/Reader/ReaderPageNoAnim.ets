@@ -83,6 +83,25 @@ export interface ChapterCacheEntry {
 const SWIPE_TRIGGER_VP: number = 40;
 
 /**
+ * 渲染箱右侧**横向松弛**（vp，2026-11-05 阶段 0.1 加固）。
+ *
+ * 为什么需要：自绘档是双引擎（`@ohos.graphics.text` 断行、ArkUI `Text` 画行），
+ * 两套度量对同一行内容的宽度结论可以差几个 px；一旦 ArkUI 侧判"装不下"，
+ * 就把末字折到下一行 ⇒ 整页多一行 ⇒ 底部溢出（2026-11-05 真机事故）。
+ * 把渲染箱右边比引擎排版宽让出 3vp（**左边缘不动**），度量差被右侧 inset 吸收，
+ * "折行"在物理上不可能发生。是否被动用由 [SLACKCANARY] 探针盯守。
+ * 只作用于渲染箱：分页口径 `areaW` 仍按 sideInsetVp 两侧对称扣，断行/页边界不变。
+ */
+const RENDER_SLACK_VP: number = 3;
+
+/**
+ * 引擎异常兜底行的 `maxLines` 上限（≈ 不限制，见 `EngineLine.engineFallback`）。
+ * 兜底行内容可能远超一行宽，必须允许自然折行（宁可折行不丢字），
+ * 不得被折行绊线裁掉大半。
+ */
+const FALLBACK_MAX_LINES: number = 99999;
+
+/**
  * 一章的「行 + 分页」结果（`chapPages` 的值）。
  *
  * ⚠️ 2026-10-27 换血：原来是 `PaginateResult`（`pages[][][]` 是"段+字符区间"的算术估算），
@@ -444,7 +463,9 @@ export struct ReaderPageNoAnim {
       return base;
     }
     const availPx: number = this.vp2px(this.areaW);
-    const deltaPx: number = availPx - measuredPx;
+    // ⚠️ 安全余量 2px（2026-11-05 真机事故）：补偿后若刚好等于可用宽，ArkUI 会把末字
+    //   折到下一行 ⇒ 整页多一行 ⇒ **底部溢出**（截图实测最后一行被裁在 y=2848）。
+    const deltaPx: number = availPx - measuredPx - 2;
     if (deltaPx <= 0) {
       return base;
     }
@@ -467,6 +488,7 @@ export struct ReaderPageNoAnim {
         textContent: text,
         fontSize: this.fontSize,
         fontFamily: this.fontName,
+        fontWeight: scrollFontWeight(this.fontWeight, this.weightOffset),
         letterSpacing: LETTER_SPACING_FP
       });
     } catch (e) {
@@ -1016,9 +1038,42 @@ export struct ReaderPageNoAnim {
     return this.isHlLine(line) ? `${base}-h${this.hlSerial}` : base;
   }
 
-  /** 段首行的顶部间距（vp）—— 与 `EngineLines.gapPx` 同口径（都是 `fontSize × gapEm`） */
-  private linePadVp(line: EngineLine): number {
-    return line.isParaStart ? this.fontSize * this.gapEm : 0;
+  /**
+   * 行框顶部间距（vp）—— **同源改造（2026-11-05 阶段 0.1）**：
+   * 直接用引擎给的本行段距 `padTopPx`（分页计价的同一个数）折回 vp，
+   * 不再用 `fontSize × gapEm` 按 vp 另算一套 —— 系统 fontScale ≠ 1 的设备上
+   * 两条换算会分叉（本机两台实测 fontScale=1.000，数值今天相等，但结构上必须一条路）。
+   */
+  private rowPadTopVp(line: EngineLine): number {
+    return this.px2vp(line.padTopPx);
+  }
+
+  /**
+   * 行框行高（fp）—— **同源改造（2026-11-05 阶段 0.1）**：
+   * 直接用引擎给的本行真实高度 `heightPx`（`LineMetrics.height`，**分页计价的同一个数**）
+   * 折回 fp，不再走 `lineHeightFp` 独立换算 ⇒ 渲染行高与分页行高**必然同值**，
+   * "算一套画一套"的纵向接缝被物理关闭。
+   * 兜底：heightPx 非法时回退配置行高（引擎异常兜底行带的正是配置值）。
+   */
+  private rowLineHeightFp(line: EngineLine): number {
+    const d: number = this.fp2px(1);
+    if (line.heightPx > 0 && d > 0) {
+      return line.heightPx / d;
+    }
+    return this.lineHeightFp;
+  }
+
+  /**
+   * 正文 Column 的右内边距（vp）—— **横向松弛（2026-11-05 阶段 0.1）**。
+   * = sideInsetVp − RENDER_SLACK_VP（**左侧不动**：左边缘是与 ReaderKit/其他档对齐的锚点，
+   * Start 对齐下右边界本来参差，放宽右侧零观感）。
+   * 侧边距太小的布局不吃这个便宜（<10vp 原样返回）。
+   */
+  private renderRightInsetVp(): number {
+    if (this.sideInsetVp < 10) {
+      return this.sideInsetVp;
+    }
+    return this.sideInsetVp - RENDER_SLACK_VP;
   }
 
   /** 标题行字号（fp）= 正文字号 × `TITLE_FONT_SCALE`（与 `EngineLines` 算行高同一个值） */
@@ -1026,9 +1081,37 @@ export struct ReaderPageNoAnim {
     return this.fontSize * TITLE_FONT_SCALE;
   }
 
-  /** 标题行行高（fp）= 正文行高 × `TITLE_FONT_SCALE`（必须同比放大，否则与下行重叠） */
-  private titleLineHeightFp(): number {
-    return this.lineHeightFp * TITLE_FONT_SCALE;
+  /**
+   * [SLACKCANARY] 探针（收尾必删）：横向松弛是否被吃满的绊线。
+   * 用 ArkUI 自己的 measureText（与渲染同 fontSize/字体/字重/字距）量当前页每行自然宽：
+   *   · measured ≤ 引擎排版宽（vp2px(areaW)）      → 松弛没被动用（健康）
+   *   · 引擎排版宽 < measured ≤ 渲染箱宽（+3vp）   → 度量差已吃进松弛（观察项）
+   *   · measured > 渲染箱宽                        → 即将折行/已被 maxLines 裁尾（必须处理）
+   * 由 `curLines()` 的节流块（每 20 次渲染一次）调用；measureText 结果有缓存，开销可忽略。
+   */
+  private slackCanary(lines: EngineLine[]): void {
+    if (lines.length === 0) {
+      return;
+    }
+    const engineBoxPx: number = this.vp2px(this.areaW);
+    const renderBoxPx: number = engineBoxPx + this.vp2px(RENDER_SLACK_VP);
+    for (let i = 0; i < lines.length; i++) {
+      const line: EngineLine = lines[i];
+      const w: number = this.measureLineWidthPx(line.text);
+      if (!(w > 0)) {
+        continue;
+      }
+      if (w > renderBoxPx) {
+        hilog.warn(DOMAIN, TAG,
+          '[SLACKCANARY] 行超渲染箱 para=%{public}d from=%{public}d w=%{public}s engineBox=%{public}s renderBox=%{public}s text=%{public}s',
+          line.paraIndex, line.charFrom, w.toFixed(1), engineBoxPx.toFixed(1),
+          renderBoxPx.toFixed(1), line.text);
+      } else if (w > engineBoxPx) {
+        hilog.info(DOMAIN, TAG,
+          '[SLACKCANARY] 度量差吃进松弛 para=%{public}d from=%{public}d w=%{public}s engineBox=%{public}s',
+          line.paraIndex, line.charFrom, w.toFixed(1), engineBoxPx.toFixed(1));
+      }
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1070,7 +1153,8 @@ export struct ReaderPageNoAnim {
     let hit: EngineLine = lines[lines.length - 1];
     for (let i = 0; i < lines.length; i++) {
       const hPx: number = lines[i].heightPx > 0 ? lines[i].heightPx : this.fp2px(this.lineHeightFp);
-      const hVp: number = this.px2vp(hPx) + this.linePadVp(lines[i]);
+      // 阶段 0.1 同源：行高 + 段距都取引擎数（heightPx/padTopPx），一次折算
+      const hVp: number = this.px2vp(hPx + lines[i].padTopPx);
       if (y < acc + hVp) {
         hit = lines[i];
         break;
@@ -1167,10 +1251,11 @@ export struct ReaderPageNoAnim {
         .fontWeight(TITLE_FONT_WEIGHT)
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
-        .lineHeight(this.titleLineHeightFp())
+        .lineHeight(this.rowLineHeightFp(line))
         .textAlign(TextAlign.Start)
         .width('100%')
-        .padding({ top: this.linePadVp(line) })
+        .maxLines(line.engineFallback ? FALLBACK_MAX_LINES : 1)
+        .padding({ top: this.rowPadTopVp(line) })
         // 听书状态下整行可点 ⇒ 弹「从此处听书」气泡（详见 tapLine / ListenBubble 注释）
         // ⚠️ 用**长按**而不是点击：整行铺满屏幕，onClick 会被父页的"点右 1/3 翻页"/"点中央出菜单"先接走，
         //    气泡永远不出现（用户实测反馈）。长按与点击手势不冲突。
@@ -1186,11 +1271,12 @@ export struct ReaderPageNoAnim {
       .fontWeight(scrollFontWeight(this.fontWeight, this.weightOffset))
       .fontFamily(this.fontName)
       .fontColor(this.fontColor)
-      .lineHeight(this.lineHeightFp)
-          .letterSpacing(this.lineLetterSpacing(line))
+      .lineHeight(this.rowLineHeightFp(line))
+      .letterSpacing(LETTER_SPACING_FP)
       .textAlign(TextAlign.Start)
       .width('100%')
-      .padding({ top: this.linePadVp(line) })
+      .maxLines(line.engineFallback ? FALLBACK_MAX_LINES : 1)
+      .padding({ top: this.rowPadTopVp(line) })
       // 听书状态下长按整行 ⇒ 弹「从此处听书」气泡（长按避开点击手势冲突）
       .bindPopup(this.popupShown(line), this.popupOpts(line))
     } else {
@@ -1199,11 +1285,12 @@ export struct ReaderPageNoAnim {
         .fontWeight(scrollFontWeight(this.fontWeight, this.weightOffset))
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
-        .lineHeight(this.lineHeightFp)
-          .letterSpacing(this.lineLetterSpacing(line))
+        .lineHeight(this.rowLineHeightFp(line))
+        .letterSpacing(LETTER_SPACING_FP)
         .textAlign(TextAlign.Start)
         .width('100%')
-        .padding({ top: this.linePadVp(line) })
+        .maxLines(line.engineFallback ? FALLBACK_MAX_LINES : 1)
+        .padding({ top: this.rowPadTopVp(line) })
         // 听书状态下整行可点 ⇒ 弹「从此处听书」气泡（详见 tapLine / ListenBubble 注释）
         // ⚠️ 用**长按**而不是点击：整行铺满屏幕，onClick 会被父页的"点右 1/3 翻页"/"点中央出菜单"先接走，
         //    气泡永远不出现（用户实测反馈）。长按与点击手势不冲突。
@@ -1260,7 +1347,10 @@ export struct ReaderPageNoAnim {
         .alignItems(HorizontalAlign.Start)
         .padding({
           left: this.sideInsetVp,
-          right: this.sideInsetVp,
+          // ⚠️ 右侧让出松弛（RENDER_SLACK_VP / renderRightInsetVp）：渲染箱比引擎排版宽
+          //    多 3vp，两套度量的差被右侧 inset 吸收 ⇒ "折行"物理上不可能发生。
+          //    ⚠️ 分页口径不受影响：areaW 仍按 sideInsetVp 两侧对称扣（onContainerAreaChange）。
+          right: this.renderRightInsetVp(),
           top: this.topInsetVp,
           bottom: this.bottomInsetVp
         })
@@ -1385,6 +1475,8 @@ export struct ReaderPageNoAnim {
         scrollFontWeight(this.fontWeight, this.weightOffset), this.fontName,
         this.areaW.toFixed(2), this.areaH.toFixed(2), this.pageIdx,
         this.flat[this.pageIdx].lines.length)
+      // [SLACKCANARY] 折行绊线（探针，收尾必删）：盯松弛是否被吃满
+      this.slackCanary(this.flat[this.pageIdx].lines)
     }
     return this.flat[this.pageIdx].lines;
   }

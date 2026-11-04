@@ -114,6 +114,12 @@ export class EngineLine {
   widthPx: number = 0;
   /** 是否**章标题行**（渲染时用大字号 + 加粗；见 `LineStyle.titleFontScale`） */
   isTitle: boolean = false;
+  /**
+   * 是否**引擎异常兜底行**（`buildEngineLines` 里 layout 抛异常时"整段当一行"）。
+   * ⚠️ 这类行的内容可能远超一行宽：渲染端**必须允许它自然折行**（宁可折行不丢字），
+   *    不得套 `maxLines(1)` —— 那会把整段裁掉大半（无动画档阶段 0.1 折行绊线的豁免依据）。
+   */
+  engineFallback: boolean = false;
 }
 
 /** 排行用的排版参数（全部 px） */
@@ -327,6 +333,7 @@ export function buildEngineLines(nodes: string[], style: LineStyle,
       l.padTopPx = segStyle.gapPx;
       l.heightPx = segStyle.lineHeightPx;
       l.isTitle = titleSeg;
+      l.engineFallback = true;
       out.push(l);
       continue;
     }
