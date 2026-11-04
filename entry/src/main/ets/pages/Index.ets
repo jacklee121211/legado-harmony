@@ -19,6 +19,8 @@ import BooksDao from '../database/dao/BooksDao'
 import { Books } from '../database/entities/Books'
 import ImmersiveMaterialUtil from '../common/utils/ImmersiveMaterialUtil'
 import AppRouter, { RouteName } from '../common/router/AppRouter'
+// 2026-11-05：书架返回手势端口（分组域逐级返回）
+import { ShelfBackRouter } from '../common/shelf/ShelfBackRouter'
 import { ReaderEntry } from '../common/reader/ReaderEntry'
 import UiMotion from '../common/utils/UiMotion'
 import BookDetailPage from './view/BookDetailPage'
@@ -664,6 +666,13 @@ struct Main {
     if (top === RouteName.READER || top === RouteName.PDF_VIEWER) {
       console.warn('[BACK] page-level fallthrough: top=' + top + ' → 自己 pop 并消费（正常应由 NavDestination 处理）');
       AppRouter.pop();
+      return true;
+    }
+    // ── 2026-11-05：书架「分组域逐级返回」（用户口径）────────────────────────────
+    // · 在任意分组内 ⇒ 回上一层分组；· 在根分组 ⇒ 切到「全部」；· 其它页签 ⇒ 不接管。
+    // 状态在 `IndexShelf.bookTypeNumber`（私有 @State，本页拿不到）⇒ 通过
+    // `ShelfBackRouter` 这个最小单向端口问它一句；返回 true = 本次返回已被消费。
+    if (ShelfBackRouter.handle()) {
       return true;
     }
     return false

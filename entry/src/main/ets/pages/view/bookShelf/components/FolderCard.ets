@@ -82,11 +82,14 @@ export default struct FolderCard {
       } else {
         Row().width('100%').height('100%').borderRadius(4).backgroundColor(this.emptyColor())
       }
-      // ── 2026-11-05（用户要求）：格子左上角角标，一眼分清「分组 / 书籍」 ────────────
-      // 只在**分组域宫格**（role='card'）里画；role='cell'（书籍宫格里的嵌套格子）不画。
-      // 亮/暗双档：暗底白字 + 亮底深字，都压一层半透明底保证任何封面颜色下的对比度。
-      if (this.role === 'card') {
-        Text(cell.isFolder ? '分组' : '书籍')
+      // ── 2026-11-05（用户定稿）：**只标「分组」**，书籍不标 ──────────────────────
+      // 用户原话：「没必要要书籍这个角标，这样用户一眼就看出来哪个是分组，
+      //   另外也不会一个宫格四个角标让用户看到心烦」。
+      // ⇒ 仅 `cell.isFolder` 才画；书籍格保持干净。
+      // 亮/暗双档：暗底白字 / 亮底米白字（沿用原「本地」角标的配色气质），
+      // 半透明底保证压在任意封面颜色上都可读。
+      if (this.role === 'card' && cell.isFolder) {
+        Text('分组')
           .fontSize(9)
           .fontWeight(FontWeight.Medium)
           .fontColor(NightMode.isDarkSurface() ? '#FFFFFF' : '#FFEDD4')
