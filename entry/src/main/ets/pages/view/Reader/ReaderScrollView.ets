@@ -288,7 +288,11 @@ export struct ReaderScrollView {
   // ── 定位请求（TTS 跟随 / 目录 / 书签 / 沉浸层交接）───────────────────────
   @Prop seekSpine: number = 0;
   @Prop seekNode: number = 0;
-  /** 段内字符偏移（与 seekNode 组成精确锚点；2026-10-27 增，与无动画档同签名） */
+  /**
+   * 段内字符偏移（与 seekNode 组成精确锚点；2026-10-27 增，与无动画档同签名）。
+   * ⚠️ 2026-11-05 修复：此前只有声明、没有消费（indexOfNode 不收 char）⇒ 滚动档
+   *   定位一律落到"该段首行"，与无动画档（按字符找所在页）不一致。已接线。
+   */
   @Prop seekChar: number = 0;
   @Prop @Watch('onSeekSerialChange') seekSerial: number = 0;
 
@@ -375,6 +379,8 @@ export struct ReaderScrollView {
    */
   private pendingSeekSpine: number = -1;
   private pendingSeekNode: number = 0;
+  /** 与上面两个配套的段内字符偏移（2026-11-05 增，对齐无动画档 pendingSeekChar） */
+  private pendingSeekChar: number = 0;
 
   @State ready: boolean = false;
   /** 首屏定位下标（只在 List **创建**时生效） */
@@ -666,6 +672,11 @@ export struct ReaderScrollView {
 
   /** 重建窗口：以 `spine` 为中心装 [spine-1 .. spine+1]，并定位到 `node` */
   private async rebuildWindow(spine: number, node: number, first: boolean): Promise<void> {
+    // 首次进入：把切档交接来的字符偏移灌进 pending，indexOfNode 才能落到"包含它"
+    // 的那一行（与无动画档 doRebuildWindow 同款，2026-11-05 补齐）
+    if (first) {
+      this.pendingSeekChar = Math.max(0, this.initChar);
+    }
     const total: number = this.spineCountProvider();
     const target: number = Math.max(0, total > 0 ? Math.min(spine, total - 1) : spine);
     const from: number = Math.max(0, target - 1);
@@ -690,7 +701,7 @@ export struct ReaderScrollView {
     this.loadedLast = to;
     this.errText = rows.length === 0 ? '这一章没有可显示的正文' : '';
 
-    const idx: number = this.indexOfNode(target, node);
+    const idx: number = this.indexOfNode(target, node, this.pendingSeekChar);
     const at: number = idx >= 0 ? idx : 0;
     if (first) {
       // 首屏：交给 List 的 initialIndex（只在创建时生效），再置 ready 触发创建
@@ -705,8 +716,10 @@ export struct ReaderScrollView {
       if (this.pendingSeekSpine >= 0) {
         const ps: number = this.pendingSeekSpine;
         const pn: number = this.pendingSeekNode;
+        const pc: number = this.pendingSeekChar;
         this.pendingSeekSpine = -1;
-        const i2: number = this.indexOfNode(ps, pn);
+        this.pendingSeekChar = 0;
+        const i2: number = this.indexOfNode(ps, pn, pc);
         if (i2 >= 0) {
           this.scrollToIndex(i2);
           this.lastStart = i2;
@@ -791,8 +804,8 @@ export struct ReaderScrollView {
   // 下标换算 / 滚动定位
   // ══════════════════════════════════════════════════════════════════════════
 
-  /** (spine, 块节点号) → 全局行下标（-1 = 不在已加载窗口内） */
-  private indexOfNode(spine: number, node: number): number {
+  /** (spine, 块节点号[, 段内字符偏移]) → 全局行下标（-1 = 不在已加载窗口内） */
+  private indexOfNode(spine: number, node: number, char: number = 0): number {
     const base: number | undefined = this.chapStart.get(spine);
     const map: number[] | undefined = this.chapRow.get(spine);
     if (base === undefined || map === undefined) {
@@ -805,6 +818,22 @@ export struct ReaderScrollView {
     if (local < 0) {
       // 空行/未渲染节点 ⇒ 退到该章首行（宁可粗略也不跳空）
       return base;
+    }
+    // 2026-11-05 修（与无动画档 indexOfNode 对齐）：带字符偏移时优先找「真正包含
+    // 这个字」的行。map[node] 只给节点**首行**，而 scrollToIndex(START) 滚到行顶
+    // ⇒ 定位会落在段落开头；分页锚点常是"上一行延续下来的半段"，两档落点不一致。
+    // 找不到（char 在段尾/行数据未覆盖）时退回节点首行 —— 与无动画档同一兜底。
+    if (char > 0) {
+      const total: number = this.ds.totalCount();
+      for (let i = base; i < total; i++) {
+        const r: ScrollRow = this.ds.getData(i);
+        if (r.spine !== spine) {
+          break; // 出了本章
+        }
+        if (r.node === node && char >= r.charFrom && char < r.charTo) {
+          return i;
+        }
+      }
     }
     return base + local;
   }
@@ -916,17 +945,20 @@ export struct ReaderScrollView {
   onSeekSerialChange(): void {
     const spine: number = this.seekSpine;
     const node: number = this.seekNode;
+    const char: number = Math.max(0, this.seekChar);
     // 首屏还没载入完 ⇒ 暂存，等 `rebuildWindow` 末尾补做（见 pendingSeek* 注释）
     if (!this.ready) {
       this.pendingSeekSpine = spine;
       this.pendingSeekNode = node;
+      this.pendingSeekChar = char;
       return;
     }
     if (spine < this.loadedFirst || spine > this.loadedLast) {
+      this.pendingSeekChar = char;
       this.rebuildWindow(spine, node, false);
       return;
     }
-    const idx: number = this.indexOfNode(spine, node);
+    const idx: number = this.indexOfNode(spine, node, char);
     if (idx >= 0) {
       this.scrollToIndex(idx);
       this.lastStart = idx;
