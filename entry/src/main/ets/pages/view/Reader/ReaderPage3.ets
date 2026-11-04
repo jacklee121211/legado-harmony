@@ -28,6 +28,9 @@ import { ReaderSettingDialog, SETTING_DIALOG_BOTTOM_GAP } from './ReaderSettingD
 // 2026-11-04（渲染侧 R-1）：「背景模糊」区块的**视图**抽到本组件；状态与副作用仍在本页
 //   （`bgBlurOn` / `bgBlurRadius` 是页面 @State，写入后还要 `applyTextureBg` + `saveCustomBg`）。
 import { ReaderBlurBlock } from './ReaderBlurBlock'
+// 2026-11-04（渲染侧 R-2-a）：「字体管理 / 更多材质 / 更多方案」按钮行的**视图**抽到本组件；
+//   展示门禁（OfflineMode）与业务门禁（VipManager）仍在本页。
+import { ReaderEntryButtonsBlock } from './ReaderEntryButtonsBlock'
 // 「保存此颜色方案」确认弹窗（2026-09-26 新增；配方与睡眠定时弹窗同款）
 import { ReaderSaveSchemeDialog } from './ReaderSaveSchemeDialog'
 import { showMessage } from '../../../componets/common/promptShow'
@@ -9191,75 +9194,38 @@ oAnimInitNode 配套） */
       //   `ReaderFontLib` 无网络依赖，材质是 rawfile）⇒ 藏了等于这三项卖不出去。
       //   真联网的「下载字体」在弹窗内部单独门控（见 `ReaderFontDialog`）。
       if (OfflineMode.showReadingEnhancements()) {
-      Row({ space: 16 }) {
-        Button('字体管理')
-          .fontSize(13)
-          .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)')
-          .backgroundColor(this.colorMode == 0
-            ? 'rgba(248, 249, 250, 0.16)'
-            : 'rgba(19, 19, 19, 0.06)')
-          .borderRadius(18)
-          .height(34)
-          .padding({ left: 14, right: 14 })
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
+        // 2026-11-04（渲染侧 R-2-a）：这一行**视图**已抽到 `ReaderEntryButtonsBlock.ets`
+        //   （原区间 `:9194-9262`）。抽出的只是"长什么样 + 点了哪个按钮"；
+        //   ① `OfflineMode.showReadingEnhancements()` 这个**展示门禁留在这里**；
+        //   ② `VipManager.isVip()` 这个**业务门禁留在回调里**（组件不依赖 VipManager）；
+        //   ③ 原各按钮第一句 `Haptics.tap()` 由 `onBeforeAct` 承担，顺序仍是"触感 → 打开弹窗"。
+        ReaderEntryButtonsBlock({
+          colorMode: this.colorMode,
+          texFocused: this.isTexOverflowFocused(),
+          schemeFocused: this.bgFocus === 'scheme',
+          onBeforeAct: (): void => {
             Haptics.tap();
+          },
+          onFont: (): void => {
             this.openFontDialog()
-          })
-
-        Button('更多材质')
-          .fontSize(13)
-          .fontColor(this.isTexOverflowFocused() ? '#ff6600'
-            : (this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'))
-          .backgroundColor(this.colorMode == 0
-            ? 'rgba(248, 249, 250, 0.16)'
-            : 'rgba(19, 19, 19, 0.06)')
-          // ── 焦点规则（2026-09-25 用户二轮反馈）：当前选中的材质不在主页前 8 个
-          //    预览里 ⇒ 材质格圈不到它，橙圈改框在「更多材质」按钮上。
-          .borderWidth(this.isTexOverflowFocused() ? 1.5 : 0)
-          .borderColor('#ff6600')
-          .borderRadius(18)
-          .height(34)
-          .padding({ left: 14, right: 14 })
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
-            Haptics.tap();
+          },
+          onTex: (): void => {
             // 会员化（2026-09-28）：「更多材质」为 VIP 特权，免费用户 → VIP 弹窗
             if (!VipManager.isVip()) {
               this.openVipDialog()
               return
             }
             this.openTexDialog()
-          })
-
-        Button('更多方案')
-          .fontSize(13)
-          .fontColor(this.bgFocus === 'scheme' ? '#ff6600'
-            : (this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'))
-          .backgroundColor(this.colorMode == 0
-            ? 'rgba(248, 249, 250, 0.16)'
-            : 'rgba(19, 19, 19, 0.06)')
-          // ── 焦点规则（2026-09-25 用户三轮反馈）：应用中的方案在这批已存方案里
-          //    （方案全部住在弹窗里）⇒ 橙圈框在「更多方案」按钮上。
-          .borderWidth(this.bgFocus === 'scheme' ? 1.5 : 0)
-          .borderColor('#ff6600')
-          .borderRadius(18)
-          .height(34)
-          .padding({ left: 14, right: 14 })
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
-            Haptics.tap();
+          },
+          onScheme: (): void => {
             // 会员化（2026-09-28）：「更多方案」为 VIP 特权，免费用户 → VIP 弹窗
             if (!VipManager.isVip()) {
               this.openVipDialog()
               return
             }
             this.openSchemeDialog()
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
+          }
+        })
       }
 
       // 我们算出来的几何（标定模式）：与截图/日志逐项对照
