@@ -139,12 +139,23 @@ export struct ReaderPageNoAnim {
   @Prop bgColor: string = '#FFFFFF';
   /** 背景图 URI（'' = 纯色） */
   @Prop bgUri: string = '';
-  /** 文本区左右内边距（vp）—— 左右各一份 ⇒ 中间正好是文本宽 */
-  @Prop sideInsetVp: number = 20;
+  /**
+   * 文本区左右内边距（vp）—— 左右各一份 ⇒ 中间正好是文本宽。
+   *
+   * ⚠️ 2026-11-05 修「平板旋转后底部溢出」：这三个 inset 是**分页依据**
+   *   （`areaW = 容器宽 − 2×side`），但它们**不是**由容器尺寸推导，而是父页用
+   *   `textAreaLeftVp(rsProjection, windowWidth, calibWidthRatio)` 算出来再传进来的。
+   *   旋转瞬间 `onAreaChange` 先带着**新容器尺寸 + 旧 inset** 触发一次（实测
+   *   `side=56.84` 而正确值应为 `86.49`），inset 随后才更新 —— 而 `onAreaChange`
+   *   只认**容器**尺寸，容器不再变 ⇒ 分页停在旧宽度（引擎按 2544px 断行），
+   *   渲染却按新边距（2410px）折行 ⇒ 行数变多 ⇒ 底部溢出。
+   *   ⇒ 给三个 inset 都挂 `@Watch('onTextInsetChange')`，inset 后到也补一次测量。
+   */
+  @Prop @Watch('onTextInsetChange') sideInsetVp: number = 20;
   /** 顶部避让（vp）：与分页模式正文首行严格对齐 */
-  @Prop topInsetVp: number = 0;
+  @Prop @Watch('onTextInsetChange') topInsetVp: number = 0;
   /** 底部避让（vp）：只让出手势条 */
-  @Prop bottomInsetVp: number = 0;
+  @Prop @Watch('onTextInsetChange') bottomInsetVp: number = 0;
 
   // ── 初始位置：`initSerial` 变化 = 重新载入窗口（进书 / 从别的模式切过来）──
   @Prop initSpine: number = 0;
@@ -264,6 +275,17 @@ export struct ReaderPageNoAnim {
   /** 实测文本区宽高（vp）；0 = 还不知道 */
   private areaW: number = 0;
   private areaH: number = 0;
+  /**
+   * **容器**原始尺寸（vp，未扣 inset）—— 2026-11-05 新增。
+   *
+   * 为什么要单独缓存：`areaW/areaH` 是"容器 − inset"的结果，而 inset 会在容器尺寸
+   * 变化**之后**才更新（旋转时序）。`onAreaChange` 只会在容器变化时来，inset 后到时
+   * 必须能用同一份容器尺寸重算 ⇒ 所以容器尺寸要独立留一份。
+   */
+  private containerW: number = 0;
+  private containerH: number = 0;
+  /** inset 补测防抖计时器（三个 inset 同帧变化时只补测一次，-1 = 无） */
+  private insetSyncTimer: number = -1;
   /** 首屏还没就绪时到来的定位请求（-1 = 无）—— 理由见滚动层同名注释 */
   private pendingSeekSpine: number = -1;
   private pendingSeekNode: number = 0;
@@ -279,6 +301,10 @@ export struct ReaderPageNoAnim {
   aboutToDisappear(): void {
     this.chapPages.clear();
     this.chapTexts.clear();
+    if (this.insetSyncTimer !== -1) {
+      clearTimeout(this.insetSyncTimer);
+      this.insetSyncTimer = -1;
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -830,6 +856,40 @@ export struct ReaderPageNoAnim {
     }, 0);
   }
 
+  /**
+   * **inset 后到 ⇒ 补一次测量**（2026-11-05 修「平板旋转后底部溢出」）。
+   *
+   * 场景（真机日志 §94 有原文）：平板竖屏 → 横屏，`onAreaChange` 先带着
+   * `新容器尺寸 + 旧 sideInsetVp` 触发（实测 side=56.84，而横屏正确值 86.49），
+   * 随后父页才把新 inset 传下来 —— 但**容器尺寸没再变**，`onAreaChange` 不会再触发，
+   * 于是 `areaW` 停在"按旧边距算出的更宽值"（1130.77vp），引擎按 2544px 断行，
+   * 而渲染按新边距（2410px）折行 ⇒ 行数变多 ⇒ 底部溢出。
+   * 切档重挂能好，是因为重挂后测量时 inset 已是最终值（印证了根因）。
+   *
+   * ⚠️ `@Watch` 运行在渲染周期内，不能直接改 @State / 重排 ⇒ `setTimeout(0)` 推到下一帧；
+   *    三个 inset 同帧变化时用计时器**合并成一次**，避免连做 3 次重排。
+   */
+  private onTextInsetChange(): void {
+    if (this.insetSyncTimer !== -1) {
+      clearTimeout(this.insetSyncTimer);
+    }
+    this.insetSyncTimer = setTimeout((): void => {
+      this.insetSyncTimer = -1;
+      if (this.containerW <= 0 || this.containerH <= 0) {
+        return;   // 容器还没测到过 ⇒ 等 onAreaChange 首测即可
+      }
+      this.syncTextArea(this.containerW - 2 * this.sideInsetVp,
+        this.containerH - this.topInsetVp - this.bottomInsetVp);
+    }, 0);
+  }
+
+  /** `onAreaChange` 的收口：先记容器原始尺寸，再扣 inset 得到文本区并重排 */
+  private onContainerAreaChange(w: number, h: number): void {
+    this.containerW = w;
+    this.containerH = h;
+    this.syncTextArea(w - 2 * this.sideInsetVp, h - this.topInsetVp - this.bottomInsetVp);
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // UI
   // ══════════════════════════════════════════════════════════════════════════
@@ -1094,8 +1154,9 @@ export struct ReaderPageNoAnim {
         .height('100%')
         .backgroundColor(this.bgColor)
         .onAreaChange((_old: Area, newArea: Area) => {
-          this.syncTextArea(Number(newArea.width) - 2 * this.sideInsetVp,
-            Number(newArea.height) - this.topInsetVp - this.bottomInsetVp);
+          // 2026-11-05：收口到 onContainerAreaChange —— 除测量外还要**缓存容器原始尺寸**，
+          //   供 inset 后到时（onTextInsetChange）补测；根因见 `onTextInsetChange` 注释。
+          this.onContainerAreaChange(Number(newArea.width), Number(newArea.height));
         })
       if (this.bgUri.length > 0) {
         Image(this.bgUri)
