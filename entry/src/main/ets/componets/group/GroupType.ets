@@ -92,7 +92,17 @@ export default struct groupTypeComponent {
   //   父级 `BookBodyContent` 的 `@State groupCoverShow` 也一并删除（同批）。
   @Link GROUP:string
   @State groupList:BookGroups[] = []
-  @Link bookTypeNumber:number
+  /**
+   * 当前分组 id（`@Link` 与 IndexShelf 双向）。
+   *
+   * ⚠️ 2026-11-05 加 `@Watch`：**外部也会改它**（返回手势在 `IndexShelf.handleBackGesture()`
+   *   里把「根分组 → 全部」，以及"回上一级分组"），而 chip 的选中态/高亮是**本组件自己的
+   *   @State**（`chipSel` / `chipHighlightId`）⇒ 只改 `bookTypeNumber` 会出现
+   *   用户报的现象：「内容变成全部了，但顶部标签还停在分组」。
+   *   ⇒ 用 `@Watch` 反查分组、回写 chip 三件套（高亮 id / 分段下标 / 哨兵名），
+   *     让"任何来源的 bookTypeNumber 变化"都能让 chip 跟得上（单一真源仍是 bookTypeNumber）。
+   */
+  @Link @Watch('onBookTypeSynced') bookTypeNumber:number
   /**
    * 「最近」虚拟 chip 状态（2026-10-19 需求第 3 条）。
    *
@@ -183,6 +193,28 @@ export default struct groupTypeComponent {
    *   所以参数一律走普通 `@Prop` 的"打开瞬间快照" —— 这正好是本面板需要的语义。
    */
   // 2026-11-04（P4b 批 C-3）：原 groupPanelDialog 字段已删 —— 宿主化后打开时 new、关闭走 closeCurrent()
+  /**
+   * `bookTypeNumber` 被**外部**改动时（返回手势等）把 chip 选中态同步过来。
+   *
+   * ⚠️ 为什么要这个方法：chip 的高亮/下标是本组件 `@State`（`chipHighlightId` / `chipSel`），
+   *   只有 chip 自己的点击分支会改它们 ⇒ 外部只改 `bookTypeNumber` 会出现
+   *   「内容变成全部了、顶部标签还停在分组」（用户真机反馈 2026-11-05）。
+   *   ⇒ `bookTypeNumber` 是**单一真源**，本方法负责让 chip 跟随它。
+   */
+  private onBookTypeSynced(): void {
+    if (this.onRecentChip) {
+      return
+    }
+    this.chipHighlightId = this.bookTypeNumber
+    this.chipSel = this.chipSelectedIndex()
+    const hit = this.groupList.find((g: BookGroups): boolean => (g.groupId ?? -1) === this.bookTypeNumber)
+    if (hit !== undefined) {
+      this.GROUP = hit.groupName === '分组' ? '分组' : '标签'
+      AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', hit.groupName ?? '')
+    }
+    ShelfPrefs.setCurrentChipId(this.bookTypeNumber)
+  }
+
   aboutToAppear(): void {
     GroupEvents.subscribe(this.shelfListener)
     // 高亮基准初始化（2026-10-19 二修）：与 `IndexShelf.aboutToAppear` 恢复出的状态对齐
