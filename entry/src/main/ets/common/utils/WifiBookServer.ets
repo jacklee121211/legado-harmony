@@ -2471,7 +2471,11 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 return { ok: false, reason: 'io', msg: '服务未就绪', existingId: -1 };
             }
             // 同名检测（在**落盘之前**）：撞名一律不覆盖
-            const dup: Books[] = await booksDao.isExistBooks(undefined, safeName);
+            // 2026-11-04（批 R-2）：原来传 undefined 当 bookUrl，而 isExistBooks 在任一参数为空时
+            //   直接返回空数组（BooksDao:775-778）⇒ 该去重**一直是失效的**。改按书名查（作者恒 '暂无'）。
+            const takenNames: string[] = await booksDao.bookNamesByAuthor('暂无');
+            const dupHit: boolean = takenNames.includes(safeName);
+            const dup: Books[] = dupHit ? [new Books()] : [];
             if (dup.length > 0) {
                 console.info(`${TAG} duplicate upload rejected: ${safeName}`);
                 return { ok: false, reason: 'dup', msg: `${safeName} 已存在`, existingId: dup[0].id ?? -1 };
@@ -2682,7 +2686,9 @@ fetch('/book?id='+id).then(function(r){return r.text()}).then(render);
                 return;
             }
             // 同名检测先做（撞名时**不落盘**，交由网页弹"改名 / 拒绝"）
-            const dup: Books[] = await booksDao.isExistBooks(undefined, meta.name);
+            // 2026-11-04（批 R-2）：同上，改按书名查（原先传 undefined 使去重失效）。
+            const takenNames2: string[] = await booksDao.bookNamesByAuthor('暂无');
+            const dup: Books[] = takenNames2.includes(meta.name) ? [new Books()] : [];
             if (dup.length > 0) {
                 console.info(`${TAG} chunked upload conflict: ${meta.name}`);
                 WifiBookServer.respondJsonCode(client, 409, false, '同名书籍已存在', `,"existingId":${dup[0].id ?? -1}`);

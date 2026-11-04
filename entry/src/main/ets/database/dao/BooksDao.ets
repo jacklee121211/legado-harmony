@@ -791,6 +791,29 @@ class BooksDao {
     }
   }
 
+  // 2026-11-04（决策 4 / 批 R-2）：按作者取全部书名，供导入时做重名消歧。
+  //   为什么新增而不是复用 isExistBooks：那个要求 bookUrl 与 bookName **同时**精确匹配，
+  //   且任一参数为空会直接返回空数组（isExistBooks 开头）—— 只知道作者的场景根本用不了。
+  //   调用方：FileHandler.CopyFile（本地导入自动改名）、WifiBookServer（撞名 409 交网页决定）。
+  async bookNamesByAuthor(author: string): Promise<string[]> {
+    const column = AppDatabaseUtil.getColumn(this.TABLE_NAME);
+    const predicates = DbUtil.getPredicates(this.TABLE_NAME);
+    predicates.equalTo('author', author);
+    try {
+      const books = await DbUtil.queryForList<Books>(predicates, column);
+      const names: string[] = [];
+      for (const b of (books || [])) {
+        if (b.bookName !== undefined && b.bookName !== '') {
+          names.push(b.bookName)
+        }
+      }
+      return names;
+    } catch (err) {
+      console.error('bookNamesByAuthor, Error:', err);
+      return [];
+    }
+  }
+
 
   /**
    * 按**书名**查书（2026-10-23 新增，应用接续用）。

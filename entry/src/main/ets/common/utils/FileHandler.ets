@@ -1,3 +1,4 @@
+import { BookNaming } from '../books/BookNaming'
 import { BooksMutation } from '../books/BooksMutation'
 import { BusinessError } from '@ohos.base';
 import fs, { Options } from '@ohos.file.fs';
@@ -128,6 +129,10 @@ export class FileHandler {
         book.fileSize = 0;
         hilog.warn(0x0000, 'testTag', 'CopyFile: stat %{public}s failed, fileSize=0', dstPath);
       }
+      // 2026-11-04（决策 4 / 批 R-2）：同名同作者即冲突，按分组样板改名（书名 (2)、(3)…）。
+      //   书名为文件名、作者恒为 '暂无' ⇒ 只比书名即可（BookNaming.nextFreeName）。
+      const takenNames: string[] = await booksDao.bookNamesByAuthor(book.author ?? '暂无')
+      book.bookName = BookNaming.nextFreeName(book.bookName, takenNames)
       await BooksMutation.add(book)
       return true
     } catch (err) {
