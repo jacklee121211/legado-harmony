@@ -74,8 +74,8 @@ t.sentinel('三递归共用的防环 helper 仍在（唯一入口，不许三处
 t.sentinel('helper 内部上界仍与 depthOf/pathOf/isDescendantOf 同口径（MAX_GROUP_DEPTH + 1）',
   /private canDescend[\s\S]{0,300}?return guard <= MAX_GROUP_DEPTH \+ 1/,
   '守 GroupTree.ets:204-209 —— 口径漂移会让环上行为与既有三处不一致')
-t.sentinel('hasSiblingNamed 仍对两侧 trim 后严格比较', /if \(\(g\.groupName \?\? ''\)\.trim\(\) === target\) \{/,
-  '守 GroupTree.ets:269 —— 重名口径（大小写/空格）')
+t.sentinel('hasSiblingNamed 改为精确比较存量名（与 DAO 口径一致）', /if \(\(g\.groupName \?\? ''\) === target\) \{/,
+  '守 GroupTree.ets:381 —— 批 C-17 把 `trim 存量名` 改成精确比较，与 BookGroupsDao.hasSiblingNamed 的 SQL 精确比较对齐')
 t.check('源码依赖集合未漂移（仍只有 BookGroups 一条 import）',
   mod.imports.length === 1 && mod.imports[0].module === '../../database/entities/BookGroups',
   '证据：GroupTree.ets:14；多余依赖会让 harness 抛「未注入绑定」')
@@ -237,8 +237,10 @@ t.eq('根级同名（3 号「小说」）⇒ true', sib.hasSiblingNamed(0, '小�
 t.eq('非同级不拦（父级 2 下没有「小说」）', sib.hasSiblingNamed(2, '小说'), false,
   '证据：GroupTree.ets:333 `this.childrenOf(parentId)`')
 t.eq('待判定名两端空白被 trim 后命中', sib.hasSiblingNamed(1, '  小说  '), true, '证据：GroupTree.ets:329 `(name ?? \'\').trim()`')
-t.eq('已有分组名两端空白被 trim 后命中', sib.hasSiblingNamed(0, '小说'), true,
-  '证据：GroupTree.ets:337 `(g.groupName ?? \'\').trim() === target`（7 号存的是「小说 」）')
+// 2026-11-04（批 C-17）：原先这里有「已有分组名两端空白被 trim 后命中」的断言。
+//   该行为已被改成**精确比较存量名**（与 `BookGroupsDao.hasSiblingNamed` 的 SQL 精确比较对齐），
+//   本 fixture 里根级 / 父级 1 都同时存在精确名「小说」与带尾空的「小说 」，无法用同名探针区分两种口径，
+//   ⇒ 语义断言改为由上面的 sentinel（正则钉住 `=== target` 精确比较写法）承担，避免产出假绿断言。
 t.eq('内部空格**不**归一（只 trim 首尾）', sib.hasSiblingNamed(1, '有空格'), false,
   '证据：GroupTree.ets:329/337 —— 只用 trim，无 replace/正则压缩')
 t.eq('大小写敏感（AB vs ab ⇒ false）', sib.hasSiblingNamed(1, 'ab'), false,

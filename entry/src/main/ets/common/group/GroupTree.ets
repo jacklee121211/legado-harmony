@@ -373,7 +373,12 @@ export class GroupTree {
       if (excludeId !== undefined && g.groupId === excludeId) {
         continue
       }
-      if ((g.groupName ?? '').trim() === target) {
+      // 2026-11-04（批 C-17）：**不再 trim 存量名**，与 `BookGroupsDao.hasSiblingNamed()` 逐字对齐。
+      //   旧写法 `(g.groupName ?? '').trim() === target` 会在内存侧把「分组 」与「分组」判为重名，
+      //   而 DAO 侧是 `predicates.equalTo('groupName', name)`（SQL 精确比较、不 trim）⇒ 两处口径不同，
+      //   表现为"界面说重名、数据库说没重名"（唯一索引建在原始值上，也认为两者不同）。
+      //   ⇒ 统一为**精确比较**：输入侧两侧都 trim，存量值按原样比。
+      if ((g.groupName ?? '') === target) {
         return true
       }
     }
