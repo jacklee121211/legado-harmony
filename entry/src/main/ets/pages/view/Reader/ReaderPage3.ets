@@ -71,6 +71,10 @@ import ReaderSession, { LocateTarget, FlipSearch, PublishFacts } from '../../../
 // 2026-11-04（渲染侧 S2-a）：设置的**默认值/编解码/校验**收在纯记录层（可单测）。
 //   本页本轮只接"默认值"这一处，字段读写仍在本页（S2-b/c 再逐批迁移，每批可单独回退）。
 import { defaultReadSettingRecord, pickReadSettingFields } from '../../../common/reader/ReadSettingRecord';
+// 2026-11-04（渲染侧 S2-b-2）：设置的响应式模型壳。⚠️ 必须是**普通成员**（不加 @State/@Prop/@Link）——
+//   官方 `arkts-v1-v2-mixusage` 限制条件 2：「V2->V1，V1不支持用装饰器接收@ObservedV2装饰的class，否则编译报错。」
+//   本轮只把它当"镜子"用（边界上映像 + 取快照），真源仍是本页 `@State readerSetting`。
+import ReadSettingState from '../../../common/reader/ReadSettingState';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -1818,6 +1822,16 @@ oAnimInitNode 配套） */
   @State readerSetting: readerCore.ReaderSetting = defaultReadSettingRecord(
     // 运行时三件事实按**同一时刻**取：scaledDensity 的 `>0` 兜底在记录层内部（与原三元等价）
     display.getDefaultDisplaySync().scaledDensity, this.windowWidth, this.windowHeight);
+
+  /**
+   * 设置的响应式模型壳（S2-b-2）。
+   *
+   * ⚠️ **普通成员**，绝对不能加 `@State`/`@Prop`/`@Link`：
+   *   官方 `arkts-v1-v2-mixusage` 限制条件 2「V1不支持用装饰器接收@ObservedV2装饰的class，否则编译报错」；
+   *   限制条件 1 又明确 `@ObservedV2/@Trace`「可以独立在 @Component 中使用」⇒ 这样持有是官方支持的形态。
+   * 本轮它只是"镜子"：真源仍是上面那个 `@State readerSetting`（S2-c 才换真源）。
+   */
+  private settingState: ReadSettingState = new ReadSettingState(this.readerSetting);
   private screenDensityCallBack: Callback<number> | null = null;
   private BookHandler: bookParser.BookParserHandler | null = null;
   /**
@@ -10850,7 +10864,7 @@ oAnimInitNode 配套） */
   }
 
   /**
-   * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
+   * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
    *
    * ── 为什么要有它 ────────────────────────────────────────────────────────────
    * 本页有 **16 处** `setPageConfig(...)` 与 **6 处** `putSync('ReaderSetting_<书名>', ...)`，
@@ -10862,12 +10876,20 @@ oAnimInitNode 配套） */
    *     （官方 FAQ `faqs-arkui-1587`）⇒ 写出脏数据（本工程历史上已被污染过一次，见 `:4133-4144`）。
    * ⇒ 把所有边界收敛到这**一个**方法，将来只改这里一处就够。
    *
+   * ── 本轮（S2-b-2）的变化：过一遍响应式模型 ───────────────────────────────────
+   * 先 `settingState.assignFrom(this.readerSetting)` 把当前值镜像进 `@ObservedV2` 模型，
+   * 再 `settingState.snapshot()` 取**纯对象**（逐字段拷贝，天然不含 `__ob_`）。
+   * 真源仍是 `@State readerSetting`（259 个读写点一行未动）⇒ **行为零变化**；
+   * 这样做的目的是让模型真跑在热路径上，证明它能承载 13 字段且不把 `__ob_` 泄漏到边界。
+   * S2-c 才把写点逐步改为直接改模型、并由模型驱动 UI。
+   *
    * ── 零行为变化 ──────────────────────────────────────────────────────────────
-   * `pickReadSettingFields()` 只**剔除多余键**（`__ob_*` / 历史脏字段），**不改任何值**；
-   * 且当现有对象不满足 13 字段类型时，**原样返回入参**（保持既有行为，绝不在这里"顺手纠正"）。
+   * `snapshot()` 只做逐字段拷贝，**不改任何值**；`pickReadSettingFields()` 再按白名单兜一次
+   * （防御性：万一将来有人往模型里塞了非 13 字段的东西），不满足时**原样返回入参**。
    */
   private settingForBoundary(): readerCore.ReaderSetting {
-    const picked: Object | null = pickReadSettingFields(this.readerSetting);
+    this.settingState.assignFrom(this.readerSetting);
+    const picked: Object | null = pickReadSettingFields(this.settingState.snapshot());
     if (picked === null) {
       return this.readerSetting;
     }

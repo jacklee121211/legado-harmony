@@ -225,3 +225,48 @@ test('页面边界已收口：22 处一律走 settingForBoundary()，不再直�
   assert.match(PAGE_SRC, /private settingForBoundary\(\): readerCore\.ReaderSetting \{/,
     '证据：S2-b-1 的边界出口必须留在页面上（引擎要纯接口对象）')
 })
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 六、S2-b-2：`@ObservedV2` 模型壳的接线约定（只能静态断言 —— 装饰器让 harness 无法加载该文件）
+// ══════════════════════════════════════════════════════════════════════════════
+
+const STATE_SRC = readSource('entry/src/main/ets/common/reader/ReadSettingState.ets')
+
+test('模型壳：@ObservedV2 装饰 class、13 个 @Trace 字段与 SDK 字段一一对应', () => {
+  assert.match(STATE_SRC, /@ObservedV2\s*\nexport class ReadSettingState/, '证据：官方 arkts-new-observedv2-and-trace「@ObservedV2仅能装饰class」')
+  for (const k of SDK_FIELDS) {
+    const re = new RegExp(String.raw`@Trace ${k}: `)
+    assert.match(STATE_SRC, re, `模型缺少 @Trace 字段 ${k}`)
+  }
+  // @Trace 数量 = 13（多一个少一个都要显式面对）
+  assert.equal((STATE_SRC.match(/@Trace /g) ?? []).length, 13)
+  // @Trace 不支持 Function ⇒ 模型里不许出现回调字段（本轮约定）
+  assert.equal(/@Trace\s+\w+\s*:\s*\(/.test(STATE_SRC), false, '证据：@Trace不支持观察Function类型')
+})
+
+test('模型壳：snapshot() 是唯一外部出口，且逐字段显式拷贝（天然不含 __ob_）', () => {
+  assert.match(STATE_SRC, /snapshot\(\): ReadSettingRecord \{/, '模型必须提供 snapshot() 纯对象出口')
+  // snapshot 内部不得整对象外抛（禁止 `return this` / `JSON.stringify(this)`）
+  assert.equal(/return this\s*;/.test(STATE_SRC), false, '禁止把模型实例本身交出去')
+  assert.equal(/JSON\.stringify\(this\)/.test(STATE_SRC), false, '证据：FAQ faqs-arkui-1587 —— __ob_ 会被序列化出来')
+  // 13 个字段在 snapshot 里都要出现（逐字段拷贝，不是 spread）
+  const snapStart = STATE_SRC.indexOf('snapshot(): ReadSettingRecord {')
+  const snapEnd = STATE_SRC.indexOf('\n  }', snapStart)
+  const snap = STATE_SRC.slice(snapStart, snapEnd)
+  for (const k of SDK_FIELDS) {
+    assert.match(snap, new RegExp(String.raw`${k}: this\.${k}`), `snapshot 漏字段 ${k}`)
+  }
+})
+
+test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，否则编译报错）', () => {
+  assert.match(PAGE_SRC, /private settingState: ReadSettingState = new ReadSettingState\(this\.readerSetting\)/,
+    '证据：arkts-v1-v2-mixusage 限制条件 2「V1不支持用装饰器接收@ObservedV2装饰的class」')
+  // 反向断言：不许出现带装饰器的持有形态
+  assert.equal(/(@State|@Prop|@Link|@StorageLink)\s+settingState/.test(PAGE_SRC), false,
+    '模型实例不能加任何 V1 装饰器')
+  // 边界出口必须过一遍模型（本轮"镜子"用法）
+  assert.match(PAGE_SRC, /this\.settingState\.assignFrom\(this\.readerSetting\)/,
+    '边界投影应先把当前值镜像进模型')
+  assert.match(PAGE_SRC, /pickReadSettingFields\(this\.settingState\.snapshot\(\)\)/,
+    '边界必须取模型快照后再走白名单兜底')
+})
