@@ -70,7 +70,7 @@ import { parseDomPos, domPosFor, clampProgressUnit,
 import ReaderSession, { LocateTarget, FlipSearch, PublishFacts } from '../../../common/reader/ReaderSession';
 // 2026-11-04（渲染侧 S2-a）：设置的**默认值/编解码/校验**收在纯记录层（可单测）。
 //   本页本轮只接"默认值"这一处，字段读写仍在本页（S2-b/c 再逐批迁移，每批可单独回退）。
-import { defaultReadSettingRecord } from '../../../common/reader/ReadSettingRecord';
+import { defaultReadSettingRecord, pickReadSettingFields } from '../../../common/reader/ReadSettingRecord';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
@@ -2090,7 +2090,7 @@ oAnimInitNode 配套） */
       if (this.bgTexId <= 0 && this.bgCustomId.length === 0) {
         this.freeBgHex = this.readerSetting.themeColor ?? ''
       }
-      this.readerComponentController.setPageConfig(this.readerSetting)
+      this.readerComponentController.setPageConfig(this.settingForBoundary())
       this.customBgTouched = true
       this.saveCustomBg()
       this.bgFocus = 'custom'
@@ -2142,7 +2142,7 @@ oAnimInitNode 配套） */
       this.freeBgHex = this.readerSetting.themeColor ?? ''
     }
     this.customBgTouched = true
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
     this.saveCustomBg()
   }
 
@@ -2595,7 +2595,7 @@ oAnimInitNode 配套） */
       //     ⇒ 日/夜下点推荐色模式不落盘，退出再进退回标准白/黑，与用户看到的不一致）。
       this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
       this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-      this.readerComponentController.setPageConfig(this.readerSetting);
+      this.readerComponentController.setPageConfig(this.settingForBoundary());
     })
   }
 
@@ -2710,7 +2710,7 @@ oAnimInitNode 配套） */
     NightMode.setReaderNight(night)
     this.syncAbilityColorMode()
     this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
   }
 
   /**
@@ -2806,7 +2806,7 @@ oAnimInitNode 配套） */
       this.syncAbilityColorMode()
     }
     this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
   }
 
   /** 取"本书记录 → 全局记录"里那条（与进书恢复用同一个解析顺序） */
@@ -3205,7 +3205,7 @@ oAnimInitNode 配套） */
     this.markFontOverride()
     this.readerSetting.fontName = name
     this.readerSetting.fontPath = path
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
     // ★★ 关键修复（2026-10-20）：ArkUI 侧必须**同步注册**新族名 ★★
     // 缺陷现场：这里原来只有上面三行 —— 引擎拿到了 `fontName/fontPath`（它自己按
     // `resourceRequest` 向应用要字体字节），所以**仿真/横滑正常**；但 ArkUI 原生文本
@@ -3226,7 +3226,7 @@ oAnimInitNode 配套） */
   private applyFontSize(v: number): void {
     this.markFontOverride()
     this.readerSetting.fontSize = Math.round(v)
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
     // 自绘层重排：上下档 LazyForEach 的行键是 `${key}-f${fontSerial}`
     // （ReaderScrollView.ets:748-753）；不 ++ 就不会重建 ⇒ 字号看着"死的"。
     // 无动画档同时靠 fontSize 的 @Watch 重排。
@@ -3240,7 +3240,7 @@ oAnimInitNode 配套） */
   private applyLineHeight(v: number): void {
     this.markFontOverride()
     this.readerSetting.lineHeight = Math.round(v * 10) / 10
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
     this.fontSerial++
     this.schedulePersistReaderSetting()
     // 页码估算随排版变（纯算术，零扫描）
@@ -3273,7 +3273,7 @@ oAnimInitNode 配套） */
     if (nm === undefined || nm === null || nm.length === 0) {
       return
     }
-    PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting)
+    PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.settingForBoundary())
   }
 
   // ── 全书页码（2026-10-31）：信息窗「xx / xx」的数据源 ─────────────────────
@@ -3493,7 +3493,7 @@ oAnimInitNode 配套） */
     if (commit || now - this.customBgAppliedAt >= CUSTOM_BG_APPLY_GAP_MS) {
       this.customBgAppliedAt = now
       this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-      this.readerComponentController.setPageConfig(this.readerSetting)
+      this.readerComponentController.setPageConfig(this.settingForBoundary())
     }
     if (commit) {
       this.customBgTouched = true
@@ -3609,7 +3609,7 @@ oAnimInitNode 配套） */
       this.syncAbilityColorMode()
     }
     this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
     // ── 后台预生成全部 5 档（含当前档，磁盘命中零成本）⇒ 之后拖动条切档零等待 ──
     if (this.bgBlurOn && finalPath.length > 0) {
       ReaderTexture.preGenerateTiers(ctx, res.path)
@@ -3769,7 +3769,7 @@ oAnimInitNode 配套） */
     this.bgFocus = (this.schemeFocusBg.length > 0
       && this.schemeFocusBg === hex) ? 'scheme' : 'preset'
     this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-    this.readerComponentController.setPageConfig(this.readerSetting)
+    this.readerComponentController.setPageConfig(this.settingForBoundary())
     this.customBgTouched = true
     this.saveCustomBg()
   }
@@ -4139,7 +4139,7 @@ oAnimInitNode 配套） */
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
         this.bookData.bookName);
       // 顺手把脏数据覆盖成合法值，避免每次进书都走这里
-      PreferencesUtil.putSync(`ReaderSetting_${this.bookData.bookName}`, this.readerSetting);
+      PreferencesUtil.putSync(`ReaderSetting_${this.bookData.bookName}`, this.settingForBoundary());
     }
     // ⚠️ readerSetting 是**按书持久化**的 ⇒ 存量值会覆盖上面的新默认值。
     //    所有字段级纠正统一走 migrateReaderSetting()（版本化迁移 + scaledDensity 刷新），
@@ -4541,7 +4541,7 @@ oAnimInitNode 配套） */
       //   真机日志 2026-09-27 01:57）。加粗（正文）暂无安全注入点，诚实搁置。
       this.readerComponentController.registerBookParser(this.BookHandler);
       this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
-      this.readerComponentController.setPageConfig(this.readerSetting);
+      this.readerComponentController.setPageConfig(this.settingForBoundary());
       // 应用接续观测（2026-10-24）：**真正下发给引擎**的落点是什么。
       // 与 `startPlay from CONTINUE/LOCAL` 那两行对起来看，就能区分
       // 「参数没传到」/「传到了但引擎按自己的排版重算」两种失败。
@@ -5197,7 +5197,7 @@ oAnimInitNode 配套） */
 
     // ③ 有改动才回写（pageShow 也会写，这里保证"打开即纠正"能落地）
     if (changed) {
-      PreferencesUtil.putSync(`ReaderSetting_${this.bookData.bookName}`, this.readerSetting);
+      PreferencesUtil.putSync(`ReaderSetting_${this.bookData.bookName}`, this.settingForBoundary());
     }
   }
 
@@ -5393,7 +5393,7 @@ oAnimInitNode 配套） */
         PreferencesUtil.putSync('LastReadBookName', writeName)
         PreferencesUtil.putSync('LastReadBookUrl', this.bookData.bookUrl ?? '')
         //  保存阅读器设置。
-        PreferencesUtil.putSync(`ReaderSetting_${writeName}`, this.readerSetting)
+        PreferencesUtil.putSync(`ReaderSetting_${writeName}`, this.settingForBoundary())
       } else {
         hilog.warn(0x0000, 'testTag', 'pageShow: bookName is empty, skip per-book persist')
       }
@@ -5680,7 +5680,7 @@ oAnimInitNode 配套） */
   /** 把当前 `readerSetting`（已含最新视口尺寸）下发给 ReaderKit */
   private pushViewportConfig(tag: string): void {
     try {
-      this.readerComponentController.setPageConfig(this.readerSetting);
+      this.readerComponentController.setPageConfig(this.settingForBoundary());
       hilog.info(0x0000, 'testTag',
         'viewport config pushed(%{public}s) w=%{public}d h=%{public}d',
         tag, this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight);
@@ -5906,7 +5906,7 @@ oAnimInitNode 配套） */
         this.readerSetting.viewPortWidth = w;
         this.readerSetting.viewPortHeight = h;
         try {
-          this.readerComponentController.setPageConfig(this.readerSetting);
+          this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
           console.error('onWindowSizeChange, error ' + JSON.stringify(e));
         }
@@ -10485,13 +10485,13 @@ oAnimInitNode 配套） */
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
         this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
         try {
-          this.readerComponentController.setPageConfig(this.readerSetting);
+          this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
           hilog.warn(0x0000, 'testTag', 'switchReadMode setPageConfig failed');
         }
         const nm: string = this.bookData.bookName;
         if (nm !== undefined && nm !== null && nm.length > 0) {
-          PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting);
+          PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.settingForBoundary());
         }
       }
       // 自绘层 → 分页：让引擎定位到自绘位置。
@@ -10540,13 +10540,13 @@ oAnimInitNode 配套） */
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
         this.readerSetting.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
         try {
-          this.readerComponentController.setPageConfig(this.readerSetting);
+          this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
           hilog.warn(0x0000, 'testTag', 'switchReadMode setPageConfig failed');
         }
         const nm: string = this.bookData.bookName;
         if (nm !== undefined && nm !== null && nm.length > 0) {
-          PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.readerSetting);
+          PreferencesUtil.putSync(`ReaderSetting_${nm}`, this.settingForBoundary());
         }
       }
     }
@@ -10847,6 +10847,31 @@ oAnimInitNode 配套） */
       scrollSpine: this.scrollSpine,
       scrollNode: this.scrollNode
     };
+  }
+
+  /**
+   * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
+   *
+   * ── 为什么要有它 ────────────────────────────────────────────────────────────
+   * 本页有 **16 处** `setPageConfig(...)` 与 **6 处** `putSync('ReaderSetting_<书名>', ...)`，
+   * 它们都在"把设置交给外部"这一侧。将来设置改由 `@ObservedV2` 模型承载时
+   * （S2-b-2，依据 `docs/渲染侧-S1-设置模型取证与决策-2026-11-04.md` §3.1），
+   * **模型实例绝不能直接交给引擎或 Preferences**：
+   *   · 引擎要的是 `readerCore.ReaderSetting` 纯接口对象；
+   *   · Preferences 会由平台侧序列化，而 V2 会生成 `__ob_` 前缀键
+   *     （官方 FAQ `faqs-arkui-1587`）⇒ 写出脏数据（本工程历史上已被污染过一次，见 `:4133-4144`）。
+   * ⇒ 把所有边界收敛到这**一个**方法，将来只改这里一处就够。
+   *
+   * ── 零行为变化 ──────────────────────────────────────────────────────────────
+   * `pickReadSettingFields()` 只**剔除多余键**（`__ob_*` / 历史脏字段），**不改任何值**；
+   * 且当现有对象不满足 13 字段类型时，**原样返回入参**（保持既有行为，绝不在这里"顺手纠正"）。
+   */
+  private settingForBoundary(): readerCore.ReaderSetting {
+    const picked: Object | null = pickReadSettingFields(this.readerSetting);
+    if (picked === null) {
+      return this.readerSetting;
+    }
+    return picked as readerCore.ReaderSetting;
   }
 
   /** 把滚动位置写成与 `pageShow` 同构的 `PageDataInfo` 并落盘 */

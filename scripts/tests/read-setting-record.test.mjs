@@ -184,3 +184,44 @@ test('落盘出口形态：13 键、无 __ob_、无函数值（可直接交给 P
     assert.ok(Object.prototype.hasOwnProperty.call(out, k), `输出缺字段 ${k}`)
   }
 })
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 五、S2-b-1：边界投影 pickReadSettingFields（只剔垃圾键，不改值）
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('pickReadSettingFields：剔除 __ob_/脏键，13 个已知字段的值逐字段原样透传', () => {
+  const live = Object.assign({}, DEF, { fontSize: 28, lineHeight: 1.05,
+    '__ob_fontSize': 99, '__ob_themeColor': '#ff0000', legacySort: '更新排序' })
+  const picked = M.pickReadSettingFields(live)
+  assert.ok(picked !== null, '合法记录必须返回投影对象')
+  assert.equal(Object.keys(picked).length, 13)
+  assert.equal(M.hasLeakedObservingKeys(picked), false, '投影结果不得含 __ob_ 键')
+  assert.equal(M.readSettingRecordEquals(picked, DEF), false, '投影不应把被改过的值还原成默认')
+  assert.equal(picked.fontSize, 28, '值必须原样透传（不做纠正）')
+  assert.equal(picked.lineHeight, 1.05)
+  assert.equal(Object.prototype.hasOwnProperty.call(picked, 'legacySort'), false)
+})
+
+test('pickReadSettingFields：不满足 13 字段类型时返回 null（调用方原样透传，保持既有行为）', () => {
+  assert.equal(M.pickReadSettingFields({ fontName: '鸿蒙黑体' }), null,
+    '证据：页面 history `:4133-4144` 的"持久位被污染"形态')
+  assert.equal(M.pickReadSettingFields(null), null)
+  assert.equal(M.pickReadSettingFields(undefined), null)
+  assert.equal(M.pickReadSettingFields('fontSize=18'), null)
+  const missingPort = Object.assign({}, DEF)
+  delete missingPort.viewPortWidth
+  assert.equal(M.pickReadSettingFields(missingPort), null, '缺运行时字段也应原样透传而不是补值')
+})
+
+test('页面边界已收口：22 处一律走 settingForBoundary()，不再直接交 readerSetting', () => {
+  const sites = (PAGE_SRC.match(/setPageConfig\(this\.settingForBoundary\(\)\)/g) ?? []).length
+  assert.equal(sites, 16, `setPageConfig 边界点应全部走投影（实测 ${sites}）`)
+  const puts = (PAGE_SRC.match(/putSync\(`ReaderSetting_[^`]*`, this\.settingForBoundary\(\)\)/g) ?? []).length
+  assert.equal(puts, 6, `ReaderSetting_ 落盘点应全部走投影（实测 ${puts}）`)
+  // 旧的直传写法必须为 0（注释里提到可以，但 `(this.readerSetting)` 这种调用形态不行）
+  assert.equal((PAGE_SRC.match(/setPageConfig\(this\.readerSetting\)/g) ?? []).length, 0)
+  assert.equal((PAGE_SRC.match(/, this\.readerSetting\)/g) ?? []).length, 0)
+  // 单一出口方法必须存在
+  assert.match(PAGE_SRC, /private settingForBoundary\(\): readerCore\.ReaderSetting \{/,
+    '证据：S2-b-1 的边界出口必须留在页面上（引擎要纯接口对象）')
+})

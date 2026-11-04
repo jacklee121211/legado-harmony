@@ -202,6 +202,41 @@ export function readSettingRecordEquals(a: ReadSettingRecord, b: ReadSettingReco
 }
 
 /**
+ * **边界投影**（S2-b-1）：只保留 13 个已知字段，**值原样透传**（不做类型纠正）。
+ *
+ * 与 `toReadSettingRecord()` 的分工：
+ * · `toReadSettingRecord()` = "我要一份能用的记录" ⇒ 缺字段/类型错就用 fallback 补齐；
+ * · `pickReadSettingFields()` = "我要把手上这份交给引擎/落盘，只求把垃圾键剔掉" ⇒ **不改值**。
+ *
+ * 为什么边界上不做纠正：那会改变既有渲染行为（脏书原来什么样就下发什么样）。剔除多余键
+ * 已经足够挡住 `@ObservedV2` 的 `__ob_` 外壳与历史脏字段，属"零行为变化"的收口。
+ *
+ * @returns 13 字段齐全且类型合法时返回新对象；否则 `null`（调用方应原样透传，保持既有行为）
+ */
+export function pickReadSettingFields(src: Object | null | undefined): ReadSettingRecord | null {
+  if (!isValidReadSettingRecord(src)) {
+    return null
+  }
+  const o = src as Record<string, Object>
+  const out: ReadSettingRecord = {
+    fontName: o.fontName as string,
+    fontSize: o.fontSize as number,
+    fontWeight: o.fontWeight as number,
+    fontColor: o.fontColor as string,
+    fontPath: o.fontPath as string,
+    lineHeight: o.lineHeight as number,
+    nightMode: o.nightMode as boolean,
+    themeColor: o.themeColor as string,
+    themeBgImg: o.themeBgImg as string,
+    flipMode: o.flipMode as string,
+    scaledDensity: o.scaledDensity as number,
+    viewPortWidth: o.viewPortWidth as number,
+    viewPortHeight: o.viewPortHeight as number
+  }
+  return out
+}
+
+/**
  * `__ob_` 防线的断言工具：对象是否混入了状态管理 V2 生成的内部键。
  *
  * 用在两处：① 单测（守 `toReadSettingRecord` 的输出形态）；
