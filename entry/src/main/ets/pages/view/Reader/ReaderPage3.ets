@@ -3242,7 +3242,11 @@ oAnimInitNode 配套） */
 
   private applyFontSize(v: number): void {
     this.markFontOverride()
-    this.readerSetting.fontSize = Math.round(v)
+    // 2026-11-04（S2-c 样板）：字号的真源已迁到 `@ObservedV2` 模型；
+    //   页面 `readerSetting.fontSize` 保留为**快照**（259 个读点本轮不动），
+    //   这样"模型为准 + 页面可读"两边一致，且渲染刷新仍靠下面的 `fontSerial++`（与改造前同一机制）。
+    this.settingState.fontSize = Math.round(v)
+    this.readerSetting.fontSize = this.settingState.fontSize
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     // 自绘层重排：上下档 LazyForEach 的行键是 `${key}-f${fontSerial}`
     // （ReaderScrollView.ets:748-753）；不 ++ 就不会重建 ⇒ 字号看着"死的"。
@@ -4151,6 +4155,12 @@ oAnimInitNode 配套） */
     }
     if (usable) {
       this.readerSetting = loaded as readerCore.ReaderSetting;
+      // 2026-11-04（S2-c 样板）**真源方向**（易错，务必看清）：
+      //   · **运行期**（用户改设置）：模型为准 → 页面快照跟模型；
+      //   · **装载期**（读持久位 / 全局字体记录 / 接续参数）：持久位为准 → 模型跟持久位。
+      //   本处属装载期，所以是 `模型 = 刚读到的值`。若写成反向（用模型的旧值覆盖），
+      //   用户保存的字号每次进书都会被默认值顶掉 —— 那是回归，不是迁移。
+      this.settingState.fontSize = this.readerSetting.fontSize ?? this.settingState.fontSize;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -5197,7 +5207,9 @@ oAnimInitNode 配套） */
         this.readerSetting.fontPath =
           (g.fontPath === undefined || g.fontPath === null || g.fontPath.length === 0)
             ? SYSTEM_CJK_FONT_PATH : g.fontPath
-        this.readerSetting.fontSize = g.fontSize
+        // 2026-11-04（S2-c 样板）：字号真源在模型，这里同步两处（模型 + 页面快照）
+        this.settingState.fontSize = g.fontSize
+        this.readerSetting.fontSize = this.settingState.fontSize
         this.readerSetting.lineHeight = g.lineHeight
         changed = true;
       }
@@ -10830,7 +10842,17 @@ oAnimInitNode 配套） */
   }
 
   /**
-   * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
+   * 已从 `@State readerSetting` 迁到 `@ObservedV2` 模型（`settingState`）的字段（2026-11-04 渲染侧 S2-c）。
+   *
+   * ⚠️ 每迁一个字段：① 把它加进这个数组；② 该字段**所有**读点改读 `this.settingState.X`；
+   *   ③ 该字段**所有**写点改写成 `this.settingState.X = …`；④ 单测 `read-setting-record.test.mjs`
+   *   里的棘轮会把"页面直写点数量"钉住（只许降），并核对本数组与实际直写点一致。
+   * 全部迁完后：删掉这个数组、删掉 `@State readerSetting`，`settingState` 成为唯一真源。
+   */
+  private MIGRATED_SETTING_FIELDS: string[] = ['fontSize'];
+
+  /**
+   * 设置的**边界投影**（2026-11-04 渲染侧 S2-b-1 / S2-b-2 / S2-c）：交给 ReaderKit 引擎 / 写进持久位之前的唯一出口。
    *
    * ── 为什么要有它 ────────────────────────────────────────────────────────────
    * 本页有 **16 处** `setPageConfig(...)` 与 **6 处** `putSync('ReaderSetting_<书名>', ...)`，
@@ -10854,7 +10876,9 @@ oAnimInitNode 配套） */
    * （防御性：万一将来有人往模型里塞了非 13 字段的东西），不满足时**原样返回入参**。
    */
   private settingForBoundary(): readerCore.ReaderSetting {
-    this.settingState.assignFrom(this.readerSetting);
+    // 2026-11-04（S2-c）：迁移期同步 —— 已迁字段（见 `MIGRATED_SETTING_FIELDS`）以模型为准，
+    //   未迁字段从页面快照回灌。全部迁完后这里只剩 `snapshot()`，本页 `@State readerSetting` 可删。
+    this.settingState.syncFromExcept(this.readerSetting, this.MIGRATED_SETTING_FIELDS);
     const picked: Object | null = pickReadSettingFields(this.settingState.snapshot());
     if (picked === null) {
       return this.readerSetting;

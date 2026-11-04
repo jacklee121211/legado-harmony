@@ -80,6 +80,65 @@ export class ReadSettingState {
   }
 
   /**
+   * 迁移期同步（S2-c）：把页面快照里的字段灌进模型，**但跳过本类已经成为真源的字段**。
+   *
+   * ── 为什么需要"跳过"──────────────────────────────────────────────────────
+   * 字段是**分批**从 `@State readerSetting` 迁到本类的（一次全迁要动 67 处写点，风险过高）。
+   * 迁移期内：
+   *   · 已迁字段（在 `keep` 里）以**本类**为准 —— 页面那份只是快照，回灌会把它覆盖掉；
+   *   · 未迁字段仍以页面为准 —— 需要镜像进来，否则快照会丢值。
+   *
+   * ⚠️ 这是**临时形态**。全部字段迁完后本方法应删除，`snapshot()` 直接就是唯一真源。
+   * @param src 页面当前的 `readerSetting`
+   * @param keep 已迁字段名（本类为准，不从 src 回灌）
+   */
+  syncFromExcept(src: Object | null | undefined, keep: string[]): void {
+    const base: ReadSettingRecord = defaultReadSettingRecord(
+      this.scaledDensity > 0 ? this.scaledDensity : 1, this.viewPortWidth, this.viewPortHeight)
+    const rec: ReadSettingRecord = fromReadSettingRecord(src, base)
+    const skip = (k: string): boolean => keep.indexOf(k) >= 0
+    if (!skip('fontName')) {
+      this.fontName = rec.fontName
+    }
+    if (!skip('fontSize')) {
+      this.fontSize = rec.fontSize
+    }
+    if (!skip('fontWeight')) {
+      this.fontWeight = rec.fontWeight
+    }
+    if (!skip('fontColor')) {
+      this.fontColor = rec.fontColor
+    }
+    if (!skip('fontPath')) {
+      this.fontPath = rec.fontPath
+    }
+    if (!skip('lineHeight')) {
+      this.lineHeight = rec.lineHeight
+    }
+    if (!skip('nightMode')) {
+      this.nightMode = rec.nightMode
+    }
+    if (!skip('themeColor')) {
+      this.themeColor = rec.themeColor
+    }
+    if (!skip('themeBgImg')) {
+      this.themeBgImg = rec.themeBgImg
+    }
+    if (!skip('flipMode')) {
+      this.flipMode = rec.flipMode
+    }
+    if (!skip('scaledDensity')) {
+      this.scaledDensity = rec.scaledDensity
+    }
+    if (!skip('viewPortWidth')) {
+      this.viewPortWidth = rec.viewPortWidth
+    }
+    if (!skip('viewPortHeight')) {
+      this.viewPortHeight = rec.viewPortHeight
+    }
+  }
+
+  /**
    * 取**普通对象快照**（13 字段显式拷贝）。
    *
    * ⚠️ 这是本类交给外部的**唯一**出口：`@Trace` 生成的 getter/setter 与 `__ob_` 内部键

@@ -264,9 +264,87 @@ test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，�
   // 反向断言：不许出现带装饰器的持有形态
   assert.equal(/(@State|@Prop|@Link|@StorageLink)\s+settingState/.test(PAGE_SRC), false,
     '模型实例不能加任何 V1 装饰器')
-  // 边界出口必须过一遍模型（本轮"镜子"用法）
-  assert.match(PAGE_SRC, /this\.settingState\.assignFrom\(this\.readerSetting\)/,
-    '边界投影应先把当前值镜像进模型')
+  // 边界出口必须过一遍模型（S2-b-2/S2-c 的"迁移期同步"）
+  assert.match(PAGE_SRC, /this\.settingState\.syncFromExcept\(this\.readerSetting, this\.MIGRATED_SETTING_FIELDS\)/,
+    '边界投影应先把当前值同步进模型（跳过已迁字段）')
   assert.match(PAGE_SRC, /pickReadSettingFields\(this\.settingState\.snapshot\(\)\)/,
     '边界必须取模型快照后再走白名单兜底')
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 七、S2-c：字段迁移棘轮（直写点只许降）+ 迁移规范
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** 迁移前实测 67 处直写；迁 fontSize 后为 63 处（其中 2 处是"模型→快照"的合规同步） */
+const RATCHET_DIRECT_WRITES = 63
+
+/**
+ * 去掉注释后的页面源码。
+ * ⚠️ 必须剔注释再数：迁移期我在注释里写了"必须写成 `this.readerSetting.fontSize = this.settingState.fontSize`"
+ *    这种**示例代码**，裸正则会把注释也算成写点（实测因此一次多计了 1~2 处）。
+ */
+const PAGE_CODE = PAGE_SRC
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+test('棘轮：页面直写 readerSetting 的点数只许降（当前基线 62）', () => {
+  const direct = (PAGE_CODE.match(/this\.readerSetting\.\w+\s*=[^=]/g) ?? []).length
+  assert.ok(direct <= RATCHET_DIRECT_WRITES,
+    `直写点从 ${RATCHET_DIRECT_WRITES} 涨到 ${direct} 了：新写点必须走模型或 settingForBoundary()，`
+    + `不要直接改 @State readerSetting（迁移期只许降）`)
+  // 若降了：提示同步下调基线（这条不是失败，是提醒）
+  if (direct < RATCHET_DIRECT_WRITES) {
+    console.log(`     ℹ️ 直写点已降到 ${direct}，请把 RATCHET_DIRECT_WRITES 同步下调到 ${direct}`)
+  }
+})
+
+test('迁移规范：已迁字段在页面里只能"模型→快照"单向写，不能再出现直写', () => {
+  const migrated = /private MIGRATED_SETTING_FIELDS: string\[\] = \[([^\]]*)\]/.exec(PAGE_SRC)
+  assert.ok(migrated, '找不到 MIGRATED_SETTING_FIELDS 数组（迁移登记处）')
+  const fields = migrated[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter((s) => s.length > 0)
+  assert.ok(fields.length >= 1, '至少应有一个字段已迁（本轮样板 = fontSize）')
+
+  for (const f of fields) {
+    // ① 不允许 `this.readerSetting.<f> = 任意其它值`（只允许 `= this.settingState.<f>`）
+    //   ⚠️ 这里**刻意不用正则**：本字段迁移检查我连续写错两版正则
+    //     （`\s*` 含换行导致跨行误判；`String.raw` 里 `[ \t]` 变成"反斜杠+t" 字符集），
+    //     两次都让合规代码被判违规。改用逐行 split 取值 —— 语义直白、不受回溯影响。
+    const okHits = []
+    const badHits = []
+    for (const rawLine of PAGE_CODE.split('\n')) {
+      const line = rawLine.trim()
+      const prefix = `this.readerSetting.${f}`
+      const at = line.indexOf(prefix)
+      if (at < 0) {
+        continue
+      }
+      const rest = line.slice(at + prefix.length)
+      const m = /^[ \t]*=[ \t]*(.*)$/.exec(rest)
+      if (m === null) {
+        continue // 不是赋值（可能是读或注释残留）
+      }
+      const rhs = m[1]
+      if (rhs.startsWith(`this.settingState.${f}`)) {
+        okHits.push(line)
+      } else {
+        badHits.push(line)
+      }
+    }
+    assert.equal(badHits.length, 0,
+      `字段 ${f} 已迁到模型，页面里的写点必须写成 "this.readerSetting.${f} = this.settingState.${f}"；`
+      + `违规 ${badHits.length} 处：${badHits.join(' | ')}`)
+    // ② 必须存在"模型 → 快照"的同步（否则 259 个读点会读到旧值）
+    assert.ok(okHits.length > 0, `字段 ${f} 缺少"模型 → 页面快照"的同步语句`)
+  }
+})
+
+test('装载期方向：读持久位后是"持久位 → 模型"，不是"模型 → 持久位"（防回归）', () => {
+  // 装载点：`this.readerSetting = loaded as readerCore.ReaderSetting;` 之后必须把值灌进模型
+  const loadIdx = PAGE_SRC.indexOf('this.readerSetting = loaded as readerCore.ReaderSetting;')
+  assert.ok(loadIdx > 0, '找不到读持久位的整体赋值点')
+  const after = PAGE_SRC.slice(loadIdx, loadIdx + 600)
+  assert.match(after, /this\.settingState\.fontSize = this\.readerSetting\.fontSize/,
+    '装载期必须把持久位里的值同步进模型；若反向覆盖，用户保存的字号每次进书都会丢')
+  assert.equal(/this\.readerSetting\.fontSize = this\.settingState\.fontSize;[^]*?loaded as readerCore/.test(after), false,
+    '装载期不允许反向覆盖快照')
 })
