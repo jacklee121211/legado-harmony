@@ -1,4 +1,5 @@
 import BooksDao from '../../database/dao/BooksDao'
+import ReadDailyDao from '../../database/dao/ReadDailyDao'
 import { Books } from '../../database/entities/Books'
 import bookGroupUtils from './bookGroupUtils'
 import toolsUtils from './ToolsUtils'
@@ -100,6 +101,21 @@ class booksUtils{
     // 删行之后清理派生数据（失败只记日志，不影响删除本身 —— 本方法无返回值语义）
     for (const n of names) {
       await bookRename.purge(n)
+    }
+    // ── 阅读时长清理（2026-11-05 修孤儿行）────────────────────────────────
+    // readDaily 以 **bookId** 为键（刻意不存书名，防改名级联）⇒ BookRename.purge
+    // 清不到它。不接线的话，已删书的秒数仍被 `totals()/buckets*()` 算进总计/柱状图
+    // （`ReadDailyDao.purgeBook` 此前全工程零调用；Top10 榜靠 books 现查过滤，其余指标不过滤）。
+    for (const b of removed) {
+      const id: number = b.id ?? -1
+      if (id < 0) {
+        continue
+      }
+      try {
+        await ReadDailyDao.purgeBook(id)
+      } catch (e) {
+        console.log('delBooksById: purge readDaily failed, ' + JSON.stringify(e))
+      }
     }
     // ── 封面文件清理（2026-10-13）─────────────────────────────────────────
     // · 自带封面：文件名由**该书**的文件名派生（一书一份）⇒ 直接删；
