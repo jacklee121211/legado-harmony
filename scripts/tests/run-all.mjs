@@ -22,6 +22,7 @@ const TESTS = [
   { file: 'shelf-prefs.test.mjs', name: 'ShelfPrefs.effectiveColumns（sm/md/lg/xl + 手动档）' },
   { file: 'reader-const.test.mjs', name: 'ReaderConst 常量契约（滑条刻度/标定键名/迁移版本/字体族名）' },
   { file: 'book-naming.test.mjs', name: 'BookNaming.nextFreeName（书名 (2) 顺延，对齐分组样板）' },
+  { file: 'db-migration.test.mjs', name: '迁移 v2 旧表清理策略（真 SQLite：仅 0 行才 DROP）' },
 ]
 
 let failed = 0
