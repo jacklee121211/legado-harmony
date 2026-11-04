@@ -72,10 +72,13 @@ test('默认记录 = 迁移前页面的 readerSetting 默认字面量（逐字�
 })
 
 test('页面默认值改为调用记录层（单一真源，页面不再自己写一份字面量）', () => {
-  assert.match(PAGE_SRC, /private rsProjection: readerCore\.ReaderSetting = defaultReadSettingRecord\(/,
-    '证据：S2-a 后页面默认值必须由 ReadSettingRecord.defaultReadSettingRecord() 产出')
+  assert.match(PAGE_SRC, /private settingState: ReadSettingState = new ReadSettingState\(defaultReadSettingRecord\(/,
+    '证据：投影现场化后模型直接用记录层默认值初始化（不再有第二份成员拷贝）')
   assert.match(PAGE_SRC, /from '\.\.\/\.\.\/\.\.\/common\/reader\/ReadSettingRecord'/,
     '页面对记录层的 import 必须存在（否则又退化成两份真值）')
+  // 2026-11-05 投影现场化：`rsProjection` 成员必须彻底消失（陈旧快照结构性不可能）
+  assert.equal(/private rsProjection/.test(PAGE_SRC), false,
+    '页面不得再有 rsProjection 成员 —— 引擎/纯函数入参一律走 projectSetting() 现场投影')
   // 页面不应再出现"直接写字面量默认值"的老形态
   assert.equal(/rsProjection: readerCore\.ReaderSetting = \{/.test(PAGE_SRC), false,
     '页面里不应再残留设置的字面量默认值（与记录层重复）')
@@ -218,9 +221,14 @@ test('页面边界已收口：22 处一律走 settingForBoundary()，不再直�
   assert.equal(sites, 16, `setPageConfig 边界点应全部走投影（实测 ${sites}）`)
   const puts = (PAGE_SRC.match(/putSync\(`ReaderSetting_[^`]*`, this\.settingForBoundary\(\)\)/g) ?? []).length
   assert.equal(puts, 6, `ReaderSetting_ 落盘点应全部走投影（实测 ${puts}）`)
-  // 旧的直传写法必须为 0（注释里提到可以，但 `(this.readerSetting)` 这种调用形态不行）
+  // 旧的直传写法必须为 0（注释里提到可以，但 `(this.rsProjection)` 这种调用形态不行）
   assert.equal((PAGE_SRC.match(/setPageConfig\(this\.rsProjection\)/g) ?? []).length, 0)
   assert.equal((PAGE_SRC.match(/, this\.rsProjection\)/g) ?? []).length, 0)
+  // 2026-11-05 投影现场化：整对象入参一律走 projectSetting()，不得把模型实例直接交给引擎
+  assert.match(PAGE_SRC, /private projectSetting\(\): readerCore\.ReaderSetting \{/,
+    '证据：现场投影必须存在（唯一整对象出口，不再持有第二份拷贝）')
+  assert.equal((PAGE_SRC.match(/setPageConfig\(this\.settingState\)/g) ?? []).length, 0,
+    '模型实例绝不能直接交给引擎（V2 会带 __ob_ 前缀键，官方 FAQ faqs-arkui-1587）')
   // 单一出口方法必须存在
   assert.match(PAGE_SRC, /private settingForBoundary\(\): readerCore\.ReaderSetting \{/,
     '证据：S2-b-1 的边界出口必须留在页面上（引擎要纯接口对象）')
@@ -259,7 +267,7 @@ test('模型壳：snapshot() 是唯一外部出口，且逐字段显式拷贝（
 })
 
 test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，否则编译报错）', () => {
-  assert.match(PAGE_SRC, /private settingState: ReadSettingState = new ReadSettingState\(this\.rsProjection\)/,
+  assert.match(PAGE_SRC, /private settingState: ReadSettingState = new ReadSettingState\(defaultReadSettingRecord\(/,
     '证据：arkts-v1-v2-mixusage 限制条件 2「V1不支持用装饰器接收@ObservedV2装饰的class」')
   // 反向断言：不许出现带装饰器的持有形态
   assert.equal(/(@State|@Prop|@Link|@StorageLink)\s+settingState/.test(PAGE_SRC), false,
@@ -292,7 +300,7 @@ test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，�
 // ══════════════════════════════════════════════════════════════════════════════
 
 /** 总直写点基线：迁移前 67；迁移期因为"模型→快照"也要写一行，总数不降反略升 ⇒ 单看它没意义 */
-const RATCHET_DIRECT_WRITES = 63
+const RATCHET_DIRECT_WRITES = 0
 /**
  * **真正的进度计**：还没有迁到模型的字段，其直写点数量（只许降）。
  *
@@ -387,18 +395,19 @@ test('迁移完成：13 个字段在页面里的写点只能"模型→快照"单
       + `违规 ${badHits.length} 处：${badHits.join(' | ')}`)
     // ② `@State readerSetting` 仍是快照 ⇒ 每个字段至少要有 1 处"模型 → 快照"同步，
     //    否则页面里那 200+ 个读点会读到旧值。
-    assert.ok(okHits.length > 0, `字段 ${f} 缺少"模型 → 页面快照"的同步语句`)
+    // ② 2026-11-05 投影现场化：投影成员已彻底删除 ⇒ 允许 0 处"模型→投影"同步，
+  //    但必须确认**投影成员真的不存在**（否则又回到"手工同步的陈旧快照"）。
+  assert.equal(/private rsProjection/.test(PAGE_CODE), false,
+    `字段 ${f}: 投影成员应已删除（现场投影 projectSetting() 取代第二份拷贝）`)
   }
 })
 
 test('装载期方向：读持久位后是"持久位 → 模型"，不是"模型 → 持久位"（防回归）', () => {
-  // 装载点：`this.rsProjection = loaded as readerCore.ReaderSetting;` 之后必须把值灌进模型
-  const loadIdx = PAGE_SRC.indexOf('this.rsProjection = loaded as readerCore.ReaderSetting;')
+  // 装载点：2026-11-05 投影现场化后，读到的持久位直接灌进模型（不再经投影）
+  const loadIdx = PAGE_SRC.indexOf('this.settingState.assignFrom(loaded as readerCore.ReaderSetting)')
   assert.ok(loadIdx > 0, '找不到读持久位的整体赋值点')
   const after = PAGE_SRC.slice(loadIdx, loadIdx + 600)
-  assert.match(after, /this\.settingState\.fontSize = this\.rsProjection\.fontSize/,
-    '装载期必须把持久位里的值同步进模型；若反向覆盖，用户保存的字号每次进书都会丢')
-  assert.equal(/this\.rsProjection\.fontSize = this\.settingState\.fontSize;[^]*?loaded as readerCore/.test(after), false,
-    '装载期不允许反向覆盖投影')
+  assert.equal(/this\.rsProjection/.test(after), false,
+    '装载期不允许再经过投影（投影成员已删除，持久位必须直接进模型）')
 })
 
