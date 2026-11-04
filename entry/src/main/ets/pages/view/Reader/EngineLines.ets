@@ -105,6 +105,13 @@ export class EngineLine {
    *   用引擎实测的高度累加，页高才算得准。
    */
   heightPx: number = 0;
+  /**
+   * 该行**实际渲染宽度**（px），来自引擎 `LineMetrics.width`。
+   * 官方原文（`@ohos.graphics.text.d.ts`，@since 12）：「Width of a line, in physical pixels (px).」
+   * 用途（2026-11-05，方案 B）：逐行字距自适应 —— 把「可用宽 − 本行宽」按字数摊回字距，
+   * 让每行左右顶到边（替代失效的 JUSTIFY）。
+   */
+  widthPx: number = 0;
   /** 是否**章标题行**（渲染时用大字号 + 加粗；见 `LineStyle.titleFontScale`） */
   isTitle: boolean = false;
 }
@@ -342,6 +349,8 @@ export function buildEngineLines(nodes: string[], style: LineStyle,
       line.padTopPx = k === 0 ? segStyle.gapPx : 0;
       // ⚠️ 真实行高（引擎实测），分页按它累加才不会溢出；兜底用配置值
       line.heightPx = m.height > 0 ? m.height : segStyle.lineHeightPx;
+  // 2026-11-05（方案 B）：该行实际宽（px），供逐行字距自适应使用
+  line.widthPx = m.width > 0 ? m.width : 0;
       line.isTitle = titleSeg;
       out.push(line);
     }

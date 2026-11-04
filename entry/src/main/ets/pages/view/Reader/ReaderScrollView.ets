@@ -157,9 +157,13 @@ export class ScrollRow {
   isParaStart: boolean = false;
   /** 是否章标题行（渲染时大字号 + 加粗） */
   isTitle: boolean = false;
+  /** 该行实际渲染宽度（px，引擎 LineMetrics.width）—— 逐行字距自适应用（2026-11-05 方案 B） */
+  lineWidthPx: number = 0;
 
   constructor(spine: number, node: number, text: string, charFrom: number, charTo: number,
-    prefixLen: number, isParaStart: boolean, isTitle: boolean = false) {
+    prefixLen: number, isParaStart: boolean, isTitle: boolean = false,
+    lineWidthPx: number = 0) {
+    this.lineWidthPx = lineWidthPx;
     this.spine = spine;
     this.node = node;
     this.text = text;
@@ -309,7 +313,18 @@ export struct ReaderScrollView {
    * ⇒ 父页在注册完成后自增这个代数，本层把它拼进 `LazyForEach` 的行键，
    *   可见行因此被重建一次，新字形才真正落到屏幕上。
    */
-  @Prop fontSerial: number = 0;
+  /**
+   * 排版代数（父页在字号/行距/字体变化时 `++`）。
+   *
+   * ⚠️⚠️ 2026-11-05 修 BUG：这里原来**没有 `@Watch`**（对比 `ReaderPageNoAnim` 是有的）。
+   *   后果（用户真机 100% 复现）：改字号/行距后 `fontSerial` 变了却没人接，只有
+   *   `rowKey()` 拼了 `fontSerial` ⇒ **UI 行重建了，但 `this.rows` 里仍是旧引擎行**。
+   *   表现（平板上下档实测）：字号从 34fp 调到 12fp 后，行仍按 34fp 的容量断（19 字/行），
+   *   却用 12fp 的字画 ⇒ 每行只占可用宽 1586px 的 1/3（`19×(27+3.82) ≈ 513px`），
+   *   看起来就是"文字缩在左边、右侧大片留白"。
+   *   「切到 ReaderKit 再切回」能好，正是因为重挂会重建行。
+   */
+  @Prop @Watch('onFontSerialChange') fontSerial: number = 0;
 
   /**
    * 字重补偿（父页按当前字体算好传入）：系统中文黑体传 `-100`，其余传 `0`。
@@ -336,6 +351,8 @@ export struct ReaderScrollView {
   private scroller: Scroller = new Scroller();
   private ds: ScrollDataSource = new ScrollDataSource();
   /** 已加载的章号区间（闭区间；-1 = 还没加载） */
+  /** 2026-11-05：容器实测宽（px），由 onAreaChange 更新；0 = 还没测到 */
+  private containerWpx: number = 0;
   private loadedFirst: number = -1;
   private loadedLast: number = -1;
   /** 载入中标记（防重入：滚动回调会连续触发） */
@@ -413,7 +430,7 @@ export struct ReaderScrollView {
           map[ln.paraIndex] = rows.length;
         }
         rows.push(new ScrollRow(spine, ln.paraIndex, ln.text, ln.charFrom, ln.charTo,
-          ln.prefixLen, ln.isParaStart, ln.isTitle));
+          ln.prefixLen, ln.isParaStart, ln.isTitle, ln.widthPx));
       }
       this.chapRow.set(spine, map);
       hilog.info(DOMAIN, TAG, 'loadChapter(engine) spine=%{public}d nodes=%{public}d lines=%{public}d',
@@ -440,6 +457,142 @@ export struct ReaderScrollView {
   // 不再用 `catalog[spine]` 直接下标（庆余年 747/748 会取到下一章）。
 
   /** 组出引擎排行参数（**全 px**；与 `ReaderPageNoAnim.buildLineStyle()` 同口径） */
+  /**
+   * **文本宽度（px）—— 引擎与渲染必须用同一个数**（2026-11-05 修「大字号行尾空一大块」）。
+   *
+   * 现象（真机，手机/平板，自绘两档）：大字号下行尾留下接近**一个整字**的空白，
+   * 看起来"文字堆在左边、右侧留白异常"。
+   * 根因：引擎断行宽是 `screenPx − 2×insetPx` 的**浮点结果**（手机实测 1136.5），
+   *   单字宽 = fontSizePx(108) + letterSpacingPx(5.74) = 113.74；
+   *   9 字 = 1023.7 放得下，10 字 = 1137.4 —— **只差 0.9px** 就放得下，
+   *   于是断成 9 字、行尾空出 112.8px（≈一字）。字号越大，这个"少一个字"的占比越高，
+   *   小字号时一行 20+ 字看不出来，大字号一行 9 字就非常刺眼。
+   * ⇒ 取整时**向上取整 + 1px 余量**：宁可宽 1px，也不把整字挤到下一行。
+   * ⚠️ 渲染端必须用同一个数（见 `renderSideInsetVp()`），否则多出的 1px 会让
+   *   渲染端把最后一个字折行（那就从"少一字"变成"多一行"，更糟）。
+   */
+  private contentWidthPx(): number {
+    const screenPx: number = display.getDefaultDisplaySync().width;
+    // 优先用**自身实测宽**（onAreaChange 记下的 px）；没测到时退回整机屏宽。
+    //   ⚠️ 横屏/分屏/窗口化时"整机屏宽 ≠ 本组件可用宽"，用 display 会断错行。
+    const baseSource: number = this.containerWpx > 0 ? this.containerWpx : screenPx;
+    const base: number = baseSource - 2 * this.vp2px(this.sideInsetVp);
+    // 余量必须够厚（2026-11-05 手机实测）：原来只 +1px，32fp 时 10 字=1137.4 而可用 1138
+    // 只剩 0.6px，引擎 1px 级差异就把 10 字挤成 9 字、行尾空一整个字（113.74px）。
+    const slack: number = Math.max(2, base * 0.003);
+    return Math.max(1, Math.ceil(base + slack));
+  }
+
+  /** 渲染端左右留白（vp）：由 `contentWidthPx()` **反推**，两边同一个 px 数 */
+  private renderSideInsetVp(): number {
+    const screenPx: number = display.getDefaultDisplaySync().width;
+    const baseSource: number = this.containerWpx > 0 ? this.containerWpx : screenPx;
+    const perSidePx: number = (baseSource - this.contentWidthPx()) / 2;
+    const density: number = this.vp2px(1);
+    return density > 0 ? Math.max(0, perSidePx / density) : this.sideInsetVp;
+  }
+
+  /**
+   * **逐行字距自适应**（2026-11-05，方案 B / 用户定的"字间距适应"机制）。
+   *
+   * 问题：引擎按 `fontSizePx + letterSpacingPx` 断行，一行排不满时余量（< 1 字）
+   *   全部堆在右边 ⇒ 大字号时右侧留白接近一个整字，看着像"文字偏左"。
+   *   `TextAlign.JUSTIFY` 救不了 —— 显式 `letterSpacing` 把字距钉死，JUSTIFY 拉不开。
+   *
+   * 做法：拿**引擎给的真实行宽** `row.lineWidthPx`（`LineMetrics.width`，px，@since 12），
+   *   把「断行宽 − 本行宽」按有效字数摊回字距 ⇒ 每行左右都顶到边。
+   *   · 段末行 / 标题 / 最后一行不补偿（保持自然，末行本来就不该拉伸）
+   *   · 补偿上限 1.2 个字宽，避免极端情况下字距大得难看
+   */
+  private rowLetterSpacing(row: ScrollRow): number {
+    const base: number = LETTER_SPACING_FP;
+    if (row.isTitle) {
+      return base;
+    }
+    // 有效字数：扣掉段首缩进前缀（前缀是空格，也会被字距拉开，不能算进补偿分母）
+    const chars: number = row.text.length - row.prefixLen;
+    if (chars < 2) {
+      return base;
+    }
+    const measuredPx: number = this.measureRowWidthPx(row.text);
+    if (!(measuredPx > 0)) {
+      return base;
+    }
+    const limitPx: number = this.fp2px(this.fontSize) * 1.2;
+    const availPx: number = this.contentWidthPx();
+    const deltaPx: number = availPx - measuredPx;
+    if (deltaPx <= 0) {
+      return base;
+    }
+    const addPx: number = Math.min(deltaPx, limitPx) / chars;
+    return base + this.px2fp(addPx);
+  }
+
+  private px2fp(v: number): number {
+    const d: number = this.fp2px(1);
+    return d > 0 ? v / d : v;
+  }
+
+  /** 本行实测宽的缓存（key 已含字号/字重/字体/字距/文本，字号一变自然 miss） */
+  private rowWidthCache: Map<string, number> = new Map<string, number>();
+
+  /**
+   * 用 **ArkUI 自己的度量**量一行实际要多宽（px）。
+   *
+   * 这是"闭环"的关键一步：补偿量不再依赖引擎算得准不准，而是拿
+   * **真正要渲染的那个 Text**（同 fontSize / 同 fontFamily / 同字距）量出来的宽度。
+   * 缓存 key 里带上所有影响宽度的量，换字号/字体/字距必定重新量。
+   */
+  private measureRowWidthPx(text: string): number {
+    const key: string = `${this.fontSize}|${this.fontName}|${this.fontWeight}|${this.weightOffset}|${LETTER_SPACING_FP}|${text}`;
+    const hit: number | undefined = this.rowWidthCache.get(key);
+    if (hit !== undefined) {
+      return hit;
+    }
+    let w: number = -1;
+    try {
+      w = this.getUIContext().getMeasureUtils().measureText({
+        textContent: text,
+        fontSize: this.fontSize,
+        fontFamily: this.fontName,
+        letterSpacing: LETTER_SPACING_FP
+      });
+    } catch (e) {
+      w = -1;
+    }
+    // 缓存上限：超了就整体清空（排版参数变化后旧值本就没用，简单可靠）
+    if (this.rowWidthCache.size > 4000) {
+      this.rowWidthCache.clear();
+    }
+    this.rowWidthCache.set(key, w);
+    return w;
+  }
+
+  /** 容器宽度变化（首帧 / 旋转 / 分屏）⇒ 记下来并重排（几何层，与字号变化同一条重排通道） */
+  private onContainerResize(wVp: number): void {
+    if (!(wVp > 0)) {
+      return;
+    }
+    const px: number = this.vp2px(wVp);
+    if (Math.abs(px - this.containerWpx) <= 1) {
+      return;
+    }
+    this.containerWpx = px;
+    // 与 onFontSerialChange 同款：布局阶段不能直接改 @State / 重排 ⇒ 推到下一帧
+    setTimeout((): void => {
+      let spine: number = this.initSpine;
+      let node: number = this.initNode;
+      const idx: number = this.lastStart >= 0 ? this.lastStart : 0;
+      if (idx >= 0 && idx < this.ds.totalCount()) {
+        const r: ScrollRow = this.ds.getData(idx);
+        spine = r.spine;
+        node = r.node;
+      }
+      this.ready = false;
+      this.rebuildWindow(spine, node, true);
+    }, 0);
+  }
+
   private buildLineStyle(): LineStyle {
     const s: LineStyle = new LineStyle();
     s.fontSizePx = this.fp2px(this.fontSize);
@@ -449,7 +602,61 @@ export struct ReaderScrollView {
     s.letterSpacingPx = this.fp2px(LETTER_SPACING_FP);
     // 流式不需要切页：宽度 = 屏幕宽(px) − 左右 inset(px)，与渲染宽度一致即可保证断行准确
     const screenPx: number = display.getDefaultDisplaySync().width;
-    s.widthPx = Math.max(1, screenPx - 2 * this.vp2px(this.sideInsetVp));
+    s.widthPx = this.contentWidthPx();
+    // [SCROLLPROBE] 探针（收尾必删）：定位「自绘两档排版异常：文字贴左 / 右侧留白」。
+    //   ⚠️ 本档的引擎宽用的是 **整机屏宽** `display.getDefaultDisplaySync().width`，
+    //   不是本组件自己的容器宽 ⇒ 只要"屏宽 ≠ 本层可用宽"（分屏/窗口化/视口未跟上），
+    //   引擎断行宽就会和渲染宽分叉。这里把两边的量都打出来对齐。
+    //   ★ 2026-11-05 追加判决字段（谁是"每行几个字"的真凶）：
+    //     · uiCharPx     = ArkUI `measureText` 量 10 个「国」再 /10 ⇒ **渲染端认的每字宽**
+    //     · engineCharPx = fontSizePx + letterSpacingPx      ⇒ **引擎认的每字宽**
+    //     · capacityUi   = floor(widthPx / uiCharPx)         ⇒ 按渲染宽度"应该"能放几个字
+    //   若 engineCharPx > uiCharPx ⇒ 引擎以为字更宽 ⇒ 每行少放字、行尾空一大块；
+    //   若两者相等但 capacityUi > 实际每行字数 ⇒ 问题在缩进槽位/字距累加规则。
+    let uiCharPx: number = -1;
+    try {
+      const mw: number = this.getUIContext().getMeasureUtils().measureText({
+        textContent: '国国国国国国国国国国', fontSize: this.fontSize, fontFamily: this.fontName
+      });
+      uiCharPx = mw / 10;
+    } catch (e) {
+      uiCharPx = -1;
+    }
+    // ★★ 判决实验（2026-11-05）：letterSpacing 到底有没有被 ArkUI 算进推进？
+    //   A = 不带字距量 10 个「国」；B = 带 letterSpacing 再量一次。
+    //   B ≈ A       ⇒ 字距被忽略（或单位不是 fp）⇒ 自绘每字比引擎少 5.5px，行填不满
+    //   B ≈ A+10×ls ⇒ 字距生效，那差异在"末字是否计入"的口径
+    let mNoLs: number = -1;
+    let mWithLs: number = -1;
+    try {
+      const mu = this.getUIContext().getMeasureUtils();
+      mNoLs = mu.measureText({ textContent: '国国国国国国国国国国', fontSize: this.fontSize });
+      mWithLs = mu.measureText({
+        textContent: '国国国国国国国国国国', fontSize: this.fontSize,
+        letterSpacing: LETTER_SPACING_FP
+      });
+    } catch (e) {
+      mNoLs = -1;
+      mWithLs = -1;
+    }
+    hilog.info(DOMAIN, TAG,
+      '[LSPROBE] fontSizeFp=%{public}s lsFp=%{public}s tenNoLs=%{public}s tenWithLs=%{public}s'
+        + ' perCharNoLs=%{public}s perCharWithLs=%{public}s deltaExpect=%{public}s',
+      this.fontSize.toFixed(2), LETTER_SPACING_FP.toFixed(2),
+      mNoLs.toFixed(1), mWithLs.toFixed(1),
+      (mNoLs > 0 ? (mNoLs / 10).toFixed(2) : '?'), (mWithLs > 0 ? (mWithLs / 10).toFixed(2) : '?'),
+      (10 * this.fp2px(LETTER_SPACING_FP)).toFixed(1));
+    const engineCharPx: number = s.fontSizePx + s.letterSpacingPx;
+    const capacityUi: number = uiCharPx > 0 ? Math.floor(s.widthPx / uiCharPx) : -1;
+    hilog.info(DOMAIN, TAG,
+      '[SCROLLPROBE] screenPx=%{public}d sideInsetVp=%{public}s widthPx=%{public}s'
+        + ' fontSizeFp=%{public}s fontSizePx=%{public}s lineHeightFp=%{public}s'
+        + ' letterSpacingPx=%{public}s indentFp=%{public}s'
+        + ' uiCharPx=%{public}s engineCharPx=%{public}s capacityUi=%{public}d',
+      screenPx, this.sideInsetVp.toFixed(2), s.widthPx.toFixed(1),
+      this.fontSize.toFixed(2), s.fontSizePx.toFixed(1), this.lineHeightFp.toFixed(2),
+      s.letterSpacingPx.toFixed(2), this.indentFp.toFixed(2),
+      uiCharPx.toFixed(2), engineCharPx.toFixed(2), capacityUi);
     s.pageHeightPx = 1e9; // 流式不用切页，给个大值避免误用
     s.fontFamily = this.fontName;
     s.fontWeight = scrollFontWeight(this.fontWeight, this.weightOffset);
@@ -683,6 +890,29 @@ export struct ReaderScrollView {
     this.rebuildWindow(this.initSpine, this.initNode, true);
   }
 
+  /**
+   * 字号 / 行距 / 字体变化 ⇒ **必须重算引擎行**（2026-11-05，上下档 BUG 修复）。
+   *
+   * 与 `ReaderPageNoAnim.onFontSerialChange()` 同款：
+   *   · `@Watch` 跑在状态更新的渲染周期内，此间改 `@State`/重排非法 ⇒ `setTimeout(0)` 推到下一帧；
+   *   · 以**当前可见行**为锚重排，不跳章：`lastStart` 是 `onScrollIndexChange` 记下的可见起点；
+   *   · `first = true` 让 `rebuildWindow` 从锚点重新铺整章（不是增量追加）。
+   */
+  private onFontSerialChange(): void {
+    setTimeout((): void => {
+      let spine: number = this.initSpine;
+      let node: number = this.initNode;
+      const idx: number = this.lastStart >= 0 ? this.lastStart : 0;
+      if (idx >= 0 && idx < this.ds.totalCount()) {
+        const r: ScrollRow = this.ds.getData(idx);
+        spine = r.spine;
+        node = r.node;
+      }
+      this.ready = false;
+      this.rebuildWindow(spine, node, true);
+    }, 0);
+  }
+
   onSeekSerialChange(): void {
     const spine: number = this.seekSpine;
     const node: number = this.seekNode;
@@ -814,7 +1044,7 @@ export struct ReaderScrollView {
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
         .lineHeight(this.lineHeightFp)
-          .letterSpacing(LETTER_SPACING_FP)
+          .letterSpacing(this.rowLetterSpacing(row))
         .textAlign(TextAlign.JUSTIFY)
         .width('100%')
         .padding({ top: this.rowPadVp(row) })
@@ -862,10 +1092,16 @@ export struct ReaderScrollView {
           }
           .width('100%')
           .layoutWeight(1)
-          // 文本区左右留白：左右各一份 ⇒ 中间正好是 ReaderKit 的文本宽度
+          // 文本区左右留白：由 `contentWidthPx()` 反推（保证「渲染内宽 === 引擎断行宽」同一个 px）
           .padding({
-            left: this.sideInsetVp,
-            right: this.sideInsetVp
+            left: this.renderSideInsetVp(),
+            right: this.renderSideInsetVp()
+          })
+          // 2026-11-05：**自身实测宽度**（旋转/分屏/窗口变化都跟得上），
+          //   引擎断行宽不再取 `display.getDefaultDisplaySync().width`（那是"整机屏宽"，
+          //   旋转后可能与本组件可用宽不一致 ⇒ 横屏断行错、行尾空一大块）。
+          .onAreaChange((_o: Area, n: Area): void => {
+            this.onContainerResize(Number(n.width));
           })
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)

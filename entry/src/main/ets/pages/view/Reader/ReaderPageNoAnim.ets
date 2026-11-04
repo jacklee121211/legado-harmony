@@ -418,6 +418,67 @@ export struct ReaderPageNoAnim {
   }
 
   /** fp → px（字号/行高/缩进都是 fp，必须乘字体缩放） */
+  /** 逐行实测宽的缓存（无动画档，2026-11-05 方案 B 闭环） */
+  private rowWidthCache: Map<string, number> = new Map<string, number>();
+
+  /**
+   * **逐行字距自适应**（2026-11-05，方案 B 闭环版，与上下档同款）。
+   *
+   * 为什么需要：引擎（`@ohos.graphics.text`）断行与 ArkUI `Text` 渲染是两套度量，
+   * 一行排不满时余量全部堆在右边 ⇒ 大字号下右侧留白接近一个整字（看着像"文字偏左"）。
+   * 做法：用 ArkUI 自己的 `measureText`（与渲染同 fontSize/fontFamily/字距）量出
+   * **本行实际要多宽**，把「可用宽 − 实测宽」按字数摊回字距 ⇒ 每行左右顶到边。
+   * 段末行/标题行不补偿（自然长度才对）。
+   */
+  private lineLetterSpacing(line: EngineLine): number {
+    const base: number = LETTER_SPACING_FP;
+    if (line.isTitle) {
+      return base;
+    }
+    const chars: number = line.text.length - line.prefixLen;
+    if (chars < 2) {
+      return base;
+    }
+    const measuredPx: number = this.measureLineWidthPx(line.text);
+    if (!(measuredPx > 0)) {
+      return base;
+    }
+    const availPx: number = this.vp2px(this.areaW);
+    const deltaPx: number = availPx - measuredPx;
+    if (deltaPx <= 0) {
+      return base;
+    }
+    const limitPx: number = this.fp2px(this.fontSize) * 1.2;
+    const addPx: number = Math.min(deltaPx, limitPx) / chars;
+    const d: number = this.fp2px(1);
+    return base + (d > 0 ? addPx / d : addPx);
+  }
+
+  private measureLineWidthPx(text: string): number {
+    const key: string = this.fontSize + '|' + this.fontName + '|' + this.fontWeight
+      + '|' + this.weightOffset + '|' + LETTER_SPACING_FP + '|' + text;
+    const hit: number | undefined = this.rowWidthCache.get(key);
+    if (hit !== undefined) {
+      return hit;
+    }
+    let w: number = -1;
+    try {
+      w = this.getUIContext().getMeasureUtils().measureText({
+        textContent: text,
+        fontSize: this.fontSize,
+        fontFamily: this.fontName,
+        letterSpacing: LETTER_SPACING_FP
+      });
+    } catch (e) {
+      w = -1;
+    }
+    if (this.rowWidthCache.size > 4000) {
+      this.rowWidthCache.clear();
+    }
+    this.rowWidthCache.set(key, w);
+    return w;
+  }
+
   private fp2px(v: number): number {
     return this.getUIContext().fp2px(v);
   }
@@ -448,6 +509,15 @@ export struct ReaderPageNoAnim {
     //    否则"引擎按 A 断行、ArkUI 按 B 渲染" ⇒ 溢出或换行错位。
     //    没有它就每行多塞 1 个字 ⇒ 页边界与 ReaderKit 系统性错位。
     s.letterSpacingPx = this.fp2px(LETTER_SPACING_FP);
+    // [LAYPROBE] 探针（收尾必删）：定位「大字号下自绘档文字偏左 / 右侧留白异常」
+    //   要证的是三个口径是否一致：① fp→px 的字体缩放比例；② 引擎断行宽 vs 渲染宽；
+    //   ③ 字距换算（fp）与缩进槽位（indentSlots=2，按字号折算）。
+    hilog.info(DOMAIN, TAG,
+      '[LAYPROBE] fontScale=%{public}s fontSizePx=%{public}s lineHeightPx=%{public}s'
+        + ' widthPx=%{public}s areaWvp=%{public}s letterSpacingPx=%{public}s indentSlots=%{public}d',
+      (this.vp2px(1) > 0 ? (this.fp2px(1) / this.vp2px(1)).toFixed(3) : '?'),
+      s.fontSizePx.toFixed(2), s.lineHeightPx.toFixed(2), s.widthPx.toFixed(1),
+      this.areaW.toFixed(2), s.letterSpacingPx.toFixed(2), s.indentSlots);
     return s;
   }
 
@@ -1117,7 +1187,7 @@ export struct ReaderPageNoAnim {
       .fontFamily(this.fontName)
       .fontColor(this.fontColor)
       .lineHeight(this.lineHeightFp)
-          .letterSpacing(LETTER_SPACING_FP)
+          .letterSpacing(this.lineLetterSpacing(line))
       .textAlign(TextAlign.Start)
       .width('100%')
       .padding({ top: this.linePadVp(line) })
@@ -1130,7 +1200,7 @@ export struct ReaderPageNoAnim {
         .fontFamily(this.fontName)
         .fontColor(this.fontColor)
         .lineHeight(this.lineHeightFp)
-          .letterSpacing(LETTER_SPACING_FP)
+          .letterSpacing(this.lineLetterSpacing(line))
         .textAlign(TextAlign.Start)
         .width('100%')
         .padding({ top: this.linePadVp(line) })
@@ -1294,9 +1364,27 @@ export struct ReaderPageNoAnim {
   }
 
   /** 当前页的行（`pageIdx` 越界时给空数组） */
+  /** [RENDERPROBE] 节流计数（探针，收尾必删） */
+  private renderProbeTick: number = 0
+
   private curLines(): EngineLine[] {
     if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
       return [];
+    }
+    // [RENDERPROBE] 探针（收尾必删）：**渲染端实际拿到的排版参数**。
+    //   与 `buildLineStyle()` 的 `[LAYPROBE]`（引擎侧）按时间戳对齐，
+    //   用来判"引擎按新字号重排 / 渲染仍按旧字号画"的时序分叉（§99 待验证）。
+    //   每 20 次渲染打一条，避免刷屏；行数一起打，便于算"一页几行"。
+    this.renderProbeTick++
+    if (this.renderProbeTick % 20 === 1) {
+      hilog.info(DOMAIN, TAG,
+        '[RENDERPROBE] fontSizeFp=%{public}s lineHeightFp=%{public}s letterSpacingFp=%{public}s'
+          + ' fontWeight=%{public}d fontName=%{public}s areaWvp=%{public}s areaHvp=%{public}s'
+          + ' pageIdx=%{public}d lines=%{public}d',
+        this.fontSize.toFixed(2), this.lineHeightFp.toFixed(2), LETTER_SPACING_FP.toFixed(2),
+        scrollFontWeight(this.fontWeight, this.weightOffset), this.fontName,
+        this.areaW.toFixed(2), this.areaH.toFixed(2), this.pageIdx,
+        this.flat[this.pageIdx].lines.length)
     }
     return this.flat[this.pageIdx].lines;
   }
