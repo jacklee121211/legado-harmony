@@ -76,7 +76,7 @@ import ReaderSession, { LocateTarget, FlipSearch, PublishFacts } from '../../../
 import { defaultReadSettingRecord, pickReadSettingFields, ReadSettingRecord } from '../../../common/reader/ReadSettingRecord';
 // 2026-11-04（渲染侧 S2-b-2）：设置的响应式模型壳。⚠️ 必须是**普通成员**（不加 @State/@Prop/@Link）——
 //   官方 `arkts-v1-v2-mixusage` 限制条件 2：「V2->V1，V1不支持用装饰器接收@ObservedV2装饰的class，否则编译报错。」
-//   本轮只把它当"镜子"用（边界上映像 + 取快照），真源仍是本页 `@State readerSetting`。
+//   2026-11-04（S2-c(11)）：它已是**唯一真源**；页面读点直接读它，纯函数入参走 `rsProjection` 投影。
 import ReadSettingState from '../../../common/reader/ReadSettingState';
 import AppRouter, { ReaderRouteParam } from '../../../common/router/AppRouter';
 import { BookNormalizer } from '../../../common/utils/BookNormalizer';
@@ -1807,13 +1807,30 @@ oAnimInitNode 配套） */
    */
   private readerBookmarkDialog: CustomDialogController | null = null
   /**
-   * 阅读排版设置（ReaderKit 接口 `readerCore.ReaderSetting`，13 个可选字段）。
+   * 设置数据的**只读投影**（`readerCore.ReaderSetting`，13 个字段）。
    *
-   * 2026-11-04（渲染侧 S2-a）：**默认值不再写在本文件里**，改由纯记录层
-   * `common/reader/ReadSettingRecord.ets` 的 `defaultReadSettingRecord()` 产出 ——
-   * 那里有单测逐字段钉住默认值（`scripts/tests/read-setting-record.test.mjs`），
+   * ── 它是什么（2026-11-04 S2-c(11) 换代后）──────────────────────────────────
+   * 设置的**真源是下面的 `settingState`（`@ObservedV2` 模型）**；本字段只是它的一份
+   * **纯数据副本**，**只能由模型单向写入**（全工程所有写点都是
+   * `this.settingState.X = v;` 紧跟 `this.rsProjection.X = this.settingState.X;`）。
+   * 存在的唯一理由：有 25+ 处把"设置"当**参数**交给纯函数/原生接口
+   * （`geom()` / `scrollFontFamily()` / `textAreaLeftVp()` / `publishLtPageBg()` …）。
+   * 那些函数签名是 `setting: readerCore.ReaderSetting`，而 ArkTS **禁止结构化类型互赋**
+   * （`arkts-no-structural-typing`，实测报错）⇒ 不能直接传模型实例；
+   * 且 V2 会给模型实例加 `__ob_` 前缀键（官方 FAQ faqs-arkui-1587），交给按 key 处理的代码会漏脏键。
+   *
+   * ── 为什么不再是 `@State`（曾经是）──────────────────────────────────────────
+   * 迁移期它是 `@State readerSetting`，页面 150 个读点都读它，靠"任何写入都触发整页重建"刷新。
+   * 现在 150 个读点已全部改读模型（`@Trace` 能驱动 V1 `@Component` 重绘，真机实证见施工记录 §90.4），
+   * 于是它**不需要**响应式能力；正文排版的刷新另有专门通道：`@State fontSerial`（字号/行距/字体改动
+   * 都会 `++`，见 `applyFontSize()` 注释），配色走 AppStorage（`publishLtPageBg`）。
+   *
+   * ⚠️ 依赖"模型 → 投影"同步的**只有**这 25+ 处纯函数入参；给模型加字段时若忘了补双写，
+   *    纯函数拿到的就是旧值（UI 与引擎仍正确，因为那两处走的是模型/边界出口）。
+   *
+   * 2026-11-04（渲染侧 S2-a）：默认值由纯记录层 `defaultReadSettingRecord()` 产出，
+   * 单测逐字段钉住（`scripts/tests/read-setting-record.test.mjs`），
    * 并与 SDK 声明（`@hms.core.readerservice.readerComponent.d.ets:69-200`）的 13 字段对齐。
-   * 本字段仍是页面唯一真源（`@State`），记录层只提供"默认值 / 编解码 / 校验"。
    *
    * ⚠️ 字体族名必须写真实族名。平台查询结果（UIContext.getFont().getFontByName）：
    *   'HarmonyOS Sans'    → /system/fonts/HarmonyOS_Sans.ttf     （仅拉丁字形，342KB）
@@ -1822,19 +1839,20 @@ oAnimInitNode 配套） */
    * 只能走回退 → targetSdkVersion 19→26 后落到 **HarmonyOS Sans Condensed（窄体）**，
    * 表现就是"字体窄窄的"。这里直接指名系统中文黑体族名 **鸿蒙黑体**，并把真实文件路径一并给出。
    */
-  @State readerSetting: readerCore.ReaderSetting = defaultReadSettingRecord(
+  private rsProjection: readerCore.ReaderSetting = defaultReadSettingRecord(
     // 运行时三件事实按**同一时刻**取：scaledDensity 的 `>0` 兜底在记录层内部（与原三元等价）
     display.getDefaultDisplaySync().scaledDensity, this.windowWidth, this.windowHeight);
 
   /**
-   * 设置的响应式模型壳（S2-b-2）。
+   * 设置的**唯一真源**（`@ObservedV2` 响应式模型，13 个字段全部在此）。
    *
    * ⚠️ **普通成员**，绝对不能加 `@State`/`@Prop`/`@Link`：
    *   官方 `arkts-v1-v2-mixusage` 限制条件 2「V1不支持用装饰器接收@ObservedV2装饰的class，否则编译报错」；
    *   限制条件 1 又明确 `@ObservedV2/@Trace`「可以独立在 @Component 中使用」⇒ 这样持有是官方支持的形态。
-   * 本轮它只是"镜子"：真源仍是上面那个 `@State readerSetting`（S2-c 才换真源）。
+   * 页面读点直接读它（150 处），V2 的 `@Trace` 会让本组件重绘（真机实证见施工记录 §90.4）；
+   * 需要"纯对象"的地方（引擎下发 / 落盘 / 纯函数入参）走 `settingForBoundary()` 或 `rsProjection`。
    */
-  private settingState: ReadSettingState = new ReadSettingState(this.readerSetting);
+  private settingState: ReadSettingState = new ReadSettingState(this.rsProjection);
   private screenDensityCallBack: Callback<number> | null = null;
   private BookHandler: bookParser.BookParserHandler | null = null;
   /**
@@ -2100,14 +2118,14 @@ oAnimInitNode 配套） */
     if (this.fontTarget) {
       // 2026-11-04（S2-c 第九批）：fontColor 真源已迁到模型（`ReadSettingState.fontColor`）
       this.settingState.fontColor = this.customFontHex()
-      this.readerSetting.fontColor = this.settingState.fontColor
+      this.rsProjection.fontColor = this.settingState.fontColor
       this.fontAuto = false
       // 手动选字色 = 用户改了自己的那一套 ⇒ 模式归自由 + 字色归档（2026-10-08）。
       // `freeBgHex` 只在背景不是材质时跟随现状（材质时它必须是空串，见 applyFreeAppearance）。
       this.themeMode = ReaderCustomBg.MODE_FREE
       this.freeFontHex = this.customFontHex()
       if (this.bgTexId <= 0 && this.bgCustomId.length === 0) {
-        this.freeBgHex = this.readerSetting.themeColor ?? ''
+        this.freeBgHex = this.settingState.themeColor ?? ''
       }
       this.readerComponentController.setPageConfig(this.settingForBoundary())
       this.customBgTouched = true
@@ -2118,9 +2136,9 @@ oAnimInitNode 配套） */
     }
     if (!this.customBgOn) {
       // 开关没开也能保存（保存 = 确认使用）：按手动开开关的完整流程走
-      this.customBgPrevTheme = this.readerSetting.themeColor
-      this.customBgPrevFont = this.readerSetting.fontColor
-      this.customBgPrevNight = this.readerSetting.nightMode
+      this.customBgPrevTheme = this.settingState.themeColor
+      this.customBgPrevFont = this.settingState.fontColor
+      this.customBgPrevNight = this.settingState.nightMode
       this.customBgOn = true
     }
     // 保存自定义背景色 = 用户改了自己的那一套 ⇒ 模式归自由 + 背景纯色归档（2026-10-08）
@@ -2148,7 +2166,7 @@ oAnimInitNode 配套） */
     }
     this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
       this.settingState.fontColor = ReaderCustomBg.hexOf(rgb)
-      this.readerSetting.fontColor = this.settingState.fontColor
+      this.rsProjection.fontColor = this.settingState.fontColor
       this.fontAuto = false
       this.customFontR = rgb.r
       this.customFontG = rgb.g
@@ -2159,7 +2177,7 @@ oAnimInitNode 配套） */
     this.themeMode = ReaderCustomBg.MODE_FREE
     this.freeFontHex = ReaderCustomBg.hexOf(rgb)
     if (this.bgTexId <= 0 && this.bgCustomId.length === 0) {
-      this.freeBgHex = this.readerSetting.themeColor ?? ''
+      this.freeBgHex = this.settingState.themeColor ?? ''
     }
     this.customBgTouched = true
     this.readerComponentController.setPageConfig(this.settingForBoundary())
@@ -2195,8 +2213,8 @@ oAnimInitNode 配套） */
       return this.bgFocus === 'tex' && this.bgTexId === item.texId
     }
     // 内置推荐色：最后一次确认的是它（ themeColor 一致即可判定是哪一枚）
-    return this.bgFocus === 'preset' && this.readerSetting.themeColor == item.themeColor
-      && this.readerSetting.themeBgImg == item.themeBgImg
+    return this.bgFocus === 'preset' && this.settingState.themeColor == item.themeColor
+      && this.settingState.themeBgImg == item.themeBgImg
   }
 
   /** 「自定义颜色」行此刻是否持焦（最后按了「保存」）——预览圆点亮橙圈用 */
@@ -2344,7 +2362,7 @@ oAnimInitNode 配套） */
   /** 本页底色：取 `themeColor`（下拉提示条的底色，必须与正文底色一致才看不出接缝）；
    *  空串兜底用工程既有的日夜页底色（同 `:1923` / `:7011` 那两处赋值）。 */
   private pageBaseColor(): string {
-    const c = this.readerSetting.themeColor
+    const c = this.settingState.themeColor
     if (c !== undefined && c.length > 0) {
       return c
     }
@@ -2483,10 +2501,10 @@ oAnimInitNode 配套） */
         Column({ space: 4 }) {
           SymbolGlyph(this.bookmarkIcon())
             .fontSize(26)
-            .fontColor([this.readerSetting.fontColor])
+            .fontColor([this.settingState.fontColor])
           Text(this.isBookmarked ? '松开移除' : '松开添加')
             .fontSize(11)
-            .fontColor(this.readerSetting.fontColor)
+            .fontColor(this.settingState.fontColor)
             .textAlign(TextAlign.Center)
         }
         .width(BM_PULL_MAX)
@@ -2499,10 +2517,10 @@ oAnimInitNode 配套） */
         Column({ space: 4 }) {
           SymbolGlyph(this.bookmarkIcon())
             .fontSize(26)
-            .fontColor([this.readerSetting.fontColor])
+            .fontColor([this.settingState.fontColor])
           Text(this.isBookmarked ? '松开移除书签' : '松开添加书签')
             .fontSize(11)
-            .fontColor(this.readerSetting.fontColor)
+            .fontColor(this.settingState.fontColor)
         }
         .width('100%')
         .height(BM_PULL_MAX)
@@ -2606,19 +2624,19 @@ oAnimInitNode 配套） */
       // 包进 animateTo 后 borderColor/borderWidth 会插值过渡（SDK 依据见日夜切换处）。
       this.getUIContext().animateTo(UiMotion.motionParam(UiMotion.SPRING_FAST), () => {
         this.settingState.fontColor = item.fontColor
-        this.readerSetting.fontColor = this.settingState.fontColor;
+        this.rsProjection.fontColor = this.settingState.fontColor;
         this.settingState.themeColor = item.themeColor
-        this.readerSetting.themeColor = this.settingState.themeColor;
+        this.rsProjection.themeColor = this.settingState.themeColor;
         // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（`ReadSettingState.themeBgImg`）
         this.settingState.themeBgImg = item.themeBgImg
-        this.readerSetting.themeBgImg = this.settingState.themeBgImg;
+        this.rsProjection.themeBgImg = this.settingState.themeBgImg;
       })
       // ★ 点了推荐色 = 用户改了自己的那一套 ⇒ **模式归自由** + 归档背景纯色/字色 + 落盘。
       //   ⚠️ 必须放在 animateTo 之后：闭包已把三个值改成刚点的推荐色，才能记成新回退点。
       //   ⚠️ 2026-10-08：改为**无条件**调用（旧代码只在 `customBgOn || customEditOn` 时才调
       //     ⇒ 日/夜下点推荐色模式不落盘，退出再进退回标准白/黑，与用户看到的不一致）。
-      this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.readerSetting.nightMode)
-      this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+      this.presetPickedWhileCustomBg(item.themeColor, item.fontColor, this.settingState.nightMode)
+      this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
       this.readerComponentController.setPageConfig(this.settingForBoundary());
     })
   }
@@ -2639,8 +2657,8 @@ oAnimInitNode 配套） */
           .height(30)
           .borderRadius(15)
           .backgroundColor(c)
-          .borderWidth(this.bgFocus === 'font' && this.readerSetting.fontColor === c ? 2 : 1)
-          .borderColor(this.bgFocus === 'font' && this.readerSetting.fontColor === c
+          .borderWidth(this.bgFocus === 'font' && this.settingState.fontColor === c ? 2 : 1)
+          .borderColor(this.bgFocus === 'font' && this.settingState.fontColor === c
             ? '#ff6600'
             : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.35)' : 'rgba(0, 0, 0, 0.25)'))
           .onClick(() => {
@@ -2724,14 +2742,14 @@ oAnimInitNode 配套） */
     this.colorMode = night ? 0 : 1
     // 2026-11-04（S2-c）：nightMode 真源已迁到模型
     this.settingState.nightMode = night
-    this.readerSetting.nightMode = this.settingState.nightMode
+    this.rsProjection.nightMode = this.settingState.nightMode
     this.settingState.fontColor = night ? '#ffffff' : '#000000'
-    this.readerSetting.fontColor = this.settingState.fontColor
+    this.rsProjection.fontColor = this.settingState.fontColor
     this.settingState.themeColor = night ? '#202224' : '#FFFFFF'
-    this.readerSetting.themeColor = this.settingState.themeColor
+    this.rsProjection.themeColor = this.settingState.themeColor
     // 2026-11-04（S2-c 第六批）：themeBgImg 真源已迁到模型（标准白/黑 ⇒ 无背景图）
     this.settingState.themeBgImg = ''
-    this.readerSetting.themeBgImg = this.settingState.themeBgImg
+    this.rsProjection.themeBgImg = this.settingState.themeBgImg
     // 焦点（2026-09-25 用户设计）：标准白/黑 ⇒ 圈落到命中的推荐色上
     this.bgFocus = 'preset'
     if (!push) {
@@ -2739,7 +2757,7 @@ oAnimInitNode 配套） */
     }
     NightMode.setReaderNight(night)
     this.syncAbilityColorMode()
-    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+    this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.settingForBoundary())
   }
 
@@ -2778,7 +2796,7 @@ oAnimInitNode 配套） */
     // 第一次进自由（既没材质、也没记过背景纯色）⇒ 以"你现在看到的颜色"为起点，
     // 不会一进来就跳成纯白（旧实现语义，保留）。
     if (this.bgTexId <= 0 && this.bgCustomId.length === 0 && this.freeBgHex.length === 0) {
-      this.freeBgHex = this.readerSetting.themeColor ?? ''
+      this.freeBgHex = this.settingState.themeColor ?? ''
       this.customBgOn = true
     }
     // 焦点：材质 ⇒ 材质格；自定义纯色 ⇒ 调色盘预览块；其余（推荐色）⇒ 推荐色格
@@ -2818,21 +2836,21 @@ oAnimInitNode 配套） */
     const dark: boolean = ReaderCustomBg.isDarkBg(rgb)
     const flipped: boolean = (this.colorMode === 0) !== dark
     this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
-    this.readerSetting.themeColor = this.settingState.themeColor
+    this.rsProjection.themeColor = this.settingState.themeColor
     // 2026-11-04（S2-c 第六批）：自由模式纯色 ⇒ 无背景图（同 applyStandardAppearance）
     this.settingState.themeBgImg = ''
-    this.readerSetting.themeBgImg = this.settingState.themeBgImg
+    this.rsProjection.themeBgImg = this.settingState.themeBgImg
     if (this.fontAuto) {
       this.settingState.fontColor = ReaderCustomBg.contrastFont(rgb)
-      this.readerSetting.fontColor = this.settingState.fontColor
+      this.rsProjection.fontColor = this.settingState.fontColor
     } else if (this.freeFontHex.length > 0) {
       // 自定义字色：切日/夜时 `readerSetting.fontColor` 被写成黑/白（并随 pageShow 落盘），
       // 真正的那个"粉字"存在 `freeFontHex` 里 ⇒ 回自由必须从这里拿回来。
       this.settingState.fontColor = this.freeFontHex
-      this.readerSetting.fontColor = this.settingState.fontColor
+      this.rsProjection.fontColor = this.settingState.fontColor
     }
     this.settingState.nightMode = dark
-    this.readerSetting.nightMode = this.settingState.nightMode
+    this.rsProjection.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
     if (!push) {
       return
@@ -2841,7 +2859,7 @@ oAnimInitNode 配套） */
     if (flipped) {
       this.syncAbilityColorMode()
     }
-    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+    this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.settingForBoundary())
   }
 
@@ -2908,7 +2926,7 @@ oAnimInitNode 配套） */
       const f = ReaderCustomBg.parseColor(e.fontHex)
       if (f !== null) {
         this.settingState.fontColor = ReaderCustomBg.hexOf(f)
-        this.readerSetting.fontColor = this.settingState.fontColor
+        this.rsProjection.fontColor = this.settingState.fontColor
         this.fontAuto = false
         // 「自由那一套」的字色同步归档：切日/夜后回自由要靠它（2026-10-08）
         this.freeFontHex = ReaderCustomBg.hexOf(f)
@@ -2970,7 +2988,7 @@ oAnimInitNode 配套） */
    */
   private currentScheme(): SchemeV3 {
     let bgKind: number = ReaderCustomBg.BG_KIND_COLOR
-    let bgHex: string = this.readerSetting.themeColor
+    let bgHex: string = this.settingState.themeColor
     let texId: number = 0
     let customTexId: string = ''
     if (this.themeMode !== ReaderCustomBg.MODE_FREE) {
@@ -2979,7 +2997,7 @@ oAnimInitNode 配套） */
     } else if (this.customBgOn) {
       bgKind = ReaderCustomBg.BG_KIND_COLOR
       // 推荐色的背景色不在草稿里 ⇒ 优先用 `freeBgHex`（为空才回落屏幕现状）
-      bgHex = this.freeBgHex.length > 0 ? this.freeBgHex : this.readerSetting.themeColor
+      bgHex = this.freeBgHex.length > 0 ? this.freeBgHex : this.settingState.themeColor
     } else if (this.bgCustomId.length > 0) {
       bgKind = ReaderCustomBg.BG_KIND_CUSTOM
       customTexId = this.bgCustomId
@@ -3002,7 +3020,7 @@ oAnimInitNode 配套） */
       blurOn: this.bgBlurOn,
       blurRadius: this.bgBlurRadius,
       fontKind: this.fontAuto ? ReaderCustomBg.FONT_KIND_AUTO : ReaderCustomBg.FONT_KIND_HEX,
-      fontHex: this.fontAuto ? '' : (freeFont ? this.freeFontHex : this.readerSetting.fontColor)
+      fontHex: this.fontAuto ? '' : (freeFont ? this.freeFontHex : this.settingState.fontColor)
     }
   }
 
@@ -3076,7 +3094,7 @@ oAnimInitNode 配套） */
             this.bgCustomId = ''
             // 2026-11-04（S2-c 第六批）：在用的自定义背景被删 ⇒ 清背景图（走模型）
             this.settingState.themeBgImg = ''
-            this.readerSetting.themeBgImg = this.settingState.themeBgImg
+            this.rsProjection.themeBgImg = this.settingState.themeBgImg
             this.applyCustomBg(true)
           }
         },
@@ -3245,8 +3263,8 @@ oAnimInitNode 配套） */
     // 2026-11-04（S2-c）：字体族名/路径真源已迁到模型（`ReadSettingState.fontName/fontPath`）
     this.settingState.fontName = name
     this.settingState.fontPath = path
-    this.readerSetting.fontName = this.settingState.fontName
-    this.readerSetting.fontPath = this.settingState.fontPath
+    this.rsProjection.fontName = this.settingState.fontName
+    this.rsProjection.fontPath = this.settingState.fontPath
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     // ★★ 关键修复（2026-10-20）：ArkUI 侧必须**同步注册**新族名 ★★
     // 缺陷现场：这里原来只有上面三行 —— 引擎拿到了 `fontName/fontPath`（它自己按
@@ -3258,7 +3276,7 @@ oAnimInitNode 配套） */
     // ⇒ 新字形才真正落到屏幕上。
     // ⚠️ 注册用的是 **ArkUI 族名**（`arkFontName()` 翻译过），不是引擎族名：
     //   引擎名「鸿蒙黑体」在 ArkUI 里解析不到（真机 1s 超时），注册它等于白等一轮。
-    ReaderFontLib.ensureRegistered(this.getUIContext(), arkFontName(this.readerSetting), path, (): void => {
+    ReaderFontLib.ensureRegistered(this.getUIContext(), arkFontName(this.rsProjection), path, (): void => {
       this.fontSerial++
       this.updateHighlight()
     })
@@ -3268,10 +3286,10 @@ oAnimInitNode 配套） */
   private applyFontSize(v: number): void {
     this.markFontOverride()
     // 2026-11-04（S2-c 样板）：字号的真源已迁到 `@ObservedV2` 模型；
-    //   页面 `readerSetting.fontSize` 保留为**快照**（259 个读点本轮不动），
-    //   这样"模型为准 + 页面可读"两边一致，且渲染刷新仍靠下面的 `fontSerial++`（与改造前同一机制）。
+    //   `rsProjection.fontSize` 只是给纯函数入参用的**纯数据副本**（S2-c(11) 起页面读点已全改读模型），
+    //   渲染刷新仍靠下面的 `fontSerial++`（与改造前同一机制）。
     this.settingState.fontSize = Math.round(v)
-    this.readerSetting.fontSize = this.settingState.fontSize
+    this.rsProjection.fontSize = this.settingState.fontSize
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     // 自绘层重排：上下档 LazyForEach 的行键是 `${key}-f${fontSerial}`
     // （ReaderScrollView.ets:748-753）；不 ++ 就不会重建 ⇒ 字号看着"死的"。
@@ -3287,7 +3305,7 @@ oAnimInitNode 配套） */
     this.markFontOverride()
     // 2026-11-04（S2-c）：行距真源同字号一样已在模型（`ReadSettingState.lineHeight`）。
     this.settingState.lineHeight = Math.round(v * 10) / 10
-    this.readerSetting.lineHeight = this.settingState.lineHeight
+    this.rsProjection.lineHeight = this.settingState.lineHeight
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     this.fontSerial++
     this.schedulePersistReaderSetting()
@@ -3330,15 +3348,15 @@ oAnimInitNode 配套） */
   private bookPageStyle(): LineStyle {
     const s: LineStyle = new LineStyle();
     const ctx = this.getUIContext();
-    s.fontSizePx = ctx.fp2px(this.readerSetting.fontSize);
-    s.lineHeightPx = ctx.fp2px(scrollLineHeightFp(this.readerSetting));
+    s.fontSizePx = ctx.fp2px(this.settingState.fontSize);
+    s.lineHeightPx = ctx.fp2px(scrollLineHeightFp(this.rsProjection));
     s.letterSpacingPx = ctx.fp2px(LETTER_SPACING_FP);
-    s.gapPx = ctx.fp2px(this.readerSetting.fontSize) * SCROLL_PARA_GAP_EM;
+    s.gapPx = ctx.fp2px(this.settingState.fontSize) * SCROLL_PARA_GAP_EM;
     s.widthPx = ctx.vp2px(this.textAreaWidthVp());
-    s.pageHeightPx = Math.max(1, this.readerSetting.viewPortHeight
+    s.pageHeightPx = Math.max(1, this.settingState.viewPortHeight
       - ctx.vp2px(scrollTopInsetVp() + scrollBottomInsetVp()));
-    s.fontFamily = scrollFontFamily(this.readerSetting);
-    s.fontWeight = this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting);
+    s.fontFamily = scrollFontFamily(this.rsProjection);
+    s.fontWeight = this.settingState.fontWeight + scrollWeightOffset(this.rsProjection);
     s.fontPath = this.scrollFontPath();
     return s;
   }
@@ -3478,9 +3496,9 @@ oAnimInitNode 配套） */
     this.settingDialog.close()
     this.fontDialog = new CustomDialogController({
       builder: ReaderFontDialog({
-        initFontSize: Math.round(this.readerSetting.fontSize),
-        initLineHeight: this.readerSetting.lineHeight,
-        curFontName: this.readerSetting.fontName,
+        initFontSize: Math.round(this.settingState.fontSize),
+        initLineHeight: this.settingState.lineHeight,
+        curFontName: this.settingState.fontName,
         onFontSize: (v: number): void => this.applyFontSize(v),
         onLineHeight: (v: number): void => this.applyLineHeight(v),
         onFont: (name: string, path: string): void => this.applyFont(name, path),
@@ -3523,20 +3541,20 @@ oAnimInitNode 配套） */
   private applyCustomBg(commit: boolean): void {
     const rgb = ReaderCustomBg.make(this.customBgR, this.customBgG, this.customBgB)
     this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
-    this.readerSetting.themeColor = this.settingState.themeColor
+    this.rsProjection.themeColor = this.settingState.themeColor
     // 2026-11-04（S2-c 第六批）：自定义纯色 ⇒ 无背景图（走模型）
     this.settingState.themeBgImg = ''
-    this.readerSetting.themeBgImg = this.settingState.themeBgImg
+    this.rsProjection.themeBgImg = this.settingState.themeBgImg
     const dark: boolean = ReaderCustomBg.isDarkBg(rgb)
     // 只有"日/夜真的翻了"才去动 Ability 配色：`NightMode.sync()` 会调
     // `ctx.setColorMode()`（一次系统级重涂），绝不能每帧调。
     const flipped: boolean = (this.colorMode === 0) !== dark
     if (this.fontAuto) {
       this.settingState.fontColor = ReaderCustomBg.contrastFont(rgb)
-      this.readerSetting.fontColor = this.settingState.fontColor
+      this.rsProjection.fontColor = this.settingState.fontColor
     }
     this.settingState.nightMode = dark
-    this.readerSetting.nightMode = this.settingState.nightMode
+    this.rsProjection.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
     NightMode.setReaderNight(dark)
     if (flipped) {
@@ -3545,7 +3563,7 @@ oAnimInitNode 配套） */
     const now: number = Date.now()
     if (commit || now - this.customBgAppliedAt >= CUSTOM_BG_APPLY_GAP_MS) {
       this.customBgAppliedAt = now
-      this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+      this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
       this.readerComponentController.setPageConfig(this.settingForBoundary())
     }
     if (commit) {
@@ -3586,7 +3604,7 @@ oAnimInitNode 配套） */
         this.bgCustomId = ''
         // 2026-11-04（S2-c 第六批）：源图已被删除 ⇒ 清背景图并回落纯色（走模型）
         this.settingState.themeBgImg = ''
-        this.readerSetting.themeBgImg = this.settingState.themeBgImg
+        this.rsProjection.themeBgImg = this.settingState.themeBgImg
         this.applyCustomBg(true)
         return
       }
@@ -3601,7 +3619,7 @@ oAnimInitNode 配套） */
     if (tex === null || this.bgTexId <= 0) {
       // 2026-11-04（S2-c 第六批）：材质 id 非法/不存在 ⇒ 清背景图并回落纯色（走模型）
       this.settingState.themeBgImg = ''
-      this.readerSetting.themeBgImg = this.settingState.themeBgImg
+      this.rsProjection.themeBgImg = this.settingState.themeBgImg
       this.applyCustomBg(true)
       return
     }
@@ -3628,7 +3646,7 @@ oAnimInitNode 配套） */
     // 它为空（旧记录 / 从没手选过）才沿用屏幕现状 `readerSetting.fontColor`（2026-10-08）。
     const nextFont = this.fontAuto
       ? ReaderCustomBg.contrastFont(res.avg)
-      : (this.freeFontHex.length > 0 ? this.freeFontHex : this.readerSetting.fontColor)
+      : (this.freeFontHex.length > 0 ? this.freeFontHex : this.settingState.fontColor)
     // ── 背景模糊（2026-09-26）：把高斯模糊"洗进"图里再交给引擎 ──────────────
     // 真机实测引擎画布不透底（透明主题色 = 黑屏，见 bgBlurOn 注释），故在**给图
     // 之前**按当前档位模糊（分档磁盘缓存：命中零等待，未命中现场生成一次）。
@@ -3647,29 +3665,29 @@ oAnimInitNode 配套） */
     // 幂等：最终图路径 + 配色全都没变 ⇒ 不再下发 setPageConfig（防闪）
     this.schemeLog('composed in res=' + res.path + ' final=' + finalPath
       + ' avg=' + ReaderCustomBg.hexOf(res.avg) + ' nextFont=' + nextFont + ' dark=' + dark
-      + ' | cur img=' + this.readerSetting.themeBgImg + ' color=' + this.readerSetting.themeColor
-      + ' font=' + this.readerSetting.fontColor + ' night=' + this.readerSetting.nightMode)
-    if (finalPath.length > 0 && this.readerSetting.themeBgImg === finalPath
-      && this.readerSetting.themeColor === avgHex
-      && this.readerSetting.fontColor === nextFont
-      && this.readerSetting.nightMode === dark) {
+      + ' | cur img=' + this.settingState.themeBgImg + ' color=' + this.settingState.themeColor
+      + ' font=' + this.settingState.fontColor + ' night=' + this.settingState.nightMode)
+    if (finalPath.length > 0 && this.settingState.themeBgImg === finalPath
+      && this.settingState.themeColor === avgHex
+      && this.settingState.fontColor === nextFont
+      && this.settingState.nightMode === dark) {
       this.schemeLog('composed IDEMPOTENT-SKIP: 状态已等于目标（点方案时=该方案本已生效）')
       return
     }
     this.settingState.themeBgImg = finalPath
-    this.readerSetting.themeBgImg = this.settingState.themeBgImg
+    this.rsProjection.themeBgImg = this.settingState.themeBgImg
     this.settingState.themeColor = avgHex
-    this.readerSetting.themeColor = this.settingState.themeColor
+    this.rsProjection.themeColor = this.settingState.themeColor
     this.settingState.fontColor = nextFont
-    this.readerSetting.fontColor = this.settingState.fontColor
+    this.rsProjection.fontColor = this.settingState.fontColor
     this.settingState.nightMode = dark
-    this.readerSetting.nightMode = this.settingState.nightMode
+    this.rsProjection.nightMode = this.settingState.nightMode
     this.colorMode = dark ? 0 : 1
     NightMode.setReaderNight(dark)
     if (flipped) {
       this.syncAbilityColorMode()
     }
-    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+    this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     // ── 后台预生成全部 5 档（含当前档，磁盘命中零成本）⇒ 之后拖动条切档零等待 ──
     if (this.bgBlurOn && finalPath.length > 0) {
@@ -3751,9 +3769,9 @@ oAnimInitNode 配套） */
       //   标记（模式切换**刻意不清**它），所以这里必须**同时判模式** —— 否则在标准白底上
       //   展开调色盘不会拍快照，之后关开关会还原成更早的一套（跨模式串味）。
       if (this.themeMode !== ReaderCustomBg.MODE_FREE || !this.customBgOn) {
-        this.customBgPrevTheme = this.readerSetting.themeColor
-        this.customBgPrevFont = this.readerSetting.fontColor
-        this.customBgPrevNight = this.readerSetting.nightMode
+        this.customBgPrevTheme = this.settingState.themeColor
+        this.customBgPrevFont = this.settingState.fontColor
+        this.customBgPrevNight = this.settingState.nightMode
       }
       // 草稿起点 = 记录里存着的色值（第一次进则沿用当前主题色，见 `restoreCustomBg`）
       const rec = this.storedCustomBg()
@@ -3805,16 +3823,16 @@ oAnimInitNode 配套） */
       return
     }
     this.settingState.themeColor = ReaderCustomBg.hexOf(rgb)
-    this.readerSetting.themeColor = this.settingState.themeColor
+    this.rsProjection.themeColor = this.settingState.themeColor
     // 2026-11-04（S2-c 第六批）：恢复 prev 那一套 = 纯色 ⇒ 无背景图（走模型）
     this.settingState.themeBgImg = ''
-    this.readerSetting.themeBgImg = this.settingState.themeBgImg
+    this.rsProjection.themeBgImg = this.settingState.themeBgImg
     this.settingState.nightMode = this.customBgPrevNight
-    this.readerSetting.nightMode = this.settingState.nightMode
+    this.rsProjection.nightMode = this.settingState.nightMode
     this.settingState.fontColor = this.fontAuto
       ? ReaderCustomBg.contrastFont(rgb)
       : this.customBgPrevFont
-    this.readerSetting.fontColor = this.settingState.fontColor
+    this.rsProjection.fontColor = this.settingState.fontColor
     this.colorMode = this.customBgPrevNight ? 0 : 1
     // 模式与"自由那一套"同步收口（2026-10-08）：开关关掉 = 屏幕回到 prev* 那一套
     // ⇒ 模式/记录必须跟着走，否则按钮文案与下次进书会与眼睛看到的不一致
@@ -3834,7 +3852,7 @@ oAnimInitNode 配套） */
     // 焦点：恢复色恰好是最后一次应用的方案 ⇒ 圈落回「更多方案」按钮；否则落推荐色
     this.bgFocus = (this.schemeFocusBg.length > 0
       && this.schemeFocusBg === hex) ? 'scheme' : 'preset'
-    this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+    this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
     this.readerComponentController.setPageConfig(this.settingForBoundary())
     this.customBgTouched = true
     this.saveCustomBg()
@@ -3870,7 +3888,7 @@ oAnimInitNode 配套） */
       const dark = ReaderCustomBg.isDarkBg(rgb)
       const flipped = (this.colorMode === 0) !== dark
       this.settingState.nightMode = dark
-      this.readerSetting.nightMode = this.settingState.nightMode
+      this.rsProjection.nightMode = this.settingState.nightMode
       this.colorMode = dark ? 0 : 1
       NightMode.setReaderNight(dark)
       if (flipped) {
@@ -3891,10 +3909,10 @@ oAnimInitNode 配套） */
     const name: string = this.bookData.bookName
     if (name !== undefined && name !== null && name.length > 0) {
       ReaderFontLib.saveFontGlobal({
-        fontName: this.readerSetting.fontName,
-        fontPath: this.readerSetting.fontPath,
-        fontSize: Math.round(this.readerSetting.fontSize),
-        lineHeight: this.readerSetting.lineHeight
+        fontName: this.settingState.fontName,
+        fontPath: this.settingState.fontPath,
+        fontSize: Math.round(this.settingState.fontSize),
+        lineHeight: this.settingState.lineHeight
       })
       fontCleared = ReaderFontLib.clearFontOverrides()
       // 本书刚成为全局基准 ⇒ 不再算"覆盖"，之后的改动重新登记
@@ -3941,7 +3959,7 @@ oAnimInitNode 配套） */
    *   例外 —— 它本来就要异步出图，见 `applyTextureBg`）。
    */
   private restoreCustomBg(): void {
-    const cur = ReaderCustomBg.parseColor(this.readerSetting.themeColor)
+    const cur = ReaderCustomBg.parseColor(this.settingState.themeColor)
     if (cur !== null) {
       this.customBgR = cur.r
       this.customBgG = cur.g
@@ -3949,7 +3967,7 @@ oAnimInitNode 配套） */
     }
     const name: string = this.bookData.bookName
     if (name === undefined || name === null || name.length === 0) {
-      this.themeMode = this.readerSetting.nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY
+      this.themeMode = this.settingState.nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY
       return
     }
     const rec = ReaderCustomBg.resolve(name)
@@ -3957,12 +3975,12 @@ oAnimInitNode 配套） */
     if (rec === null) {
       // 本书从没写过记录：模式按存量判断 —— 底色不是标准白/黑（例如用户点过推荐色，
       // 那条路径旧实现**不落记录**）也算「自由」，与 2026-10-08 用户口径一致。
-      const std: boolean = ReaderCustomBg.isStandardTheme(this.readerSetting.themeColor)
+      const std: boolean = ReaderCustomBg.isStandardTheme(this.settingState.themeColor)
       this.themeMode = std
-        ? (this.readerSetting.nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY)
+        ? (this.settingState.nightMode ? ReaderCustomBg.MODE_NIGHT : ReaderCustomBg.MODE_DAY)
         : ReaderCustomBg.MODE_FREE
       if (this.themeMode === ReaderCustomBg.MODE_FREE) {
-        this.freeBgHex = this.readerSetting.themeColor ?? ''
+        this.freeBgHex = this.settingState.themeColor ?? ''
       }
       // 圈落到命中的推荐色（维持推荐色的书）
       this.bgFocus = 'preset'
@@ -3990,14 +4008,14 @@ oAnimInitNode 配套） */
     this.freeBgHex = rec.bgHex
     this.freeFontHex = rec.fontHex
     // ── ② 模式（旧记录 mode=-1 ⇒ 按存量字段推断）──────────────────────────────
-    this.themeMode = ReaderCustomBg.modeOf(rec, this.readerSetting.nightMode,
-      this.readerSetting.themeColor)
+    this.themeMode = ReaderCustomBg.modeOf(rec, this.settingState.nightMode,
+      this.settingState.themeColor)
     // ── ③ 按模式摆外观 ───────────────────────────────────────────────────────
     if (this.themeMode === ReaderCustomBg.MODE_FREE) {
       // 旧记录（无 `bgHex`）的自由纯色：用**存量主题色**补齐，之后切日/夜再回来才不会
       // 回落到可能已被改过的调色盘草稿（`customBgR/G/B`）。
       if (this.freeBgHex.length === 0 && this.bgTexId <= 0 && this.bgCustomId.length === 0) {
-        this.freeBgHex = this.readerSetting.themeColor ?? ''
+        this.freeBgHex = this.settingState.themeColor ?? ''
       }
       // 材质 ⇒ 材质格；自定义纯色 ⇒ 调色盘预览块；推荐色 ⇒ 推荐色格
       if (this.bgTexId > 0 || this.bgCustomId.length > 0) {
@@ -4193,42 +4211,42 @@ oAnimInitNode 配套） */
     //        ② 这里做类型体检，读到的不是"带 fontSize/lineHeight 的对象"就
     //          **丢弃并用默认值重建**，让已被污染的书自动恢复。
     const loaded: Object = PreferencesUtil.getSync(`ReaderSetting_${this.bookData.bookName}`,
-      this.readerSetting) as Object;
+      this.rsProjection) as Object;
     let usable: boolean = false;
     if (loaded !== null && loaded !== undefined && typeof loaded === 'object') {
       const cand = loaded as readerCore.ReaderSetting;
       usable = (typeof cand.fontSize === 'number' && typeof cand.lineHeight === 'number');
     }
     if (usable) {
-      this.readerSetting = loaded as readerCore.ReaderSetting;
+      this.rsProjection = loaded as readerCore.ReaderSetting;
       // 2026-11-04（S2-c 样板）**真源方向**（易错，务必看清）：
       //   · **运行期**（用户改设置）：模型为准 → 页面快照跟模型；
       //   · **装载期**（读持久位 / 全局字体记录 / 接续参数）：持久位为准 → 模型跟持久位。
       //   本处属装载期，所以是 `模型 = 刚读到的值`。若写成反向（用模型的旧值覆盖），
       //   用户保存的字号每次进书都会被默认值顶掉 —— 那是回归，不是迁移。
-      this.settingState.fontSize = this.readerSetting.fontSize ?? this.settingState.fontSize;
-      this.settingState.lineHeight = this.readerSetting.lineHeight ?? this.settingState.lineHeight;
+      this.settingState.fontSize = this.rsProjection.fontSize ?? this.settingState.fontSize;
+      this.settingState.lineHeight = this.rsProjection.lineHeight ?? this.settingState.lineHeight;
       // 字体三件套同理（S2-c 第二批）：整体赋值会绕过模型，必须把持久位的值灌回模型。
-      this.settingState.fontName = this.readerSetting.fontName ?? this.settingState.fontName;
-      this.settingState.fontPath = this.readerSetting.fontPath ?? this.settingState.fontPath;
-      this.settingState.fontWeight = this.readerSetting.fontWeight ?? this.settingState.fontWeight;
+      this.settingState.fontName = this.rsProjection.fontName ?? this.settingState.fontName;
+      this.settingState.fontPath = this.rsProjection.fontPath ?? this.settingState.fontPath;
+      this.settingState.fontWeight = this.rsProjection.fontWeight ?? this.settingState.fontWeight;
       // 外观（S2-c 第三批）：nightMode 已迁；themeColor 已迁（第五批）；themeBgImg 已迁（第六批）。
-      this.settingState.nightMode = this.readerSetting.nightMode ?? this.settingState.nightMode;
-      this.settingState.themeColor = this.readerSetting.themeColor ?? this.settingState.themeColor;
+      this.settingState.nightMode = this.rsProjection.nightMode ?? this.settingState.nightMode;
+      this.settingState.themeColor = this.rsProjection.themeColor ?? this.settingState.themeColor;
       // 背景图（S2-c 第六批）：装载期方向 = 持久位 → 模型（写反则用户存的材质背景每次进书都丢）
-      this.settingState.themeBgImg = this.readerSetting.themeBgImg ?? this.settingState.themeBgImg;
+      this.settingState.themeBgImg = this.rsProjection.themeBgImg ?? this.settingState.themeBgImg;
       // 翻页方式（S2-c 第七批）：装载期方向 = 持久位 → 模型。注意它只是**引擎侧投影**，
       //   "读方式"的真源仍是按书持久化的 `ReaderMode_<书名>`（见 `loadReadMode()` 注释），
       //   这里只保证"边界出口拿到的是持久位里那份值"，避免下面 loadReadMode 之前就被默认值顶上。
-      this.settingState.flipMode = this.readerSetting.flipMode ?? this.settingState.flipMode;
+      this.settingState.flipMode = this.rsProjection.flipMode ?? this.settingState.flipMode;
       // 设备度量三件套（S2-c 第八批）：装载期先把模型对齐到持久位那份值，
       //   随后 `startPlay()` 的 boot 视口校准与 `refreshScaledDensity()` 会用**设备真值**
       //   再覆盖一次（见 `applyViewportNow()` 注释）。写反会让排版尺寸永久停在旧值。
-      this.settingState.scaledDensity = this.readerSetting.scaledDensity ?? this.settingState.scaledDensity;
-      this.settingState.viewPortWidth = this.readerSetting.viewPortWidth ?? this.settingState.viewPortWidth;
-      this.settingState.viewPortHeight = this.readerSetting.viewPortHeight ?? this.settingState.viewPortHeight;
+      this.settingState.scaledDensity = this.rsProjection.scaledDensity ?? this.settingState.scaledDensity;
+      this.settingState.viewPortWidth = this.rsProjection.viewPortWidth ?? this.settingState.viewPortWidth;
+      this.settingState.viewPortHeight = this.rsProjection.viewPortHeight ?? this.settingState.viewPortHeight;
       // 字色（S2-c 第九批）：装载期 = 持久位 → 模型
-      this.settingState.fontColor = this.readerSetting.fontColor ?? this.settingState.fontColor;
+      this.settingState.fontColor = this.rsProjection.fontColor ?? this.settingState.fontColor;
     } else {
       hilog.error(0x0000, 'testTag',
         'readerSetting 持久位类型非法（推测是接续旧版污染），已丢弃并重建默认值。book=%{public}s',
@@ -4251,35 +4269,35 @@ oAnimInitNode 配套） */
     // 2026-11-04（S2-c）：装载期方向 —— 接续参数为准 → 同步进模型（模型再回写快照，见下方统一段）
     if (temp.continueFontName !== undefined && temp.continueFontName.length > 0) {
       this.settingState.fontName = temp.continueFontName;
-      this.readerSetting.fontName = this.settingState.fontName;
+      this.rsProjection.fontName = this.settingState.fontName;
     }
     if (temp.continueFontPath !== undefined && temp.continueFontPath.length > 0) {
       this.settingState.fontPath = temp.continueFontPath;
-      this.readerSetting.fontPath = this.settingState.fontPath;
+      this.rsProjection.fontPath = this.settingState.fontPath;
     }
     if (temp.continueFontWeight !== undefined && temp.continueFontWeight > 0) {
       this.settingState.fontWeight = temp.continueFontWeight;
-      this.readerSetting.fontWeight = this.settingState.fontWeight;
+      this.rsProjection.fontWeight = this.settingState.fontWeight;
     }
     if (temp.continueFontColor !== undefined && temp.continueFontColor.length > 0) {
       // 2026-11-04（S2-c 第九批）：接续属装载期，来源为准 → 灌进模型（再同步快照）
       this.settingState.fontColor = temp.continueFontColor;
-      this.readerSetting.fontColor = this.settingState.fontColor;
+      this.rsProjection.fontColor = this.settingState.fontColor;
     }
     if (temp.continueThemeColor !== undefined && temp.continueThemeColor.length > 0) {
       // 2026-11-04（S2-c）：接续属装载期，来源为准 → 灌进模型
       this.settingState.themeColor = temp.continueThemeColor;
-      this.readerSetting.themeColor = this.settingState.themeColor;
+      this.rsProjection.themeColor = this.settingState.themeColor;
     }
     if (temp.continueThemeBgImg !== undefined && temp.continueThemeBgImg.length > 0) {
       // 2026-11-04（S2-c 第六批）：接续属装载期，来源为准 → 灌进模型（再同步快照）
       this.settingState.themeBgImg = temp.continueThemeBgImg;
-      this.readerSetting.themeBgImg = this.settingState.themeBgImg;
+      this.rsProjection.themeBgImg = this.settingState.themeBgImg;
     }
     if (temp.continueNightMode !== undefined) {
       // 2026-11-04（S2-c）：接续属装载期，来源为准 → 灌进模型
       this.settingState.nightMode = temp.continueNightMode;
-      this.readerSetting.nightMode = this.settingState.nightMode;
+      this.rsProjection.nightMode = this.settingState.nightMode;
     }
     if (temp.continueFlipMode !== undefined && temp.continueFlipMode.length > 0) {
       // ⚠️ 只对**分页两档**回写引擎的 `flipMode`：'0'/'1' 是 ReaderKit 合法取值，
@@ -4287,7 +4305,7 @@ oAnimInitNode 配套） */
       if (temp.continueFlipMode === '0' || temp.continueFlipMode === '1') {
         // 2026-11-04（S2-c 第七批）：接续属装载期，来源为准 → 灌进模型（再同步快照）
         this.settingState.flipMode = temp.continueFlipMode;
-        this.readerSetting.flipMode = this.settingState.flipMode;
+        this.rsProjection.flipMode = this.settingState.flipMode;
       }
       // ⚠️⚠️ 只改 `readerSetting.flipMode` **不生效**（2026-10-23 真机日志定案）：
       //   `loadReadMode()`（:3947 调用）优先读**按书持久化**的
@@ -4472,11 +4490,11 @@ oAnimInitNode 配套） */
       }
     }, 250);
     hilog.info(0x0000, 'testTag', 'reader: aboutToAppear tail, nightMode=%{public}s',
-      String(this.readerSetting.nightMode));
+      String(this.settingState.nightMode));
     // ★ 构建标记（2026-10-31，安装验证用）：装完必须看到这条时间戳变化，
     //   否则说明 hdc 的 "install bundle successfully" 是假成功（版本降级/被拒）。
     hilog.info(0x0000, 'testTag', '===== BUILD V2026-10-31T16:22 =====');
-    this.colorMode = this.readerSetting.nightMode ? 0 : 1
+    this.colorMode = this.settingState.nightMode ? 0 : 1
     // ★ 顺序不能反：先把"阅读器在栈顶"立起来，再写夜间开关 ——
     //   `NightMode.desiredDark()` 用 `readerActive` 判断"该走阅读器分支"，
     //   反过来的话（先写开关）会让 `Main` 的 Watch 用"书架页签"的规则算错一次。
@@ -4600,15 +4618,15 @@ oAnimInitNode 配套） */
       const bootW: number = (AppStorage.get<number>('windowWidth') ?? 0) as number;
       const bootH: number = (AppStorage.get<number>('windowHeight') ?? 0) as number;
       if (bootW > 0 && bootH > 0) {
-        if (this.readerSetting.viewPortWidth !== bootW
-          || this.readerSetting.viewPortHeight !== bootH) {
+        if (this.settingState.viewPortWidth !== bootW
+          || this.settingState.viewPortHeight !== bootH) {
           hilog.info(0x0000, 'testTag',
             'startPlay: viewPort STALE %{public}d x %{public}d -> corrected to %{public}d x %{public}d',
-            this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight, bootW, bootH);
+            this.settingState.viewPortWidth, this.settingState.viewPortHeight, bootW, bootH);
           this.settingState.viewPortWidth = bootW;
           this.settingState.viewPortHeight = bootH;
-          this.readerSetting.viewPortWidth = this.settingState.viewPortWidth;
-          this.readerSetting.viewPortHeight = this.settingState.viewPortHeight;
+          this.rsProjection.viewPortWidth = this.settingState.viewPortWidth;
+          this.rsProjection.viewPortHeight = this.settingState.viewPortHeight;
         }
         // 方向状态与密度同源刷新：`aboutToAppear` 里已调 `syncReaderViewSize()` 更新组件尺寸，
         // 这里补齐 `readerSetting` 一侧，保证两者**同一时刻指向同一对值**（防撕裂）。
@@ -4617,7 +4635,7 @@ oAnimInitNode 配套） */
       // 诊断（2026-10-19）：新版式排查用 —— 页图被渲染成"原始像素尺寸"时，第一嫌疑是 viewPort 传错单位
       hilog.info(0x0000, 'testTag',
         'startPlay: viewPort=%{public}d x %{public}d , window=%{public}d x %{public}d , bookPath=%{public}s',
-        this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight,
+        this.settingState.viewPortWidth, this.settingState.viewPortHeight,
         this.windowWidth, this.windowHeight, usePath);
       let initPromise: Promise<void> = this.readerComponentController.init(context);
       let defaultHandler: Promise<bookParser.BookParserHandler> = bookParser.getDefaultHandler(usePath);
@@ -4651,7 +4669,7 @@ oAnimInitNode 配套） */
       //   onPageDataNeedUpdate 不再触发 ⇒ Draw Cur Page 不执行 ⇒ XComponent 无帧黑屏，
       //   真机日志 2026-09-27 01:57）。加粗（正文）暂无安全注入点，诚实搁置。
       this.readerComponentController.registerBookParser(this.BookHandler);
-      this.session.publishLtPageBg(this.readerSetting)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
+      this.session.publishLtPageBg(this.rsProjection)   // 七轮：发布内容页外观给飞行层（见 ReaderSession 注释）
       this.readerComponentController.setPageConfig(this.settingForBoundary());
       // 应用接续观测（2026-10-24）：**真正下发给引擎**的落点是什么。
       // 与 `startPlay from CONTINUE/LOCAL` 那两行对起来看，就能区分
@@ -5232,12 +5250,12 @@ oAnimInitNode 配套） */
     let changed = false;
     // ① scaledDensity：以系统当前值为准（设备属性，不随书持久化）
     const sysScaled = display.getDefaultDisplaySync().scaledDensity;
-    if (sysScaled > 0 && this.readerSetting.scaledDensity !== sysScaled) {
+    if (sysScaled > 0 && this.settingState.scaledDensity !== sysScaled) {
       hilog.info(0x0000, 'testTag', 'rs-migrate: scaledDensity %{public}s -> %{public}s',
-        String(this.readerSetting.scaledDensity), String(sysScaled));
+        String(this.settingState.scaledDensity), String(sysScaled));
       // 2026-11-04（S2-c 第八批）：迁移属"装载期"，设备真值 → 模型 → 快照
       this.settingState.scaledDensity = sysScaled;
-      this.readerSetting.scaledDensity = this.settingState.scaledDensity;
+      this.rsProjection.scaledDensity = this.settingState.scaledDensity;
       changed = true;
     }
 
@@ -5251,13 +5269,13 @@ oAnimInitNode 配套） */
       // fontName / fontPath 自定义入口（只有 fontSize/lineHeight/主题/翻页/nightMode 可改），
       // 故此处纠正不会覆盖任何用户选择。
       if (ver < 1) {
-        const fn = this.readerSetting.fontName;
+        const fn = this.settingState.fontName;
         // ⚠️ 'HarmonyOS Sans' 已是字体管理弹窗里的合法系统字体（2026-09-26），不再当占位值重置
         if (fn === undefined || fn === null || fn.length === 0 || fn === '系统字体'
           || fn === 'system') {
           // 2026-11-04（S2-c）：迁移写点也要走模型（迁移属"装载期"，值以迁移结果为准）
           this.settingState.fontName = SYSTEM_CJK_FONT_NAME;
-          this.readerSetting.fontName = this.settingState.fontName;
+          this.rsProjection.fontName = this.settingState.fontName;
           // ⚠️ 2026-10-12：这里**原来会写系统字体绝对路径**，正是乱码的源头之一
           //   （旧书迁到 v1 时被种下 `fontPath=/system/fonts/…`）。
           //   现在只给族名，路径留空；下面的 v2 迁移会再把存量脏值清一遍。
@@ -5271,10 +5289,10 @@ oAnimInitNode 配套） */
       //   而字体分支只认 `fontPath` ⇒ 回 0 字节 ⇒ 整篇乱码。
       //   ⇒ 现在反过来：只要为空就补上系统中文黑体的真实路径，与 `loadFontBytes()`
       //     的入参解析形成双保险。
-      if (ver < 2 && (this.readerSetting.fontPath === undefined
-        || this.readerSetting.fontPath === null || this.readerSetting.fontPath.length === 0)) {
+      if (ver < 2 && (this.settingState.fontPath === undefined
+        || this.settingState.fontPath === null || this.settingState.fontPath.length === 0)) {
         this.settingState.fontPath = SYSTEM_CJK_FONT_PATH;
-        this.readerSetting.fontPath = this.settingState.fontPath;
+        this.rsProjection.fontPath = this.settingState.fontPath;
         changed = true;
         hilog.info(0x0000, 'testTag', 'rs-migrate: v1->v2 restore fontPath %{public}s',
           SYSTEM_CJK_FONT_PATH);
@@ -5297,12 +5315,12 @@ oAnimInitNode 配套） */
         this.settingState.fontPath =
           (g.fontPath === undefined || g.fontPath === null || g.fontPath.length === 0)
             ? SYSTEM_CJK_FONT_PATH : g.fontPath
-        this.readerSetting.fontName = this.settingState.fontName
-        this.readerSetting.fontPath = this.settingState.fontPath
+        this.rsProjection.fontName = this.settingState.fontName
+        this.rsProjection.fontPath = this.settingState.fontPath
         this.settingState.fontSize = g.fontSize
         this.settingState.lineHeight = g.lineHeight
-        this.readerSetting.fontSize = this.settingState.fontSize
-        this.readerSetting.lineHeight = this.settingState.lineHeight
+        this.rsProjection.fontSize = this.settingState.fontSize
+        this.rsProjection.lineHeight = this.settingState.lineHeight
         changed = true;
       }
     }
@@ -5311,8 +5329,8 @@ oAnimInitNode 配套） */
     // （高亮测量通道 / 沉浸层按 fontName 渲染，走 @ohos.font；引擎侧走 resourceRequest 不依赖此）
     // 2026-10-20：注册是异步的，完成后再逼一次重排 —— 否则首帧可能抢在注册之前，
     // 而滚动层的 List 项参数不变就不会自己重排 ⇒ 字体永久停在系统默认字形。
-    ReaderFontLib.ensureRegistered(this.getUIContext(), arkFontName(this.readerSetting),
-      this.readerSetting.fontPath, (): void => {
+    ReaderFontLib.ensureRegistered(this.getUIContext(), arkFontName(this.rsProjection),
+      this.settingState.fontPath, (): void => {
         this.fontSerial++
       });
 
@@ -5407,7 +5425,7 @@ oAnimInitNode 配套） */
     this.screenDensityCallBack = (data: number) => {
       let displaySync = display.getDefaultDisplaySync();
       let scaledDensity = displaySync.scaledDensity;
-      if (scaledDensity !== this.readerSetting.scaledDensity) {
+      if (scaledDensity !== this.settingState.scaledDensity) {
         AppRouter.pop();
       }
     }
@@ -5713,8 +5731,8 @@ oAnimInitNode 配套） */
     //   绝不能写成"模型 → 窗口"（那会让排版尺寸永远停在进书那一刻）。
     this.settingState.viewPortWidth = w;
     this.settingState.viewPortHeight = h;
-    this.readerSetting.viewPortWidth = this.settingState.viewPortWidth;
-    this.readerSetting.viewPortHeight = this.settingState.viewPortHeight;
+    this.rsProjection.viewPortWidth = this.settingState.viewPortWidth;
+    this.rsProjection.viewPortHeight = this.settingState.viewPortHeight;
     // ①' 密度跟着刷新（旋转 / 2in1 窗口缩放后 scaledDensity 可能变，
     //    旧实现只在字段初始化时算一次 ⇒ 一直是旧值，px↔vp 换算基准就错了）
     this.refreshScaledDensity();
@@ -5774,10 +5792,10 @@ oAnimInitNode 配套） */
     try {
       const d = display.getDefaultDisplaySync();
       const sd: number = d.scaledDensity > 0 ? d.scaledDensity : 1;
-      if (this.readerSetting.scaledDensity !== sd) {
+      if (this.settingState.scaledDensity !== sd) {
         // 2026-11-04（S2-c 第八批）：设备真值 → 模型 → 快照（同 applyViewportNow 的口径）
         this.settingState.scaledDensity = sd;
-        this.readerSetting.scaledDensity = this.settingState.scaledDensity;
+        this.rsProjection.scaledDensity = this.settingState.scaledDensity;
         hilog.info(0x0000, 'testTag', 'refreshScaledDensity -> %{public}f', sd);
       }
     } catch (e) {
@@ -5811,7 +5829,7 @@ oAnimInitNode 配套） */
       this.readerComponentController.setPageConfig(this.settingForBoundary());
       hilog.info(0x0000, 'testTag',
         'viewport config pushed(%{public}s) w=%{public}d h=%{public}d',
-        tag, this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight);
+        tag, this.settingState.viewPortWidth, this.settingState.viewPortHeight);
     } catch (e) {
       hilog.warn(0x0000, 'testTag', 'pushViewportConfig(%{public}s) failed: %{public}s',
         tag, e instanceof Error ? e.message : String(e));
@@ -6028,14 +6046,14 @@ oAnimInitNode 配套） */
       if (w <= 0 || h <= 0) {
         return;
       }
-      if (this.readerSetting.viewPortWidth != w ||
-        this.readerSetting.viewPortHeight != h) {
+      if (this.settingState.viewPortWidth != w ||
+        this.settingState.viewPortHeight != h) {
         // 当窗口大小更改时，更新当前页面视区大小。
         // 2026-11-04（S2-c 第八批）：外部真值（窗口）→ 模型 → 快照，再由边界出口下发
         this.settingState.viewPortWidth = w;
         this.settingState.viewPortHeight = h;
-        this.readerSetting.viewPortWidth = this.settingState.viewPortWidth;
-        this.readerSetting.viewPortHeight = this.settingState.viewPortHeight;
+        this.rsProjection.viewPortWidth = this.settingState.viewPortWidth;
+        this.rsProjection.viewPortHeight = this.settingState.viewPortHeight;
         try {
           this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
@@ -6092,11 +6110,11 @@ oAnimInitNode 配套） */
       if (rect.width <= 0 || rect.height <= 0) {
         return;
       }
-      if (Math.abs(rect.width - this.readerSetting.viewPortWidth) > 1 ||
-        Math.abs(rect.height - this.readerSetting.viewPortHeight) > 1) {
+      if (Math.abs(rect.width - this.settingState.viewPortWidth) > 1 ||
+        Math.abs(rect.height - this.settingState.viewPortHeight) > 1) {
         hilog.info(0x0000, 'testTag',
           'viewport self-check: %{public}dx%{public}d -> %{public}dx%{public}d',
-          this.readerSetting.viewPortWidth, this.readerSetting.viewPortHeight,
+          this.settingState.viewPortWidth, this.settingState.viewPortHeight,
           rect.width, rect.height);
         this.applyViewportNow('selfcheck');
       }
@@ -6136,7 +6154,7 @@ oAnimInitNode 配套） */
         return ReaderPage3.loadFontBytes(
           this.getUIContext(),
           this.getUIContext().getHostContext() as common.UIAbilityContext,
-          this.readerSetting, filePath);
+          this.rsProjection, filePath);
       }
       // ── 背景图分支（2026-09-25）：按请求路径给字节 ──────────────────────────
       if (isImage) {
@@ -6647,15 +6665,15 @@ oAnimInitNode 配套） */
       this.immPagesKey = '';
       return;
     }
-    const key = `${TtsEngine.currentChapter()}:${this.readerSetting.fontSize}`
-      + `:${this.readerSetting.lineHeight.toFixed(1)}:${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}`
+    const key = `${TtsEngine.currentChapter()}:${this.settingState.fontSize}`
+      + `:${this.settingState.lineHeight.toFixed(1)}:${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}`
       + `:${this.calibWidthRatio.toFixed(3)}`;
     if (key === this.immPagesKey && this.immPages.length > 0) {
       return;
     }
-    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
+    const g = geom(this.rsProjection, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const cpl = cplFor(
-      Math.max(1, (this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth)
+      Math.max(1, (this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth)
         * this.calibWidthRatio), g[2]);
     const maxLines = Math.max(1, Math.floor(immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx) / Math.max(1, g[3])));
     // ★ 行粒度分页（与 ReaderKit 一致：可在段落中间断页）
@@ -7643,7 +7661,7 @@ oAnimInitNode 配套） */
     const indents: number[] = [];
     for (let i = 0; i < paras.length; i++) {
       const isContinuation = i === 0 && r.startChar > 0;
-      indents.push(isContinuation ? 0 : this.readerSetting.fontSize * HL_INDENT_SLOTS);
+      indents.push(isContinuation ? 0 : this.settingState.fontSize * HL_INDENT_SLOTS);
     }
     this.measureParas = paras;
     this.measureCtrls = ctrls;
@@ -7662,7 +7680,7 @@ oAnimInitNode 配套） */
   private textAreaWidthVp(): number {
     const disp = display.getDefaultDisplaySync();
     const densityPx = disp.densityPixels > 0 ? disp.densityPixels : 1;
-    const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
+    const vw = this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth;
     return Math.max(1, vw * this.calibWidthRatio) / densityPx;
   }
 
@@ -7671,10 +7689,10 @@ oAnimInitNode 配套） */
     if (nodes === null || this.measureCtrls.length !== this.measureParas.length) {
       return;
     }
-    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
+    const g = geom(this.rsProjection, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const fontPx = g[2];
     const lh = g[3];
-    const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
+    const vw = this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth;
     const textW = Math.max(1, vw * this.calibWidthRatio);
     const cpl = cplFor(textW, fontPx);
     // 我们模型的逐段行数
@@ -7779,11 +7797,11 @@ oAnimInitNode 配套） */
     }
     const disp = display.getDefaultDisplaySync();
     const densityPx = disp.densityPixels > 0 ? disp.densityPixels : 1;
-    const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
+    const vw = this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth;
     const textW = Math.max(1, vw * this.calibWidthRatio);
     // 文本区左边界（px）—— 必须加上它！之前漏了 ⇒ 色块整体左移，"左侧顶格"
     const leftPx = Math.max(0, (vw - textW) / 2);
-    const vh = this.readerSetting.viewPortHeight > 0 ? this.readerSetting.viewPortHeight : this.windowHeight;
+    const vh = this.settingState.viewPortHeight > 0 ? this.settingState.viewPortHeight : this.windowHeight;
     const bands: Band[] = [];
     for (let j = 0; j < lines.length; j++) {
       const ln = lines[j];
@@ -7817,13 +7835,13 @@ oAnimInitNode 配套） */
       this.calibLabel = '';
       return;
     }
-    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
+    const g = geom(this.rsProjection, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const densityPx = g[0];
     const scale = g[1];
     const fontPx = g[2];
     const lh = g[3];
-    const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
-    const vh = this.readerSetting.viewPortHeight > 0 ? this.readerSetting.viewPortHeight : this.windowHeight;
+    const vw = this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth;
+    const vh = this.settingState.viewPortHeight > 0 ? this.settingState.viewPortHeight : this.windowHeight;
     const textW = Math.max(1, vw * this.calibWidthRatio);
     const cpl = cplFor(textW, fontPx);
     const leftPx = Math.max(0, (vw - textW) / 2);
@@ -7858,7 +7876,7 @@ oAnimInitNode 配套） */
     this.calibMarks = marks;
     this.calibMarkBase = base;
     this.calibCounts = counts;
-    this.calibLabel = `字号 ${this.readerSetting.fontSize}  行距 ${this.readerSetting.lineHeight.toFixed(1)}`
+    this.calibLabel = `字号 ${this.settingState.fontSize}  行距 ${this.settingState.lineHeight.toFixed(1)}`
       + `  dens ${densityPx.toFixed(2)}  scale ${scale.toFixed(2)}\n`
       + `font ${fontPx.toFixed(1)}px  line ${lh.toFixed(1)}px  每行 ${cpl} 字`
       + `  实测每页 ${this.learnedCapacity > 0 ? this.learnedCapacity : '—'} 行\n`
@@ -7870,7 +7888,7 @@ oAnimInitNode 配套） */
   /** 测量/几何的失效键：页区间 + 排版参数，任一变化都要重新测量 */
   private measureKeyFor(r: PageRange): string {
     return `${r.spine}:${r.startNode}:${r.startChar}:${r.endNode}:${r.endChar}`
-      + `:${this.readerSetting.fontSize}:${this.readerSetting.lineHeight.toFixed(1)}`
+      + `:${this.settingState.fontSize}:${this.settingState.lineHeight.toFixed(1)}`
       + `:${effectiveLineMul(this.autoLineMul, this.calibLineMul).toFixed(3)}:${this.calibWidthRatio.toFixed(3)}`;
   }
 
@@ -7879,10 +7897,10 @@ oAnimInitNode 配套） */
     if (this.learnedCapacity <= 0) {
       return;
     }
-    const g = geomSelfContained(this.readerSetting);
-    const vh = this.readerSetting.viewPortHeight > 0 ? this.readerSetting.viewPortHeight : this.windowHeight;
+    const g = geomSelfContained(this.rsProjection);
+    const vh = this.settingState.viewPortHeight > 0 ? this.settingState.viewPortHeight : this.windowHeight;
     const targetPitch = (vh - this.calibTopPx) / this.learnedCapacity;
-    const derived = targetPitch / Math.max(1, this.readerSetting.lineHeight * g);
+    const derived = targetPitch / Math.max(1, this.settingState.lineHeight * g);
     // ⚠️ 护栏（2026-09-20 实测）：阅读器可用页高会被系统/避让区改变（实测从 2848px 掉到 2150px），
     // 此时"页高÷行数"会把系数压到 0.79 一类的不合理值 → 行距被压塌、整页只占一半、底部大片空白。
     // 因此只在**合理区间**内采纳自动校准，超出则回退到手调值/默认值。
@@ -8043,12 +8061,12 @@ oAnimInitNode 配套） */
     // 还没有测量数据（例如"打开书直接按播放、从未翻页"）⇒ 主动发起测量
     this.ensureMeasured(r);
     this.hlBands = [];
-    const g = geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul));
+    const g = geom(this.rsProjection, effectiveLineMul(this.autoLineMul, this.calibLineMul));
     const densityPx = g[0];
     const scale = g[1];
     const fontPx = g[2];
     const lh = g[3];
-    const vw = this.readerSetting.viewPortWidth > 0 ? this.readerSetting.viewPortWidth : this.windowWidth;
+    const vw = this.settingState.viewPortWidth > 0 ? this.settingState.viewPortWidth : this.windowWidth;
     const textW = Math.max(1, vw * this.calibWidthRatio);
     const cpl = cplFor(textW, fontPx);
     const pairs = simulatePage(nodes, r, cpl);
@@ -8064,7 +8082,7 @@ oAnimInitNode 配套） */
       return;
     }
     // 每页最多能放几行（由文本区高 / 行高决定）——超出即裁到页内，避免"遮罩溢出页面"
-    const vh0 = this.readerSetting.viewPortHeight > 0 ? this.readerSetting.viewPortHeight : this.windowHeight;
+    const vh0 = this.settingState.viewPortHeight > 0 ? this.settingState.viewPortHeight : this.windowHeight;
     const capacity = Math.max(1,
       Math.floor((vh0 - this.calibTopPx - HL_BOTTOM_RESERVED_PX) / Math.max(1, lh)));
     if (top >= capacity) {
@@ -8130,13 +8148,13 @@ oAnimInitNode 配套） */
         Column() {
           ForEach(this.measureParas, (p: string, i: number) => {
             Text(p, { controller: this.measureCtrls[i] })
-              .fontSize(this.readerSetting.fontSize)
+              .fontSize(this.settingState.fontSize)
               // 字体管理（2026-09-26）：测量通道必须与引擎渲染同字体，否则换字体后
               // 高亮/沉浸层的行高测量错位。导入字体由 migrateReaderSetting 里的
               // ensureRegistered 注册到 ArkUI（@ohos.font）。
-              .fontFamily(scrollFontFamily(this.readerSetting))
-              .fontWeight(this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting))
-              .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
+              .fontFamily(scrollFontFamily(this.rsProjection))
+              .fontWeight(this.settingState.fontWeight + scrollWeightOffset(this.rsProjection))
+              .lineHeight(this.settingState.lineHeight * this.settingState.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
               .textIndent(this.measureIndents.length > i ? this.measureIndents[i] : 0)
               .width('100%')
               .fontColor(Color.Transparent)
@@ -8213,15 +8231,15 @@ oAnimInitNode 配套） */
       // 与引擎、与沉浸听读层**同源**，所以几种方式看起来是同一本书、同一个版式。
       if (this.scrollModeOn() && this.bookHandlerReady) {
         ReaderScrollView({
-          fontName: scrollFontFamily(this.readerSetting),
-          fontSize: this.readerSetting.fontSize,
-          fontWeight: selfDrawnFontWeight(this.readerSetting),
-          fontColor: this.readerSetting.fontColor,
-          lineHeightFp: scrollLineHeightFp(this.readerSetting),
-          indentFp: scrollIndentFp(this.readerSetting),
-          bgColor: this.readerSetting.themeColor,
+          fontName: scrollFontFamily(this.rsProjection),
+          fontSize: this.settingState.fontSize,
+          fontWeight: selfDrawnFontWeight(this.rsProjection),
+          fontColor: this.settingState.fontColor,
+          lineHeightFp: scrollLineHeightFp(this.rsProjection),
+          indentFp: scrollIndentFp(this.rsProjection),
+          bgColor: this.settingState.themeColor,
           bgUri: this.scrollBgUri(),
-          sideInsetVp: textAreaLeftVp(this.readerSetting, this.windowWidth, this.calibWidthRatio),
+          sideInsetVp: textAreaLeftVp(this.rsProjection, this.windowWidth, this.calibWidthRatio),
           // 顶部：与分页模式正文首行严格对齐（同时让出阅读器信息窗）
           // 底部：只让出手势条 ⇒ 整块正文区域整体下移（见两个方法的注释）
           topInsetVp: scrollTopInsetVp(),
@@ -8245,7 +8263,7 @@ oAnimInitNode 配套） */
           // 让 .fontFamily 用上刚注册好的族名（见 ReaderScrollView.rowKey 注释）
           fontSerial: this.fontSerial,
           // 字重补偿：系统中文黑体（可变字体）减一档才与引擎的默认实例一致
-          weightOffset: scrollWeightOffset(this.readerSetting),
+          weightOffset: scrollWeightOffset(this.rsProjection),
           // 解析器用闭包读：`BookHandler` 是异步赋值的普通字段，
           // 直接按值传会永远拿到构造那一刻的 null。
           handlerProvider: (): bookParser.BookParserHandler | null => this.BookHandler,
@@ -8280,19 +8298,19 @@ oAnimInitNode 配套） */
       // 差别只有一处：本层把"连续行流"按页切开，翻页 = 换一个整数，**没有任何动画**。
       if (this.noAnimModeOn() && this.bookHandlerReady) {
         ReaderPageNoAnim({
-          fontName: scrollFontFamily(this.readerSetting),
+          fontName: scrollFontFamily(this.rsProjection),
           // ⚠️ 引擎排行与渲染都要这个路径；不传的话自定义字体在自绘层会用默认字体
           fontPath: this.scrollFontPath(),
-          fontSize: this.readerSetting.fontSize,
-          fontWeight: selfDrawnFontWeight(this.readerSetting),
-          fontColor: this.readerSetting.fontColor,
-          lineHeightFp: scrollLineHeightFp(this.readerSetting),
-          indentFp: scrollIndentFp(this.readerSetting),
+          fontSize: this.settingState.fontSize,
+          fontWeight: selfDrawnFontWeight(this.rsProjection),
+          fontColor: this.settingState.fontColor,
+          lineHeightFp: scrollLineHeightFp(this.rsProjection),
+          indentFp: scrollIndentFp(this.rsProjection),
           // 段间距系数与滚动层**必须是同一个值**（两档互切时段落疏密不能变）
           gapEm: SCROLL_PARA_GAP_EM,
-          bgColor: this.readerSetting.themeColor,
+          bgColor: this.settingState.themeColor,
           bgUri: this.scrollBgUri(),
-          sideInsetVp: textAreaLeftVp(this.readerSetting, this.windowWidth, this.calibWidthRatio),
+          sideInsetVp: textAreaLeftVp(this.rsProjection, this.windowWidth, this.calibWidthRatio),
           topInsetVp: scrollTopInsetVp(),
           bottomInsetVp: scrollBottomInsetVp(),
           initSpine: this.noAnimInitSpine,
@@ -8320,7 +8338,7 @@ oAnimInitNode 配套） */
           hlTo: this.scrollHlTo,
           hlSerial: this.scrollHlSerial,
           fontSerial: this.fontSerial,
-          weightOffset: scrollWeightOffset(this.readerSetting),
+          weightOffset: scrollWeightOffset(this.rsProjection),
           // dock 展开时关掉本层横向手势 —— 否则会抢走 dock 进度滑条
           // 的横向拖动（与本页下拉书签手势 `fingers: 9` 同一套做法，见该处注释）。
           gestureEnabled: !this.isShowSetting,
@@ -8529,13 +8547,13 @@ oAnimInitNode 配套） */
               // `ReplaceSymbolEffect` + triggerValue：从太阳切到月亮（或反之）时播放形变动效
               SymbolGlyph(this.infoClockIcon())
                 .fontSize(INFO_ICON_SIZE)
-                .fontColor([this.readerSetting.fontColor])
+                .fontColor([this.settingState.fontColor])
                 .opacity(0.9)
                 .symbolEffect(new ReplaceSymbolEffect(), this.infoClockIsDay ? 1 : 0)
                 .hitTestBehavior(HitTestMode.None)
               Text(this.infoClockText)
                 .fontSize(INFO_TEXT_SIZE)
-                .fontColor(this.readerSetting.fontColor)
+                .fontColor(this.settingState.fontColor)
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
@@ -8546,13 +8564,13 @@ oAnimInitNode 配套） */
             if (this.infoWinBatteryMode > 0 && this.infoBatterySoc >= 0) {
               SymbolGlyph(this.infoBatteryIcon())
                 .fontSize(INFO_ICON_SIZE)
-                .fontColor([this.readerSetting.fontColor])
+                .fontColor([this.settingState.fontColor])
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
               if (this.infoWinBatteryMode >= 2) {
                 Text(this.infoBatteryText())
                   .fontSize(INFO_TEXT_SIZE)
-                  .fontColor(this.readerSetting.fontColor)
+                  .fontColor(this.settingState.fontColor)
                   .opacity(0.9)
                   .hitTestBehavior(HitTestMode.None)
               }
@@ -8571,14 +8589,14 @@ oAnimInitNode 配套） */
             if (this.infoWinBookmarkShow && this.isBookmarked) {
               SymbolGlyph(this.bookmarkIcon())
                 .fontSize(INFO_ICON_SIZE)
-                .fontColor([this.readerSetting.fontColor])
+                .fontColor([this.settingState.fontColor])
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
             if (this.infoWinTimerShow && this.infoTimerText.length > 0) {
               Text(this.infoTimerText)
                 .fontSize(INFO_TEXT_SIZE)
-                .fontColor(this.readerSetting.fontColor)
+                .fontColor(this.settingState.fontColor)
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
@@ -8590,7 +8608,7 @@ oAnimInitNode 配套） */
             if (this.infoWinAntiPeepShow && this.vipOn && OfflineMode.showReadingEnhancements()) {
               SymbolGlyph(this.antiPeepIcon())
                 .fontSize(INFO_ICON_SIZE)
-                .fontColor([this.readerSetting.fontColor])
+                .fontColor([this.settingState.fontColor])
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
@@ -8598,7 +8616,7 @@ oAnimInitNode 配套） */
             if (this.infoWinPageNoShow && this.bookPageTotal > 0) {
               Text(`${this.bookPageCur} / ${this.bookPageTotal}`)
                 .fontSize(INFO_TEXT_SIZE)
-                .fontColor(this.readerSetting.fontColor)
+                .fontColor(this.settingState.fontColor)
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
@@ -10232,9 +10250,9 @@ oAnimInitNode 配套） */
         //   一次**系统级重涂**）。把系统级重涂放进动画闭包里正是本工程反复记过的
         //   "屏闪"成因（见 `ReaderPage3.aboutToAppear` 尾部的延迟块注释）
         //   ⇒ 底色本来就是整页换，硬切反而干净。
-        this.customBgPrevTheme = this.readerSetting.themeColor
-        this.customBgPrevFont = this.readerSetting.fontColor
-        this.customBgPrevNight = this.readerSetting.nightMode
+        this.customBgPrevTheme = this.settingState.themeColor
+        this.customBgPrevFont = this.settingState.fontColor
+        this.customBgPrevNight = this.settingState.nightMode
         this.enterFreeMode()
       } else {
         // 日/夜：颜色会插值过渡（`.fontColor/.fillColor` 都由 `colorMode` 派生）。
@@ -10242,11 +10260,11 @@ oAnimInitNode 配套） */
         this.getUIContext().animateTo(UiMotion.motionParam(), () => {
           this.colorMode = next === 0 ? 0 : 1
           this.settingState.nightMode = next === 0
-          this.readerSetting.nightMode = this.settingState.nightMode
+          this.rsProjection.nightMode = this.settingState.nightMode
           this.settingState.fontColor = next === 0 ? '#ffffff' : '#000000'
-          this.readerSetting.fontColor = this.settingState.fontColor
+          this.rsProjection.fontColor = this.settingState.fontColor
           this.settingState.themeColor = next === 0 ? '#202224' : '#FFFFFF'
-          this.readerSetting.themeColor = this.settingState.themeColor
+          this.rsProjection.themeColor = this.settingState.themeColor
         })
         // 收口：模式落盘（`mode` = 0/1，自由那一套原样保留）、Ability 配色、
         // `setPageConfig` 都在这里，且都在动画闭包之外。
@@ -10381,7 +10399,7 @@ oAnimInitNode 配套） */
     let m: number = READ_MODE_FLIP_CURL;
     try {
       const v: number = PreferencesUtil.getSync(`${READ_MODE_KEY_PREFIX}${this.bookData.bookName}`,
-        this.readerSetting.flipMode === '1' ? READ_MODE_FLIP_SLIDE : READ_MODE_FLIP_CURL) as number;
+        this.settingState.flipMode === '1' ? READ_MODE_FLIP_SLIDE : READ_MODE_FLIP_CURL) as number;
       m = v;
     } catch (e) {
       m = READ_MODE_FLIP_CURL;
@@ -10404,10 +10422,10 @@ oAnimInitNode 配套） */
     //   方向仍是"来源 → 模型"，再由模型同步回快照（写反会让引擎拿到旧的翻页方式）。
     if (m === READ_MODE_FLIP_CURL || m === READ_MODE_FLIP_SLIDE) {
       this.settingState.flipMode = m === READ_MODE_FLIP_SLIDE ? '1' : '0';
-      this.readerSetting.flipMode = this.settingState.flipMode;
+      this.rsProjection.flipMode = this.settingState.flipMode;
     }
     hilog.info(0x0000, 'testTag', 'readMode loaded: %{public}d (flipMode=%{public}s)',
-      m, this.readerSetting.flipMode);
+      m, this.settingState.flipMode);
     // 无动画档要吞掉系统侧滑返回（见 `ReaderSession.publishReadModeFlag` 注释）
     this.session.publishReadModeFlag(this.readMode === READ_MODE_NONE);
   }
@@ -10441,8 +10459,8 @@ oAnimInitNode 配套） */
     if (deviceInfo.deviceType === 'phone') {
       return false;
     }
-    const w: number = this.windowWidth > 0 ? this.windowWidth : this.readerSetting.viewPortWidth;
-    const h: number = this.windowHeight > 0 ? this.windowHeight : this.readerSetting.viewPortHeight;
+    const w: number = this.windowWidth > 0 ? this.windowWidth : this.settingState.viewPortWidth;
+    const h: number = this.windowHeight > 0 ? this.windowHeight : this.settingState.viewPortHeight;
     return w > 0 && h > 0 && w > h;
   }
 
@@ -10585,7 +10603,7 @@ oAnimInitNode 配套） */
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
         // 2026-11-04（S2-c 第七批）：运行期 = 模型为准 → 快照（必须在下行边界出口之前）
         this.settingState.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
-        this.readerSetting.flipMode = this.settingState.flipMode;
+        this.rsProjection.flipMode = this.settingState.flipMode;
         try {
           this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
@@ -10642,7 +10660,7 @@ oAnimInitNode 配套） */
       if (next === READ_MODE_FLIP_CURL || next === READ_MODE_FLIP_SLIDE) {
         // 2026-11-04（S2-c 第七批）：运行期 = 模型为准 → 快照（必须在下行边界出口之前）
         this.settingState.flipMode = next === READ_MODE_FLIP_SLIDE ? '1' : '0';
-        this.readerSetting.flipMode = this.settingState.flipMode;
+        this.rsProjection.flipMode = this.settingState.flipMode;
         try {
           this.readerComponentController.setPageConfig(this.settingForBoundary());
         } catch (e) {
@@ -10751,8 +10769,8 @@ oAnimInitNode 配套） */
       hilog.info(0x0000, 'testTag',
         'LAYOUTPROBE mode=%{public}d vp=%{public}sx%{public}s density=%{public}s topInset=%{public}s bottomInset=%{public}s topRect=%{public}s bottomRect=%{public}s infoPos=%{public}d calibTopPx=%{public}s',
         this.readMode,
-        (dv > 0 ? this.readerSetting.viewPortWidth / dv : 0).toFixed(2),
-        (dv > 0 ? this.readerSetting.viewPortHeight / dv : 0).toFixed(2),
+        (dv > 0 ? this.settingState.viewPortWidth / dv : 0).toFixed(2),
+        (dv > 0 ? this.settingState.viewPortHeight / dv : 0).toFixed(2),
         dv.toFixed(3),
         scrollTopInsetVp().toFixed(2),
         scrollBottomInsetVp().toFixed(2),
@@ -10762,14 +10780,14 @@ oAnimInitNode 配套） */
         this.calibTopPx.toFixed(1));
       hilog.info(0x0000, 'testTag',
         'FONTPROBE rk: name=%{public}s path=%{public}s weight=%{public}d size=%{public}s lh=%{public}s | sd: family=%{public}s path=%{public}s lhFp=%{public}s',
-        this.readerSetting.fontName,
-        this.readerSetting.fontPath,
-        this.readerSetting.fontWeight,
-        this.readerSetting.fontSize.toFixed(2),
-        this.readerSetting.lineHeight.toFixed(3),
-        scrollFontFamily(this.readerSetting),
+        this.settingState.fontName,
+        this.settingState.fontPath,
+        this.settingState.fontWeight,
+        this.settingState.fontSize.toFixed(2),
+        this.settingState.lineHeight.toFixed(3),
+        scrollFontFamily(this.rsProjection),
         this.scrollFontPath(),
-        scrollLineHeightFp(this.readerSetting).toFixed(2));
+        scrollLineHeightFp(this.rsProjection).toFixed(2));
     } catch (e) {
       hilog.warn(0x0000, 'testTag', 'LAYOUTPROBE failed');
     }
@@ -10945,7 +10963,7 @@ oAnimInitNode 配套） */
   private publishFacts(): PublishFacts {
     return {
       book: this.bookData,
-      setting: this.readerSetting,
+      setting: this.rsProjection,
       readMode: this.readMode,
       selfDrawn: this.selfDrawnModeOn(),
       scrollSpine: this.scrollSpine,
@@ -11061,7 +11079,7 @@ oAnimInitNode 配套） */
    *   only when the value of name is set in fontFamilies in TextStyle」）。
    */
   private scrollFontPath(): string {
-    const p: string = this.readerSetting.fontPath;
+    const p: string = this.settingState.fontPath;
     if (p !== undefined && p !== null && p.length > 0 && p !== SYSTEM_CJK_FONT_PATH) {
       return p;
     }
@@ -11220,7 +11238,7 @@ oAnimInitNode 配套） */
    * （官方 FAQ `faqs-arkui-154`）⇒ 这里转成 `file://` URI 再传下去。
    */
   private scrollBgUri(): string {
-    const p: string = this.readerSetting.themeBgImg;
+    const p: string = this.settingState.themeBgImg;
     if (p === undefined || p === null || p.length === 0) {
       return '';
     }
@@ -11318,7 +11336,7 @@ oAnimInitNode 配套） */
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor(this.readerSetting.themeColor)
+        .backgroundColor(this.settingState.themeColor)
         .hitTestBehavior(HitTestMode.None)
 
       Column() {
@@ -11330,22 +11348,22 @@ oAnimInitNode 配套） */
                 .textBackgroundStyle({ color: 'rgba(0, 125, 255, 0.20)', radius: 4 })
               Span(this.immAfter(sg))
             }
-            .fontSize(this.readerSetting.fontSize)
-            .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
-            .textIndent(sg[1] === 0 ? this.readerSetting.fontSize * HL_INDENT_SLOTS : 0)
-            .fontColor(this.readerSetting.fontColor)
-            .fontFamily(scrollFontFamily(this.readerSetting))
-            .fontWeight(this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting))
+            .fontSize(this.settingState.fontSize)
+            .lineHeight(this.settingState.lineHeight * this.settingState.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
+            .textIndent(sg[1] === 0 ? this.settingState.fontSize * HL_INDENT_SLOTS : 0)
+            .fontColor(this.settingState.fontColor)
+            .fontFamily(scrollFontFamily(this.rsProjection))
+            .fontWeight(this.settingState.fontWeight + scrollWeightOffset(this.rsProjection))
             .width('100%')
             .hitTestBehavior(HitTestMode.None)
           } else {
             Text(this.immSegText(sg))
-              .fontSize(this.readerSetting.fontSize)
-              .lineHeight(this.readerSetting.lineHeight * this.readerSetting.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
-              .textIndent(sg[1] === 0 ? this.readerSetting.fontSize * HL_INDENT_SLOTS : 0)
-              .fontColor(this.readerSetting.fontColor)
-              .fontFamily(scrollFontFamily(this.readerSetting))
-              .fontWeight(this.readerSetting.fontWeight + scrollWeightOffset(this.readerSetting))
+              .fontSize(this.settingState.fontSize)
+              .lineHeight(this.settingState.lineHeight * this.settingState.fontSize * effectiveLineMul(this.autoLineMul, this.calibLineMul))
+              .textIndent(sg[1] === 0 ? this.settingState.fontSize * HL_INDENT_SLOTS : 0)
+              .fontColor(this.settingState.fontColor)
+              .fontFamily(scrollFontFamily(this.rsProjection))
+              .fontWeight(this.settingState.fontWeight + scrollWeightOffset(this.rsProjection))
               .width('100%')
               .hitTestBehavior(HitTestMode.None)
           }
@@ -11357,7 +11375,7 @@ oAnimInitNode 配套） */
       .height(immersiveBudgetPx(this.windowHeight, this.bottomRectHeight, this.calibTopPx) / densityVp())
       .clip(true)
       .position({
-        x: textAreaLeftVp(this.readerSetting, this.windowWidth, this.calibWidthRatio),
+        x: textAreaLeftVp(this.rsProjection, this.windowWidth, this.calibWidthRatio),
         y: this.calibTopPx / densityVp()
       })
       .hitTestBehavior(HitTestMode.None)
@@ -11424,7 +11442,7 @@ oAnimInitNode 配套） */
     if (bottom <= budget) {
       return 0;
     }
-    const linePx = Math.max(1, geom(this.readerSetting, effectiveLineMul(this.autoLineMul, this.calibLineMul))[3]);
+    const linePx = Math.max(1, geom(this.rsProjection, effectiveLineMul(this.autoLineMul, this.calibLineMul))[3]);
     return Math.ceil((bottom - budget) / linePx) * linePx;
   }
 

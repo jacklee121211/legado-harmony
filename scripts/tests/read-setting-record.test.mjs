@@ -72,13 +72,13 @@ test('默认记录 = 迁移前页面的 readerSetting 默认字面量（逐字�
 })
 
 test('页面默认值改为调用记录层（单一真源，页面不再自己写一份字面量）', () => {
-  assert.match(PAGE_SRC, /@State readerSetting: readerCore\.ReaderSetting = defaultReadSettingRecord\(/,
+  assert.match(PAGE_SRC, /private rsProjection: readerCore\.ReaderSetting = defaultReadSettingRecord\(/,
     '证据：S2-a 后页面默认值必须由 ReadSettingRecord.defaultReadSettingRecord() 产出')
   assert.match(PAGE_SRC, /from '\.\.\/\.\.\/\.\.\/common\/reader\/ReadSettingRecord'/,
     '页面对记录层的 import 必须存在（否则又退化成两份真值）')
   // 页面不应再出现"直接写字面量默认值"的老形态
-  assert.equal(/readerSetting: readerCore\.ReaderSetting = \{/.test(PAGE_SRC), false,
-    '页面里不应再残留 readerSetting 的字面量默认值（与记录层重复）')
+  assert.equal(/rsProjection: readerCore\.ReaderSetting = \{/.test(PAGE_SRC), false,
+    '页面里不应再残留设置的字面量默认值（与记录层重复）')
 })
 
 test('scaledDensity 非法（<=0 / NaN）时兜底为 1', () => {
@@ -219,8 +219,8 @@ test('页面边界已收口：22 处一律走 settingForBoundary()，不再直�
   const puts = (PAGE_SRC.match(/putSync\(`ReaderSetting_[^`]*`, this\.settingForBoundary\(\)\)/g) ?? []).length
   assert.equal(puts, 6, `ReaderSetting_ 落盘点应全部走投影（实测 ${puts}）`)
   // 旧的直传写法必须为 0（注释里提到可以，但 `(this.readerSetting)` 这种调用形态不行）
-  assert.equal((PAGE_SRC.match(/setPageConfig\(this\.readerSetting\)/g) ?? []).length, 0)
-  assert.equal((PAGE_SRC.match(/, this\.readerSetting\)/g) ?? []).length, 0)
+  assert.equal((PAGE_SRC.match(/setPageConfig\(this\.rsProjection\)/g) ?? []).length, 0)
+  assert.equal((PAGE_SRC.match(/, this\.rsProjection\)/g) ?? []).length, 0)
   // 单一出口方法必须存在
   assert.match(PAGE_SRC, /private settingForBoundary\(\): readerCore\.ReaderSetting \{/,
     '证据：S2-b-1 的边界出口必须留在页面上（引擎要纯接口对象）')
@@ -259,17 +259,24 @@ test('模型壳：snapshot() 是唯一外部出口，且逐字段显式拷贝（
 })
 
 test('页面侧：模型必须是普通成员（不能套 @State/@Prop/@Link，否则编译报错）', () => {
-  assert.match(PAGE_SRC, /private settingState: ReadSettingState = new ReadSettingState\(this\.readerSetting\)/,
+  assert.match(PAGE_SRC, /private settingState: ReadSettingState = new ReadSettingState\(this\.rsProjection\)/,
     '证据：arkts-v1-v2-mixusage 限制条件 2「V1不支持用装饰器接收@ObservedV2装饰的class」')
   // 反向断言：不许出现带装饰器的持有形态
   assert.equal(/(@State|@Prop|@Link|@StorageLink)\s+settingState/.test(PAGE_SRC), false,
     '模型实例不能加任何 V1 装饰器')
+  // S2-c(11)：`@State readerSetting` 已退役 —— 投影不得带任何装饰器，且旧名不得再出现（断言在下方 CODE 上）
+
   // 边界出口必须**只**取模型快照（S2-c(10) 起脚手架已拆：不再有 syncFromExcept 回灌）
   //   注：`ReaderPage3` 的注释里仍保留 "不再需要 syncFromExcept(...)" 这类历史说明
   //   ⇒ 这里剔掉注释再断言，避免把"说明性文字"当成调用。
   const CODE = PAGE_SRC
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  // 退役断言也必须在**代码**上做：注释里保留"曾叫 @State readerSetting"的历史说明是允许的
+  assert.equal(/@State\s+readerSetting/.test(CODE), false,
+    '`@State readerSetting` 已退役，读点全部改读模型')
+  assert.equal(/@State\s+rsProjection/.test(CODE), false,
+    'rsProjection 是纯数据投影，不能是 @State（UI 刷新由模型的 @Trace 驱动）')
   assert.equal(/syncFromExcept/.test(CODE), false,
     '迁移脚手架 syncFromExcept 应已删除（13 字段全迁完后它就是"陈旧快照盖掉模型"的隐患）')
   assert.equal(/MIGRATED_SETTING_FIELDS/.test(CODE), false,
@@ -317,7 +324,7 @@ const PAGE_CODE = PAGE_SRC
   .replace(/(^|[^:])\/\/.*$/gm, '$1')
 
 test('棘轮：页面直写 readerSetting 的点数只许降（当前基线 63）', () => {
-  const direct = (PAGE_CODE.match(/this\.readerSetting\.\w+\s*=[^=]/g) ?? []).length
+  const direct = (PAGE_CODE.match(/this\.rsProjection\.\w+\s*=[^=]/g) ?? []).length
   assert.ok(direct <= RATCHET_DIRECT_WRITES,
     `直写点从 ${RATCHET_DIRECT_WRITES} 涨到 ${direct} 了：新写点必须走模型或 settingForBoundary()，`
     + `不要直接改 @State readerSetting（迁移期只许降）`)
@@ -330,7 +337,7 @@ test('棘轮：页面直写 readerSetting 的点数只许降（当前基线 63�
 test('进度计：未迁字段的直写点只许降（迁移期的真实进度指标）', () => {
   let unmigrated = 0
   for (const raw of PAGE_CODE.split('\n')) {
-    const m = /^this\.readerSetting\.(\w+)\s*=(?!=)\s*(.*)$/.exec(raw.trim())
+    const m = /^this\.rsProjection\.(\w+)\s*=(?!=)\s*(.*)$/.exec(raw.trim())
     if (!m) continue
     if (!m[2].startsWith(`this.settingState.${m[1]}`)) unmigrated++
   }
@@ -356,7 +363,7 @@ test('迁移完成：13 个字段在页面里的写点只能"模型→快照"单
     const badHits = []
     for (const rawLine of PAGE_CODE.split('\n')) {
       const line = rawLine.trim()
-      const prefix = `this.readerSetting.${f}`
+      const prefix = `this.rsProjection.${f}`
       const at = line.indexOf(prefix)
       if (at < 0) {
         continue
@@ -376,7 +383,7 @@ test('迁移完成：13 个字段在页面里的写点只能"模型→快照"单
       }
     }
     assert.equal(badHits.length, 0,
-      `字段 ${f} 已是模型真源，页面里的写点必须写成 "this.readerSetting.${f} = this.settingState.${f}"；`
+      `字段 ${f} 已是模型真源，投影里的写点必须写成 "this.rsProjection.${f} = this.settingState.${f}"；`
       + `违规 ${badHits.length} 处：${badHits.join(' | ')}`)
     // ② `@State readerSetting` 仍是快照 ⇒ 每个字段至少要有 1 处"模型 → 快照"同步，
     //    否则页面里那 200+ 个读点会读到旧值。
@@ -385,13 +392,13 @@ test('迁移完成：13 个字段在页面里的写点只能"模型→快照"单
 })
 
 test('装载期方向：读持久位后是"持久位 → 模型"，不是"模型 → 持久位"（防回归）', () => {
-  // 装载点：`this.readerSetting = loaded as readerCore.ReaderSetting;` 之后必须把值灌进模型
-  const loadIdx = PAGE_SRC.indexOf('this.readerSetting = loaded as readerCore.ReaderSetting;')
+  // 装载点：`this.rsProjection = loaded as readerCore.ReaderSetting;` 之后必须把值灌进模型
+  const loadIdx = PAGE_SRC.indexOf('this.rsProjection = loaded as readerCore.ReaderSetting;')
   assert.ok(loadIdx > 0, '找不到读持久位的整体赋值点')
   const after = PAGE_SRC.slice(loadIdx, loadIdx + 600)
-  assert.match(after, /this\.settingState\.fontSize = this\.readerSetting\.fontSize/,
+  assert.match(after, /this\.settingState\.fontSize = this\.rsProjection\.fontSize/,
     '装载期必须把持久位里的值同步进模型；若反向覆盖，用户保存的字号每次进书都会丢')
-  assert.equal(/this\.readerSetting\.fontSize = this\.settingState\.fontSize;[^]*?loaded as readerCore/.test(after), false,
-    '装载期不允许反向覆盖快照')
+  assert.equal(/this\.rsProjection\.fontSize = this\.settingState\.fontSize;[^]*?loaded as readerCore/.test(after), false,
+    '装载期不允许反向覆盖投影')
 })
 
