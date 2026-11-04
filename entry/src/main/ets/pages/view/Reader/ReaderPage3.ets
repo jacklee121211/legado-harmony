@@ -113,6 +113,8 @@ import { VipManager } from '../../../common/utils/VipManager';
 // ── 离线模式（2026-10-13 新增）：隐藏阅读器内依赖网络的入口 ──
 import { OfflineMode } from '../../../common/utils/OfflineMode';
 import { ReaderCustomColorBlock } from './ReaderCustomColorBlock';
+// 设置面板「阅读方式」一行四档（2026-11-05 R-2-c：纯视图抽出，副作用留本页）
+import { ReaderReadModeBlock } from './ReaderReadModeBlock';
 // ── 上下滚动阅读（2026-10-20 新增：阅读方式第三档）──────────────────────────
 // ReaderKit 只有仿真/横滑两档（`flipMode` '0'/'1'，SDK 全文无滚动字段），
 // 这一档由我们自己用 ArkUI 铺段落实现，见 `ReaderScrollView.ets` 文件头。
@@ -9544,7 +9546,23 @@ oAnimInitNode 配套） */
       //   然后其他的是真实」。
       // ⇒ 旧「点一下循环一档」的胶囊按钮**取消**，换成一行四格**直接选**
       //   （点一次就到目标档，不用循环试），顺序由 `READ_MODE_OPTIONS` 定。
-      this.ReadModeRow()
+      // 2026-11-05（R-2-c）：**视图**已抽到 `ReaderReadModeBlock.ets`；
+      //   档位列表 / 文案 / 切换副作用仍全在本页（`readModeOptions()` /
+      //   `readModeOptionLabel()` / `switchReadMode()`）⇒ 唯一实现不变。
+      ReaderReadModeBlock({
+        readMode: this.readMode,
+        colorMode: this.colorMode,
+        modes: this.readModeOptions(),
+        labels: this.readModeOptions().map((m: number): string => this.readModeOptionLabel(m)),
+        onPick: (m: number): void => {
+          this.switchReadMode(m);
+          // 2026-10-31：选完动画档直接关设置弹窗，避免误触/停留
+          this.settingDialog?.close();
+          // 同步把底栏「设置」图标收回空心态，否则下次要点两次才能再开
+          this.isShowContentSetting = false;
+          this.getUIContext().getPromptAction().showToast({ message: this.readModeOptionLabel(m) });
+        }
+      })
     }.padding({
       left: 20, right: 20,
       // ★ 2026-09-23 用户：「（仿真翻页按钮）与容器贴底，加一点点间距」
@@ -9555,59 +9573,14 @@ oAnimInitNode 配套） */
   /**
    * 「阅读方式」一行四档（**2026-10-26 用户要求，替代原来的单按钮循环切换**）。
    *
-   * 用户原话：「底部有个点击切换阅读方式的按钮…把这个按钮拆解，挪到下一行展开，然后分别是
-   *   横滑、仿真、上下、无动画。无动画是占位的，注释上，方便后续接入，然后其他的是真实」。
-   *
-   * 与旧实现的差别（旧 = `FlipModeButton()`，已删除）：
-   * · 旧：一个胶囊，点一下按 仿真→横滑→上下滚动→仿真 循环，**要试才知道下一档是什么**；
-   * · 新：四格平铺**直接点**，点一次就到目标档，当前档高亮（蓝底白字），所见即所得。
-   *
-   * ⚠️ 顺序由常量 `READ_MODE_OPTIONS` 决定（横滑/仿真/上下/无动画），**不是**数值顺序
-   *   （数值是 仿真0 / 横滑1 / 滚动2 / 无动画3）—— 想调顺序只改那个数组。
-   * ⚠️ 文案只用两字（`上下` 而非 `上下滚动`）：四格等分宽度，三字会挤；行首「阅读方式」已表意。
-   * ⚠️ 真实切换仍然交给 `switchReadMode()`（进度交接逻辑一行没动）；
-   *   本 @Builder 只负责"选谁"，不碰任何排版/落盘。
+   * 2026-11-05（R-2-c）：**整个 @Builder 已搬进 `ReaderReadModeBlock.ets`**。
+   *   为什么搬：它是纯视图（选中态 + 两组颜色 + 点击回调），副作用全在页面
+   *   （`switchReadMode()` 19 处调用、关面板、收回底栏图标、toast）⇒ 搬视图零风险。
+   *   搬走后本页不再需要 `Color` 直写高亮色 —— 已在组件里，仍与面板其它行同源
+   *   （日间深字 / 夜间浅字 + `#007DFF` 选中）。
+   *   档位顺序与文案**没搬**：仍是本页 `readModeOptions()` / `readModeOptionLabel()`
+   *   （后者还被 toast 复用）⇒ 单一实现，不产生第二份。
    */
-  @Builder
-  ReadModeRow() {
-    Row({ space: 6 }) {
-      Text('阅读方式')
-        .fontSize(12)
-        .width(52)
-        .maxLines(1)
-        .fontColor(this.colorMode == 0 ? 'rgba(248, 249, 250, 0.6)' : 'rgba(19, 19, 19, 0.6)')
-      ForEach(this.readModeOptions(), (m: number) => {
-        Button(this.readModeOptionLabel(m))
-          .fontSize(13)
-          .fontColor(this.readMode === m
-            ? Color.White
-            : (this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'))
-          .backgroundColor(this.readMode === m
-            ? '#007DFF'
-            : (this.colorMode == 0 ? 'rgba(248, 249, 250, 0.16)' : 'rgba(19, 19, 19, 0.06)'))
-          .borderRadius(18)
-          .height(34)
-          .padding({ left: 6, right: 6 })
-          .layoutWeight(1)
-          .clickEffect(UiMotion.CLICK)
-          .onClick(() => {
-            Haptics.tap();
-            if (m === this.readMode) {
-              return;
-            }
-            this.switchReadMode(m);
-            // 2026-10-31：选完动画档直接关设置弹窗，避免误触/停留
-            this.settingDialog?.close();
-            // 同步把底栏「设置」图标收回空心态，否则下次要点两次才能再开
-            this.isShowContentSetting = false;
-            this.getUIContext().getPromptAction().showToast({ message: this.readModeOptionLabel(m) });
-          })
-      }, (m: number): string => 'rm-' + m)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-  }
-
   /** 阅读方式四档的按钮文案（四档都是真实档，2026-10-26 起「无动画」已接入） */
   private readModeOptionLabel(m: number): string {
     if (m === READ_MODE_FLIP_SLIDE) {
