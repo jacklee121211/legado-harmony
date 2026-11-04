@@ -1,4 +1,5 @@
 import { GroupEvents, GroupChangedListener, GroupChangedPayload } from '../../common/group/GroupEvents'
+import { ShelfChipRouter } from '../../common/shelf/ShelfChipRouter'
 import BookGroupsDao from '../../database/dao/BookGroupsDao'
 import { BookGroups } from '../../database/entities/BookGroups'
 // ⚠️ 2026-10-20：`BookType` 已不再使用 —— 顶栏 chip 行整体换成官方 `SegmentButton`
@@ -102,7 +103,7 @@ export default struct groupTypeComponent {
    *   ⇒ 用 `@Watch` 反查分组、回写 chip 三件套（高亮 id / 分段下标 / 哨兵名），
    *     让"任何来源的 bookTypeNumber 变化"都能让 chip 跟得上（单一真源仍是 bookTypeNumber）。
    */
-  @Link @Watch('onBookTypeSynced') bookTypeNumber:number
+  @Link bookTypeNumber:number
   /**
    * 「最近」虚拟 chip 状态（2026-10-19 需求第 3 条）。
    *
@@ -194,39 +195,37 @@ export default struct groupTypeComponent {
    */
   // 2026-11-04（P4b 批 C-3）：原 groupPanelDialog 字段已删 —— 宿主化后打开时 new、关闭走 closeCurrent()
   /**
-   * `bookTypeNumber` 被**外部**改动时（返回手势等）把 chip 选中态同步过来。
+   * **定向**切某个系统 chip（2026-11-05 定稿）：只给"明确要动 chip"的调用方用
+   * （目前唯一调用方 = `IndexShelf` 的返回手势：根分组 →「全部」）。
    *
-   * ⚠️ 为什么要这个方法：chip 的高亮/下标是本组件 `@State`（`chipHighlightId` / `chipSel`），
-   *   只有 chip 自己的点击分支会改它们 ⇒ 外部只改 `bookTypeNumber` 会出现
-   *   「内容变成全部了、顶部标签还停在分组」（用户真机反馈 2026-11-05）。
-   *   ⇒ `bookTypeNumber` 是**单一真源**，本方法负责让 chip 跟随它。
+   * ⚠️ 为什么不做成 `@Watch(bookTypeNumber)` 全局同步（试过，已废弃）：
+   *   chip 的选中态是本组件 @State，而 `bookTypeNumber` 会被很多路径改（进分组、
+   *   点书、刷新…）。全局同步 = 每次改都动 chip ⇒ 进文件夹时自定义 id 不在 chip 序列里，
+   *   下标换算落错 ⇒ 用户看到"标签乱跳"。
+   *   ⇒ 只有显式调用本方法时才动 chip，其它路径一概不碰。
+   *
+   * @returns true = 已找到该 chip 并完成切（内容 + 高亮一起变）
    */
-  private onBookTypeSynced(): void {
-    if (this.onRecentChip) {
-      return
+  selectSystemChipByName(name: string): boolean {
+    const hit = this.groupList.find((g: BookGroups): boolean =>
+      g.isSystem && (g.groupName ?? '') === name)
+    if (hit === undefined || hit.groupId === undefined) {
+      return false
     }
-    const hit = this.groupList.find((g: BookGroups): boolean => (g.groupId ?? -1) === this.bookTypeNumber)
-    if (hit === undefined) {
-      return
-    }
-    // ⚠️ 2026-11-05（用户真机）：**只有系统 chip 才同步**。
-    //   现象：进某个分组（bookTypeNumber = 自定义 id ≥ 5）时，顶部标签从「分组」跳到「最近」。
-    //   根因：`chipSelectedIndex()` 是按"系统 chip 序列"换算下标的，自定义分组不在序列里
-    //   ⇒ 换算落到 0 = 「最近」。而"进分组"本来就不该动 chip（仍在「分组」这个视角里浏览）。
-    //   ⇒ 判据用**名字**（全部 / 分组），未分组·自定义分组一律不同步。
-    const name: string = hit.groupName ?? ''
-    if (name !== '分组' && name !== '全部') {
-      return
-    }
-    this.chipHighlightId = this.bookTypeNumber
-    this.chipSel = this.chipSelectedIndex()
+    this.onRecentChip = false
     this.GROUP = name === '分组' ? '分组' : '标签'
+    this.bookTypeNumber = hit.groupId
+    this.chipHighlightId = hit.groupId
+    this.chipSel = this.chipSelectedIndex()
     AppStorage.setOrCreate<string>('SHELF_CURRENT_GROUP_NAME', name)
-    ShelfPrefs.setCurrentChipId(this.bookTypeNumber)
+    ShelfPrefs.setCurrentChipId(hit.groupId)
+    return true
   }
 
   aboutToAppear(): void {
     GroupEvents.subscribe(this.shelfListener)
+    // 2026-11-05：注册 chip 端口（唯一调用方 = IndexShelf 返回手势「根分组 → 全部」）
+    ShelfChipRouter.register((name: string): boolean => this.selectSystemChipByName(name))
     // 高亮基准初始化（2026-10-19 二修）：与 `IndexShelf.aboutToAppear` 恢复出的状态对齐
     //   · 停在「最近」 ⇒ 哨兵；否则用当前分组 id。
     //   为什么不用 `onRecentChip` 直接推导 highlightId：它只是个布尔，推不出"停在哪个分组"；
@@ -564,6 +563,8 @@ export default struct groupTypeComponent {
 
   aboutToDisappear(): void {
     GroupEvents.unsubscribe(this.shelfListener)
+    // 2026-11-05：注销 chip 端口（闭包持有本组件，不清会留下已销毁组件）
+    ShelfChipRouter.unregister()
   }
 
   build() {

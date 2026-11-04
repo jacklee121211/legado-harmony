@@ -20,6 +20,7 @@ import { BookGroups } from '../../../database/entities/BookGroups'
 import BookGroupsDao from '../../../database/dao/BookGroupsDao'
 // 2026-11-05：返回手势（分组域逐级返回）的端口 —— Index.onBackPress 会问它一句
 import { ShelfBackRouter } from '../../../common/shelf/ShelfBackRouter'
+import { ShelfChipRouter } from '../../../common/shelf/ShelfChipRouter'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 // ── Symbol 点击动效令牌 + 全局震动反馈（2026-09-25 新增）──────────────────────
 import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion'
@@ -330,7 +331,12 @@ export default struct IndexShelf {
   private handleBackGesture(): boolean {
     const cur: number = this.bookTypeNumber
     if (cur === 1) {
-      this.bookTypeNumber = 2
+      // 2026-11-05：走**定向端口**让 chip 与内容一起切到「全部」
+      //   （chip 的选中态是 GroupType 的 @State，本页改不到；见 ShelfChipRouter 文件头）。
+      //   端口没注册（极端情况）时退回"只改内容"，至少不把返回漏给系统。
+      if (!ShelfChipRouter.selectSystemChip('全部')) {
+        this.bookTypeNumber = 2
+      }
       return true
     }
     if (cur >= 5) {
