@@ -74,7 +74,11 @@ V2.0.2 封面圆角对齐 + 进场更顺
 - `.githooks/post-commit` 钩子会把它**同步**到两处并并入**同一笔提交**
   （生成 → `git add` → `git commit --amend --no-verify --no-edit`；提交信息与内容不变，
   只有 hash 与产物变化，命令输出会打印 `旧hash -> 新hash`；rebase/merge 期间不动）：
-  `AppScope/app.json5`（versionName / versionCode = 1000+major*100+minor*10+patch）
+  `AppScope/app.json5`（versionName / versionCode = `major*1000000 + minor*1000 + patch`）
+  ⚠️ **2026-11-05 换过公式**（旧公式 `1000+major*100+minor*10+patch` 在 minor 进位时会**倒退**：
+  旧版 3.0.13 算出 1313，而 3.1.0 只能算出 **1310** ⇒ 脚本「只升不降」护栏直接拒写、
+  即便强写系统与 AppGallery 也会按降级拒收）。新公式：3.0.13→3000013、3.1.0→3001000。
+  发版前若发现 code 比线上小，先查是不是用了老旧脚本。
   与 `entry/src/main/ets/pages/view/myCenter/about/VersionLogData.ets`（更新日志数据，
   **只含当前版本一条**）；
   ⚠️ 为什么不是 `commit-msg`：隔离实验实测「`commit-msg`/`prepare-commit-msg` 里 `git add`

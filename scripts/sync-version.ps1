@@ -14,8 +14,9 @@
     · 找不到版本号的提交**不进更新日志**（如内部检查点），只在控制台提示；
     · 同一版本号只保留**最新**一条提交，条目做并集 ⇒ 历史里 V2.0.0 的十几次重复
       提交不会把日志刷屏；
-    · `versionCode = 1000 + major*100 + minor*10 + patch`（3.0.11→1311；千位前缀保证
-      新版 V3.x 仍高于旧分支遗留在设备上的 1003，避免降级拒装）；
+    · `versionCode = major*1000000 + minor*1000 + patch`
+      （2026-11-05 修正，**旧公式已废**，见下方「版本号编码」一节；3.0.13→3000013、3.1.0→3001000、
+        3.0.14→3000014 ⇒ 严格保持 semver 顺序）；
     · **更新日志只展示「当前版本」一条，不保留历史**（2026-10-05 用户定：
       "在更新日志中，不保留历史日志，只展示当前版本日志"）⇒ `-MaxVersions` 默认 **1**；
       同一版本号的多次提交**合并条目**，所以一个版本内的多条改动不会丢。
@@ -28,6 +29,18 @@
     · 手动刷新/回填： pwsh -File scripts/sync-version.ps1
     · 钩子（commit-msg）： pwsh -File scripts/sync-version.ps1 <commit-msg 文件>
       —— 会把"正在提交的这条备注"当作最新一条参与生成（它此时还不在 git log 里）。
+
+  版本号编码（2026-11-05 修正，**上架前必须用这一版**）
+  ============================================================================
+  旧公式 `1000 + major*100 + minor*10 + patch` 在 minor 进位时**会倒退**：
+      3.0.13 → 1313   3.1.0 → **1310**   3.0.14 → 1314
+  即 3.1.0 的 code 比 3.0.13 还小 ⇒ ① 脚本「只升不降」护栏会**拒绝写入**
+  （提交备注写 V3.1.0 也没用，app.json5 与更新日志都不动）；② 即使强写，
+  系统安装与 AppGallery 上架都会按**降级**拒收。
+  新公式 `major*1000000 + minor*1000 + patch`：
+      3.0.13 → 3000013   3.1.0 → 3001000   3.0.14 → 3000014   10.0.0 → 10000000
+  语义：patch 段 0..999、minor 段 0..999，semver 顺序 = code 顺序。
+  旧包（code=1313 之类）一律远小于新包 ⇒ 升级方向永远正确，不会降级拒装。
 #>
 param(
   [string]$CommitMsgFile = '',
@@ -181,7 +194,7 @@ $guardVer = [regex]::Match([string]$newest, '\d+\.\d+\.\d+').Value
 $guardCode = 0
 if ($guardVer -ne '') {
   $gp = $guardVer.Split('.')
-  $guardCode = 1000 + [int]$gp[0] * 100 + [int]$gp[1] * 10 + [int]$gp[2]
+  $guardCode = [int]$gp[0] * 1000000 + [int]$gp[1] * 1000 + [int]$gp[2]
 }
 $curCode = 0
 $curMatch = [regex]::Match([System.IO.File]::ReadAllText($appJson), '"versionCode"\s*:\s*(\d+)')
@@ -218,7 +231,7 @@ foreach ($ver in $byVersion.Keys) {
 $verNums = [regex]::Match($newest, '\d+\.\d+\.\d+').Value
 if ($verNums -ne '') {
   $p = $verNums.Split('.')
-  $code = 1000 + [int]$p[0] * 100 + [int]$p[1] * 10 + [int]$p[2]
+  $code = [int]$p[0] * 1000000 + [int]$p[1] * 1000 + [int]$p[2]
   $json = [System.IO.File]::ReadAllText($appJson)
   $json = [regex]::Replace($json, '("versionCode"\s*:\s*)\d+', "`${1}$code")
   $json = [regex]::Replace($json, '("versionName"\s*:\s*")[^"]*(")', "`${1}$verNums`${2}")
