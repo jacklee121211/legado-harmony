@@ -493,9 +493,10 @@ struct Main {
       //   用户在外屏正看着书，展开后却停在书架，得再点一次书。
       //   复用同一条快速阅读链路（openLastReadBook），不新写跳转；
       //   已在阅读页（内屏看书 -> 合上 -> 展开）时 	opName === READER 直接不跳。
-      if (AppRouter.isReady() && AppRouter.topName() !== RouteName.READER) {
-        this.openLastReadBook(false)
-      }
+      // 2026-11-06 二修（真机：展开后仍停在书架）：折叠/展开会让 Navigation 重排，
+      //   一次性 push 会被重排冲掉。⇒ 走带重试的 autoEnterReaderOnInner(attempt)，
+      //   与 autoEnterReaderOnOuter 同款的门（栈就绪 + 路由就绪 + 已在阅读页不重推）。
+      this.autoEnterReaderOnInner(0)
       return
     }
     this.autoEnterReaderOnOuter()
@@ -517,6 +518,39 @@ struct Main {
    * 失败兜底：`openLastReadBook` 自己会 toast「还没有阅读记录」，
    * 同时本页会渲染 `OuterHomeCard` 的空态卡片 ⇒ 不会留下黑屏/死路。
    */
+  /**
+   * 展开到内屏后**接续进阅读器**（2026-11-06，用户：展开后不该停在书架）。
+   *
+   * 为什么要重试：折叠/展开瞬间 Navigation 会重排，一次性 push 会被重排冲掉
+   *   （真机：代码走到了、也确实调了 openLastReadBook，但仍停在书架）。
+   *   与 utoEnterReaderOnOuter 同一套门 + 同一套重试节奏。
+   */
+  private autoEnterReaderOnInner(attempt: number = 0): void {
+    if (this.outerMinimal) {
+      return
+    }
+    if (!(AppStorage.get<boolean>('startupStackCleared') ?? false) || !AppRouter.isReady()) {
+      if (attempt < 25) {
+        setTimeout(() => {
+          this.autoEnterReaderOnInner(attempt + 1)
+        }, 200)
+      }
+      return
+    }
+    if (AppRouter.topName() === RouteName.READER) {
+      return
+    }
+    this.openLastReadBook(false)
+    // 折叠重排可能把刚 push 的页冲掉 ⇒ 400ms 后确认一次，最多补 3 次
+    if (attempt < 3) {
+      setTimeout(() => {
+        if (!this.outerMinimal && AppRouter.topName() !== RouteName.READER) {
+          this.autoEnterReaderOnInner(attempt + 1)
+        }
+      }, 400)
+    }
+  }
+
   private autoEnterReaderOnOuter(attempt: number = 0): void {
     if (!this.outerMinimal) {
       return
