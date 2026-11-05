@@ -136,8 +136,9 @@ export function catalogPanelHeightVp(winHpx: number, density: number, typing: bo
     return want
   }
   const availVp: number = winHpx / density
-  // 上下各留 12vp 间隙，再压到 90% 上限
-  const cap: number = Math.max(200, availVp * 0.9 - 24)
+  // 2026-11-06 外屏实测（980x980）：90% 仍会在顶部被裁 —— 打开后弹窗还会因底部避让整体上移，
+  //   所以上限要再保守：**80% 屏高，上下各留 16vp**（用户：矮一点没关系）。
+  const cap: number = Math.max(180, availVp * 0.8 - 32)
   return Math.min(want, cap)
 }
 

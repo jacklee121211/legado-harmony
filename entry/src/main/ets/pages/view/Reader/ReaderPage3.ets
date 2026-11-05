@@ -9736,6 +9736,11 @@ oAnimInitNode 配套） */
     if (action === 3) {
       return this.readerModeName(this.nextReaderMode())
     }
+    // 外屏翻页档位格（2026-11-06）：显示**当前**档位，点一下在 无动画 <-> 上下 之间切。
+    //   ⚠️ 之前这里掉到 `return '设置'` 兜底，所以外屏第 5 格一直写着「设置」。
+    if (action === 5) {
+      return this.outerReadMode === 'scroll' ? '上下' : '无动画'
+    }
     return '设置'
   }
 
