@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "id": "celadon",
+  "name": "青瓷",
+  "author": "工程内置",
+  "previewColor": "#8FBFAE",
+  "elements": [
+    { "key": "reader.band.top",  "type": "image", "asset": "band_top.png" },
+    { "key": "reader.band.bottom", "type": "image", "asset": "band_bottom.png" },
+    { "key": "reader.text.frame", "type": "image", "asset": "frame.png",
+      "insetExtraVp": 16, "slice": { "top": 60, "right": 60, "bottom": 60, "left": 60 } },
+    { "key": "reader.infobar.bg.top", "type": "image", "asset": "infobar.png",
+      "slice": { "top": 28, "right": 30, "bottom": 28, "left": 30 } },
+    { "key": "reader.infobar.bg.bottom", "type": "image", "asset": "infobar.png",
+      "slice": { "top": 28, "right": 30, "bottom": 28, "left": 30 } }
+  ],
+  "dark": [
+    { "key": "reader.band.top",  "type": "image", "asset": "band_top_dark.png" },
+    { "key": "reader.band.bottom", "type": "image", "asset": "band_bottom_dark.png" },
+    { "key": "reader.text.frame", "type": "image", "asset": "frame_dark.png",
+      "insetExtraVp": 16, "slice": { "top": 60, "right": 60, "bottom": 60, "left": 60 } },
+    { "key": "reader.infobar.bg.top", "type": "image", "asset": "infobar_dark.png",
+      "slice": { "top": 28, "right": 30, "bottom": 28, "left": 30 } },
+    { "key": "reader.infobar.bg.bottom", "type": "image", "asset": "infobar_dark.png",
+      "slice": { "top": 28, "right": 30, "bottom": 28, "left": 30 } }
+  ]
+}
