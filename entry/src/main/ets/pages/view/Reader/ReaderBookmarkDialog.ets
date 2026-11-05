@@ -232,7 +232,11 @@ export struct ReaderBookmarkDialog {
       ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55),
       this.colorMode == 0 ? ThemeColorMode.DARK : ThemeColorMode.LIGHT))
     .borderRadius(20)
-    .position({ bottom: 8, right: 8 })
+    // 2026-11-06 真机（外屏）：胶囊底部仍没包住第三个按钮（顶部/定位/底部）
+  //   原因：容器高度按内容自适应，缩短内边距后总高不够，胶囊底边落在第二个按钮下面。
+  //   ⇒ 显式给足高度（3 行 × 约 40vp + 上下内边距），再定位。
+  .constraintSize({ minHeight: 138 })
+  .position({ bottom: 8, right: 8 })
   }
 
   build() {
@@ -324,3 +328,4 @@ export struct ReaderBookmarkDialog {
     .backgroundColor(this.colorMode == 0 ? READER_PANEL_NIGHT_BG : READER_PANEL_DAY_BG)
   }
 }
+ 
