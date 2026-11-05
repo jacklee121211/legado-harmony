@@ -9772,6 +9772,18 @@ oAnimInitNode 配套） */
       this.openBookmarkDialog()
     } else if (index === 2) {
       // 听书面板（@CustomDialog，见 `openListenDialog()`）
+      // 2026-11-06 外屏（用户拍板方案 A）：外屏**不新起听书**，只能跟随内屏已开始的会话。
+      //   · 已在播 ⇒ 复用迷你条同一个入口 `miniBarPrimary()`（暂停/续播/回进度语义一致）
+      //   · 未开始 ⇒ 提示回内屏开始（外屏没有听书面板，别让用户点了没反应）
+      if (this.outerMinimal) {
+        if (this.ttsState === 'stopped' || !this.listeningThisBook()) {
+          this.getUIContext().getPromptAction().showToast({ message: '请在内屏开始听书' })
+          return
+        }
+        Haptics.tap()
+        this.miniBarPrimary()
+        return
+      }
       this.openListenDialog()
     } else if (index === 3) {
       // ── 三模式循环：日间 → 夜间 → 自由 → 日间（2026-09-26 加上「自由」）──────────
