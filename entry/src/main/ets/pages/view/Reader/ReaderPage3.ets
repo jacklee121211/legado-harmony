@@ -139,6 +139,8 @@ import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent
 import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
 // 2026-11-06：外屏固定版式常量（字号/行距/留白），只在投影出口覆盖一次
 import { OuterStyle } from '../../../common/reader/OuterStyle';
+// 2026-11-06：折叠重建前的进度内存透传（真机日志：重建时磁盘值落后于内存）
+import { ReaderPosMemory, ReaderPos } from '../../../common/reader/ReaderPosMemory';
 // 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../common/dialog/DialogHost'
 // 2026-11-04（P3 批 A-5）：本页**不再** import `ReaderPorts` —— 它在本页最后一个写点
@@ -1291,6 +1293,13 @@ oAnimInitNode 配套） */
    *   · **不停播**听书 —— 与工程「退出阅读页不停播」的既定口径一致。
    */
   onOuterMinimalChanged(): void {
+    // ── 2026-11-06 形态切换：先把**内存里的当前位置**记下来 ────────────────────
+    //   本页随后可能被销毁重建（真机日志：同一本书两次 startPlay）。
+    //   重建时 startPlay 走 LOCAL 分支，它会先问 ReaderPosMemory ⇒ 不会被
+    //   "还没落盘的旧磁盘值"顶掉。双向都记：合上记内屏位置，展开记外屏位置。
+    const curPos = this.bookData.localBookDurChapterPos
+    ReaderPosMemory.remember(this.bookData.bookName,
+      curPos?.resourceIndex ?? 0, curPos?.startDomPos ?? '')
     // ── 外屏档位（2026-11-06）──────────────────────────────────────────────
     //   进外屏：记下内屏档位（`auto` 恢复用），然后按 `outerReadMode` 下发；
     //   离外屏：恢复内屏档位 —— 保证外屏的临时选择**不会污染**内屏设置。
@@ -4474,12 +4483,18 @@ oAnimInitNode 配套） */
       this.continueTargetChar = cOff;
       this.startPlay(this.bookData.bookUrl ?? '', cSpine, dp);
     } else {
+      // ── 2026-11-06 折叠重建：**内存位置比磁盘新** ────────────────────────────
+      //   真机日志实证：进外屏 domPos=15，展开重建时又从磁盘读到 7（写盘还没落地）
+      //   ⇒ 用户看到"进度被重置"。这里先问内存，取不到再退回磁盘（行为同改造前）。
+      const memPos: ReaderPos | null = ReaderPosMemory.recall(this.bookData.bookName);
+      const sp: number = memPos !== null ? memPos.spine
+        : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
+      const dp: string = memPos !== null ? memPos.domPos
+        : (this.bookData.localBookDurChapterPos?.startDomPos ?? '');
       hilog.info(0x0000, 'ContinueIdx',
-        'startPlay from LOCAL: spine=%{public}d domPos=%{public}s book=%{public}s',
-        this.bookData.localBookDurChapterPos?.resourceIndex ?? 0,
-        this.bookData.localBookDurChapterPos?.startDomPos ?? '', this.bookData.bookName);
-      this.startPlay(this.bookData.bookUrl ?? '', this.bookData.localBookDurChapterPos?.resourceIndex ?? 0,
-        this.bookData.localBookDurChapterPos?.startDomPos ?? '');
+        'startPlay from %{public}s: spine=%{public}d domPos=%{public}s book=%{public}s',
+        memPos !== null ? 'MEMORY' : 'LOCAL', sp, dp, this.bookData.bookName);
+      this.startPlay(this.bookData.bookUrl ?? '', sp, dp);
     }
     // ── 应用接续（2026-10-24）：本页进入 ⇒ 向系统声明"可接续" ─────────────────
     // 官方 `setMissionContinueState(ACTIVE)`：非此页时系统不显示接续入口。
