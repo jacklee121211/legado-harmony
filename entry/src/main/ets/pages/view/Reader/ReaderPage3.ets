@@ -98,7 +98,7 @@ import { ReaderFontDialog } from './ReaderFontDialog';
 // ── 应用接续 / 无缝流转（2026-10-24）：把当前阅读态登记给 EntryAbility.onContinue ──
 // 2026-11-04（P3 批 A-5）：`ContinuePayload` 与 `ContinueBridge.publish` 的唯一调用方
 //   （`publishContinueStateWith`）已搬进 `ReaderSession` ⇒ 本页只留 `ContinueBridge`
-//   （`aboutToDisappear` 里仍要 `ContinueBridge.leaveReader`）。
+//   （aboutToAppear 领接续令牌、aboutToDisappear 凭令牌关闸，见 continueSessionToken）。
 import { ContinueBridge } from '../../../common/utils/ContinueBridge';
 import { ReaderSchemeDialog } from './ReaderSchemeDialog';
 // ── 按键翻页（2026-10-07）：音量键翻页，开关在 设置-功能-「音量键翻页」（2026-10-19：原「按键翻页」组已删）──
@@ -517,6 +517,12 @@ export default struct ReaderPage3 {
    * ——只注册不解绑会让闭包连同整个阅读页实例一起驻留（每次开书漏一个）。
    */
   private webSyncListenerCb: ((event: emitter.EventData) => void) | null = null
+  /**
+   * 应用接续会话令牌（2026-11-06）：`aboutToAppear` 里 `openReaderSession` 领取，
+   * `aboutToDisappear` 里凭它关闸 —— 折叠重建时旧页销毁晚于新页进入，
+   * 只有"当前代"才能把接续开关关掉（竞态实证与机制见 ContinueBridge 注释）。
+   */
+  private continueSessionToken: number = -1
   @StorageLink('windowWidth') @Watch('onViewportChanged') windowWidth: number = 0;
   @StorageLink('windowHeight') @Watch('onViewportChanged') windowHeight: number = 0;
 
@@ -4498,7 +4504,11 @@ oAnimInitNode 配套） */
     }
     // ── 应用接续（2026-10-24）：本页进入 ⇒ 向系统声明"可接续" ─────────────────
     // 官方 `setMissionContinueState(ACTIVE)`：非此页时系统不显示接续入口。
-    ContinueBridge.setMissionActive(this.getUIContext().getHostContext() as common.UIAbilityContext, true);
+    // 2026-11-06 改走**带代际的会话对**：折叠重建时旧页的 aboutToDisappear 晚于
+    // 本页到达（真机日志 `.904 true → .159 false`），无代际校验会把 ACTIVE 覆盖回 false
+    // ⇒ 进入领令牌、销毁凭令牌关闸（见 ContinueBridge.openReaderSession 注释）。
+    this.continueSessionToken = ContinueBridge.openReaderSession(
+      this.getUIContext().getHostContext() as common.UIAbilityContext);
     // 桌面快捷方式「快速听书」：等就绪后自动开播（见 autoStartListenWhenReady）
     if (temp.quickListen === true) {
       this.autoStartListenWhenReady(0);
@@ -4694,9 +4704,23 @@ oAnimInitNode 配套） */
       // 应用接续观测（2026-10-24）：**真正下发给引擎**的落点是什么。
       // 与 `startPlay from CONTINUE/LOCAL` 那两行对起来看，就能区分
       // 「参数没传到」/「传到了但引擎按自己的排版重算」两种失败。
-      hilog.info(0x0000, 'ContinueIdx',
-        'engine.startPlay: spine=%{public}d domPos=%{public}s', resourceIndex || 0, domPos);
-      this.readerComponentController.startPlay(resourceIndex || 0, domPos);
+      // ⚠️ 2026-11-06：**自绘两档（上下/无动画）不驱动 ReaderKit 引擎**。
+      //   真机日志（PuraX 外屏冷启动）：mode=3 时照调引擎 startPlay，
+      //   ReaderKit 立刻 `loadDataFailed: Book parser is not initialized`
+      //   + `onGetPageDataFailed`（`load failed, errorCode is: 4`）——
+      //   自绘档的正文由 NoAnimReader/ReaderScrollView 渲染，引擎这次调用
+      //   纯属空转，还每次外屏首启刷一遍错误。
+      //   引擎的首次 startPlay 推迟到真正需要分页档时：
+      //   `switchReadMode`(自绘→分页) → `requestLocate` → `startPlayAt`，
+      //   那条链此刻 BookHandler 已注册（上方 registerBookParser），可正常落位。
+      if (this.selfDrawnModeOn()) {
+        hilog.info(0x0000, 'testTag',
+          'engine.startPlay skipped: self-drawn mode (scroll/none render by themselves)');
+      } else {
+        hilog.info(0x0000, 'ContinueIdx',
+          'engine.startPlay: spine=%{public}d domPos=%{public}s', resourceIndex || 0, domPos);
+        this.readerComponentController.startPlay(resourceIndex || 0, domPos);
+      }
       this.CatalogList.pushAllData(this.BookHandler?.getCatalogList() || []); //获取目录列表
       // 单源目录（M3，2026-10-05）：把手机端目录**标题**发布成快照，供电脑端 `GET /toc` 用。
       // 电脑端拿这份标题列表，在**与 /book 完全同一串解码文本**上按顺序定位 ⇒ 两端章号/百分比
@@ -5445,9 +5469,11 @@ oAnimInitNode 配套） */
         //   折叠机上改为：就地刷新密度 + 按新视口重排（书不退）。
         //   2in1 拖窗口跨 DPI 的自毁兜底**保持不变**（一键回退：删掉这个 isFoldable 分支即可）。
         if (display.isFoldable()) {
+          // ⚠️ hilog 不支持带精度的格式（`%.4{public}f` 实测打成乱码，见本文件
+          //    BMPULL 那条注释）⇒ 一律先 toFixed 再 %{public}s。
           hilog.info(0x0000, 'testTag',
-            'density change on foldable: refresh in place (no pop) %.4{public}f -> %.4{public}f',
-            this.settingState.scaledDensity, scaledDensity);
+            'density change on foldable: refresh in place (no pop) %{public}s -> %{public}s',
+            this.settingState.scaledDensity.toFixed(3), scaledDensity.toFixed(3));
           this.refreshScaledDensity();
           this.applyViewportNow('density-change-foldable');
         } else {
@@ -6310,7 +6336,11 @@ oAnimInitNode 配套） */
     //   ⚠️ 只关开关、**不删阅读态** —— 键回落场景：用户读到某处 → 退回书架 →
     //      立刻发起接续。旧实现在这里 `clear()` 会让那条路直接 REJECT，
     //      而留一份几百字节的 AppStorage 快照毫无代价（真正的门禁是 mission state）。
-    ContinueBridge.leaveReader(this.getUIContext().getHostContext() as common.UIAbilityContext);
+    //   2026-11-06 改走带代际的 close：折叠重建时本回调可能**晚于**新页的进入到达，
+    //   只有本页仍是"当前代"（令牌未被新页顶掉）才真正关闸，否则跳过
+    //   （真机日志实证：`.904 新页 true → .159 旧页 false`，用户在看书接续入口却是关的）。
+    ContinueBridge.closeReaderSession(this.getUIContext().getHostContext() as common.UIAbilityContext,
+      this.continueSessionToken);
     // ★ 2026-10-24：清掉本页所有延时/轮询计时器
     //   （尺寸合流 viewportSyncTimer + 重排防抖 viewportTimer + 兜底 viewportRetryTimer
     //    + 旋转轮询 rotatePollTimer）。

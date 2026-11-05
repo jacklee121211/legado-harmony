@@ -196,6 +196,53 @@ export class ContinueBridge {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // 接续会话代际（2026-11-06，真机日志实证的竞态）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 现场真机日志：折叠展开重建阅读页时，新页 aboutToAppear 先 setMissionActive(true)
+  // （`.904 setMissionContinueState: true`），**旧页**的 aboutToDisappear 后到，
+  // 又把它写回 false（`.159 setMissionContinueState: false`）⇒ 用户明明在看书，
+  // 系统接续入口却是关闭态。两个写入方没有代际校验，"谁最后写谁赢"变成了
+  // "谁销毁得慢谁赢"。
+  // ⇒ 本页进入时领一个**令牌**，销毁时只有**当前代**的令牌才能关闸；过期令牌
+  //   只记日志、不覆盖。`setMissionActive()` 仍是唯一系统调用通路（单一通路）。
+  /** 接续会话代际计数（单调递增） */
+  private static missionSeq: number = 0;
+  /** 当前持有 ACTIVE 的会话令牌；-1 = 无归属 */
+  private static missionOwner: number = -1;
+
+  /**
+   * 阅读页进入：登记为当前接续会话并置 ACTIVE。
+   * @returns 本次会话令牌 —— aboutToDisappear 时必须原样传回 `closeReaderSession`
+   */
+  static openReaderSession(ctx: common.UIAbilityContext | null): number {
+    const token: number = ++ContinueBridge.missionSeq;
+    ContinueBridge.missionOwner = token;
+    ContinueBridge.setMissionActive(ctx, true);
+    hilog.info(DOMAIN, TAG, 'openReaderSession: token=%{public}d', token);
+    return token;
+  }
+
+  /**
+   * 阅读页销毁：**只有最新一代**才允许把接续开关关掉。
+   * 折叠重建时旧页的销毁回调会晚于新页的进入回调到达（见上方竞态说明），
+   * 过期令牌的 close 只记日志、不写系统。
+   *
+   * 与旧 `leaveReader` 的口径一致：这里**只关开关、不删阅读态**（KEY_LIVE 快照保留）
+   * —— 键回落场景「读到某处 → 退回书架 → 立刻接续」靠它不 REJECT；
+   * 真正的门禁是 mission state。
+   */
+  static closeReaderSession(ctx: common.UIAbilityContext | null, token: number): void {
+    if (token !== ContinueBridge.missionOwner) {
+      hilog.info(DOMAIN, TAG,
+        'closeReaderSession: stale token %{public}d (owner=%{public}d), skip',
+        token, ContinueBridge.missionOwner);
+      return;
+    }
+    ContinueBridge.missionOwner = -1;
+    ContinueBridge.setMissionActive(ctx, false);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // 源端：登记当前阅读态
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -204,15 +251,6 @@ export class ContinueBridge {
       return;
     }
     AppStorage.setOrCreate(ContinueBridge.KEY_LIVE, JSON.stringify(p));
-  }
-
-  /**
-   * 离开阅读页：只关"可接续"开关，**不删阅读态**。
-   * 旧实现在这里 clear() 会让「读到某处 → 退回书架 → 立刻接续」直接 REJECT；
-   * 留一份几百字节的 AppStorage 快照毫无代价，真正的门禁是 mission state。
-   */
-  static leaveReader(ctx: common.UIAbilityContext | null): void {
-    ContinueBridge.setMissionActive(ctx, false);
   }
 
   static live(): ContinuePayload | null {
