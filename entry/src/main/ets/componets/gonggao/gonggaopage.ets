@@ -58,6 +58,16 @@ export default struct GonggaoPage {
   /** 用户点了「我知道了」：只做回调请求关闭（见文件头 ⚠️），真正的 close 在创建者 */
   onConfirm: () => void = (): void => {}
 
+  /**
+   * 用户点了公告里的**可点按钮**（`GonggaoItem.actionText/action`，2026-11-05 新增）。
+   *
+   * 为什么不在弹窗里直接执行动作：动作需要 `UIAbilityContext`，而且可能是"去评分/打开某页"
+   * 这类必须由宿主决定的行为（同「关闭权归宿主」的理由，见文件头 ⚠️）。
+   * ⇒ 弹窗只把 `action` 原样抛出去，**执行与失败提示都在 `Index.ets`**，
+   *   这样以后加新动作只改宿主一处，界面文件不用动。
+   */
+  onAction: (action: string) => void = (): void => {}
+
   /** 当前页下标（驱动底部指示点） */
   @State page: number = 0
   /** 确认键 Q 弹缩放（规范 §1.2 三件套：独立状态，不用数组下标驱动动画） */
@@ -131,6 +141,27 @@ export default struct GonggaoPage {
             .objectFit(ImageFit.Contain)
             .margin({ top: 12 })
         }, (_img: ResourceStr, idx: number) => `${idx}`)
+
+        // 可点按钮（`actionText` 不写 / 空串 = 没有按钮）。动作由宿主执行，见 `onAction` 注释。
+        if (item.actionText !== undefined && item.actionText.length > 0) {
+          Text(item.actionText)
+            .fontSize(FontConstants.ITEM)
+            .fontWeight(FontConstants.W_TITLE)
+            .fontColor(this.accent())
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .height(42)
+            .borderRadius(21)
+            // 浅色块而不是实心主色：它是**次要动作**（主行动仍是底部「我知道了」）
+            .backgroundColor(this.dark() ? 'rgba(255, 255, 255, 0.10)' : 'rgba(0, 0, 0, 0.05)')
+            .margin({ top: 16 })
+            .clickEffect(UiMotion.CLICK)
+            .onClick((): void => {
+              Haptics.tap();
+              // 弹窗不执行动作，只把 action 抛给宿主（见 onAction 注释）
+              this.onAction(item.action === undefined ? '' : item.action);
+            })
+        }
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)

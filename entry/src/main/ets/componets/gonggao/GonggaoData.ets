@@ -39,7 +39,30 @@ export interface GonggaoItem {
   body: string;
   /** 配图：`$rawfile('gonggao/x.png')` 或 `$r('app.media.x')`；空数组 = 不显示 */
   images: ResourceStr[];
+  /**
+   * 【可选】页面底部那颗可点按钮的文案，如 `'点击加群'`。
+   * **不写 = 没有按钮**（`undefined` 与空串等价）。
+   */
+  actionText?: string;
+  /**
+   * 【可选】点了那颗按钮做什么，取值见下面的 `GONGGAO_ACTION_*`。
+   * 写了 `actionText` 却没写 `action`（或写了不认识的值）= 按钮显示但点了没反应。
+   */
+  action?: string;
 }
+
+/**
+ * 公告里可点按钮**支持的动作用值**（写别的值 = 按钮照常显示但点了没反应）。
+ *
+ *   `GONGGAO_ACTION_JOIN_GROUP` = 复用工程既有的「加入 QQ 群」链路：
+ *      QQ 直接进群资料页 → 打不开就开浏览器 → 再失败提示群号。
+ *      实现在 `common/utils/QqGroup.ets`，与「我的 → 设置 → 加入Q群」是**同一个函数**
+ *      （按项目铁律"同一语义只允许一处实现"，换通道只改那一处）。
+ *
+ * 以后要加新动作（例如"去评分""打开某页面"）：这里加一个常量 +
+ * 在 `Index.openGonggaoDialog()` 的 `onAction` 里加一个分支即可，**界面文件不用动**。
+ */
+export const GONGGAO_ACTION_JOIN_GROUP: string = 'joinGroup';
 
 /** 弹窗顶部标题（想叫「更新公告」「版本说明」改这里） */
 export const GONGGAO_DIALOG_TITLE: string = '公告';
@@ -54,21 +77,20 @@ export const GONGGAO_OK_TEXT: string = '我知道了';
  */
 export const GONGGAO_ITEMS: GonggaoItem[] = [
   {
-    title: '欢迎使用喵阅',
+    title: 'V3.1.0版本',
     date: '',
-    body: '感谢你选择喵阅。\n\n' +
-      '这条公告是一个示例：正文会自动换行，长文在弹窗里上下滚动；' +
-      '多页内容可以左右滑动切换。\n\n' +
+    body: '感谢您选择喵阅。\n\n' +
+      '在过去的版本，我们的动画体验切换不平滑，甚至出现书签不同步的情况所以在此版本我们进行了优化\n' +
+      '1.新增无动画模式，设置内动画切换按钮从点击变成一字排布，更方便使用\n' +
+      '2.震动反馈、阅读器设置页滑块新增防误触锁定；亮度随系统/屏幕常亮增加确认' +
+      '3.修复横滑、仿真模式下点击书签可能不能瞬时到达问题' +
+      '4.完整的分组系统期待您的体验，优美的四宫格预览，最多十级子目录，新的批量管理系统，更多功能请自行探索' +
+      '5.全架构链路的重构，性能体验的提升' +
       '把你自己的公告写进 GonggaoData.ets 就行，界面代码一行都不用改。',
-    images: []
-  },
-  {
-    title: '配图与多页示例',
-    date: '示例',
-    body: '下面是配图示例（当前复用应用图标）。\n\n' +
-      '换图方法：把图片放进 resources/rawfile/gonggao/ 目录，' +
-      '再把 images 写成 $rawfile(\'gonggao/你的图片名.png\')。\n\n' +
-      '继续往 GONGGAO_ITEMS 里加对象，就是继续加页。',
-    images: [$r('app.media.icon')]
+    images: [],
+    // 底下这颗按钮：不想要就把 actionText 改成 ''（或整行删掉）
+    actionText: '点击加群',
+    // 'joinGroup' = 复用「设置 → 加入Q群」的同一套链路（QQ → 浏览器 → 提示群号）
+    action: GONGGAO_ACTION_JOIN_GROUP
   }
 ];

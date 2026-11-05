@@ -102,6 +102,9 @@ import { OfflineMode } from '../common/utils/OfflineMode'
 // ② new controller 并打开；③ 打开成功后记账（见 `maybeShowGonggao` 注释）。
 import GonggaoPage from '../componets/gonggao/gonggaopage'
 import { Gonggao } from '../componets/gonggao/Gonggao'
+// 公告里的可点按钮动作（「点击加群」）：取值常量在内容文件里，链路在公共件 `QqGroup`
+import { GONGGAO_ACTION_JOIN_GROUP } from '../componets/gonggao/GonggaoData'
+import { QqGroup, QQ_GROUP_CODE } from '../common/utils/QqGroup'
 
 // ── 阅读里程碑主动推广（2026-10-28 新增，用户需求）──────────────────────────
 // 「累计阅读 >1h 弹评分软引导 / >10h 弹 VIP」的**判定与记账**全在 `ReadPromo`；
@@ -1272,6 +1275,12 @@ struct Main {
           // 本弹窗不自己 close（`RenameBookDialog.ets:27-32` 真机结论）⇒ 关闭权在本页
           onConfirm: (): void => {
             this.closeGonggaoDialog()
+          },
+          // 公告里的可点按钮（如「点击加群」）—— **动作执行放在宿主**，弹窗只抛 action 上来。
+          // 目前只支持「加群」，走的是与「我的 → 设置 → 加入Q群」**同一个** `QqGroup.join`
+          // （单一通路：换通道只改 `common/utils/QqGroup.ets`）。
+          onAction: (action: string): void => {
+            this.onGonggaoAction(action)
           }
         }),
         autoCancel: true,
@@ -1297,6 +1306,31 @@ struct Main {
       this.gonggaoDialog = null
       hilog.warn(0x0000, 'Gonggao', `openGonggaoDialog failed: ${JSON.stringify(e)}`)
     }
+  }
+
+  /**
+   * 公告弹窗里的**可点按钮**动作分派（2026-11-05 新增）。
+   *
+   * `GonggaoItem.action` 的取值见 `componets/gonggao/GonggaoData.ets` 的 `GONGGAO_ACTION_*`。
+   * 目前只有一种：
+   *   · `GONGGAO_ACTION_JOIN_GROUP` ⇒ `QqGroup.join(ctx, onAllFailed)`
+   *     —— 与「我的 → 设置 → 加入Q群」**同一个函数**（`common/utils/QqGroup.ets`，三级链路：
+   *        `forward/url` 让 QQ 直接进群资料页 → 打不开就开浏览器 → 再失败提示群号）。
+   *     失败提示复用本页 `promoToast()`（`showMessage` 的安全封装，见其注释）——
+   *     那条 Toast 在 `showCommentDialog()` 之后会被 ArkUI 拒收，但本路径不涉及系统评分弹窗。
+   *
+   * 未知/空 action：什么都不做（按钮点了"没反应"比弹个错误提示更不打扰）。
+   * 新增动作只改这里 + `GonggaoData.ets` 的常量，**界面文件不用动**。
+   */
+  private onGonggaoAction(action: string): void {
+    if (action === GONGGAO_ACTION_JOIN_GROUP) {
+      QqGroup.join(this.hostAbilityContext(), (): void => {
+        hilog.warn(0x0000, 'Gonggao', 'join QQ group failed at all three levels');
+        this.promoToast(`打开失败，请手动搜索 QQ群：${QQ_GROUP_CODE}`)
+      })
+      return
+    }
+    hilog.info(0x0000, 'Gonggao', `unhandled announcement action: ${action}`)
   }
 
   /**

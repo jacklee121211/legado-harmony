@@ -1,10 +1,10 @@
 import MySetConstants from '../../../common/constants/MySetConstants'
 // ── 加入 QQ 群（2026-10-21 新增）：跳转走系统 openLink ────────────────────────
 import { common } from '@kit.AbilityKit'
-import { BusinessError, deviceInfo } from '@kit.BasicServicesKit'
-import { hilog } from '@kit.PerformanceAnalysisKit'
-// 2026-10-24：QQ 群入口改用 `forward/url`，需要 base64 编码官方邀请链接（url_prefix）
-import { util } from '@kit.ArkTS'
+import { deviceInfo } from '@kit.BasicServicesKit'
+// 2026-11-05：三级链路（forward/url → 浏览器 → 群号兜底）搬到公共件，
+// 公告弹窗（`componets/gonggao`）与本页**共用同一份**实现
+import { QqGroup, QQ_GROUP_CODE } from '../../../common/utils/QqGroup'
 import { SetList, SetGroupList } from '../../../componets/dataList/SetListGroup'
 import { SetListView } from '../../../componets/myset/SetListView'
 // 首页三段按钮排序控件（2026-10-21 新增）
@@ -50,60 +50,14 @@ import { DialogHost } from '../../../common/dialog/DialogHost'
 // 2026-10-19：「书架动画速度」滑块按用户要求**整项删除**（连 `shelfAnimSpeed` 读写一起去掉）
 // ⇒ 不再 import EntranceWave；书架入场波次回归 `EntranceWave` 内置默认档（level 3 = 0.75x）。
 
-// ── 喵阅官方 QQ 群（2026-10-21 新增；2026-10-22 首改；2026-10-24 二次改，见下）──────
+// ── 喵阅官方 QQ 群（2026-10-21 新增；2026-10-24 首改；2026-11-05 抽成公共件）──────
 //
-// 三级链路：**① 让 QQ 打开官方邀请链接 → ② 邀请链接（浏览器/H5）→ ③ 群号兜底**。
-//
-// ⚠️ 2026-10-24 换通道的实证依据（MatePad Pro MRO-W00 / HarmonyOS 6.1 / QQ 9.2.71）：
-//   旧方案 ① 是 `mqqapi://card/show_pslcard?...&card_type=group`，**冷启动必卡「加载中」**
-//   （实测 40s 不恢复；热启动正常）。QQ 日志证明卡点在 QQ 自己那侧：
-//     `JumpService: sourceJumpUrl:mqqapi://card/show_pslcard?...`   ← 已收到
-//     `ProfileCardOIDBHelper: sendOIDBRequest: success, retCode=0`   ← 群资料已拉回
-//   但页面始终不渲染、loading 层不撤 ⇒ 我们这侧无法修，只能换通道。
-//   对照实验（同一台设备、同一个群）：
-//     · `card/show_pslcard`           → 冷启动卡死（40s 仍卡）／热启动正常
-//     · 裸 https 邀请链接              → 冷启动进浏览器官方群资料页，底部「申请加群」
-//     · **`forward/url` + url_prefix** → 冷启动 **2/2 直接进 QQ 原生群资料页**，不卡 ✅
-//     · `im/chat?...&chat_type=group`  → 冷启动不卡，直接进群聊（仅对已入群者有意义）
-//
-// ⚠️ 为什么弃用 `card/show_pslcard`：它是 QQ 的**内部私有 scheme**，不在任何官方文档里
-//   ——QQ互联 HarmonyOS SDK（V1.0.4）公开接口只有 login / share / isQQInstalled /
-//   addCustomLogger，Android SDK 功能列表同样**没有加群 / 群资料能力**。
-//   即「第三方 App 拉起 QQ 加群」腾讯从未提供官方 API，私有 scheme 的 bug 自然无人修。
-//
-// ① 官方语义下的加群载体是**群分享链接 / 二维码**（QQ 群设置里生成），即下面 `QQ_GROUP_URL`：
-//   `busi_data` 解出来是 `{"groupCode":"526836555","token":"…","uin":"…"}`，由 QQ 自己签发。
-//   官方期望的用法是「当普通网页链接打开 → H5 里点『申请加群』→ 由 H5 拉起 QQ」。
-//   `forward/url` 就是让 QQ **自己**去打开这条官方链接（QQ 内置浏览器加载后自动跳原生群资料页），
-//   语义上仍走官方 H5 通道，只是把 H5 放在了 QQ 里 ⇒ 既守规范、又免掉浏览器那一跳。
-//
-// ② 兜底：`forward/url` 抛错（QQ 未安装 / 老版本不认该 scheme）时，退回 `openLink(邀请链接)`，
-//   由系统浏览器打开官方 H5 群资料页。
-//   （`bm dump -n com.tencent.mqq` 显示 QQ 声明的 https host 只有 `qm.qq.com` 与
-//    `qqso.qianbao.qq.com`，**不含 `qun.qq.com`** ⇒ 走 openLink 必然落到浏览器。）
-//
-// ③ 群号 `526836555`：前两级都失败时按钮下方常驻展示，用户可手动搜索加群。
-const QQ_GROUP_CODE: string = '526836555'
-
-/** ② 官方群分享链接（用户给定，原样保留 percent-encoded 的 `%2B`/`%2F` 与 base64 的 busi_data） */
-const QQ_GROUP_URL: string = 'https://qun.qq.com/universal-share/share?ac=1&authKey=d5vyZIDihejxMq67Ib9Ae05s1scbFNo4yvjkoNqcoGgnHOX0Lkf%2BabPN/bIEuAi1&busi_data=eyJncm91cENvZGUiOiI1MjY4MzY1NTUiLCJ0b2tlbiI6IlN0K0p0L3o1NWwwdEEvTEdKc0IvNXF5UGQrTDEvczUwbmxSNklXL0NGK0duWEJRVWhaeEFBVlMzTEN0anlHeUwiLCJ1aW4iOiIxNzMzODIyODc3In0=&data=uZnXBzbs3rpves1K30ISR1NR7hDg8V5OeQJ4wKxXtAklswbrdGD99qm8H5Sr-UW3FknXRZksOM8gssRqKN2leg&svctype=4&tempid=h5_group_info'
-
-/**
- * ① 「让 QQ 自己打开官方邀请链接」的 Deep Link。
- *
- * `url_prefix` 是 **base64(UTF-8)** 的完整 URL —— 这是 QQ `forward/url` 的既有约定。
- * 证据：QQ 自己下发的插件数据里就有同款（2026-10-24 真机 hilog，`QQKMPPluginDataManager` 的 jumpUrl）：
- *   `mqqapi://forward/url?src_type=internal&plg_dev=0&plg_auth=1&version=1&style=home&url_prefix=aHR0cHM6…`
- *
- * 用**运行时编码**而不是写死 base64 串：`QQ_GROUP_URL` 一旦改动不会忘记同步
- * （写死过一次就必然踩：改了链接、忘了改 base64，表现为 QQ 打开一个 404 页）。
- */
-function buildQqGroupScheme(): string {
-  const prefix: string = new util.Base64Helper().encodeToStringSync(new util.TextEncoder().encodeInto(QQ_GROUP_URL))
-  return `mqqapi://forward/url?src_type=internal&version=1&plg_auth=1&plg_dev=0&url_prefix=${prefix}`
-}
-
-const QQ_GROUP_SCHEME: string = buildQqGroupScheme()
+// ⚠️ 2026-11-05：整条三级链路（`forward/url` → 浏览器 → 群号兜底）已搬到
+// `common/utils/QqGroup.ets`，本页只负责"按钮 + 群号展示 + 失败提示"。
+// 搬家的原因：用户要求公告弹窗的「点击加群」**共用工程既有的加群效果**
+// ⇒ 按"同一语义只允许一处实现"，两处调用同一个 `QqGroup.join(ctx, onAllFailed)`。
+// 通道选择的全部实证依据（为什么弃用 `card/show_pslcard`、为什么 `forward/url`）
+// 都跟着代码一起搬到了那个文件头，本页不再重复。
 
 // ── 信息窗「时间显示」三档的显示文案（2026-10-19 新增）────────────────────────// 值的口径与阅读页一致（`ReaderPage3` 的 `infoWinTimeMode`）：0 = 关、1 = 时:分、2 = 时:分:秒。
 const INFO_TIME_MODE_LABELS: string[] = ['关闭', '时:分', '时:分:秒']
@@ -807,50 +761,18 @@ export default struct MySetPage{
   @StorageLink(VipManager.STORAGE_KEY) vipOn: boolean = false
 
   /**
-   * 加入喵阅官方 QQ 群（2026-10-21 新增；2026-10-24 改走 `forward/url`）。
+   * 加入喵阅官方 QQ 群（2026-10-21 新增；2026-10-24 改走 `forward/url`；2026-11-05 抽成公共件）。
    *
-   * 三级链路（前一级失败才走下一级）：
-   *   ① `startAbility` + `mqqapi://forward/url?...&url_prefix=<base64(官方邀请链接)>`
-   *      → QQ 冷/热启动都能直接进群资料页（实测见文件头注释）
-   *   ② `openLink(官方邀请链接)` → 系统浏览器打开官方 H5 群资料页（QQ 没装 / scheme 无效时）
-   *   ③ 都失败 → 按钮下方常驻的「QQ群号」让用户手动搜
-   *
-   * ── 为什么 ① 用 `startAbility` 隐式 Want（官方依据）────────────────────────
-   *   `开发指南/Ability_Kit_程序框架服务/应用间跳转/拉起指定应用/使用Deep_Linking实现应用间跳转/deep-linking-startup`
-   *   原文：「startAbility() 接口是将应用链接放入 Want 中，通过调用隐式 Want 匹配的方法触发应用跳转。」
-   *   示例：`let want: Want = { uri: 'link://www.example.com' }; context.startAbility(want)`
-   *   ⇒ scheme 由系统在本地已安装应用的 skills.uris 里匹配，命中 `mqqapi` 即拉起 QQ。
-   *
-   * ── 为什么不再走 `mqqapi://card/show_pslcard`（2026-10-24 换掉）──────────────
-   *   冷启动 100% 卡「加载中」且永不恢复（40s 实测），热启动正常。
-   *   QQ 日志显示 URL 已被 `JumpService` 消费、群资料 OIDB 也成功返回，是 QQ 侧页面不渲染
-   *   ⇒ 我们无法修，只能换成「让 QQ 自己打开官方邀请链接」的 `forward/url`。
-   *   详细对照实验与官方 API 调研见本文件头部「喵阅官方 QQ 群」注释块。
-   *
-   * ── 为什么不再补发（原 1.5s/4s 两档）──────────────────────────────────────
-   *   补发是旧通道的绕行手段：晚补发确实能救回，但代价是热启动每次多压一层群页
-   *   （用户要多按几次返回），且依赖 QQ 初始化耗时，时序不稳。
-   *   换通道后冷启动一次到位 ⇒ 补发整段删除，行为回到「只发一次」。
-   *
-   * 全部失败只提示、不抛 —— 它只是个可选入口。
+   * ⚠️ 2026-11-05：三级链路本体已移到 `common/utils/QqGroup.ets`（公告弹窗也要用同一份），
+   * 本页只保留调用 + 失败提示。**行为与搬家前完全一致**：
+   *   ① `startAbility` + `mqqapi://forward/url?...` ⇒ 直接进 QQ 群资料页；
+   *   ② `openLink(官方邀请链接)` ⇒ 浏览器打开官方群资料页；
+   *   ③ 都失败 ⇒ 提示"请手动搜索 QQ群：${QQ_GROUP_CODE}"（按钮下方还常驻群号）。
+   * 通道选择的实证依据（为何弃 `card/show_pslcard` 等）见 `QqGroup.ets` 文件头。
    */
-  private async openQqGroup(): Promise<void> {
+  private openQqGroup(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext
-    // ① 让 QQ 自己打开官方邀请链接
-    try {
-      await ctx.startAbility({ uri: QQ_GROUP_SCHEME })
-    } catch (e) {
-      const err = e as BusinessError
-      // 16000019 No matching ability（QQ 未安装）等 ⇒ 落到第 ② 级
-      hilog.info(0x0000, 'MySetPage', `qq forward/url failed, code=${err.code}, try browser`)
-      this.openQqGroupInBrowser(ctx)
-    }
-  }
-
-  /** ② 浏览器兜底：打开 QQ 群邀请页；再失败则提示群号 */
-  private openQqGroupInBrowser(ctx: common.UIAbilityContext): void {
-    ctx.openLink(QQ_GROUP_URL).catch((err: BusinessError) => {
-      hilog.warn(0x0000, 'MySetPage', `qq url failed, code=${err.code}`)
+    QqGroup.join(ctx, (): void => {
       // ③ 群号兜底（按钮下方常驻，这里只补一句提示）
       this.toast(`打开失败，请手动搜索 QQ群：${QQ_GROUP_CODE}`)
     })
