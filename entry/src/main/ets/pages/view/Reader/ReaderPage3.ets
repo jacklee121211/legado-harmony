@@ -1799,10 +1799,11 @@ oAnimInitNode 配套） */
     this.skinFrame = null;
     this.skinInfoBgTop = null;
     this.skinInfoBgBottom = null;
-    if (!this.skinOn || this.skinPackId === '') {
+    if (!this.skinOn) {
       return;
     }
-    const pack: SkinPack | null = SkinStore.activePack();
+    // 开关开但用户没选过包 ⇒ 用内置兜底包（SkinStore.activeOrFallbackPack，2026-11-06）
+    const pack: SkinPack | null = SkinStore.activeOrFallbackPack();
     if (pack === null) {
       return;
     }

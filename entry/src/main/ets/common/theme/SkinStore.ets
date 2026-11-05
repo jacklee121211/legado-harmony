@@ -20,6 +20,9 @@ import { SkinAssetType, SkinElementKey, SkinPack, SkinSlot,
 /** AppStorage/PersistentStorage 键：当前皮肤包 id（'' = 未启用皮肤） */
 const SKIN_ID_KEY: string = 'readerSkinPackId';
 
+/** 兜底皮肤包 id（用户没选过包但总开关打开 ⇒ 用它，否则开关是死的；2026-11-06 P1.7 验证前置） */
+const SKIN_FALLBACK_PACK_ID: string = 'warm-paper-lite';
+
 /** rawfile 皮肤包清单索引（规范 §4.4：rawfile/skins/index.json 列出全部内置包 id） */
 interface SkinIndex {
   packs: string[];
@@ -152,6 +155,25 @@ export class SkinStore {
     }
     for (let i = 0; i < SkinStore.packs.length; i++) {
       if (SkinStore.packs[i].id === id) {
+        return SkinStore.packs[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 生效皮肤包（**含兜底**，2026-11-06 P1.7 验证前置）：
+   * 显式 id → 注册表查找；id 为空或未注册 → 内置 code 兜底包（`SKIN_FALLBACK_PACK_ID`）。
+   * 语义：「主题皮肤层」开关打开但用户没选过包 ⇒ 用内置兜底包（否则开关打开也无任何渲染）。
+   * 皮肤包选择 UI 属 P3.3（ASK-USER），落地前这就是唯一的包来源。
+   */
+  static activeOrFallbackPack(): SkinPack | null {
+    const p: SkinPack | null = SkinStore.activePack();
+    if (p !== null) {
+      return p;
+    }
+    for (let i = 0; i < SkinStore.packs.length; i++) {
+      if (SkinStore.packs[i].id === SKIN_FALLBACK_PACK_ID) {
         return SkinStore.packs[i];
       }
     }
