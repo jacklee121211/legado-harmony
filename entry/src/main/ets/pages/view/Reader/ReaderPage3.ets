@@ -8360,7 +8360,9 @@ oAnimInitNode 配套） */
                 .opacity(0.9)
                 .hitTestBehavior(HitTestMode.None)
             }
-            if (this.infoWinTimerShow && this.infoTimerText.length > 0) {
+            // 2026-11-06 外屏：计时项只在**渲染层**过滤 —— 开关 `infoWinTimerShow` 一个字节都不动，
+            //   否则切回内屏就丢用户设置（外屏没有听书入口，显示计时也没有可用场景）。
+            if (this.infoWinTimerShow && !this.outerMinimal && this.infoTimerText.length > 0) {
               Text(this.infoTimerText)
                 .fontSize(INFO_TEXT_SIZE)
                 .fontColor(this.settingState.fontColor)
@@ -8411,7 +8413,9 @@ oAnimInitNode 配套） */
       // ⚠️ 叠加 `listeningThisBook()`：在听《神墓》时打开《鬼墓》，
       //   《鬼墓》必须是**纯普通阅读模式**，不该出现别人的朗读浮条（用户 2026-10-09 要求）。
       // ⚠️ 2026-10-24 PuraX 外屏：迷你条同样属于「听书模块」⇒ 外屏不渲染（不停播）。
-      if (this.ttsState !== 'stopped' && this.listeningThisBook() && !this.outerMinimal) {
+      // ★ 2026-11-06 改：外屏**放开**。外屏没有听书面板（`openListenDialog()` 外屏直接 return），
+      //   迷你条是唯一的 ▶/⏸ 入口 —— 用户明确要"合盖后能暂停"。
+      if (this.ttsState !== 'stopped' && this.listeningThisBook()) {
         this.TtsMiniBar()
       }
 
