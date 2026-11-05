@@ -692,7 +692,8 @@ export default class EntryAbility extends UIAbility {
       // 主题初始化
       themeManager.init()
       // 皮肤系统初始化（2026-11-06，注册内置包 + 持久化当前皮肤 id；规范 docs/主题皮肤系统-设计规范与交接）
-      SkinStore.init()
+      // 2026-11-06 P2.1：传入 context 以加载 rawfile/skins 下的图片皮肤包（P2.1）
+      SkinStore.init(this.context)
       hilog.info(0x0000, 'testTag', 'Succeeded in loading the content. Data: %{public}s', JSON.stringify(data) ?? '');
     });
   }

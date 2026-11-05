@@ -11,19 +11,94 @@
  * 初始化：`EntryAbility` 里与 `themeManager.init()` 同点调用 `SkinStore.init()`（同一先例）。
  * ⚠️ 本文件不出现任何对齐常量（88/62/0.861/12/8/18/20）；区域几何由渲染层调既有函数（§5.8）。
  */
+import { common } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { SkinAssetType, SkinElementKey, SkinPack, SkinSlot,
   findDarkSlot, findSlot, SKIN_FORMAT_VERSION } from './SkinCore';
 
 /** AppStorage/PersistentStorage 键：当前皮肤包 id（'' = 未启用皮肤） */
 const SKIN_ID_KEY: string = 'readerSkinPackId';
 
+/** rawfile 皮肤包清单索引（规范 §4.4：rawfile/skins/index.json 列出全部内置包 id） */
+interface SkinIndex {
+  packs: string[];
+}
+
 export class SkinStore {
   private static packs: SkinPack[] = [];
+  private static appContext: common.UIAbilityContext | null = null;
 
-  /** 应用启动时调用一次（EntryAbility，与 themeManager.init() 同点）：持久化 + 注册内置包 */
-  static init(): void {
+  /**
+   * 应用启动时调用一次（EntryAbility，与 themeManager.init() 同点）。
+   * context 用于读 rawfile 皮肤包（P2.1）；不传 = 只注册 code 内置包（向后兼容）。
+   */
+  static init(context?: common.UIAbilityContext): void {
     PersistentStorage.persistProp<string>(SKIN_ID_KEY, '');
     SkinStore.registerBuiltin(SkinStore.builtinCodePack());
+    if (context !== undefined && context !== null) {
+      SkinStore.appContext = context;
+      SkinStore.loadRawfilePacks();
+    }
+  }
+
+  /**
+   * P2.1：从 rawfile 加载皮肤包。约定（规范 §4.4）：
+   *   `rawfile/skins/index.json` = `{"packs":["<id>",…]}`（rawfile 无目录列举 API，用索引文件）；
+   *   `rawfile/skins/<id>/manifest.json` = SkinPack。
+   * 任一文件缺失/损坏 ⇒ 跳过该包（内置 code 包兜底），不抛错不崩。
+   */
+  private static loadRawfilePacks(): void {
+    const ctx: common.UIAbilityContext | null = SkinStore.appContext;
+    if (ctx === null) {
+      return;
+    }
+    ctx.resourceManager.getRawFileContent('skins/index.json')
+      .then((bytes: Uint8Array): void => {
+        const idx = JSON.parse(SkinStore.utf8(bytes)) as SkinIndex;
+        const ids: string[] = (idx !== undefined && idx !== null
+          && idx.packs !== undefined && idx.packs !== null) ? idx.packs : [];
+        SkinStore.loadEachRawfilePack(ids);
+      })
+      .catch((e: BusinessError): void => {
+        // 工程没放 skins/index.json = 没有图片皮肤包 ⇒ 静默走内置 code 包
+        SkinStore.logSkip('index.json', e);
+      });
+  }
+
+  private static loadEachRawfilePack(ids: string[]): void {
+    const ctx: common.UIAbilityContext | null = SkinStore.appContext;
+    if (ctx === null) {
+      return;
+    }
+    for (let i = 0; i < ids.length; i++) {
+      const id: string = ids[i];
+      ctx.resourceManager.getRawFileContent('skins/' + id + '/manifest.json')
+        .then((bytes: Uint8Array): void => {
+          const pack = JSON.parse(SkinStore.utf8(bytes)) as SkinPack;
+          SkinStore.registerBuiltin(pack); // 幂等 + formatVersion 校验
+        })
+        .catch((e: BusinessError): void => {
+          SkinStore.logSkip(id + '/manifest.json', e);
+        });
+    }
+  }
+
+  private static logSkip(what: string, e: BusinessError): void {
+    // 静默降级是设计行为（没有皮肤包 ≠ 错误）；只在有 message 时留一行便于排查
+    if (e !== null && e !== undefined && e.message !== undefined && e.message !== '') {
+      console.info('[SkinStore] skip ' + what + ': ' + e.message);
+    }
+  }
+
+  private static utf8(bytes: Uint8Array): string {
+    const decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
+    return decoder.decodeToString(bytes);
+  }
+
+  /** 元素素材的 rawfile 路径：`skins/<包id>/<素材相对路径>`（规范 §4.4；渲染层 $rawfile 用） */
+  static rawfilePath(packId: string, slot: SkinSlot): string {
+    return 'skins/' + packId + '/' + (slot.asset ?? '');
   }
 
   /** 注册内置皮肤包（幂等：同 id 只注册一次） */

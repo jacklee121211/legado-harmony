@@ -87,7 +87,7 @@ import { NightMode } from '../../../common/utils/NightMode';
 // ── 主题皮肤系统（2026-11-06，P1.4）───────────────────────────────────────────
 // SkinCore：元素 key/槽位结构；SkinStore：皮肤包解析与回落（规范 docs/主题皮肤系统-设计规范与交接）
 import { SkinStore } from '../../../common/theme/SkinStore';
-import { SkinElementKey, SkinSlot, SkinPack, SKIN_FRAME_INSET_EXTRA_VP_DEFAULT } from '../../../common/theme/SkinCore';
+import { SkinAssetType, SkinElementKey, SkinSlot, SkinPack, SKIN_FRAME_INSET_EXTRA_VP_DEFAULT } from '../../../common/theme/SkinCore';
 import { TtsControlPanel } from '../../../components/tts/TtsControlPanel';
 // ── 自定义背景色（2026-09-25 新增）─────────────────────────────────────────────
 // `ReaderCustomBg`：色彩数学 + 按书/全局持久化（文件头有"背景色是渲染还是图片"的取证）；
@@ -1848,8 +1848,15 @@ oAnimInitNode 配套） */
       if (this.skinBandBottom !== null) {
         this.SkinBand(this.skinBandBottom, false)
       }
-      // ③ 阅读区框（CODE 通道 = 1vp 实线边；四角装饰图片 P2 上 image 通道）
-      if (this.skinFrame !== null) {
+      // ③ 阅读区框（CODE = 1vp 实线边；IMAGE = 九宫格框图，四角固定不变形）
+      if (this.skinFrame !== null && this.skinFrame.type === SkinAssetType.IMAGE) {
+        this.SkinImage(this.skinFrame,
+          this.debugAreaWidthVp() + 2 * this.skinFrameExtra(),
+          this.debugAreaHeightVp() + 2 * this.skinFrameExtra(),
+          this.debugAreaLeftVp() - this.skinFrameExtra(),
+          scrollTopInsetVp() - this.skinFrameExtra())
+      }
+      if (this.skinFrame !== null && this.skinFrame.type === SkinAssetType.CODE) {
         Column()
           .width(this.debugAreaWidthVp() + 2 * this.skinFrameExtra())
           .height(this.debugAreaHeightVp() + 2 * this.skinFrameExtra())
@@ -1863,23 +1870,34 @@ oAnimInitNode 配套） */
       }
       // ⑤ 信息窗底板（P1.5：按 infoWinPos 二选一；y 从 infoWinRowPadding() 派生，不抄 padding 数）
       if (this.infoWinPos === 0 && this.skinInfoBgTop !== null) {
-        Column()
-          .width('100%')
-          .height(this.infoWinHeightVp())
-          .backgroundColor(this.skinInfoBgTop.color ?? Color.Transparent)
-          .position({ x: 0, y: this.infoWinPadTopVp() })
-          .hitTestBehavior(HitTestMode.None)
+        if (this.skinInfoBgTop.type === SkinAssetType.IMAGE) {
+          this.SkinImage(this.skinInfoBgTop, '100%', this.infoWinHeightVp(), 0, this.infoWinPadTopVp())
+        }
+        if (this.skinInfoBgTop.type === SkinAssetType.CODE) {
+          Column()
+            .width('100%')
+            .height(this.infoWinHeightVp())
+            .backgroundColor(this.skinInfoBgTop.color ?? Color.Transparent)
+            .position({ x: 0, y: this.infoWinPadTopVp() })
+            .hitTestBehavior(HitTestMode.None)
+        }
       }
       if (this.infoWinPos === 1 && this.skinInfoBgBottom !== null) {
-        Column()
-          .width('100%')
-          .height(this.infoWinHeightVp())
-          .backgroundColor(this.skinInfoBgBottom.color ?? Color.Transparent)
-          .position({
-            x: 0,
-            y: this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp()
-          })
-          .hitTestBehavior(HitTestMode.None)
+        if (this.skinInfoBgBottom.type === SkinAssetType.IMAGE) {
+          this.SkinImage(this.skinInfoBgBottom, '100%', this.infoWinHeightVp(), 0,
+            this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp())
+        }
+        if (this.skinInfoBgBottom.type === SkinAssetType.CODE) {
+          Column()
+            .width('100%')
+            .height(this.infoWinHeightVp())
+            .backgroundColor(this.skinInfoBgBottom.color ?? Color.Transparent)
+            .position({
+              x: 0,
+              y: this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp()
+            })
+            .hitTestBehavior(HitTestMode.None)
+        }
       }
     }
     .width('100%')
@@ -1887,22 +1905,65 @@ oAnimInitNode 配套） */
     .hitTestBehavior(HitTestMode.None)
   }
 
-  /** 留白带（②）：全宽矩形；isTop=false 时贴屏底。color→colorEnd 纵向渐变（无 colorEnd = 纯色） */
+  /**
+   * 留白带（②）：全宽矩形；isTop=false 时贴屏底。
+   * CODE = color→colorEnd 纵向渐变（无 colorEnd = 纯色）；IMAGE = 素材图（P2.2）。
+   */
   @Builder
   SkinBand(slot: SkinSlot | null, isTop: boolean) {
-    Column()
-      .width('100%')
-      .height(isTop ? scrollTopInsetVp() : scrollBottomInsetVp())
-      .linearGradient({
-        angle: 180,
-        colors: [
-          [slot?.color ?? Color.Transparent, 0],
-          [slot?.colorEnd ?? slot?.color ?? Color.Transparent, 1]
-        ]
-      })
-      .position({ x: 0, y: isTop ? 0 : this.skinViewportHeightVp() - scrollBottomInsetVp() })
-      .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
-      .hitTestBehavior(HitTestMode.None)
+    if (slot !== null && slot.type === SkinAssetType.CODE) {
+      Column()
+        .width('100%')
+        .height(isTop ? scrollTopInsetVp() : scrollBottomInsetVp())
+        .linearGradient({
+          angle: 180,
+          colors: [
+            [slot.color ?? Color.Transparent, 0],
+            [slot.colorEnd ?? slot.color ?? Color.Transparent, 1]
+          ]
+        })
+        .position({ x: 0, y: isTop ? 0 : this.skinViewportHeightVp() - scrollBottomInsetVp() })
+        .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+        .hitTestBehavior(HitTestMode.None)
+    }
+    if (slot !== null && slot.type === SkinAssetType.IMAGE) {
+      this.SkinImage(slot, '100%',
+        isTop ? scrollTopInsetVp() : scrollBottomInsetVp(),
+        0, isTop ? 0 : this.skinViewportHeightVp() - scrollBottomInsetVp())
+    }
+  }
+
+  /**
+   * IMAGE 通道通用渲染（P2.2）：素材来自 `rawfile/skins/<包id>/`（SkinStore.rawfilePath）。
+   * slice 有值 = 九宫格 `.resizable`（SDK `image.d.ts`：EdgeWidths 单位 vp，四角固定边拉伸）；
+   * 无 slice = 整体拉伸 + `ImageFit.Cover`。全部 HitTestMode.None + READER_ZOOM 钩子。
+   */
+  @Builder
+  SkinImage(slot: SkinSlot | null, w: Length, h: Length, x: number, y: number) {
+    if (slot !== null && slot.asset !== undefined && slot.slice !== undefined) {
+      Image($rawfile(SkinStore.rawfilePath(this.skinPackId, slot)))
+        .width(w)
+        .height(h)
+        .objectFit(ImageFit.Fill)
+        .resizable({
+          slice: {
+            top: slot.slice.top, right: slot.slice.right,
+            bottom: slot.slice.bottom, left: slot.slice.left
+          }
+        })
+        .position({ x: x, y: y })
+        .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+        .hitTestBehavior(HitTestMode.None)
+    }
+    if (slot !== null && slot.asset !== undefined && slot.slice === undefined) {
+      Image($rawfile(SkinStore.rawfilePath(this.skinPackId, slot)))
+        .width(w)
+        .height(h)
+        .objectFit(ImageFit.Cover)
+        .position({ x: x, y: y })
+        .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+        .hitTestBehavior(HitTestMode.None)
+    }
   }
 
   /**
