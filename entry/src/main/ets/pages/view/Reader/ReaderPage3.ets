@@ -8283,7 +8283,9 @@ oAnimInitNode 配套） */
       //   的内容"）⇒ 整层与全部子节点逐个 HitTestMode.None（工程已知坑：None 只穿透
       //   自身，子节点照样吃触摸）。字色随正文（readerSetting.fontColor 与正文同源）。
       // 位置与顶栏图标同一视觉基线（topRectHeight+12，左右各 20）。
-      if (!this.isShowSetting && this.infoWinOn) {
+      // 2026-11-06 外屏：信息条**整条不显示**（用户拍板：外屏 326×326vp 上它没有存在价值）。
+      //   开关值 `infoWinOn` 一个字节都不动 ⇒ 切回内屏原样恢复。
+      if (!this.isShowSetting && this.infoWinOn && !this.outerMinimal) {
         // 一行两段：左 = 系统时间，右 = 书签/定时/防窥。
         // ⚠️ 结构保证左对齐：Row 内两段都是 `layoutWeight(1)` 的等分格，
         //   左格内容靠 Start、右格内容靠 End ⇒ 右段外观与改版前（整行 End + 满宽）
@@ -9590,7 +9592,15 @@ oAnimInitNode 配套） */
           .fontSize(24)
           .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
           .scale({ x: this.barScale[pos], y: this.barScale[pos] })
-      } else if (action === 3) {
+      } else if (action === 5) {
+    // ── 外屏翻页档位格（2026-11-06，仅外屏出现在 dock）──────────────
+    //   符号 rectangle_split_2x1 已在 SDK 符号表核实存在（sysResource.js 命中）。
+    //   点击在「无动画 <-> 上下」之间切；外屏只保留这两档。
+    SymbolGlyph($r('sys.symbol.rectangle_split_2x1'))
+      .fontSize(24)
+      .fontColor([this.colorMode == 0 ? 'rgba(248, 249, 250, 1)' : 'rgba(19, 19, 19, 1.00)'])
+      .scale({ x: this.barScale[pos], y: this.barScale[pos] })
+  } else if (action === 3) {
         // ── 三模式图标（2026-09-26 用户要求加「自由」）────────────────────────
         // 沿用改造前的**「显示目标」**约定（见下段注释）：日间时显示「夜间」、
         // 夜间时显示「自由」、自由时显示「日间」。想改成"显示当前模式"
@@ -9664,28 +9674,15 @@ oAnimInitNode 配套） */
    */
   // ⚠️ 用实例字段而不是 AppStorage：AppStorage 键有硬预算（审计 ratchet 只许降，当前 80）。
   //    持久化留待与外屏其它偏好一起收口（同一个 Preferences 文件），不影响折叠切换（切形态不重建本页）。
-  @State outerReadMode: string = 'auto'
+  @State outerReadMode: string = 'none'
 
   /** 进入外屏前记下的内屏档位（`auto` 恢复用） */
   private normalReadMode: number = -1
 
   /** 外屏有效档位（number，喂 `switchReadMode`） */
   private effectiveOuterReadMode(): number {
-    const m: string = this.outerReadMode
-    if (m === 'flip') {
-      return READ_MODE_FLIP_SLIDE
-    }
-    if (m === 'curl') {
-      return READ_MODE_FLIP_CURL
-    }
-    if (m === 'scroll') {
-      return READ_MODE_SCROLL
-    }
-    if (m === 'none') {
-      return READ_MODE_NONE
-    }
-    // auto：跟随内屏（进入外屏时记下的那份）
-    return this.normalReadMode >= 0 ? this.normalReadMode : this.readMode
+    // 外屏只保留自绘两档（ReaderKit 两档在 326vp 窗口显示不完整，见 cycleOuterReadMode 注释）
+    return this.outerReadMode === 'scroll' ? READ_MODE_SCROLL : READ_MODE_NONE
   }
 
   /** 把有效档位真正下发（听书中强制无动画，退出时由 TTS 链路恢复） */
@@ -9706,7 +9703,9 @@ oAnimInitNode 配套） */
       this.getUIContext().getPromptAction().showToast({ message: '听书中已锁定无动画' })
       return
     }
-    const order: string[] = ['auto', 'flip', 'curl', 'scroll', 'none']
+    // 外屏只保留自绘两档（用户拍板）：ReaderKit 两档在 326vp 窗口显示不完整（真机日志实证 ChapterView loadDataFailed），
+    // 所以外屏不再跟随内屏，只在 上下 <-> 无动画 之间切。
+    const order: string[] = ['none', 'scroll']
     const cur: number = order.indexOf(this.outerReadMode)
     const next: string = order[(cur < 0 ? 0 : cur + 1) % order.length]
     this.outerReadMode = next
