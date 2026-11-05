@@ -1,6 +1,7 @@
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 import { MyThemeConfigComp } from './MyThemeConfigComp'
+import { SkinPickerSection } from './SkinPickerSection'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
 import { common } from '@kit.AbilityKit'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
@@ -135,6 +136,12 @@ export default struct MyThemeConfig {
       })
       // 2026-09-25 用户要求：宽度缩到 90%
       .width('90%')
+      .margin({ bottom: 12 })
+
+      // ── 阅读皮肤选择区（2026-11-06，主题皮肤系统 UI 层）────────────────────
+      // 固定区段挂载（主题网格零改动）：GlassSegment 之下、色板网格之上；
+      // 点选即生效（写 skinPackId + 同步 SET_READER_SKIN_ON），「默认外观」= 一键回退。
+      SkinPickerSection()
       .margin({ bottom: 12 })
 
       // ── 内容区（2026-09-23：**去掉原来那层 Tabs**）────────────────────────────

@@ -230,6 +230,7 @@ export class SkinStore {
       formatVersion: SKIN_FORMAT_VERSION,
       id: 'warm-paper-lite',
       name: '暖纸·极简（内置占位）',
+      previewColor: '#FFF1DE',
       elements: light,
       dark: dark
     };
