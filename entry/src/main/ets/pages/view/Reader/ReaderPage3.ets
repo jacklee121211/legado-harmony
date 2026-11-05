@@ -1291,6 +1291,20 @@ oAnimInitNode 配套） */
    *   · **不停播**听书 —— 与工程「退出阅读页不停播」的既定口径一致。
    */
   onOuterMinimalChanged(): void {
+    // ── 外屏档位（2026-11-06）──────────────────────────────────────────────
+    //   进外屏：记下内屏档位（`auto` 恢复用），然后按 `outerReadMode` 下发；
+    //   离外屏：恢复内屏档位 —— 保证外屏的临时选择**不会污染**内屏设置。
+    if (this.outerMinimal) {
+      if (this.normalReadMode < 0) {
+        this.normalReadMode = this.readMode
+      }
+    } else if (this.normalReadMode >= 0) {
+      const back: number = this.normalReadMode
+      this.normalReadMode = -1
+      this.switchReadMode(back)
+      return
+    }
+    this.applyOuterReadMode()
     if (this.outerMinimal) {
       // 外屏：强制不显示系统状态栏（与 aboutToAppear 读取处的短路同源）
       this.readerStatusBarOn = false;
@@ -9637,8 +9651,67 @@ oAnimInitNode 配套） */
    * ⚠️ 返回的是**动作 id**，页签位置由 `ForEach` 的下标 `i` 提供 ——
    *   两套编号语义不同（见 `ReaderBarItem` 注释），别合并。
    */
+  /**
+   * 外屏翻页档位（2026-11-06）：`auto` / `flip` / `curl` / `scroll` / `none`。
+   *
+   * 为什么要独立一份：内屏用户的档位存 `readMode`（`@State`），外屏如果直接覆盖它，
+   * 切回内屏就丢设置。⇒ 外屏只写 `outerReadMode`（AppStorage 镜像），
+   * **有效档位** = `auto` 时用内屏档位，否则用外屏选择。这就是"同一组数据 + 投影"。
+   */
+  // ⚠️ 用实例字段而不是 AppStorage：AppStorage 键有硬预算（审计 ratchet 只许降，当前 80）。
+  //    持久化留待与外屏其它偏好一起收口（同一个 Preferences 文件），不影响折叠切换（切形态不重建本页）。
+  @State outerReadMode: string = 'auto'
+
+  /** 进入外屏前记下的内屏档位（`auto` 恢复用） */
+  private normalReadMode: number = -1
+
+  /** 外屏有效档位（number，喂 `switchReadMode`） */
+  private effectiveOuterReadMode(): number {
+    const m: string = this.outerReadMode
+    if (m === 'flip') {
+      return READ_MODE_FLIP_SLIDE
+    }
+    if (m === 'curl') {
+      return READ_MODE_FLIP_CURL
+    }
+    if (m === 'scroll') {
+      return READ_MODE_SCROLL
+    }
+    if (m === 'none') {
+      return READ_MODE_NONE
+    }
+    // auto：跟随内屏（进入外屏时记下的那份）
+    return this.normalReadMode >= 0 ? this.normalReadMode : this.readMode
+  }
+
+  /** 把有效档位真正下发（听书中强制无动画，退出时由 TTS 链路恢复） */
+  private applyOuterReadMode(): void {
+    if (!this.outerMinimal || this.ttsState !== 'stopped') {
+      return
+    }
+    const want: number = this.effectiveOuterReadMode()
+    if (want !== this.readMode) {
+      this.switchReadMode(want)
+    }
+  }
+
+  /** dock 第 5 格：在 自动 → 横滑 → 仿真 → 上下 → 无动画 之间循环 */
+  private cycleOuterReadMode(): void {
+    // 听书中档位被锁在无动画，循环按钮不生效（否则用户会以为坏了）
+    if (this.ttsState !== 'stopped') {
+      this.getUIContext().getPromptAction().showToast({ message: '听书中已锁定无动画' })
+      return
+    }
+    const order: string[] = ['auto', 'flip', 'curl', 'scroll', 'none']
+    const cur: number = order.indexOf(this.outerReadMode)
+    const next: string = order[(cur < 0 ? 0 : cur + 1) % order.length]
+    this.outerReadMode = next
+    Haptics.tap()
+    this.applyOuterReadMode()
+  }
+
   private barActions(): number[] {
-    return this.outerMinimal ? [0, 1, 3] : [0, 1, 2, 3, 4]
+    return this.outerMinimal ? [0, 1, 3, 2, 5] : [0, 1, 2, 3, 4]
   }
 
   /**
@@ -9677,8 +9750,15 @@ oAnimInitNode 配套） */
     // ── PuraX 外屏：听书(2) / 设置(4) 两个动作不可达（2026-10-24）──────────────
     // dock 在外屏只渲染 0/1/3 三格，正常点不到这两格；这里兜一道，
     // 保证"即使有人改错了 tabBar 配置"也不会在外屏弹出听书面板/设置面板。
-    if (this.outerMinimal && (index === 2 || index === 4)) {
+    if (this.outerMinimal && index === 4) {
       return
+    }
+    // ── 外屏第 5 格：翻页档位循环（2026-11-06）──────────────────────────────
+    //   档位取值沿用 `outerReadMode`：auto / flip / curl / scroll / none，
+    //   auto = 跟随内屏选择（默认）。听书中由 `applyOuterReadMode()` 锁定无动画。
+    if (index === 5) {
+      this.cycleOuterReadMode();
+      return;
     }
     if (index === 0) {
       // 目录（**2026-10-13 拆分后只剩目录**，书签见下面 index===1）—— @CustomDialog
