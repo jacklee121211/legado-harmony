@@ -36,7 +36,7 @@ import { Haptics } from '../../../common/utils/Haptics'
 import BookmarksDao, { BookmarkRow } from '../../../database/dao/BookmarksDao'
 // ⚠️ 只 import 非输入态高度：本弹窗没有搜索框 ⇒ 永远不会进入「输入中」那一档。
 //    （`CATALOG_PANEL_HEIGHT_TYPING` 只服务目录弹窗的键盘避让，见其常量注释。）
-import { CATALOG_PANEL_HEIGHT } from './ReaderCatalogDialog'
+import { CATALOG_PANEL_HEIGHT, catalogPanelHeightVp } from './ReaderCatalogDialog'
 
 /** 面板文字色常量见下方 `activeColor()` / `subColor()`（2026-11-02：面板底改成
  *  `ImmersiveMaterialUtil.READER_PANEL_*` 之后，原来的 `PANEL_BG_NIGHT/DAY` 已删除） */
@@ -308,7 +308,8 @@ export struct ReaderBookmarkDialog {
     // ★ 宽度/高度语义与目录弹窗完全一致（详见 `ReaderCatalogDialog` 的同名注释）：
     //   options 不写 height ⇒ 弹窗高度 = 本节点高度；高度常量从目录弹窗 import ⇒ 两窗等高。
     .width('100%')
-    .height(CATALOG_PANEL_HEIGHT)
+    // 2026-11-06 官方回执 #1：与目录弹窗同口径「min(560, 90%窗口高 − 24vp)」，外屏不再溢出
+  .height(catalogPanelHeightVp(AppStorage.get<number>('windowHeight') ?? 0, this.getUIContext().vp2px(1), false))
     .borderRadius(20)
     .clip(true)
     // 内保护边距：底部给 dock 留位（dock 是绝对定位在 Stack 右下角，不留会被裁一半）

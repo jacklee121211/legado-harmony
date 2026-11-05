@@ -112,6 +112,34 @@ const PANEL_HEIGHT_TYPING: number = 440
 export const CATALOG_PANEL_HEIGHT: number = PANEL_HEIGHT
 export const CATALOG_PANEL_HEIGHT_TYPING: number = PANEL_HEIGHT_TYPING
 
+/**
+ * **面板实际高度（vp）——上限 90% 屏高**（2026-11-06 官方回执 #1）。
+ *
+ * 为什么不能只用固定 560vp：PuraX 外屏是 **326×326vp（980×980px）**，560vp 的面板比整块屏幕
+ * 还高 ⇒ 目录/书签弹窗被截断、按钮够不到。官方给的方案原文（适配问题交流材料 slide 4）：
+ *   「弹窗**最大高度不超过屏幕高度 90%**，内容在显示区内**支持滚动**显示」
+ *   「标题、操作按钮在弹框内固定显示，内容信息动态延伸布局」
+ *
+ * 实现：取「期望高度」与「90% 窗口高 − 上下各 12vp 间隙」的较小值。
+ *   · 窗口高读 AppStorage `windowHeight`（px，由 `WindowAbility` 写入，见 `:68/:165`）
+ *   · 外屏/折叠/旋转都会改变 windowHeight ⇒ 天然跟随，不需要额外监听
+ *   · 列表本身是 `List`（可滚动）+ 底部按钮绝对定位（固定）= 官方要求的"内容滚动、按钮固定"
+ *
+ * @param winHpx 窗口高（px）；<=0 时退回固定值（兜底，保证不会算出 0 高）
+ * @param density vp→px 比例（`vp2px(1)`）
+ * @param typing 是否处于搜索输入态（输入态用更矮的期望值，给键盘让位）
+ */
+export function catalogPanelHeightVp(winHpx: number, density: number, typing: boolean): number {
+  const want: number = typing ? PANEL_HEIGHT_TYPING : PANEL_HEIGHT
+  if (!(winHpx > 0) || !(density > 0)) {
+    return want
+  }
+  const availVp: number = winHpx / density
+  // 上下各留 12vp 间隙，再压到 90% 上限
+  const cap: number = Math.max(200, availVp * 0.9 - 24)
+  return Math.min(want, cap)
+}
+
 @CustomDialog
 export struct ReaderCatalogDialog {
   /** 由 `CustomDialogController` 注入（`@CustomDialog` 必需字段） */
@@ -152,6 +180,16 @@ export struct ReaderCatalogDialog {
   @State typing: boolean = false
 
   private scrollerForList: Scroller = new Scroller()
+
+  /**
+   * 面板实际高度（vp）：`catalogPanelHeightVp()` 的成员封装。
+   * 窗口高走 AppStorage `windowHeight`（px，`WindowAbility` 写入）⇒ 外屏/折叠/旋转自动跟随；
+   * 外屏 326×326vp 时面板不再超出屏幕（官方回执 #1 要求"最大高度 ≤ 90%"）。
+   */
+  private panelHeightVp(): number {
+    const winHpx: number = AppStorage.get<number>('windowHeight') ?? 0
+    return catalogPanelHeightVp(winHpx, this.getUIContext().vp2px(1), this.typing)
+  }
 
   aboutToAppear(): void {
     this.keyword = this.initKeyword
@@ -260,7 +298,8 @@ export struct ReaderCatalogDialog {
     //   `custom_dialog_controller.d.ts:126`：「If the width and height of the dialog box are not
     //   set, the dialog box … adapts its height to the custom content node.」）。
     //   分两档是为了键盘弹起时顶部不"穿"（详见 `PANEL_HEIGHT_TYPING` 的注释）。
-    .height(this.typing ? PANEL_HEIGHT_TYPING : PANEL_HEIGHT)
+    // 2026-11-06 官方回执 #1：不再写死 560vp，改为「min(560, 90%窗口高 − 24vp)」
+  .height(this.panelHeightVp())
     .borderRadius(20)
     .clip(true)
     // ★ 内保护边距：顶部/底部/定位那条浮动按钮由 `CatalogListPane()` 内部绘制（Stack 右下角），
