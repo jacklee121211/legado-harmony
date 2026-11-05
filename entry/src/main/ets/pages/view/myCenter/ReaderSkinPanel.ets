@@ -76,6 +76,8 @@ export struct ReaderSkinPanel {
   @State skinOn: boolean = false
   /** 按元素选择表（原始 JSON；@StorageProp 驱动重渲染，选中态读 SkinStore.elemSel） */
   @StorageProp('readerSkinElemSel') selsRaw: string = '[]'
+  /** 手势条高度：滚动内容底部让位悬浮 dock（2026-11-06 用户反馈「底部留白卡到 dock 点不到」） */
+  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
 
   aboutToAppear(): void {
     this.skinOn = PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_ON, false) as boolean;
@@ -401,7 +403,15 @@ export struct ReaderSkinPanel {
         }, (def: SkinGroupDef) => def.title + '_' + this.selsRaw)
       }
       .width('100%')
-      .padding({ left: 20, right: 20, top: 4, bottom: 24 })
+      .padding({
+        left: 20,
+        right: 20,
+        top: 4,
+        // 底部 dock 让位（2026-11-06 用户反馈：底部留白那组卡到 dock 点不到）。
+        // 与主题页内容区同款（MyThemeConfig 内容区同口径）；Scroll 无 contentEndOffset
+        // （工程 readStatisticsDataList 注释：SDK scroll.d.ts 无该声明，List 才有）⇒ 用内容 padding。
+        bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
+      })
     }
     .width('100%')
     .height('100%')

@@ -1816,6 +1816,21 @@ oAnimInitNode 配套） */
     return this.skinFrame?.insetExtraVp ?? SKIN_FRAME_INSET_EXTRA_VP_DEFAULT;
   }
 
+  /**
+   * 阅读区框的下缘 y（vp，2026-11-06 用户反馈修正）。
+   * 默认 = 模型底边（屏高−62vp）+ 冗余；**信息条在底部时边框让路**——
+   * 下缘上抬到信息条上缘 −4vp，不许边框压到信息条（「信息条下移迁就边框」是被否决的方向）。
+   * 信息条上缘 = 屏高 − infoWinRowPadding().bottom − infoWinHeightVp()（与底板同一套函数）。
+   */
+  private skinFrameBottomY(): number {
+    let bottom: number = this.skinViewportHeightVp() - scrollBottomInsetVp() + this.skinFrameExtra();
+    if (this.infoWinPos === 1) {
+      const infoTop: number = this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp();
+      bottom = Math.min(bottom, infoTop - 4);
+    }
+    return Math.max(bottom, scrollTopInsetVp());
+  }
+
   /** 视口高（vp，与 debugAreaHeightVp 同一份真源） */
   private skinViewportHeightVp(): number {
     const vhPx: number = this.settingState.viewPortHeight > 0
@@ -1846,17 +1861,18 @@ oAnimInitNode 配套） */
         this.SkinBand(this.skinBandBottom, false)
       }
       // ③ 阅读区框（CODE = 1vp 实线边；IMAGE = 九宫格框图，四角固定不变形）
+      //    下缘走 skinFrameBottomY()：信息条在底部时自动让路，不压信息条
       if (this.skinFrame !== null && this.skinFrame.type === SkinAssetType.IMAGE) {
         this.SkinImage(this.skinFrame,
           this.debugAreaWidthVp() + 2 * this.skinFrameExtra(),
-          this.debugAreaHeightVp() + 2 * this.skinFrameExtra(),
+          this.skinFrameBottomY() - (scrollTopInsetVp() - this.skinFrameExtra()),
           this.debugAreaLeftVp() - this.skinFrameExtra(),
           scrollTopInsetVp() - this.skinFrameExtra())
       }
       if (this.skinFrame !== null && this.skinFrame.type === SkinAssetType.CODE) {
         Column()
           .width(this.debugAreaWidthVp() + 2 * this.skinFrameExtra())
-          .height(this.debugAreaHeightVp() + 2 * this.skinFrameExtra())
+          .height(this.skinFrameBottomY() - (scrollTopInsetVp() - this.skinFrameExtra()))
           .border({ width: 1, color: this.skinFrame?.color ?? Color.Transparent })
           .position({
             x: this.debugAreaLeftVp() - this.skinFrameExtra(),
@@ -1939,7 +1955,9 @@ oAnimInitNode 配套） */
   /**
    * IMAGE 通道通用渲染（P2.2 + v2 resolvedPath 单源）。
    * slice 有值 = 九宫格 `.resizable`（SDK `image.d.ts`：EdgeWidths 单位 vp，四角固定边拉伸）；
-   * 无 slice = 整体拉伸 + `ImageFit.Cover`。全部 HitTestMode.None + READER_ZOOM 钩子。
+   * 无 slice = **整体拉伸（ImageFit.Fill）**——素材按"精确铺满目标矩形"设计（留白带的内缘
+   * 阴影线必须落在贴正文一侧的边上，Cover 会等比缩放裁掉边缘线，2026-11-06 用户实测
+   * 「顶部没覆盖全」即此因），横纵比例失真对渐变/纹理类素材无感。全部 HitTestMode.None。
    */
   @Builder
   SkinImage(slot: SkinSlot | null, w: Length, h: Length, x: number, y: number) {
@@ -1962,7 +1980,7 @@ oAnimInitNode 配套） */
       Image(this.skinSrc(slot))
         .width(w)
         .height(h)
-        .objectFit(ImageFit.Cover)
+        .objectFit(ImageFit.Fill)
         .position({ x: x, y: y })
         .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
         .hitTestBehavior(HitTestMode.None)
