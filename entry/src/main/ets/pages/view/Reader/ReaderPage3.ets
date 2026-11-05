@@ -84,6 +84,10 @@ import UiMotion, { runJellyClick } from '../../../common/utils/UiMotion';
 // 阅读时长记账（2026-10-13 新增）：「真实阅读时长」的唯一写入端，见该文件头注释
 import { ReadTimeRecorder } from '../../../common/utils/ReadTimeRecorder';
 import { NightMode } from '../../../common/utils/NightMode';
+// ── 主题皮肤系统（2026-11-06，P1.4）───────────────────────────────────────────
+// SkinCore：元素 key/槽位结构；SkinStore：皮肤包解析与回落（规范 docs/主题皮肤系统-设计规范与交接）
+import { SkinStore } from '../../../common/theme/SkinStore';
+import { SkinElementKey, SkinSlot, SkinPack, SKIN_FRAME_INSET_EXTRA_VP_DEFAULT } from '../../../common/theme/SkinCore';
 import { TtsControlPanel } from '../../../components/tts/TtsControlPanel';
 // ── 自定义背景色（2026-09-25 新增）─────────────────────────────────────────────
 // `ReaderCustomBg`：色彩数学 + 按书/全局持久化（文件头有"背景色是渲染还是图片"的取证）；
@@ -1383,6 +1387,20 @@ oAnimInitNode 配套） */
    * 几何见 `DebugTextAreaOverlay()` 的注释。
    */
   @State debugTextAreaOn: boolean = false
+  /**
+   * 主题皮肤层（2026-11-06，P1.4）：开关 + 皮肤包 id，进场读一次（与 debugTextAreaOn 同口径）。
+   * 总开关 `MySetConstants.SET_READER_SKIN_ON` **默认关**（一键回退=关开关，默认外观零变化）；
+   * 皮肤包 id 在 AppStorage `readerSkinPackId`（SkinStore 持久化，'' = 全默认外观）。
+   * 槽位解析 `resolveSkinSlots()` → 渲染 `SkinLayers()`（规范 §5.1 层序 ②③⑤）。
+   */
+  @State skinOn: boolean = false
+  @State skinPackId: string = ''
+  /** 解析后的皮肤槽位（null = 该元素无皮肤 ⇒ 零渲染走默认外观；进场解析一次，规范 §4.1 回落链） */
+  @State skinBandTop: SkinSlot | null = null
+  @State skinBandBottom: SkinSlot | null = null
+  @State skinFrame: SkinSlot | null = null
+  @State skinInfoBgTop: SkinSlot | null = null
+  @State skinInfoBgBottom: SkinSlot | null = null
   /** 信息窗与正文间距（vp，0–40，默认 15；顶部/底部共用） */
   @State infoWinGapVp: number = -4
   @State bookPageCur: number = 0
@@ -1760,6 +1778,131 @@ oAnimInitNode 配套） */
       ? this.settingState.viewPortHeight : this.windowHeight;
     const vhVp: number = vhPx / densityVp();
     return Math.max(0, vhVp - scrollTopInsetVp() - scrollBottomInsetVp());
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 主题皮肤层（2026-11-06，P1.4/P1.5；规范 docs/主题皮肤系统-设计规范与交接 §5.1）
+  // ══════════════════════════════════════════════════════════════════════════
+  // 槽位：与 DebugTextAreaOverlay 同一处（三层正文之上、信息窗/菜单之下）：
+  //   · 留白带 = 带区按定义无正文 ⇒ 画在正文之上安全；
+  //   · 阅读区框 = 1vp 边线落在留白带里（冗余 ≥15.1vp 实测偏差）；
+  //   · 信息窗底板画在本槽位（信息窗内容在 build 里更靠后 ⇒ 自然垫在内容之下）。
+  // 几何：只调既有函数（debugArea*/scrollTopInsetVp/scrollBottomInsetVp/infoWinRowPadding/
+  //   infoWinHeightVp/densityVp），零抄常量（§5.8）。
+  // 回退：`SET_READER_SKIN_ON` 关（默认）⇒ skinOn=false ⇒ 零渲染。
+  // ⚠️ reader.text.fill 本期不渲染：它必须垫在正文之下（规范 §5.2 方案 A），RK 档由 themeColor 承担。
+
+  /** 皮肤槽位解析（进场一次；深浅档按 NightMode，规范 §4.1 回落链 + §5.3 优先级） */
+  private resolveSkinSlots(): void {
+    this.skinBandTop = null;
+    this.skinBandBottom = null;
+    this.skinFrame = null;
+    this.skinInfoBgTop = null;
+    this.skinInfoBgBottom = null;
+    if (!this.skinOn || this.skinPackId === '') {
+      return;
+    }
+    const pack: SkinPack | null = SkinStore.activePack();
+    if (pack === null) {
+      return;
+    }
+    const dark: boolean = NightMode.isDarkSurface();
+    this.skinBandTop = SkinStore.resolve(pack, SkinElementKey.BAND_TOP, dark);
+    this.skinBandBottom = SkinStore.resolve(pack, SkinElementKey.BAND_BOTTOM, dark);
+    this.skinFrame = SkinStore.resolve(pack, SkinElementKey.TEXT_FRAME, dark);
+    this.skinInfoBgTop = SkinStore.resolve(pack, SkinElementKey.INFOBAR_BG_TOP, dark);
+    this.skinInfoBgBottom = SkinStore.resolve(pack, SkinElementKey.INFOBAR_BG_BOTTOM, dark);
+  }
+
+  /** 阅读区框的四周冗余（vp）：槽位给了用槽位，否则取规范默认 16（≥15.1 实测偏差 + 余量） */
+  private skinFrameExtra(): number {
+    return this.skinFrame?.insetExtraVp ?? SKIN_FRAME_INSET_EXTRA_VP_DEFAULT;
+  }
+
+  /** 视口高（vp，与 debugAreaHeightVp 同一份真源） */
+  private skinViewportHeightVp(): number {
+    const vhPx: number = this.settingState.viewPortHeight > 0
+      ? this.settingState.viewPortHeight : this.windowHeight;
+    return vhPx / densityVp();
+  }
+
+  /** 信息窗 padding 数值化（Padding 字段是 Length|undefined，算术前必须收敛成 number） */
+  private infoWinPadTopVp(): number {
+    const v: Length | undefined = this.infoWinRowPadding().top;
+    return typeof v === 'number' ? v : 0;
+  }
+
+  private infoWinPadBottomVp(): number {
+    const v: Length | undefined = this.infoWinRowPadding().bottom;
+    return typeof v === 'number' ? v : 0;
+  }
+
+  @Builder
+  SkinLayers() {
+    Stack() {
+      // ② 顶部留白带（全宽，0..scrollTopInsetVp）
+      if (this.skinBandTop !== null) {
+        this.SkinBand(this.skinBandTop, true)
+      }
+      // ② 底部留白带（全宽，贴屏底）
+      if (this.skinBandBottom !== null) {
+        this.SkinBand(this.skinBandBottom, false)
+      }
+      // ③ 阅读区框（CODE 通道 = 1vp 实线边；四角装饰图片 P2 上 image 通道）
+      if (this.skinFrame !== null) {
+        Column()
+          .width(this.debugAreaWidthVp() + 2 * this.skinFrameExtra())
+          .height(this.debugAreaHeightVp() + 2 * this.skinFrameExtra())
+          .border({ width: 1, color: this.skinFrame?.color ?? Color.Transparent })
+          .position({
+            x: this.debugAreaLeftVp() - this.skinFrameExtra(),
+            y: scrollTopInsetVp() - this.skinFrameExtra()
+          })
+          .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+          .hitTestBehavior(HitTestMode.None)
+      }
+      // ⑤ 信息窗底板（P1.5：按 infoWinPos 二选一；y 从 infoWinRowPadding() 派生，不抄 padding 数）
+      if (this.infoWinPos === 0 && this.skinInfoBgTop !== null) {
+        Column()
+          .width('100%')
+          .height(this.infoWinHeightVp())
+          .backgroundColor(this.skinInfoBgTop.color ?? Color.Transparent)
+          .position({ x: 0, y: this.infoWinPadTopVp() })
+          .hitTestBehavior(HitTestMode.None)
+      }
+      if (this.infoWinPos === 1 && this.skinInfoBgBottom !== null) {
+        Column()
+          .width('100%')
+          .height(this.infoWinHeightVp())
+          .backgroundColor(this.skinInfoBgBottom.color ?? Color.Transparent)
+          .position({
+            x: 0,
+            y: this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp()
+          })
+          .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  /** 留白带（②）：全宽矩形；isTop=false 时贴屏底。color→colorEnd 纵向渐变（无 colorEnd = 纯色） */
+  @Builder
+  SkinBand(slot: SkinSlot | null, isTop: boolean) {
+    Column()
+      .width('100%')
+      .height(isTop ? scrollTopInsetVp() : scrollBottomInsetVp())
+      .linearGradient({
+        angle: 180,
+        colors: [
+          [slot?.color ?? Color.Transparent, 0],
+          [slot?.colorEnd ?? slot?.color ?? Color.Transparent, 1]
+        ]
+      })
+      .position({ x: 0, y: isTop ? 0 : this.skinViewportHeightVp() - scrollBottomInsetVp() })
+      .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+      .hitTestBehavior(HitTestMode.None)
   }
 
   /**
@@ -4478,6 +4621,10 @@ oAnimInitNode 配套） */
         scrollTopInsetVp().toFixed(2), scrollBottomInsetVp().toFixed(2),
         this.debugAreaHeightVp().toFixed(2));
     }
+    // 主题皮肤层（2026-11-06 P1.4）：进场读一次 + 槽位解析（默认关 ⇒ 默认外观零变化）
+    this.skinOn = PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_ON, false) as boolean;
+    this.skinPackId = SkinStore.activePackId();
+    this.resolveSkinSlots();
     this.syncInfoTicker();
     // ── 信息窗电量（2026-10-19 新增）：订阅电池变化公共事件 ──────────────────
     // 与 `syncInfoTicker()` 的秒级刷新分工：时间/倒计时走 1s 定时器，电量走系统事件
@@ -8251,6 +8398,13 @@ oAnimInitNode 配套） */
       // ⇒ 只给正文打红框，不会把 dock/弹窗也染红。
       if (this.debugTextAreaOn) {
         this.DebugTextAreaOverlay()
+      }
+
+      // ── 主题皮肤层（2026-11-06 P1.4，总开关 SET_READER_SKIN_ON 默认关）─────────
+      // 与调试浮层同槽位（规范 §5.1 层序 ②③⑤）：留白带/阅读区框/信息窗底板，
+      // HitTestMode.None 不挡触摸；关开关 = 零渲染 = 改动前外观（一键回退）。
+      if (this.skinOn) {
+        this.SkinLayers()
       }
 
       // ── 转换进度 / 转换失败（2026-10-19，PDF/DOCX 首次打开）──────────────────
