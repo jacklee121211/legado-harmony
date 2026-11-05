@@ -62,13 +62,16 @@ import { Haptics } from '../../../common/utils/Haptics';
 import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP, parseHexColor } from './EngineLines';
 // 字重补偿与滚动层**必须共用同一个函数**（否则两档互切时字会突然变粗/变细）
 import { scrollFontWeight } from './ReaderScrollView';
-// 阶段 1 PoC：引擎直绘组件（见其文件头；默认关，验收后阶段 2 才切默认）
+// 引擎直绘组件（**已转正**，2026-11-05 用户裁定；见下方开关注释）
 import { ReaderPageNoAnimCanvas } from './ReaderPageNoAnimCanvas';
 
 /**
- * 无动画档渲染路径开关（阶段 2）：true = 当前页改由 `ReaderPageNoAnimCanvas`（引擎直绘）画。
- * ⚠️ AppStorage 键 `READER_NOANIM_CANVAS`，**默认 false**——老 Text 树路径仍是唯一权威；
- * 设置页/调试入口写这个键即可热切换（切换 = ready 子树重建，无过渡态）。
+ * 无动画档渲染路径开关：true = 当前页由 `ReaderPageNoAnimCanvas`（引擎直绘）画。
+ *
+ * ⚠️ **已转正（2026-11-05 用户裁定"已经转正了"）⇒ 默认 true = 直绘为唯一权威路径。**
+ *    AppStorage 键 `READER_NOANIM_CANVAS` 仍然保留 —— 它的唯一用途是**一键回退**：
+ *    把它写成 false 即可退回老 Text 树渲染（切换 = ready 子树重建，无过渡态），
+ *    排查"直绘疑似画错"时用得上。别再把它当"实验开关"看待。
  */
 const CANVAS_MODE_KEY: string = 'READER_NOANIM_CANVAS';
 

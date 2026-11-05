@@ -44,7 +44,7 @@
 | └ §74–§97 | 渲染侧重构全链路（13 字段迁移 → 脚手架拆除 → `@State` 退役 → 组件抽取 → 旋转溢出 → 投影现场化） | ✅ | 2026-11-05 |
 | └ §98 | 分组域三项定稿：本地彻底退场、宫格角标只留「分组」、返回手势逐级返回 + chip 定向端口（三版收敛教训） | ✅ | 2026-11-05 |
 | └ §99 | 大字号排版异常：探针取数 verdict——A/B/C 全排除，转直绘单引擎改造（详见 §100） | ✅ | 2026-11-05 |
-| └ §100 | **自绘无动画档收官**：直绘单引擎（整段 paint+行带裁剪→逐行 justify）+ 双Canvas高亮 + 四个 SDK 声明/实现不符定案（TextLine.paint 自然位/color 默认白/createImageSource 返 undefined/LineMetrics.width=排版宽）+ 背景缓存竞态；开关 READER_NOANIM_CANVAS 默认 false 待用户定转正 | ✅ | 2026-11-05 |
+| └ §100 | **自绘无动画档收官**：直绘单引擎（整段 paint+行带裁剪→逐行 justify）+ 双Canvas高亮 + 四个 SDK 声明/实现不符定案（TextLine.paint 自然位/color 默认白/createImageSource 返 undefined/LineMetrics.width=排版宽）+ 背景缓存竞态；**开关 `READER_NOANIM_CANVAS` 已转正（默认 true，仅留一键回退）** | ✅ | 2026-11-05 |
 | └ §101 | **「公告」弹窗模块**：三文件分工（内容真源/界面/判定）+ `versionName` 比对只弹一次 + 一键开关 `Gonggao.ENABLED` + Swiper/Scroll/Image 配方 + §101.11 可点按钮「点击加群」 + §101.12 重装后"没触发公告"的事故与修复（记账改到关闭时 + `onDidAppear` 看门狗 + 内容顶对齐修正）+ §101.13 隐私声明门禁（接 `privacyManager.getAppPrivacyResult()`）+ §101.14「关于我们 → 更新公告」手动入口 + **§101.15 两个真机事故复盘**（① `builder: Xxx({…})` 放进普通类 ⇒ 弹窗建不出来且不报错；② 隐私接口"空数组=未签"被判成放行）+ 两个新 ArkTS 坑（ForEach 两段闭包形参不能同名、Dimension≠string\|number） | ✅ 真机全流程验收（§101.15 已回归） | 2026-11-05 |
 | └ §102 | **阅读器「正文绝对显示区」调试浮层**：设置页暗门组（Edge TTS 同组）新增开关 → 阅读页盖 80% 透明红矩形，标出首行上限(`scrollTopInsetVp()` 88vp)/尾行下限(`scrollBottomInsetVp()` 62vp)/左右文本宽；四种翻页方式共用同一块矩形（三层同 inset + 同 scale 基准） | ⚠️ 构建通过、真机锁屏未验 | 2026-11-05 |
 | └ §103 | **事故复盘：切到「无动画」黑屏无字**（真机已修）：`parseHexColor` 只认 `#hex`，把主题色的 `rgba(248,249,250,1)` 当**不透明黑** ⇒ `fillBg` 刷黑整页 + 正文 `#000000` ⇒ 黑底黑字；修法是补 `rgb()/rgba()` 解析 + 不识别时打 warn；ReaderKit/上下档不中招（底色不走这个解析器） | ✅ 真机复现 + 修复回归（手机） | 2026-11-05 |
