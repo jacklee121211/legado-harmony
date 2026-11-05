@@ -14,13 +14,13 @@ export interface VersionEntry {
 }
 
 /** 读不到 bundle 信息时的兜底版本号（与 app.json5 同源） */
-export const APP_VERSION_FALLBACK: string = 'V3.0.13'
+export const APP_VERSION_FALLBACK: string = 'V3.1.0'
 
 /** 更新日志（默认只含**当前版本**一条；-MaxVersions 调大才有多条历史） */
 export const VERSION_LOGS: VersionEntry[] = [
   {
-    version: 'V3.0.13',
-    date: '2026-11-04',
+    version: 'V3.1.0',
+    date: '2026-11-05',
     items: [
       'UI全面优化，引入鸿蒙7.0沉浸光感材质及特效，全新的动画机制',
       '完全精简的极致体验',
@@ -88,6 +88,10 @@ export const VERSION_LOGS: VersionEntry[] = [
       '电脑阅读与手机的进度、书签单向隔离，互不覆盖',
       '平板 / 2in1 横屏时 TXT 阅读方式进一步精简为横滑 / 上下 / 无动画（去掉仿真）',
       '自绘档字重按屏幕密度自动补偿，不同设备观感一致',
+      '新增版本公告：新装或检测到版本更新后弹出一次，支持左右滑动、长文滚动、图片，并可一键「点击加群」',
+      '「关于我们」新增「更新公告」入口，随时可以再看本版本的公告',
+      '修复「无动画」翻页偶发整页黑屏、看不到正文的问题',
+      '首次安装时公告会在您同意隐私声明之后再出现，不再被系统弹窗遮住',
     ]
   },
 ]
