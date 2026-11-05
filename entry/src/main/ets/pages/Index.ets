@@ -100,11 +100,9 @@ import { OfflineMode } from '../common/utils/OfflineMode'
 // 判定与记账全在 `componets/gonggao/Gonggao.ets`（一键开关 `Gonggao.ENABLED` 在那里）；
 // 内容在 `componets/gonggao/GonggaoData.ets`；本页只负责：① 冷启动判定一次；
 // ② new controller 并打开；③ 打开成功后记账（见 `maybeShowGonggao` 注释）。
-import GonggaoPage from '../componets/gonggao/gonggaopage'
 import { Gonggao } from '../componets/gonggao/Gonggao'
-// 公告里的可点按钮动作（「点击加群」）：取值常量在内容文件里，链路在公共件 `QqGroup`
-import { GONGGAO_ACTION_JOIN_GROUP } from '../componets/gonggao/GonggaoData'
-import { QqGroup, QQ_GROUP_CODE } from '../common/utils/QqGroup'
+// 公告弹窗的唯一创建入口（另一个入口是「关于我们 → 更新公告」，两处共用同一份样式与关闭口径）
+import { GonggaoDialog } from '../componets/gonggao/GonggaoDialog'
 
 // ── 阅读里程碑主动推广（2026-10-28 新增，用户需求）──────────────────────────
 // 「累计阅读 >1h 弹评分软引导 / >10h 弹 VIP」的**判定与记账**全在 `ReadPromo`；
@@ -1313,82 +1311,44 @@ struct Main {
   }
 
   /**
-   * 真正 new controller 并打开公告。任何异常都不许影响主流程（公告是增值功能）。
+   * 真正创建并打开公告。任何异常都不许影响主流程（公告是增值功能）。
    *
-   * ── options 配方逐条对齐 `docs/标准-弹窗与按钮统一规范.md` §2.2 / §2.4
-   *   · `customStyle: false` + `cornerRadius: 20` + `systemMaterial` + SPRING_FAST 开关动画；
-   *   · 内容含 `Scroll` ⇒ **必须给固定高**（§2.4），这里给百分比 `'78%'`。
-   *     官方文档原文（documentId `harmonyos-references/…/ArkTS组件/弹窗/自定义弹窗_(CustomDialog)/自定义弹窗_(CustomDialog)`）：
-   *     「height…弹窗高度默认最大值：0.9 *（窗口高度 - 安全区域）。
-   *       **百分比参数方式：弹窗参考高度为（窗口高度 - 安全区域）**，在此基础上调小或调大。」
-   *     ⇒ 百分比自动跟随窗口/设备，比写死 560vp 安全（小屏不裁、大屏不矮）。
-   *     宽度同文档：「百分比参数方式：弹窗参考宽度为所在窗口的宽度」⇒ 见 `gonggaoWidth()`。
-   *
-   * ── 记账在这两条关闭路径上，**不在这里**（理由见本节开头的事故记录）
-   *   · 「我知道了」⇒ `closeGonggaoDialog()`；
-   *   · 点遮罩 / 返回键 ⇒ options 的 `cancel`。
-   * 程序化 close（例如别的弹窗走 `DialogHost.openIf` 把它顶掉）**不记账** ⇒ 下次还能补弹。
+   * ⚠️ 2026-11-05：options 配方 / 关闭记账 / 动作分派**全部收进 `componets/gonggao/GonggaoDialog.ets`**
+   * —— 因为公告多了一个手动入口「关于我们 → 更新公告」，两处必须一模一样，不能各写一份。
+   * 本页只保留**自动弹出**特有的三件事：显示看门狗、补弹重试、与首启引导/阅读推广互斥。
    */
   private openGonggaoDialog(): void {
     this.gonggaoAppeared = false
-    try {
-      const dialog: CustomDialogController = new CustomDialogController({
-        builder: GonggaoPage({
-          theme: this.theme,
-          // 本弹窗不自己 close（`RenameBookDialog.ets:27-32` 真机结论）⇒ 关闭权在本页
-          onConfirm: (): void => {
-            this.closeGonggaoDialog()
-          },
-          // 公告里的可点按钮（如「点击加群」）—— **动作执行放在宿主**，弹窗只抛 action 上来。
-          // 目前只支持「加群」，走的是与「我的 → 设置 → 加入Q群」**同一个** `QqGroup.join`
-          // （单一通路：换通道只改 `common/utils/QqGroup.ets`）。
-          onAction: (action: string): void => {
-            this.onGonggaoAction(action)
-          }
-        }),
-        autoCancel: true,
-        alignment: DialogAlignment.Center,
-        width: this.gonggaoWidth(),
-        height: '78%',
-        cornerRadius: 20,
-        // ★ 材质生效的必要条件（规范 2.2）
-        customStyle: false,
-        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
-        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-        // 「真的显示出来了」的唯一信号（SDK :528；被打断时不触发，见本节开头事故记录）
-        onDidAppear: (): void => {
-          this.gonggaoAppeared = true
-          hilog.info(0x0000, 'Gonggao', 'appeared')
-        },
-        /**
-         * 弹窗**消失**（不论谁关的）。为什么要它：真机实测「系统隐私协议窗把公告压住后，
-         * 协议窗一关，公告也会被销毁」—— 此时既没有 `cancel` 也没有 `onConfirm`，
-         * `gonggaoDialog` 会一直是脏引用 ⇒ 后续重试被挡死、本次会话再也补不上。
-         * 这里清引用；若还没记账（= 用户没看到）就排一次补弹。
-         */
-        onDidDisappear: (): void => {
-          hilog.info(0x0000, 'Gonggao', 'didDisappear')
-          this.gonggaoDialog = null
-          if (!Gonggao.shouldShow()) {
-            // 已记账 = 用户看过了（「我知道了」/ 点遮罩 / 返回键）
-            return
-          }
-          this.scheduleGonggaoRetry('disappeared-unseen')
-        },
-        cancel: (): void => {
-          // 点遮罩 / 返回键 = 用户**看到了并关掉** ⇒ 记账（弹窗已被系统关掉，这里只清引用）
-          this.gonggaoDialog = null
-          Gonggao.markShown()
+    const dialog: CustomDialogController | null = GonggaoDialog.create(
+      this.hostAbilityContext(), this.theme,
+      // 「真的显示出来了」的唯一信号（SDK :528；被打断时不触发，见本节开头事故记录）
+      (): void => {
+        this.gonggaoAppeared = true
+        hilog.info(0x0000, 'Gonggao', 'appeared')
+      },
+      /**
+       * 弹窗**消失**（不论谁关的）。为什么要它：真机实测「系统隐私协议窗把公告压住后，
+       * 协议窗一关，公告也会被销毁」—— 此时既没有 `cancel` 也没有 `onConfirm`，
+       * `gonggaoDialog` 会一直是脏引用 ⇒ 后续重试被挡死、本次会话再也补不上。
+       * 这里清引用；若还没记账（= 用户没看到）就排一次补弹。
+       */
+      (): void => {
+        hilog.info(0x0000, 'Gonggao', 'didDisappear')
+        this.gonggaoDialog = null
+        if (!Gonggao.shouldShow()) {
+          // 已记账 = 用户看过了（「我知道了」/ 点遮罩 / 返回键）
+          return
         }
+        this.scheduleGonggaoRetry('disappeared-unseen')
       })
-      this.gonggaoDialog = dialog
-      DialogHost.openIf(dialog)
-      this.armGonggaoWatchdog()
-    } catch (e) {
-      this.gonggaoDialog = null
-      hilog.warn(0x0000, 'Gonggao', `openGonggaoDialog failed: ${JSON.stringify(e)}`)
+    if (dialog === null) {
+      // 没有公告内容（`GONGGAO_ITEMS = []`）⇒ 什么都不做
+      hilog.info(0x0000, 'Gonggao', 'no content, skip')
+      return
     }
+    this.gonggaoDialog = dialog
+    DialogHost.openIf(dialog)
+    this.armGonggaoWatchdog()
   }
 
   /**
@@ -1441,65 +1401,6 @@ struct Main {
     }, Main.GONGGAO_RETRY_MS)
   }
 
-
-  /**
-   * 公告弹窗里的**可点按钮**动作分派（2026-11-05 新增）。
-   *
-   * `GonggaoItem.action` 的取值见 `componets/gonggao/GonggaoData.ets` 的 `GONGGAO_ACTION_*`。
-   * 目前只有一种：
-   *   · `GONGGAO_ACTION_JOIN_GROUP` ⇒ `QqGroup.join(ctx, onAllFailed)`
-   *     —— 与「我的 → 设置 → 加入Q群」**同一个函数**（`common/utils/QqGroup.ets`，三级链路：
-   *        `forward/url` 让 QQ 直接进群资料页 → 打不开就开浏览器 → 再失败提示群号）。
-   *     失败提示复用本页 `promoToast()`（`showMessage` 的安全封装，见其注释）——
-   *     那条 Toast 在 `showCommentDialog()` 之后会被 ArkUI 拒收，但本路径不涉及系统评分弹窗。
-   *
-   * 未知/空 action：什么都不做（按钮点了"没反应"比弹个错误提示更不打扰）。
-   * 新增动作只改这里 + `GonggaoData.ets` 的常量，**界面文件不用动**。
-   */
-  private onGonggaoAction(action: string): void {
-    if (action === GONGGAO_ACTION_JOIN_GROUP) {
-      QqGroup.join(this.hostAbilityContext(), (): void => {
-        hilog.warn(0x0000, 'Gonggao', 'join QQ group failed at all three levels');
-        this.promoToast(`打开失败，请手动搜索 QQ群：${QQ_GROUP_CODE}`)
-      })
-      return
-    }
-    hilog.info(0x0000, 'Gonggao', `unhandled announcement action: ${action}`)
-  }
-
-  /**
-   * 关闭公告弹窗 —— 「我知道了」的唯一出口，**同时也是记账点**（用户明确关掉 = 看过了）。
-   * 必须由**创建 controller 的本页**执行（`RenameBookDialog.ets:27-32`：子组件内 close 无效）。
-   */
-  private closeGonggaoDialog(): void {
-    const dialog: CustomDialogController | null = this.gonggaoDialog
-    this.gonggaoDialog = null
-    // 先记账再关：即使 close 抛异常，也不会出现"用户关了但下次又弹"的重复打扰
-    Gonggao.markShown()
-    if (dialog === null) {
-      return
-    }
-    try {
-      dialog.close()
-    } catch (e) {
-      hilog.warn(0x0000, 'Gonggao', `closeGonggaoDialog failed: ${JSON.stringify(e)}`)
-    }
-  }
-
-  /**
-   * 公告弹窗宽度：手机（xs/sm/md）按窗口宽 88%，平板 / 2in1（lg/xl）固定 460vp。
-   * 为什么大屏不用百分比：`width` 的百分比口径是"所在窗口宽"（见 `openGonggaoDialog` 注释），
-   * 平板/2in1 上用 88% 会变成"一条横跨整屏的公告"⇒ 固定宽更接近系统弹窗观感。
-   * `currentBreakpoint` 由 `EntryAbility.updateBreakpoint()` 写入，与书架列数（`ShelfPrefs`）同源。
-   * ⚠️ 返回类型必须是 `Dimension`（不是 `string | number`）：SDK `component/units.d.ts:347`
-   * 原文 `declare type Dimension = PX | VP | FP | LPX | Percentage | Resource;`，
-   * 其中 `:289 declare type Percentage = \`${number}%\`;`、`PX/VP` 也是模板字面量类型
-   * ⇒ 裸 `string`/裸 `number` 联合**不可赋值**（MCP check 实测报 2322）。
-   */
-  private gonggaoWidth(): Dimension {
-    const bp: string = AppStorage.get<string>('currentBreakpoint') ?? ''
-    return (bp === 'lg' || bp === 'xl') ? '460vp' : '88%'
-  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // 阅读里程碑主动推广（2026-10-28 新增）—— 触发、判定、controller、记账

@@ -16,6 +16,9 @@ import RatingPromptDialog from './RatingPromptDialog'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
+// ── 更新公告（2026-11-05 新增）：与冷启动自动弹的公告**同一个创建入口** ────────────
+// 判定/记账在 `Gonggao.ets`；弹窗样式与关闭口径在 `GonggaoDialog.ets`（唯一实现，两入口共用）。
+import { GonggaoDialog } from '../../../../componets/gonggao/GonggaoDialog'
 
 // ── 关于我们（2026-09-30 回填，用户需求清单）────────────────────────────────
 // 基座（legado-harmony）的 aboutUsPage 为空壳参考：本页按喵阅现状全部重写。
@@ -30,6 +33,12 @@ export default struct AboutPage {
 
   /** 版本名（来自 AppScope/app.json5 的 versionName，运行时读取，不硬编码） */
   @State versionName: string = ''
+
+  /**
+   * 「更新公告」手动入口的 controller（null = 未打开 / 已关闭）。
+   * 每次点都 new 一个新的（SDK NOTE：弹窗参数不支持动态更新）⇒ 与 `Index` 的自动路径同款做法。
+   */
+  private gonggaoDialog: CustomDialogController | null = null
 
   /**
    * 评分引导弹窗（2026-10-13 新增）。
@@ -116,6 +125,14 @@ export default struct AboutPage {
                 .margin({ left: 20, right: 20 })
               this.row('更新日志', (): void => {
                 AppRouter.push(RouteName.VERSION_LOG)
+              })
+              Divider().color(this.nightOn ? '#2A2A2C' : '#F0F0F0')
+                .margin({ left: 20, right: 20 })
+              // ── 更新公告（2026-11-05 新增，用户要求）：手动查看本版本公告 ──────────
+              // 与冷启动自动弹出的公告**同一份内容、同一个弹窗**（创建入口 `GonggaoDialog`，
+              // 见 `componets/gonggao/GonggaoDialog.ets`）⇒ 样式/关闭口径不会再跑偏。
+              this.row('更新公告', (): void => {
+                this.openGonggaoByHand()
               })
             }
             .backgroundColor($r('app.color.card_bg'))
@@ -208,6 +225,46 @@ export default struct AboutPage {
     }
     .hideTitleBar(true)
     .systemTransition(UiMotion.pageTransition(UiMotion.T_SETTING))
+  }
+
+  /**
+   * 「更新公告」行：手动打开**本版本**的公告弹窗（2026-11-05 新增，用户要求）。
+   *
+   * ── 和自动弹出（`Index.maybeShowGonggao`）的关系
+   *   · 同一份内容（`GonggaoData.ets`）、同一个弹窗实现（`GonggaoDialog.ets`）；
+   *   · 差别只有两点：① 手动打开**不看版本判定**（用户想查就查）；
+   *     ② **不看隐私声明门禁** —— 能点到这里说明系统隐私弹窗早处理完了
+   *     （见施工记录 §101.12 / §101.13），不必再等。
+   *   · 关闭时同样 `Gonggao.markShown()`（`GonggaoDialog` 内建）⇒ 用户手动看过本版本后，
+   *     下次冷启动不再自动弹（他确实已经读到了），符合"一次版本号变化 = 一次展示机会"。
+   *
+   * 没有公告内容（`GONGGAO_ITEMS = []`）时只提示，不开空弹窗。
+   */
+  private openGonggaoByHand(): void {
+    if (this.gonggaoDialog !== null) {
+      // 已经开着（连点两下 / 弹窗尚未消失）⇒ 不重复创建
+      return
+    }
+    if (!GonggaoDialog.hasContent()) {
+      this.toast('本版本暂无更新公告')
+      return
+    }
+    const dialog: CustomDialogController | null = GonggaoDialog.create(
+      this.hostContext(), this.theme,
+      (): void => {},
+      (): void => {
+        // 关掉了（不论谁关的）⇒ 清引用，避免下次点击复用旧 controller
+        this.gonggaoDialog = null
+      },
+      // 手动看过本版本 ⇒ 记为本版本已展示（下次冷启动不再自动弹）。
+      // 若你希望"手动查阅不消耗自动弹出机会"，把这里改成 false 即可（另一入口不受影响）。
+      true)
+    if (dialog === null) {
+      this.toast('本版本暂无更新公告')
+      return
+    }
+    this.gonggaoDialog = dialog
+    DialogHost.openIf(dialog)
   }
 
   // ── 应用市场相关动作（2026-10-13 新增）──────────────────────────────────
