@@ -128,12 +128,24 @@ export struct ReaderSkinPanel {
     return '已设置';
   }
 
+  /**
+   * 任意选择动作前确保总开关打开（用户拍板的开关语义：关=完全恢复原版，开=出现皮肤；
+   * 选择了元素却没开开关 = 无效操作，自动代开）。
+   */
+  private ensureOn(): void {
+    if (!this.skinOn) {
+      this.skinOn = true;
+      PreferencesUtil.putSync(MySetConstants.SET_READER_SKIN_ON, true);
+    }
+  }
+
   /** 对一组键写同一个选择（预制） */
   private applyPresetToGroup(def: SkinGroupDef, pack: SkinPack): void {
+    this.ensureOn();
     const slot: SkinSlot | null = SkinStore.resolve(pack, def.keys[0], NightMode.isDarkSurface());
     for (let i = 0; i < def.keys.length; i++) {
       if (slot === null) {
-        SkinStore.setElemSel(null);
+        SkinStore.setElemSel(def.keys[i], null);
         continue;
       }
       const sel: SkinElemSel = {
@@ -141,16 +153,17 @@ export struct ReaderSkinPanel {
         asset: slot.asset, sourcePack: pack.id,
         color: slot.color, colorEnd: slot.colorEnd, slice: slot.slice
       };
-      SkinStore.setElemSel(sel);
+      SkinStore.setElemSel(def.keys[i], sel);
     }
     this.getUIContext().getPromptAction().showToast(
       { message: '「' + pack.name + '」已应用到' + def.title + '，进阅读页生效' });
   }
 
-  /** 对一组键写「无」 */
+  /** 对一组键写「无」（只清本组键，不殃及其它元素） */
   private clearGroup(def: SkinGroupDef): void {
+    this.ensureOn();
     for (let i = 0; i < def.keys.length; i++) {
-      SkinStore.setElemSel(null);
+      SkinStore.setElemSel(def.keys[i], null);
     }
     this.getUIContext().getPromptAction().showToast({ message: '已恢复透出真实背景' });
   }
@@ -164,6 +177,7 @@ export struct ReaderSkinPanel {
     if (uris.length === 0) {
       return;
     }
+    this.ensureOn();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const dir: string = ctx.filesDir + '/skins/custom';
     try {
@@ -182,14 +196,15 @@ export struct ReaderSkinPanel {
       const sel: SkinElemSel = {
         key: keys[i], type: SkinAssetType.IMAGE, customPath: 'file://' + dest
       };
-      SkinStore.setElemSel(sel);
+      SkinStore.setElemSel(keys[i], sel);
     }
     this.getUIContext().getPromptAction().showToast({ message: '自定义素材已应用，进阅读页生效' });
   }
 
-  /** 一键整套方案：全部四组来自同一个包；'' = 全清（默认外观） */
+  /** 一键整套方案：全部四组来自同一个包；'' = 清空四组（默认外观） */
   private applyWholePack(packId: string): void {
     Haptics.tap();
+    this.ensureOn();
     SkinStore.applyPresetPack(packId);
     const tip: string = packId === '' ? '已恢复默认外观' : '整套方案已应用，进阅读页生效';
     this.getUIContext().getPromptAction().showToast({ message: tip });
@@ -306,7 +321,7 @@ export struct ReaderSkinPanel {
           this.selChip('无', this.groupSel(def.keys) === null, (): void => {
             this.clearGroup(def)
           })
-          ForEach(SkinStore.listPacks(), (pack: SkinPack) => {
+          ForEach(SkinStore.visiblePacks(), (pack: SkinPack) => {
             if (SkinStore.resolve(pack, def.keys[0], NightMode.isDarkSurface()) !== null) {
               this.selChip(pack.name, this.chipSelected(def.keys, pack.id), (): void => {
                 this.applyPresetToGroup(def, pack)
@@ -339,7 +354,7 @@ export struct ReaderSkinPanel {
             Text('启用阅读皮肤')
               .fontSize(15)
               .fontColor(this.textColor())
-            Text('关闭即一键回退；进阅读页生效')
+            Text('关闭 = 完全恢复原版外观（所有皮肤元素不渲染）；任意选择会自动打开')
               .fontSize(11)
               .fontColor(this.subTextColor())
           }
@@ -379,10 +394,10 @@ export struct ReaderSkinPanel {
           Row({ space: 12 }) {
             this.packCard('', '默认外观', NightMode.isDarkSurface() ? '#2A2D31' : '#ECEFF1',
               SkinStore.elemSels().length === 0)
-            ForEach(SkinStore.listPacks(), (pack: SkinPack) => {
+            ForEach(SkinStore.visiblePacks(), (pack: SkinPack) => {
               this.packCard(pack.id, pack.name, pack.previewColor ?? '#ECEFF1',
                 this.chipSelected([SkinElementKey.BAND_TOP], pack.id))
-            }, (pack: SkinPack) => pack.id + '_' + this.selsRaw.length)
+            }, (pack: SkinPack) => pack.id + '_' + this.selsRaw)
           }
           .alignItems(VerticalAlign.Top)
         }

@@ -111,6 +111,8 @@ export interface SkinPack {
   author?: string;
   /** 预览主色（主题页皮肤卡片的色块底色，2026-11-06 UI 增补；缺省 = 中性灰） */
   previewColor?: string;
+  /** 是否在选择 UI 中可见（2026-11-06：内置兜底包标 false，不出现在预设列表） */
+  visible?: boolean;
   /** 亮色档元素表 */
   elements: SkinSlot[];
   /** 深色档可选；解析顺序 dark[key] → elements[key] → 无皮肤（规范 §4.1 回落链） */

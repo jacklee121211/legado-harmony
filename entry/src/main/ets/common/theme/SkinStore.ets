@@ -226,12 +226,17 @@ export class SkinStore {
     return null;
   }
 
-  /** 写/清单个元素选择（null = 删除该项）；写后由 AppStorage 持久化链路自动落盘 */
-  static setElemSel(sel: SkinElemSel | null): void {
+  /**
+   * 写/清单个元素选择（**按 key 精确作用域**：null = 只删这一个 key。
+   * ⚠️ 2026-11-06 修一个真 bug：旧签名 setElemSel(null) 会把**整张表**清空——
+   * 「无/默认外观」一动就殃及全部元素，m80 上表现为点了没反应/状态乱。
+   * 写后由 AppStorage 持久化链路自动落盘。）
+   */
+  static setElemSel(key: string, sel: SkinElemSel | null): void {
     const arr: SkinElemSel[] = SkinStore.elemSels();
     const out: SkinElemSel[] = [];
     for (let i = 0; i < arr.length; i++) {
-      if (sel === null || arr[i].key !== sel.key) {
+      if (arr[i].key !== key) {
         out.push(arr[i]);
       }
     }
@@ -243,25 +248,28 @@ export class SkinStore {
 
   /**
    * 一键整套方案：把某个包的 四组元素 写进选择表（信息窗一个选择写 top+bottom 两个键）。
-   * packId = '' ⇒ 全清（默认外观）。
+   * packId = '' ⇒ 按键清空四组（默认外观），不动其它键。
    */
   static applyPresetPack(packId: string): void {
+    const keys: string[] = [
+      SkinElementKey.BAND_TOP, SkinElementKey.BAND_BOTTOM,
+      SkinElementKey.TEXT_FRAME, SkinElementKey.INFOBAR_BG_TOP,
+      SkinElementKey.INFOBAR_BG_BOTTOM
+    ];
     if (packId === '') {
-      SkinStore.setElemSel(null);
+      for (let i = 0; i < keys.length; i++) {
+        SkinStore.setElemSel(keys[i], null);
+      }
       return;
     }
     const pack: SkinPack | null = SkinStore.activePackById(packId);
     if (pack === null) {
       return;
     }
-    const keys: string[] = [
-      SkinElementKey.BAND_TOP, SkinElementKey.BAND_BOTTOM,
-      SkinElementKey.TEXT_FRAME, SkinElementKey.INFOBAR_BG_TOP
-    ];
     for (let i = 0; i < keys.length; i++) {
       const slot: SkinSlot | null = findSlot(pack, keys[i]);
       if (slot === null) {
-        SkinStore.setElemSel(null); // 包里没配这个元素 = 无（透出真实背景）
+        SkinStore.setElemSel(keys[i], null); // 包里没配这个元素 = 无（透出真实背景）
         continue;
       }
       const sel: SkinElemSel = {
@@ -269,16 +277,19 @@ export class SkinStore {
         asset: slot.asset, sourcePack: pack.id,
         color: slot.color, colorEnd: slot.colorEnd, slice: slot.slice
       };
-      SkinStore.setElemSel(sel);
-      if (keys[i] === SkinElementKey.INFOBAR_BG_TOP) {
-        const mirror: SkinElemSel = {
-          key: SkinElementKey.INFOBAR_BG_BOTTOM, type: slot.type,
-          asset: slot.asset, sourcePack: pack.id,
-          color: slot.color, colorEnd: slot.colorEnd, slice: slot.slice
-        };
-        SkinStore.setElemSel(mirror);
+      SkinStore.setElemSel(keys[i], sel);
+    }
+  }
+
+  /** 选择 UI 可见的包（内置兜底包 visible=false 不列出；2026-11-06） */
+  static visiblePacks(): SkinPack[] {
+    const out: SkinPack[] = [];
+    for (let i = 0; i < SkinStore.packs.length; i++) {
+      if (SkinStore.packs[i].visible !== false) {
+        out.push(SkinStore.packs[i]);
       }
     }
+    return out;
   }
 
   /** 按 id 直查注册表里的包（activePack 依赖当前选中 id，这里独立查） */
@@ -380,6 +391,7 @@ export class SkinStore {
       id: 'warm-paper-lite',
       name: '暖纸·极简（内置占位）',
       previewColor: '#FFF1DE',
+      visible: false,
       elements: light,
       dark: dark
     };
