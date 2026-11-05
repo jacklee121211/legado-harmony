@@ -1302,7 +1302,7 @@ oAnimInitNode 配套） */
       const back: number = this.normalReadMode
       this.normalReadMode = -1
       this.switchReadMode(back)
-      return
+      // ⚠️ 不再 return：下面还要收尾（收起残留弹窗），否则展开后目录页会浮在书架上
     }
     this.applyOuterReadMode()
     if (this.outerMinimal) {

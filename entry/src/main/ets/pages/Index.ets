@@ -489,6 +489,13 @@ struct Main {
     if (!this.outerMinimal) {
       // 回到内屏：复位闸门，下次再合上还能自动进书
       this.outerAutoOpened = false
+      // 2026-11-06（用户）：**展开也要接续进阅读器** —— 之前展开只回书架，
+      //   用户在外屏正看着书，展开后却停在书架，得再点一次书。
+      //   复用同一条快速阅读链路（openLastReadBook），不新写跳转；
+      //   已在阅读页（内屏看书 -> 合上 -> 展开）时 	opName === READER 直接不跳。
+      if (AppRouter.isReady() && AppRouter.topName() !== RouteName.READER) {
+        this.openLastReadBook(false)
+      }
       return
     }
     this.autoEnterReaderOnOuter()
