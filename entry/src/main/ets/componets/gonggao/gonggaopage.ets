@@ -165,6 +165,10 @@ export default struct GonggaoPage {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
+      // 2026-11-05 真机修复：内容比滚动区矮时，Scroll 会把子节点**垂直居中**
+      //（真机 layout dump：Scroll 481..2250，Column 1054..1677 = 正好居中 ⇒ 顶部 573px 空白）。
+      // `minHeight: '100%'` 让内容块至少撑满视口 ⇒ 顶部对齐；内容更长时不受限，照常滚动。
+      .constraintSize({ minHeight: '100%' })
       .padding({ bottom: 16 })
     }
     .width('100%')

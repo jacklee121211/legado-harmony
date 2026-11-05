@@ -1078,6 +1078,11 @@ struct Main {
     if (this.backgroundedSinceLastShow) {
       this.backgroundedSinceLastShow = false
     }
+    // ★ 公告补弹点（2026-11-05）：首装首次启动时，应用市场的**系统隐私协议窗**会盖在应用之上
+    //   （真机证据见 `maybeShowGonggao` 上方的说明），公告会被压住/打断 ⇒ 那条路径**不记账**。
+    //   `onPageShow` 是"回到本页"的既有钩子，这里再判一次，协议窗关掉后本次会话就能补上。
+    //   幂等：`maybeShowGonggao` 内部有 pending / controller 去重，且 `shouldShow()` 记账后为 false。
+    this.maybeShowGonggao('pageShow')
   }
 
   /**
@@ -1148,7 +1153,7 @@ struct Main {
     // ★ 首次安装模式选择（2026-10-13）：流程正常启动，主界面立住后再弹引导。
     this.maybeShowFirstRunDialog()
     // ★ 公告（新装 / 版本号变化后一次）：判定在 `Gonggao.shouldShow()`，本页只负责弹与记账。
-    this.maybeShowGonggao()
+    this.maybeShowGonggao('coldStart')
     // ★ 阅读里程碑主动推广（2026-10-28）：先灌历史时长，再在首帧稳定后判定一次。
     //   ① `init()` 幂等：只在首次调用时启动 `readDaily` 历史秒数的一次性入账
     //      （老用户"装了新版本一进就弹"的唯一依据，见 `ReadPromo.ets` 头注释）；
@@ -1224,29 +1229,78 @@ struct Main {
   // ══════════════════════════════════════════════════════════════════════════
   // 「公告」弹窗（新装 / 版本号变化后弹一次）—— 判定、controller、记账
   // ══════════════════════════════════════════════════════════════════════════
+  //
+  // ⚠️ 2026-11-05 真机事故（用户报「重装后没触发公告」）+ 修复，机制写在这里，别再踩：
+  //
+  //   真机证据（MatePad Pro，卸载重装后首次启动，hilog 原文）：
+  //     `15:51:44.349 54937 testTag: Ability onCreate`
+  //     `15:51:45.275 55219 A06666/commonUI/AG/AppGallery: [DisposeAlertAbility] onCreate`
+  //     `15:51:45.528 55219 …AppGallery: [NavigateDisposePrivacyDialog]:aboutToAppear com.jk.reader`
+  //     `15:51:45.542 54937 Gonggao: shouldShow: fresh install, current=3.0.13`
+  //     `15:51:45.543 54937 Gonggao: markShown: version=3.0.13`      ← 旧实现：open 后立刻记账
+  //     `15:52:28.730 54937 AceFocus: view: ModalPage/76 close`       ← 用户点「同意」后协议层才关
+  //   ⇒ 首装首次启动时，**应用市场（AppGallery）的系统隐私协议弹窗**会盖在应用之上（它是
+  //     `DisposeAlertAbility`，与本应用同窗口内的 ModalPage），公告弹窗被它压住/打断：
+  //     用户看不到，而旧实现在 `open()` 之后**立刻记账** ⇒ 这个版本号的公告**永久丢失**。
+  //
+  //   两条修复（缺一不可）：
+  //   ① **记账时机 = 用户关闭时**（「我知道了」/ 点遮罩 / 返回键），不再"open 即记账"。
+  //      于是"开出来了但没人看见"不会被记账 ⇒ 下次冷启动还会补弹，最坏也只是多弹一次。
+  //   ② **显示看门狗**：`open()` 后 `GONGGAO_APPEAR_WATCHDOG_MS` 内没等到 `onDidAppear`
+  //      就判定"没显示出来"⇒ 关掉、不记账、隔 `GONGGAO_RETRY_MS` 重试（上限 `GONGGAO_MAX_ATTEMPTS`）。
+  //      依据：SDK `custom_dialog_controller.d.ts:528 onDidAppear?: Callback<void>;`，
+  //      同文件 :520 NOTE 原文「**If the dialog box is dismissed before its entrance animation
+  //      is finished, the animation will be interrupted, and onDidAppear will not be triggered.**」
+  //      ⇒ `onDidAppear` 正是"真显示出来了"的官方信号；协议窗压住/打断时它不会触发。
+
+  /** 有在途的延迟触发（防同一时刻排两次：冷启动的 aboutToAppear 与 onPageShow 都会判定） */
+  private gonggaoPending: boolean = false
+  /** 本次打开是否真的显示出来（`onDidAppear` 置 true；看门狗据此判定） */
+  private gonggaoAppeared: boolean = false
+  /** 已重试次数（只有"没显示出来"才累加） */
+  private gonggaoAttempts: number = 0
+  /** 打开后等多久还没 `onDidAppear` 就判定"没显示出来" */
+  private static readonly GONGGAO_APPEAR_WATCHDOG_MS: number = 2000
+  /** 判定没显示出来后，隔多久重试（够用户点掉系统隐私协议窗） */
+  private static readonly GONGGAO_RETRY_MS: number = 3000
+  /** 重试上限（20 × 3s ≈ 60s 窗口；超了就放弃本次，**不记账**，下次冷启动继续） */
+  private static readonly GONGGAO_MAX_ATTEMPTS: number = 20
 
   /**
-   * 冷启动判定并弹出公告。
+   * 判定并（延迟）弹出公告。
+   *
+   * 触发点有两个，都走本方法（内部有 `gonggaoPending` / `gonggaoDialog` 去重）：
+   *   · `aboutToAppear`（冷启动）；
+   *   · `onPageShow`（回到本页 —— 兜"首装时系统隐私协议窗盖住"那次的补弹）。
    *
    * ── 判定全在 `Gonggao.shouldShow()`（判定表见 `componets/gonggao/Gonggao.ets` 文件头）
    *   · `Gonggao.ENABLED === false` ⇒ 永不弹（开发者一键开关）；
    *   · 内容数组为空 / 取不到版本号 ⇒ 永不弹；
    *   · 本地"已展示版本"≠ 当前 `versionName` ⇒ 弹（新装时本地没有记录 ⇒ 也弹）。
    * 用户原话：「新下载软件，或者更新版本后出现，且在版本号未变化时不再重复出现第二次」。
+   *
+   * 另外三道闸：首启引导开着（强制选择语义，让位）、阅读器在栈顶（弹窗会盖在阅读页上）。
    */
-  private maybeShowGonggao(): void {
+  private maybeShowGonggao(source: string): void {
     if (!Gonggao.shouldShow()) {
       return
     }
+    if (this.gonggaoDialog !== null || this.gonggaoPending) {
+      return
+    }
+    if (this.firstRunDialog !== null) {
+      return
+    }
+    if (AppStorage.get<boolean>(NightMode.READER_KEY) === true) {
+      return
+    }
+    this.gonggaoPending = true
     setTimeout((): void => {
-      // 再次判定（防御性）：延迟期间可能已被其它路径记账
-      if (!Gonggao.shouldShow()) {
+      this.gonggaoPending = false
+      if (!Gonggao.shouldShow() || this.gonggaoDialog !== null) {
         return
       }
-      // 首启引导是"强制选择"语义，必须让它先走完；公告**不记账**，下次冷启动照常弹，不会丢
-      if (this.firstRunDialog !== null) {
-        return
-      }
+      hilog.info(0x0000, 'Gonggao', `open (source=${source}, attempt=${this.gonggaoAttempts})`)
       this.openGonggaoDialog()
     }, Main.GONGGAO_DELAY_MS)
   }
@@ -1263,11 +1317,13 @@ struct Main {
    *     ⇒ 百分比自动跟随窗口/设备，比写死 560vp 安全（小屏不裁、大屏不矮）。
    *     宽度同文档：「百分比参数方式：弹窗参考宽度为所在窗口的宽度」⇒ 见 `gonggaoWidth()`。
    *
-   * ── 记账时机 = **open 之后**（不是关闭时）
-   * 用户要的是"不再出现第二次" ⇒ 只要"出现过"就算展示过。放在关闭路径上会被
-   * 点遮罩 / 返回键 / cancel 回调漏接等分支绕过；放在 open 之后只有一种漏记：刚开就被杀进程。
+   * ── 记账在这两条关闭路径上，**不在这里**（理由见本节开头的事故记录）
+   *   · 「我知道了」⇒ `closeGonggaoDialog()`；
+   *   · 点遮罩 / 返回键 ⇒ options 的 `cancel`。
+   * 程序化 close（例如别的弹窗走 `DialogHost.openIf` 把它顶掉）**不记账** ⇒ 下次还能补弹。
    */
   private openGonggaoDialog(): void {
+    this.gonggaoAppeared = false
     try {
       const dialog: CustomDialogController = new CustomDialogController({
         builder: GonggaoPage({
@@ -1293,20 +1349,91 @@ struct Main {
         systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
         openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
         closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
-        cancel: (): void => {
-          // 点遮罩 / 返回键：弹窗已被系统关掉，这里只清引用（记账已在打开时完成）
+        // 「真的显示出来了」的唯一信号（SDK :528；被打断时不触发，见本节开头事故记录）
+        onDidAppear: (): void => {
+          this.gonggaoAppeared = true
+          hilog.info(0x0000, 'Gonggao', 'appeared')
+        },
+        /**
+         * 弹窗**消失**（不论谁关的）。为什么要它：真机实测「系统隐私协议窗把公告压住后，
+         * 协议窗一关，公告也会被销毁」—— 此时既没有 `cancel` 也没有 `onConfirm`，
+         * `gonggaoDialog` 会一直是脏引用 ⇒ 后续重试被挡死、本次会话再也补不上。
+         * 这里清引用；若还没记账（= 用户没看到）就排一次补弹。
+         */
+        onDidDisappear: (): void => {
+          hilog.info(0x0000, 'Gonggao', 'didDisappear')
           this.gonggaoDialog = null
+          if (!Gonggao.shouldShow()) {
+            // 已记账 = 用户看过了（「我知道了」/ 点遮罩 / 返回键）
+            return
+          }
+          this.scheduleGonggaoRetry('disappeared-unseen')
+        },
+        cancel: (): void => {
+          // 点遮罩 / 返回键 = 用户**看到了并关掉** ⇒ 记账（弹窗已被系统关掉，这里只清引用）
+          this.gonggaoDialog = null
+          Gonggao.markShown()
         }
       })
       this.gonggaoDialog = dialog
       DialogHost.openIf(dialog)
-      // 「出现过即算展示过」——必须在 open 之后（见方法头注释）
-      Gonggao.markShown()
+      this.armGonggaoWatchdog()
     } catch (e) {
       this.gonggaoDialog = null
       hilog.warn(0x0000, 'Gonggao', `openGonggaoDialog failed: ${JSON.stringify(e)}`)
     }
   }
+
+  /**
+   * 显示看门狗：`GONGGAO_APPEAR_WATCHDOG_MS` 内没等到 `onDidAppear` ⇒ 判定"没显示出来"
+   * （典型场景：首装时系统隐私协议窗把它压住）。处置：关掉、**不记账**、隔一会儿重试。
+   *
+   * 为什么必须"关掉"再重试：controller 还在的话 `gonggaoDialog !== null` 会把后续重试全挡掉。
+   * 关掉时 `onDidAppear` 未触发 ⇒ `cancel` 也不会触发 ⇒ 不会误记账。
+   */
+  private armGonggaoWatchdog(): void {
+    setTimeout((): void => {
+      if (this.gonggaoAppeared) {
+        return
+      }
+      if (this.gonggaoDialog === null) {
+        return
+      }
+      hilog.warn(0x0000, 'Gonggao',
+        `not appeared within ${Main.GONGGAO_APPEAR_WATCHDOG_MS}ms (attempt=${this.gonggaoAttempts}), retry later`)
+      const dead: CustomDialogController | null = this.gonggaoDialog
+      this.gonggaoDialog = null
+      if (dead !== null) {
+        try {
+          dead.close()
+        } catch (e) {
+          // 关不掉也没关系：下面重试会新建 controller
+        }
+      }
+      if (this.gonggaoAttempts >= Main.GONGGAO_MAX_ATTEMPTS) {
+        hilog.warn(0x0000, 'Gonggao', 'give up this session (not marked, will retry next cold start)')
+        return
+      }
+      this.scheduleGonggaoRetry('watchdog')
+    }, Main.GONGGAO_APPEAR_WATCHDOG_MS)
+  }
+
+  /**
+   * 排一次补弹（**所有"没显示出来/被销毁"路径的唯一重试入口**）。
+   * 上限 `GONGGAO_MAX_ATTEMPTS`；只排定时器，真正的判定仍在 `maybeShowGonggao()` 里。
+   */
+  private scheduleGonggaoRetry(reason: string): void {
+    if (this.gonggaoAttempts >= Main.GONGGAO_MAX_ATTEMPTS) {
+      hilog.warn(0x0000, 'Gonggao', `give up this session (${reason}); not marked, next cold start will retry`)
+      return
+    }
+    this.gonggaoAttempts++
+    hilog.info(0x0000, 'Gonggao', `retry scheduled (${reason}, attempt=${this.gonggaoAttempts})`)
+    setTimeout((): void => {
+      this.maybeShowGonggao('retry')
+    }, Main.GONGGAO_RETRY_MS)
+  }
+
 
   /**
    * 公告弹窗里的**可点按钮**动作分派（2026-11-05 新增）。
@@ -1334,12 +1461,14 @@ struct Main {
   }
 
   /**
-   * 关闭公告弹窗 —— 「我知道了」的唯一出口。
+   * 关闭公告弹窗 —— 「我知道了」的唯一出口，**同时也是记账点**（用户明确关掉 = 看过了）。
    * 必须由**创建 controller 的本页**执行（`RenameBookDialog.ets:27-32`：子组件内 close 无效）。
    */
   private closeGonggaoDialog(): void {
     const dialog: CustomDialogController | null = this.gonggaoDialog
     this.gonggaoDialog = null
+    // 先记账再关：即使 close 抛异常，也不会出现"用户关了但下次又弹"的重复打扰
+    Gonggao.markShown()
     if (dialog === null) {
       return
     }
