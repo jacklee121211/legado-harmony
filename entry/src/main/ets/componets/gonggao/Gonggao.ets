@@ -130,7 +130,14 @@ export class Gonggao {
           return agreed;
         }
       }
-      return true;
+      // ⚠️ 2026-11-05 真机纠正（实机日志原文，签署前/签署后对比）：
+      //   签署前：`[PrivacyManager] QueryPrivacyResult success, **no rows**`（查不到任何行）
+      //   签署后：`[PrivacyManager] set privacy result … [{"type":1,…,"result":1,…},{"type":2,…}]`
+      // ⇒ **空数组不是"没声明协议"，而是"还没签"**（首次安装就是这个状态）。
+      //   原来这里 `return true`（放行）导致公告在系统协议窗下面弹出来、然后被销毁 —— 白弹一次。
+      //   "应用没用这套托管服务"的情况由下面的 catch（错误码 1006700003）兜，不靠空数组判。
+      hilog.info(0x0000, TAG, 'privacyConsentReady: no rows -> treat as NOT signed yet');
+      return false;
     } catch (e) {
       const err = e as BusinessError;
       // 1006700003 = 应用未接入隐私管理服务（= 不存在系统协议框）⇒ 放行

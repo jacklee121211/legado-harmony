@@ -101,7 +101,9 @@ import { OfflineMode } from '../common/utils/OfflineMode'
 // 内容在 `componets/gonggao/GonggaoData.ets`；本页只负责：① 冷启动判定一次；
 // ② new controller 并打开；③ 打开成功后记账（见 `maybeShowGonggao` 注释）。
 import { Gonggao } from '../componets/gonggao/Gonggao'
-// 公告弹窗的唯一创建入口（另一个入口是「关于我们 → 更新公告」，两处共用同一份样式与关闭口径）
+// 公告弹窗的界面（**必须在本 struct 里实例化**，见 openGonggaoDialog 的 ⚠️⚠️ 注释）
+import GonggaoPage from '../componets/gonggao/gonggaopage'
+// 公告弹窗的共享件：尺寸常量 / 关闭记账口径 / 加群动作（不含 builder，见其文件头）
 import { GonggaoDialog } from '../componets/gonggao/GonggaoDialog'
 
 // ── 阅读里程碑主动推广（2026-10-28 新增，用户需求）──────────────────────────
@@ -1263,6 +1265,13 @@ struct Main {
   private static readonly GONGGAO_RETRY_MS: number = 3000
   /** 重试上限（20 × 3s ≈ 60s 窗口；超了就放弃本次，**不记账**，下次冷启动继续） */
   private static readonly GONGGAO_MAX_ATTEMPTS: number = 20
+  /** 等系统隐私声明同意的轮询上限（40 × 3s ≈ 120s，独立预算，见 `schedulePrivacyWait`） */
+  private static readonly GONGGAO_PRIVACY_WAIT_MAX: number = 40
+
+  /** 等隐私声明同意的轮询是否已排（防同一轮排两个） */
+  private privacyWaitPending: boolean = false
+  /** 已等了几轮（独立于看门狗预算） */
+  private privacyWaitCount: number = 0
 
   /**
    * 判定并（延迟）弹出公告。
@@ -1284,10 +1293,9 @@ struct Main {
       return
     }
     // 门禁：系统「隐私声明」还没同意 ⇒ 现在弹必然被那个系统确认框盖住（真机事故见本节开头）
-    // ⇒ 不弹、**不记账**，靠 `scheduleGonggaoRetry` 每 3s 复查一次（用户点完「同意」就会放行）。
+    // ⇒ 不弹、**不记账**，用**独立的**轮询预算等用户点「同意」（不占用看门狗的重试次数）。
     if (!Gonggao.privacyConsentReady()) {
-      hilog.info(0x0000, 'Gonggao', `waiting for system privacy consent (source=${source})`)
-      this.scheduleGonggaoRetry('privacy-pending')
+      this.schedulePrivacyWait(source)
       return
     }
     if (this.gonggaoDialog !== null || this.gonggaoPending) {
@@ -1313,42 +1321,105 @@ struct Main {
   /**
    * 真正创建并打开公告。任何异常都不许影响主流程（公告是增值功能）。
    *
-   * ⚠️ 2026-11-05：options 配方 / 关闭记账 / 动作分派**全部收进 `componets/gonggao/GonggaoDialog.ets`**
-   * —— 因为公告多了一个手动入口「关于我们 → 更新公告」，两处必须一模一样，不能各写一份。
+   * ⚠️⚠️ **`builder: GonggaoPage({…})` 必须留在本 struct 的方法里，不能挪进任何普通类**。
+   * 2026-11-05 真机事故：曾把整段 `new CustomDialogController({ builder: GonggaoPage({…}) })`
+   * 收进 `GonggaoDialog.create()`（普通类的静态方法）以求两个入口共用 options —— 结果
+   * **弹窗从不出现、也不报错**（日志见 `GonggaoDialog.ets` 文件头，`appeared` 命中 0 次）。
+   * 根因：结构体实例化必须在 @Component 上下文里；放普通类里 ets 会把它编译成普通函数调用。
+   * ⇒ 共享件 `GonggaoDialog` 只提供尺寸常量 / 记账口径 / 加群动作，**controller 一律在本 struct 里 new**。
    * 本页只保留**自动弹出**特有的三件事：显示看门狗、补弹重试、与首启引导/阅读推广互斥。
    */
   private openGonggaoDialog(): void {
     this.gonggaoAppeared = false
-    const dialog: CustomDialogController | null = GonggaoDialog.create(
-      this.hostAbilityContext(), this.theme,
-      // 「真的显示出来了」的唯一信号（SDK :528；被打断时不触发，见本节开头事故记录）
-      (): void => {
-        this.gonggaoAppeared = true
-        hilog.info(0x0000, 'Gonggao', 'appeared')
-      },
-      /**
-       * 弹窗**消失**（不论谁关的）。为什么要它：真机实测「系统隐私协议窗把公告压住后，
-       * 协议窗一关，公告也会被销毁」—— 此时既没有 `cancel` 也没有 `onConfirm`，
-       * `gonggaoDialog` 会一直是脏引用 ⇒ 后续重试被挡死、本次会话再也补不上。
-       * 这里清引用；若还没记账（= 用户没看到）就排一次补弹。
-       */
-      (): void => {
-        hilog.info(0x0000, 'Gonggao', 'didDisappear')
-        this.gonggaoDialog = null
-        if (!Gonggao.shouldShow()) {
-          // 已记账 = 用户看过了（「我知道了」/ 点遮罩 / 返回键）
-          return
-        }
-        this.scheduleGonggaoRetry('disappeared-unseen')
-      })
-    if (dialog === null) {
+    if (!GonggaoDialog.hasContent()) {
       // 没有公告内容（`GONGGAO_ITEMS = []`）⇒ 什么都不做
       hilog.info(0x0000, 'Gonggao', 'no content, skip')
       return
     }
-    this.gonggaoDialog = dialog
-    DialogHost.openIf(dialog)
-    this.armGonggaoWatchdog()
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: GonggaoPage({
+          theme: this.theme,
+          // 「我知道了」：先记账，再关自己（关闭权在创建 controller 的本 struct）
+          onConfirm: (): void => {
+            GonggaoDialog.markShown()
+            GonggaoDialog.close(this.gonggaoDialog)
+            this.gonggaoDialog = null
+          },
+          // 可点按钮（如「点击加群」）：动作分派在共享件里，两个入口行为一致
+          onAction: (action: string): void => {
+            GonggaoDialog.dispatchAction(this.hostAbilityContext(), action)
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: GonggaoDialog.dialogWidth(),
+        height: GonggaoDialog.DIALOG_HEIGHT,
+        cornerRadius: GonggaoDialog.DIALOG_CORNER,
+        // ★ 材质生效的必要条件（规范 2.2）
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        // 「真的显示出来了」的唯一信号（SDK :528；被打断时不触发，见本节开头事故记录）
+        onDidAppear: (): void => {
+          this.gonggaoAppeared = true
+          hilog.info(0x0000, 'Gonggao', 'appeared')
+        },
+        /**
+         * 弹窗**消失**（不论谁关的）。为什么要它：真机实测「系统隐私协议窗把公告压住后，
+         * 协议窗一关，公告也会被销毁」—— 此时既没有 `cancel` 也没有 `onConfirm`，
+         * `gonggaoDialog` 会一直是脏引用 ⇒ 后续重试被挡死、本次会话再也补不上。
+         * 这里清引用；若还没记账（= 用户没看到）就排一次补弹。
+         */
+        onDidDisappear: (): void => {
+          hilog.info(0x0000, 'Gonggao', 'didDisappear')
+          this.gonggaoDialog = null
+          if (!Gonggao.shouldShow()) {
+            // 已记账 = 用户看过了（「我知道了」/ 点遮罩 / 返回键）
+            return
+          }
+          this.scheduleGonggaoRetry('disappeared-unseen')
+        },
+        cancel: (): void => {
+          // 点遮罩 / 返回键 = 用户看到了并关掉 ⇒ 记账（弹窗已被系统关掉，这里只记账）
+          GonggaoDialog.markShown()
+        }
+      })
+      this.gonggaoDialog = dialog
+      DialogHost.openIf(dialog)
+      this.armGonggaoWatchdog()
+    } catch (e) {
+      this.gonggaoDialog = null
+      hilog.warn(0x0000, 'Gonggao', `openGonggaoDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 等系统隐私声明同意的**独立轮询**（2026-11-05 新增）。
+   *
+   * 为什么独立：等的是"用户点同意"这件事，可能十几秒也可能一分钟，
+   * 与"弹窗没显示出来"那种异常重试不是一个量级 —— 共用一个计数器会把预算吃光
+   * （真机实测：两个调用点各计一次 ⇒ 20 次 ≈ 30s 就放弃）。
+   * 预算：`GONGGAO_PRIVACY_WAIT_MAX` × `GONGGAO_RETRY_MS` = 40 × 3s ≈ 120s；
+   * 还没同意就放弃本次会话（**不记账**），下次冷启动继续等。
+   */
+  private schedulePrivacyWait(source: string): void {
+    if (this.privacyWaitPending) {
+      return
+    }
+    if (this.privacyWaitCount >= Main.GONGGAO_PRIVACY_WAIT_MAX) {
+      hilog.warn(0x0000, 'Gonggao', 'privacy consent still not signed, give up this session (not marked)')
+      return
+    }
+    this.privacyWaitPending = true
+    this.privacyWaitCount++
+    hilog.info(0x0000, 'Gonggao',
+      `waiting for system privacy consent (source=${source}, check=${this.privacyWaitCount})`)
+    setTimeout((): void => {
+      this.privacyWaitPending = false
+      this.maybeShowGonggao('privacy-wait')
+    }, Main.GONGGAO_RETRY_MS)
   }
 
   /**

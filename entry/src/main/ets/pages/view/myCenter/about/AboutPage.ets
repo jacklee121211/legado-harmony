@@ -16,9 +16,11 @@ import RatingPromptDialog from './RatingPromptDialog'
 import ImmersiveMaterialUtil from '../../../../common/utils/ImmersiveMaterialUtil'
 // 2026-11-02 第 25 轮（P3 弹窗收口 B4/B5）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../../common/dialog/DialogHost'
-// ── 更新公告（2026-11-05 新增）：与冷启动自动弹的公告**同一个创建入口** ────────────
-// 判定/记账在 `Gonggao.ets`；弹窗样式与关闭口径在 `GonggaoDialog.ets`（唯一实现，两入口共用）。
+// ── 更新公告（2026-11-05 新增）：与冷启动自动弹的公告**同一份内容、同一套口径** ────────
+// 判定/记账在 `Gonggao.ets`；尺寸/关闭记账/加群动作在 `GonggaoDialog.ets`（共享件）；
+// 弹窗内容 `GonggaoPage` **必须在本 struct 里实例化**（见 openGonggaoByHand 的 ⚠️⚠️ 注释）。
 import { GonggaoDialog } from '../../../../componets/gonggao/GonggaoDialog'
+import GonggaoPage from '../../../../componets/gonggao/gonggaopage'
 
 // ── 关于我们（2026-09-30 回填，用户需求清单）────────────────────────────────
 // 基座（legado-harmony）的 aboutUsPage 为空壳参考：本页按喵阅现状全部重写。
@@ -231,12 +233,15 @@ export default struct AboutPage {
    * 「更新公告」行：手动打开**本版本**的公告弹窗（2026-11-05 新增，用户要求）。
    *
    * ── 和自动弹出（`Index.maybeShowGonggao`）的关系
-   *   · 同一份内容（`GonggaoData.ets`）、同一个弹窗实现（`GonggaoDialog.ets`）；
+   *   · 同一份内容（`GonggaoData.ets`）、同一套尺寸/记账/加群口径（`GonggaoDialog` 共享件）；
    *   · 差别只有两点：① 手动打开**不看版本判定**（用户想查就查）；
    *     ② **不看隐私声明门禁** —— 能点到这里说明系统隐私弹窗早处理完了
    *     （见施工记录 §101.12 / §101.13），不必再等。
-   *   · 关闭时同样 `Gonggao.markShown()`（`GonggaoDialog` 内建）⇒ 用户手动看过本版本后，
-   *     下次冷启动不再自动弹（他确实已经读到了），符合"一次版本号变化 = 一次展示机会"。
+   *   · 关闭时同样记账 ⇒ 用户手动看过本版本后，下次冷启动不再自动弹。
+   *
+   * ⚠️⚠️ `builder: GonggaoPage({…})` **必须写在本 struct 里**（同 `Index.openGonggaoDialog`
+   * 的教训）：2026-11-05 曾把整段 controller 收进普通类的静态方法，真机上弹窗**从不出现也不报错**
+   * （详见 `componets/gonggao/GonggaoDialog.ets` 文件头）。
    *
    * 没有公告内容（`GONGGAO_ITEMS = []`）时只提示，不开空弹窗。
    */
@@ -249,22 +254,45 @@ export default struct AboutPage {
       this.toast('本版本暂无更新公告')
       return
     }
-    const dialog: CustomDialogController | null = GonggaoDialog.create(
-      this.hostContext(), this.theme,
-      (): void => {},
-      (): void => {
-        // 关掉了（不论谁关的）⇒ 清引用，避免下次点击复用旧 controller
-        this.gonggaoDialog = null
-      },
-      // 手动看过本版本 ⇒ 记为本版本已展示（下次冷启动不再自动弹）。
-      // 若你希望"手动查阅不消耗自动弹出机会"，把这里改成 false 即可（另一入口不受影响）。
-      true)
-    if (dialog === null) {
-      this.toast('本版本暂无更新公告')
-      return
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: GonggaoPage({
+          theme: this.theme,
+          // 「我知道了」：先记账，再关自己（关闭权在创建 controller 的本 struct）
+          onConfirm: (): void => {
+            GonggaoDialog.markShown()
+            GonggaoDialog.close(this.gonggaoDialog)
+            this.gonggaoDialog = null
+          },
+          onAction: (action: string): void => {
+            GonggaoDialog.dispatchAction(this.hostContext(), action)
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: GonggaoDialog.dialogWidth(),
+        height: GonggaoDialog.DIALOG_HEIGHT,
+        cornerRadius: GonggaoDialog.DIALOG_CORNER,
+        // ★ 材质生效的必要条件（规范 2.2）
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        onDidDisappear: (): void => {
+          // 关掉了（不论谁关的）⇒ 清引用，避免下次点击复用旧 controller
+          this.gonggaoDialog = null
+        },
+        cancel: (): void => {
+          GonggaoDialog.markShown()
+        }
+      })
+      this.gonggaoDialog = dialog
+      DialogHost.openIf(dialog)
+    } catch (err) {
+      this.gonggaoDialog = null
+      hilog.warn(0x0000, 'AboutPage', `openGonggaoByHand failed: ${JSON.stringify(err)}`)
+      this.toast('公告打开失败')
     }
-    this.gonggaoDialog = dialog
-    DialogHost.openIf(dialog)
   }
 
   // ── 应用市场相关动作（2026-10-13 新增）──────────────────────────────────
