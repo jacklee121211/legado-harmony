@@ -209,6 +209,12 @@ export default struct MySetPage{
   // 落盘 TtsPrefs.ttsEngine（TtsEngine.activeEngineId() 还有解锁二次校验兜底）。
   @StorageLink('listenEntryUnlocked') listenUnlocked: boolean = false
   @State edgeTtsOn: boolean = false
+  /**
+   * 「正文显示区」调试浮层开关（2026-11-05 新增，用户要求）。
+   * 打开后阅读页会盖一层 80% 透明的红色矩形，标出正文的**绝对显示区域**；
+   * 与 Edge TTS 同一组（仅暗门解锁后可见），默认关，Preferences 持久化。
+   */
+  @State textAreaDebugOn: boolean = false
   /** 标定模式（开发者）开关（2026-09-26 迁入，仅解锁后随组出现） */
   @State calibDevOn: boolean = false
 
@@ -243,6 +249,9 @@ export default struct MySetPage{
     this.edgeTtsOn = ListenUnlock.isUnlocked() && loadTtsPrefs().ttsEngine === 'edge'
     // 标定模式开关初值（2026-09-26 迁入：读 TtsHlCalibV3 的 dev 字段，与阅读页同一存储）
     this.calibDevOn = this.calibDevRead()
+    // 正文显示区调试浮层初值（2026-11-05 新增；默认关，阅读页进场读同一个键）
+    this.textAreaDebugOn =
+      PreferencesUtil.getSync(MySetConstants.SET_READER_TEXT_AREA_DEBUG, false) as boolean
     // 书架拓展名开关初值（2026-09-27，默认关=隐藏后缀）
     // ⚠️ 2026-10-19：这一行已从「书架」组并入「功能」组（阅读器信息窗下面）
     //    ⇒ 行状态在下面 rebuildOtherList 之后统一回填（不再有 bookSetList）。
@@ -334,7 +343,17 @@ export default struct MySetPage{
       this.engineSetList = [
         new SetList(false, '使用 Edge TTS 引擎', this.edgeTtsOn, '',
           '联网云端合成，音色更丰富、句级进度更准；关闭=系统本地引擎（离线可用）。仅供学习测试，禁止商用',
-          MySetConstants.SET_EDGE_TTS)
+          MySetConstants.SET_EDGE_TTS),
+        // ── 正文显示区调试浮层（2026-11-05 新增，用户要求：与 Edge TTS 放同一组）──────────
+        // 打开后在阅读页覆盖一层 80% 透明的红色矩形，标出正文的**绝对显示区域**：
+        //   上 = 首行上限、下 = 尾行下限、左右 = 文本宽。
+        // 四种翻页方式通用（仿真/横滑 = ReaderKit 引擎；上下/无动画 = 自绘），
+        // 因为两套渲染**共用同一组 inset**（见 `ReaderPage3` 的 build 与
+        // `ReaderCalibMath.scrollTopInsetVp()/scrollBottomInsetVp()/textAreaLeftVp()`）。
+        // 键：`MySetConstants.SET_READER_TEXT_AREA_DEBUG`（Preferences，默认关）。
+        new SetList(false, '显示正文绝对显示区（调试）', this.textAreaDebugOn, '',
+          '在阅读页覆盖一层 80% 透明的红色矩形，标出正文的首行上限、尾行下限与左右宽度；四种翻页方式都会覆盖',
+          MySetConstants.SET_READER_TEXT_AREA_DEBUG)
       ]
       this.setGroupList = this.setGroupList.concat(
         [new SetGroupList('听书引擎（进阶）', this.engineSetList)])
@@ -1551,6 +1570,17 @@ export default struct MySetPage{
         const prefs = loadTtsPrefs()
         prefs.ttsEngine = this.edgeTtsOn ? 'edge' : 'local'
         saveTtsPrefs(prefs)
+        break;
+      case MySetConstants.SET_READER_TEXT_AREA_DEBUG:
+        // 正文显示区调试浮层（2026-11-05 新增）：立即落盘；阅读页进场读同一个键。
+        // ⚠️ `findSetRow()` 只查 other/info/about 三张表，**不含** `engineSetList`
+        //    （所以上面 Edge TTS 那行用的是 `engineSetList[0]`）。
+        //    本组顺序固定为 [0]=Edge TTS、[1]=正文绝对显示区，改顺序时这里要同步。
+        this.textAreaDebugOn = !this.textAreaDebugOn
+        if (this.engineSetList.length > 1) {
+          this.engineSetList[1].toggleStatus = this.textAreaDebugOn
+        }
+        PreferencesUtil.putSync(MySetConstants.SET_READER_TEXT_AREA_DEBUG, this.textAreaDebugOn)
         break;
       case MySetConstants.SET_KEY_VOL:
         // 音量键翻页（2026-10-07）：落盘 + 立即对账订阅（阅读页不在时 refresh 只记账不订阅）

@@ -1341,6 +1341,14 @@ oAnimInitNode 配套） */
   @State infoWinPageNoShow: boolean = true
   /** 信息窗位置（2026-10-31 用户拍板）：0 = 顶部（默认）/ 1 = 底部 */
   @State infoWinPos: number = 0
+  /**
+   * 「正文绝对显示区」调试浮层开关（2026-11-05 新增，用户要求）。
+   * 设置页「我的-设置-听书引擎（进阶）」里与 Edge TTS 同一组（暗门解锁后可见），
+   * Preferences 键 `MySetConstants.SET_READER_TEXT_AREA_DEBUG`，进场读一次。
+   * 打开后在本页盖一层 80% 透明的红色矩形 —— 标的是"正文真正可用的矩形"，
+   * 几何见 `DebugTextAreaOverlay()` 的注释。
+   */
+  @State debugTextAreaOn: boolean = false
   /** 信息窗与正文间距（vp，0–40，默认 15；顶部/底部共用） */
   @State infoWinGapVp: number = -4
   @State bookPageCur: number = 0
@@ -1650,6 +1658,74 @@ oAnimInitNode 配套） */
    */
   private infoBatteryText(): string {
     return `${this.infoBatterySoc}%`;
+  }
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   * 「正文绝对显示区」调试浮层（2026-11-05 新增，用户要求）
+   * ══════════════════════════════════════════════════════════════════════════
+   * 开关：我的-设置 →「听书引擎（进阶）」组（暗门解锁后可见）→「显示正文绝对显示区（调试）」，
+   *       落盘键 `MySetConstants.SET_READER_TEXT_AREA_DEBUG`，本页进场读一次。
+   * 视觉：80% 透明红（`#33FF0000` = alpha 0x33；想更红改 33 → 66/99）+ 1vp 实线边。
+   *
+   * ── 标的是什么（用户定义的"绝对显示区域"）
+   *   · 上边 = **首行的上限** = `scrollTopInsetVp()`（= 引擎上留白 88vp）
+   *   · 下边 = **尾行的下限** = 屏高 − `scrollBottomInsetVp()`（= 引擎下留白 62vp）
+   *   · 左/右 = `textAreaLeftVp()` … `+ textAreaWidthVp()`（文本宽 = viewPortWidth × calibWidthRatio）
+   *   依据（`ReaderCalibMath.ets:342-345` 原文）：
+   *     「上留白 88vp（RK 首行墨迹 100.1vp − 行内墨迹偏移 ≈12vp）」
+   *     「下留白 62vp（把自绘末行推到 RK 的 766vp）」
+   *
+   * ── 为什么**一套矩形**能覆盖四种翻页方式（自绘 / ReaderKit 都算）
+   *   · ReaderKit（仿真 / 横滑）与两个自绘层（上下 / 无动画）**共用同一组 inset**：
+   *     本页 build() 里 `ReadPageComponent` 的页面配置与
+   *     `ReaderScrollView` / `ReaderPageNoAnim` 的 `topInsetVp` / `bottomInsetVp` /
+   *     `sideInsetVp` 全部来自上面那几个函数；
+   *   · 三层还共用同一个放大系数与基准点：`.scale({ x: READER_ZOOM, y: READER_ZOOM,
+   *     centerX: '50%', centerY: 0 })`（ReaderPage3.ets:7851 / 7937 / 8030）
+   *     ⇒ 本浮层也用**同一个** `.scale()`，缩放后自然同步，不会跑偏。
+   *
+   * ── 信息窗在上/在下、开/关，为什么矩形不变
+   *   2026-11-01 换轨后的模型：信息条落在引擎**内建页眉/页脚留白**里，不再驱动正文位移
+   *   （官方 FAQ `faqs-reader-3`：「ReadPageComponent 顶部和底部预留了页眉页脚」）。
+   *   ⇒ 四种组合（上/下 × 开/关）矩形相同。若你在某一组合下看到正文压出矩形，
+   *     那就是该组合相对模型的**真实偏差** —— 正是这层浮层要暴露的东西。
+   *
+   * ⚠️ 不拦截触摸（`HitTestMode.None`），翻页/点按照常；
+   *    放在三层正文之后、「正在排版…」占位之前 ⇒ 只盖正文，不盖菜单与弹窗。
+   */
+  @Builder
+  DebugTextAreaOverlay() {
+    Column()
+      .width(this.debugAreaWidthVp())
+      .height(this.debugAreaHeightVp())
+      // 80% 透明 = 20% 不透明红；alpha 十六进制 33
+      .backgroundColor('#33FF0000')
+      .border({ width: 1, color: 'rgba(255,0,0,0.85)' })
+      .position({ x: this.debugAreaLeftVp(), y: scrollTopInsetVp() })
+      .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+      .hitTestBehavior(HitTestMode.None)
+  }
+
+  /** 浮层左边（vp）—— 与三层共用的同一个函数 */
+  private debugAreaLeftVp(): number {
+    return textAreaLeftVp(this.projectSetting(), this.windowWidth, this.calibWidthRatio);
+  }
+
+  /** 浮层宽度（vp）—— 文本宽（与各层分页/断行用的宽度同源） */
+  private debugAreaWidthVp(): number {
+    return this.textAreaWidthVp();
+  }
+
+  /**
+   * 浮层高度（vp）= 屏高 − 上留白 − 下留白。
+   * 屏高取 `viewPortHeight`（px，与阅读器引擎同一份视口），换 vp 用 `densityVp()`。
+   */
+  private debugAreaHeightVp(): number {
+    const vhPx: number = this.settingState.viewPortHeight > 0
+      ? this.settingState.viewPortHeight : this.windowHeight;
+    const vhVp: number = vhPx / densityVp();
+    return Math.max(0, vhVp - scrollTopInsetVp() - scrollBottomInsetVp());
   }
 
   /**
@@ -4312,6 +4388,16 @@ oAnimInitNode 配套） */
     // 信息窗位置/间距（2026-10-31 用户拍板）：设置页改，阅读页进场读一次
     this.infoWinPos = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_POS, 0) as number;
     this.infoWinGapVp = PreferencesUtil.getSync(MySetConstants.SET_INFO_WIN_GAP, -4) as number;
+    // 正文绝对显示区调试浮层（2026-11-05 新增）：与信息窗同款口径，进场读一次
+    this.debugTextAreaOn =
+      PreferencesUtil.getSync(MySetConstants.SET_READER_TEXT_AREA_DEBUG, false) as boolean;
+    if (this.debugTextAreaOn) {
+      hilog.info(0x0000, 'testTag',
+        'debugArea: x=%{public}s w=%{public}s top=%{public}s bottom=%{public}s h=%{public}s',
+        this.debugAreaLeftVp().toFixed(2), this.debugAreaWidthVp().toFixed(2),
+        scrollTopInsetVp().toFixed(2), scrollBottomInsetVp().toFixed(2),
+        this.debugAreaHeightVp().toFixed(2));
+    }
     this.syncInfoTicker();
     // ── 信息窗电量（2026-10-19 新增）：订阅电池变化公共事件 ──────────────────
     // 与 `syncInfoTicker()` 的秒级刷新分工：时间/倒计时走 1s 定时器，电量走系统事件
@@ -8028,6 +8114,13 @@ oAnimInitNode 配套） */
           .height('100%')
           // 2026-10-31：与 ReaderKit / 上下同一放大系数、同一顶部中点基准
           .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+      }
+
+      // ── 正文绝对显示区调试浮层（2026-11-05，设置页开关；几何见 DebugTextAreaOverlay）──
+      // 位置：三层正文（ReaderKit / 上下 / 无动画）**之上**、占位与菜单**之下**
+      // ⇒ 只给正文打红框，不会把 dock/弹窗也染红。
+      if (this.debugTextAreaOn) {
+        this.DebugTextAreaOverlay()
       }
 
       // ── 转换进度 / 转换失败（2026-10-19，PDF/DOCX 首次打开）──────────────────

@@ -53,6 +53,19 @@ export default class MySetConstants {
   static readonly SET_EDGE_TTS: string = 'setEdgeTts';
   /** 标定模式（开发者）开关（2026-09-26）：解锁后在我的-设置出现，读写 TtsHlCalibV3 的 dev 字段 */
   static readonly SET_CALIB_DEV: string = 'setCalibDev';
+  /**
+   * 阅读器「正文显示区」调试浮层（2026-11-05 新增，用户要求）。
+   *
+   * 打开后在阅读页覆盖一层 **80% 透明的红色矩形**，标出**绝对显示区域**：
+   *   上边 = 首行上限（`scrollTopInsetVp()`，引擎上留白 88vp）
+   *   下边 = 尾行下限（屏高 − `scrollBottomInsetVp()`，引擎下留白 62vp）
+   *   左右 = `textAreaLeftVp()` … `textAreaLeftVp() + textAreaWidthVp()`
+   * 四种翻页方式（仿真/横滑 = ReaderKit，上下/无动画 = 自绘）共用同一组 inset ⇒ 同一块矩形。
+   *
+   * ⚠️ 仅暗门解锁后出现在「听书引擎（进阶）」组（与 Edge TTS 同一组），默认**关**；
+   *    落盘键 `setReaderTextAreaDebug`（Preferences），阅读页进场读一次。
+   */
+  static readonly SET_READER_TEXT_AREA_DEBUG: string = 'setReaderTextAreaDebug';
   /** 书架书名是否显示文件拓展名（2026-09-27，默认关=隐藏 .txt 等后缀；Preferences 落盘） */
   static readonly SET_EXT_NAME: string = 'setExtName';
 
