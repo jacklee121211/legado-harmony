@@ -278,6 +278,24 @@ V2.0.2 封面圆角对齐 + 进场更顺
   现有实现 `gestureFingers()`：PDF 放大态 或 `AppStorage('READER_READ_MODE')==='none'` ⇒ 9。
   ⚠️ 下次遇到「某个手势打不过别人的手势」，**先搜全工程谁挂了同方向的 PanGesture**，
   别默认是系统手势；工程内已有多处这类自绘手势（下拉书签、右滑返回、进度滑条）。
+- **`new CustomDialogController({ builder: XxxDialog({…}) })` 绝不能放进普通类 / 静态方法**
+  （2026-11-05 真机实证，公告模块）：整段搬进一个普通类的 `static create()` 后（想让两个入口共用
+  options），真机表现是**弹窗从不出现、也不报错** —— `open()` 不抛、`onDidAppear` 永不触发、
+  hilog 里**没有任何** `ModalPage` / `CustomDialog` 节点，只剩外层重试日志在循环：
+  ```
+  Gonggao: open (source=coldStart, attempt=0)
+  Gonggao: not appeared within 2000ms (attempt=0), retry later
+  ```
+  把**同一份代码**放回 `@Component` struct 的方法里就立刻正常（同机 A/B 实测）。
+  根因：结构体实例化必须在组件上下文里；放普通类里 ets 编译产物把它变成普通函数调用，builder 就空了。
+  ⇒ 想复用弹窗配置，只能共享**与 builder 无关**的部分（尺寸常量 / 关闭口径 / 回调动作）；
+     `builder: Xxx({…})` 一律写在各宿主的 struct 里。
+- **AppGalleryKit 隐私签署状态：`getAppPrivacyResult()` 未签署时返回的是「空数组」不是「报错」**
+  （2026-11-05 真机）：签署前设备日志 `[PrivacyManager] QueryPrivacyResult success, **no rows**`，
+  签署后才出现 `[{"type":1,"result":1,…},{"type":2,…}]`。而"应用没接入隐私管理服务"才是**抛错误码
+  `1006700003`**。⇒ 判定必须是：有 `PRIVACY_AGREEMENT` 项且 `result === FULL_MODE_AGREED` 才放行；
+  **空数组 = 还没签（要等）**；只有 catch 到异常才当"没有这套服务"放行。
+  踩错会怎样：公告会在系统隐私协议窗**下面**弹出来、用户看不见，随后被销毁（等于白弹一次）。
 
 ## 9. 截图/验证产物：一律放仓库外（2026-10-19 隐私事故后立的规矩）
 
