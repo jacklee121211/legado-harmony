@@ -8265,6 +8265,20 @@ oAnimInitNode 配套） */
         //   左格内容靠 Start、右格内容靠 End ⇒ 右段外观与改版前（整行 End + 满宽）
         //   **完全一致**，不会因插入左侧元素而整体左移。
         Row() {
+          // ── 信息窗「内容带」（2026-11-05 调试新增，用户要求）─────────────────
+          // 开「我的-设置 → 听书引擎（进阶）→ 显示正文绝对显示区（调试）」时，
+          // 这一整条也盖 80% 透明红覆膜 + 1vp 红边（色值与正文红框同为 `#33FF0000`），
+          // 用来肉眼确认**信息窗真正的落位与高度**。
+          //
+          // 为什么必须再套一层：外层 `Row` 是 `.height('100%')` + Top/Bottom 对齐，
+          // 直接给它上色会糊满整屏；这一层只 **hug 内容**（高度 = 图标/文字行高），
+          // 宽度 100%（左右各留 `infoWinRowPadding()` 的 20vp）⇒ 得到一条干净的带子。
+          // 缩进：本层是后加的，内部两段**故意没有重新缩进**，避免无关 diff。
+          //
+          // ⚠️ 这只是**调试浮层**：`debugTextAreaOn` 为假时背景是 `Color.Transparent`、
+          //   边框宽度 0 ⇒ 与改动前完全一致（零风险）。
+          // ⚠️ 信息窗关掉（`infoWinOn=false`）时不渲染，所以也不会有这条覆膜。
+          Row() {
           // ── 左段：系统时间 + 电量（2026-10-19：状态栏开启时整段隐藏）────────────
           // ⚠️ 用户拍板：`显示系统状态栏` 开启后，状态栏本身就有时间与电量
           //   ⇒ 这里再显示一遍是重复信息，**只藏左段**，右段（书签/定时/防窥）照旧。
@@ -8352,6 +8366,12 @@ oAnimInitNode 配套） */
           }
           .justifyContent(FlexAlign.End)
           .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+          }
+          // ↓ 上面那个 Row 是「内容带」：只给调试用，关掉时完全不可见
+          .width('100%')
+          .backgroundColor(this.debugTextAreaOn ? '#33FF0000' : Color.Transparent)
+          .border({ width: this.debugTextAreaOn ? 1 : 0, color: 'rgba(255,0,0,0.85)' })
           .hitTestBehavior(HitTestMode.None)
         }
         // ⚠️ 必须显式撑满高度 + 顶部对齐：Stack 子元素默认垂直居中（2026-10-07 真机实测：
