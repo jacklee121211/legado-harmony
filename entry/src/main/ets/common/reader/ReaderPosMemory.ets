@@ -29,7 +29,13 @@ export class ReaderPosMemory {
   private static domPos: string = ''
   private static at: number = 0
 
-  /** 记一次当前位置（调用方：进书首帧 / 位置变化 / 形态切换前） */
+  /**
+   * 记一次当前位置。
+   * 调用方 = **两个位置权威更新点**（2026-11-06 收口，单一通路）：
+   * 分页档 `pageShow` / 自绘档 `applySelfDrawnPos`。
+   * 形态切换沿**不再**调用 —— 那里拿到的 `bookData.localBookDurChapterPos`
+   * 在自绘档是节流滞后值，会把更新点刚写的新快照顶旧。
+   */
   static remember(bookName: string, spine: number, domPos: string): void {
     if (bookName.length === 0 || spine < 0) {
       return

@@ -1303,13 +1303,12 @@ oAnimInitNode 配套） */
    *   · **不停播**听书 —— 与工程「退出阅读页不停播」的既定口径一致。
    */
   onOuterMinimalChanged(): void {
-    // ── 2026-11-06 形态切换：先把**内存里的当前位置**记下来 ────────────────────
-    //   本页随后可能被销毁重建（真机日志：同一本书两次 startPlay）。
-    //   重建时 startPlay 走 LOCAL 分支，它会先问 ReaderPosMemory ⇒ 不会被
-    //   "还没落盘的旧磁盘值"顶掉。双向都记：合上记内屏位置，展开记外屏位置。
-    const curPos = this.bookData.localBookDurChapterPos
-    ReaderPosMemory.remember(this.bookData.bookName,
-      curPos?.resourceIndex ?? 0, curPos?.startDomPos ?? '')
+    // ── （2026-11-06 审计调整）这里**不再**记内存位置 ──────────────────────────
+    //   原写点取 `bookData.localBookDurChapterPos`：分页档它够新（每页 pageShow 同步
+    //   落盘），自绘档它是**节流滞后值** —— 切沿一记反而把位置更新点
+    //   （分页 pageShow / applySelfDrawnPos，2026-11-06 起各自同步 remember）
+    //   刚写进内存的新快照**顶旧**。到达切沿时内存本来就已是当前位置，
+    //   本写点纯属冗余，删除（单一通路：内存只有两个权威写点）。
     // ── 外屏档位（2026-11-06）──────────────────────────────────────────────
     //   进外屏：记下内屏档位（`auto` 恢复用），然后按 `outerReadMode` 下发；
     //   离外屏：恢复内屏档位 —— 保证外屏的临时选择**不会污染**内屏设置。
@@ -4388,8 +4387,15 @@ oAnimInitNode 配套） */
     //   否则退回持久化进度（原有行为，不变）。
     if (this.selfDrawnModeOn()) {
       const cSpine: number = temp.continueSpine ?? -1;
-      let ri: number = this.bookData.localBookDurChapterPos?.resourceIndex ?? 0;
-      let nd: number = parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
+      // ★ 2026-11-06 审计补：自绘档 boot 也问内存（与分页 LOCAL 分支同款优先级
+      //   CONTINUE > MEMORY > DISK）—— 重建/重进时自绘磁盘是节流滞后值
+      //   （SCROLL_PERSIST_GAP_MS），内存（若同书且未过期）更新。
+      //   domPos → 节点号还原口径与磁盘分支一致（parseDomPos[0]）。
+      const memPos: ReaderPos | null = ReaderPosMemory.recall(this.bookData.bookName);
+      let ri: number = memPos !== null ? memPos.spine
+        : (this.bookData.localBookDurChapterPos?.resourceIndex ?? 0);
+      let nd: number = memPos !== null ? parseDomPos(memPos.domPos)[0]
+        : parseDomPos(this.bookData.localBookDurChapterPos?.startDomPos ?? '')[0];
       if (cSpine >= 0) {
         // 接续落点优先（continueNode 由 Index 从 wantParam 带来，备用坐标）
         ri = cSpine;
@@ -5555,6 +5561,13 @@ oAnimInitNode 配套） */
         return;
       }
       this.bookData.localBookDurChapterPos = data;
+      // ★ 进度内存透传同步（2026-11-06 审计补）：分页档的**位置权威更新点**。
+      //   内存快照原来只在形态切换沿写（onOuterMinimalChanged），切换后继续读的
+      //   部分不在内存里 ⇒「切换 → 继续读 → 退出 → 5min 内重进」会用旧内存顶掉
+      //   新磁盘（startPlay LOCAL 分支 recall 优先于磁盘）⇒ 进度回退。
+      //   挂到更新点后内存永远不旧于最后一次已知位置；"重建时写盘未落地"的
+      //   磁盘滞后护栏（ReaderPosMemory 的原始用途）完整保留。
+      ReaderPosMemory.remember(this.bookData.bookName, data.resourceIndex, data.startDomPos);
       // 应用接续观测（2026-10-24）：引擎**实际落点**。与 `engine.startPlay` 一比即知
       // 接续的 domPos 有没有被采纳（若两者 spine 相同但 domPos 不同 ⇒ 引擎重算了）。
       hilog.info(0x0000, 'ContinueIdx',
@@ -10530,6 +10543,11 @@ oAnimInitNode 配套） */
     this.session.checkFinished(this.bookData);
     this.session.persistReadProgress(this.bookData);
     this.writeWebSyncAnchors();
+    // ★ 进度内存透传同步（2026-11-06 审计补）：自绘档的**位置权威更新点**（不节流）。
+    //   不挂进 persistScrollProgress 的原因与下方 publishContinueState 相同：
+    //   那条链被 SCROLL_PERSIST_GAP_MS 节流，快速滚动时会记住旧位置。
+    //   domPos 口径与落盘一致（domPosFor(node, 0)），boot 侧 parseDomPos[0] 可还原节点号。
+    ReaderPosMemory.remember(this.bookData.bookName, spine, domPosFor(node, 0));
     // 进度落盘（节流）：合成一个与 pageShow 同构的 `PageDataInfo`，
     // 这样"退出再进"用的还是同一条恢复链路（`resourceIndex` + `startDomPos`）。
     const now: number = Date.now();
