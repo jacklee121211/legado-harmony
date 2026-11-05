@@ -538,6 +538,17 @@ struct Main {
       return
     }
     if (AppRouter.topName() === RouteName.READER) {
+      // ⚠️ 2026-11-06 真机（外->内 卡书架）：此刻"在阅读页"可能是**假象** ——
+      //   密度回调（外屏 3.0 / 内屏 2.55）会在几十毫秒后把这一页 pop 掉。
+      //   原来这里直接 return 且不安排重试 ⇒ 书被 pop 后再无触发沿，永久停在书架。
+      //   ⇒ 命中本门也要在 400ms 后确认一次。
+      if (attempt < 3) {
+        setTimeout(() => {
+          if (!this.outerMinimal && AppRouter.topName() !== RouteName.READER) {
+            this.autoEnterReaderOnInner(attempt + 1)
+          }
+        }, 400)
+      }
       return
     }
     this.openLastReadBook(false)
@@ -559,6 +570,7 @@ struct Main {
       return
     }
     if (Date.now() - this.outerAutoOpenedAt < Main.OUTER_AUTO_OPEN_COOLDOWN_MS) {
+      hilog.info(0x0000, 'OuterScreen', 'auto enter skipped: cooldown window')
       return
     }
     if (!(AppStorage.get<boolean>('startupStackCleared') ?? false) || !AppRouter.isReady()) {

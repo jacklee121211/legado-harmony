@@ -5439,7 +5439,20 @@ oAnimInitNode 配套） */
       let displaySync = display.getDefaultDisplaySync();
       let scaledDensity = displaySync.scaledDensity;
       if (scaledDensity !== this.settingState.scaledDensity) {
-        AppRouter.pop();
+        // ── 2026-11-06 折叠屏：**不再 pop 整本书**（真机日志实证）────────────
+        //   PuraX 外屏密度 3.0 / 内屏 2.55，每次开合必跨 ⇒ 原来一折叠就把阅读页 pop 掉，
+        //   于是「合上就地切精简版」这条设计在折叠屏上从未生效，全是销毁重建。
+        //   折叠机上改为：就地刷新密度 + 按新视口重排（书不退）。
+        //   2in1 拖窗口跨 DPI 的自毁兜底**保持不变**（一键回退：删掉这个 isFoldable 分支即可）。
+        if (display.isFoldable()) {
+          hilog.info(0x0000, 'testTag',
+            'density change on foldable: refresh in place (no pop) %.4{public}f -> %.4{public}f',
+            this.settingState.scaledDensity, scaledDensity);
+          this.refreshScaledDensity();
+          this.applyViewportNow('density-change-foldable');
+        } else {
+          AppRouter.pop();
+        }
       }
     }
     display.on('change', this.screenDensityCallBack);
