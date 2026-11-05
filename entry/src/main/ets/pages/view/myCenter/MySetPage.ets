@@ -215,6 +215,8 @@ export default struct MySetPage{
    * 与 Edge TTS 同一组（仅暗门解锁后可见），默认关，Preferences 持久化。
    */
   @State textAreaDebugOn: boolean = false
+  /** 主题皮肤层总开关（2026-11-06 P1）：默认关；阅读页进场读同一个键（一键回退=关） */
+  @State readerSkinOn: boolean = false
   /** 标定模式（开发者）开关（2026-09-26 迁入，仅解锁后随组出现） */
   @State calibDevOn: boolean = false
 
@@ -252,6 +254,9 @@ export default struct MySetPage{
     // 正文显示区调试浮层初值（2026-11-05 新增；默认关，阅读页进场读同一个键）
     this.textAreaDebugOn =
       PreferencesUtil.getSync(MySetConstants.SET_READER_TEXT_AREA_DEBUG, false) as boolean
+    // 主题皮肤层初值（2026-11-06 P1；默认关，阅读页进场读同一个键）
+    this.readerSkinOn =
+      PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_ON, false) as boolean
     // 书架拓展名开关初值（2026-09-27，默认关=隐藏后缀）
     // ⚠️ 2026-10-19：这一行已从「书架」组并入「功能」组（阅读器信息窗下面）
     //    ⇒ 行状态在下面 rebuildOtherList 之后统一回填（不再有 bookSetList）。
@@ -353,7 +358,14 @@ export default struct MySetPage{
         // 键：`MySetConstants.SET_READER_TEXT_AREA_DEBUG`（Preferences，默认关）。
         new SetList(false, '显示正文绝对显示区（调试）', this.textAreaDebugOn, '',
           '在阅读页覆盖一层 80% 透明的红色矩形，标出正文的首行上限、尾行下限与左右宽度；四种翻页方式都会覆盖',
-          MySetConstants.SET_READER_TEXT_AREA_DEBUG)
+          MySetConstants.SET_READER_TEXT_AREA_DEBUG),
+        // ── 主题皮肤层（2026-11-06 P1，与调试浮层同组）────────────────────────
+        // 打开后阅读页按元素注册表渲染皮肤层（留白带/阅读区框/信息窗底板，code 通道起步）。
+        // 皮肤包在 SkinStore（内置「暖纸·极简」占位包）；逐元素缺省回落默认外观。
+        // 键：`MySetConstants.SET_READER_SKIN_ON`（Preferences，默认关=零渲染，关即回退）。
+        new SetList(false, '主题皮肤层（阅读页）', this.readerSkinOn, '',
+          '按皮肤包渲染阅读页的留白带、正文区边框与信息窗底板（当前内置：暖纸·极简）；关闭=完全恢复默认外观',
+          MySetConstants.SET_READER_SKIN_ON)
       ]
       this.setGroupList = this.setGroupList.concat(
         [new SetGroupList('听书引擎（进阶）', this.engineSetList)])
@@ -1575,12 +1587,20 @@ export default struct MySetPage{
         // 正文显示区调试浮层（2026-11-05 新增）：立即落盘；阅读页进场读同一个键。
         // ⚠️ `findSetRow()` 只查 other/info/about 三张表，**不含** `engineSetList`
         //    （所以上面 Edge TTS 那行用的是 `engineSetList[0]`）。
-        //    本组顺序固定为 [0]=Edge TTS、[1]=正文绝对显示区，改顺序时这里要同步。
+        //    本组顺序固定为 [0]=Edge TTS、[1]=正文绝对显示区、[2]=主题皮肤层，改顺序时这里要同步。
         this.textAreaDebugOn = !this.textAreaDebugOn
         if (this.engineSetList.length > 1) {
           this.engineSetList[1].toggleStatus = this.textAreaDebugOn
         }
         PreferencesUtil.putSync(MySetConstants.SET_READER_TEXT_AREA_DEBUG, this.textAreaDebugOn)
+        break;
+      case MySetConstants.SET_READER_SKIN_ON:
+        // 主题皮肤层（2026-11-06 P1）：立即落盘；阅读页进场读同一个键（engineSetList[2]）。
+        this.readerSkinOn = !this.readerSkinOn
+        if (this.engineSetList.length > 2) {
+          this.engineSetList[2].toggleStatus = this.readerSkinOn
+        }
+        PreferencesUtil.putSync(MySetConstants.SET_READER_SKIN_ON, this.readerSkinOn)
         break;
       case MySetConstants.SET_KEY_VOL:
         // 音量键翻页（2026-10-07）：落盘 + 立即对账订阅（阅读页不在时 refresh 只记账不订阅）
