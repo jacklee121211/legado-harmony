@@ -35,7 +35,7 @@
 import { image } from '@kit.ImageKit';
 import { drawing, text, common2D } from '@kit.ArkGraphics2D';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { EngineLine, LineStyle, buildPaintParagraph, engineSourceText, parseHexColor } from './EngineLines';
+import { EngineLine, LineStyle, buildPaintParagraph, parseHexColor, LETTER_SPACING_FP } from './EngineLines';
 
 const TAG: string = 'NoAnimCanvas';
 const DOMAIN: number = 0x0000;
@@ -46,8 +46,8 @@ export struct ReaderPageNoAnimCanvas {
   @Prop @Watch('onSourceChange') lines: EngineLine[] = [];
   /** 分页用的同一份排版参数（父页 `buildLineStyle()` 产物：宽/字号/字距/strut 全在里面） */
   @Prop @Watch('onSourceChange') style: LineStyle = new LineStyle();
-  /** 段落全文提供者（父页 chapTexts）——直绘必须用**整段**文本重排，断行才与分页一致 */
-  paraText: (paraIndex: number) => string = (paraIndex: number): string => '';
+  /** 段落全文提供者（父页 chapTexts）——行缓存构建时取段原文（异常兜底用） */
+  paraText: (paraIndex: number) => string = (_pi: number): string => '';
   @Prop @Watch('onSourceChange') fontColor: string = '#000000';
   @Prop @Watch('onSourceChange') bgColor: string = '#FFFFFF';
   /** 背景图 URI（'' = 纯色底）；异步加载，完成后重绘（cover 居中裁剪，与老树 ImageCover 同观感） */
@@ -73,12 +73,15 @@ export struct ReaderPageNoAnimCanvas {
   private pmHpx: number = 0;
   private pending: boolean = false;
   /**
-   * 段落缓存（正文 repaint 时填写）：paraIndex → 排好的 Paragraph 与它的 paint 落位（px）。
-   * 高亮层复用同一批实例做 `getRectsForRange` ⇒ 高亮矩形与正文字形**必然同源同位**。
+   * 行缓存（正文 repaint 时填写）：行级 Paragraph 与落位（px）。
+   * ⚠️ 直绘逐行 justify（2026-11-05）：每行**单独**排一个单行 Paragraph——
+   *    非段末行按「可用宽 − 引擎行自然宽(widthPx) − 2px」摊回字距，行尾顶到边；
+   *    行箱 layout 宽给 avail+SLACK，单行内容物理上不可能二次折行（直绘专属安全性）。
+   *    度量闭环：widthPx 与补偿后的绘制同属一个引擎，无跨引擎度量差。
+   * 高亮层复用同一批实例做 `getRectsForRange`（区间映射到行内偏移）。
+   * 数组下标 = 页内行序（与父页 lines 一一对应）。
    */
-  private paraCache: Map<number, text.Paragraph> = new Map();
-  private paraPaintY: Map<number, number> = new Map();
-  private paraTitle: Map<number, boolean> = new Map();
+  private rowCache: (RowEntry | null)[] = [];
   /** 背景图（bgUri 异步解码产物；null = 无图/加载中/失败 → 纯色底） */
   private bgPixelMap: image.PixelMap | null = null;
   /** 背景图原始尺寸（cover 裁剪算 srcRect 用） */
@@ -228,47 +231,41 @@ export struct ReaderPageNoAnimCanvas {
         { left: srcX, top: srcY, right: srcX + srcW, bottom: srcY + srcH },
         { left: 0, top: 0, right: this.pmWpx, bottom: this.pmHpx });
     }
-    // 页内容变化 ⇒ 段落缓存整体重建（高亮层复用同一批实例）
-    this.paraCache.clear();
-    this.paraPaintY.clear();
-    this.paraTitle.clear();
+    // 页内容变化 ⇒ 行缓存整体重建（下标 = 页内行序；高亮层复用同一批实例）
+    this.rowCache = new Array<(RowEntry | null)>(lines.length).fill(null);
     const topPx: number = this.vp2px(this.topInsetVp);
     const xPx: number = this.vp2px(this.sideInsetVp);
+    // 排版箱宽（px）：与分页同一个数（style.widthPx = vp2px(areaW)）
+    const boxPx: number = this.style.widthPx > 0 ? this.style.widthPx : 1;
     let yPx: number = topPx;
-    let i: number = 0;
-    let runCount: number = 0;
-    let okRuns: number = 0;
-    while (i < lines.length) {
-      const first: EngineLine = lines[i];
-      let j: number = i + 1;
-      while (j < lines.length && lines[j].paraIndex === first.paraIndex) {
-        j++;
+    let painted: number = 0;
+    let justRows: number = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line: EngineLine = lines[i];
+      // 段末行判定：下一行不同段 / 页内最后一行 —— 段末行保持自然（不补偿）
+      const isParaEnd: boolean = (i + 1 >= lines.length) || (lines[i + 1].paraIndex !== line.paraIndex);
+      const entry: RowEntry | null = this.paintLine(cv, line, xPx, yPx, boxPx, isParaEnd);
+      if (entry !== null) {
+        this.rowCache[i] = entry;
+        painted++;
+        if (entry.justified) {
+          justRows++;
+        }
       }
-      // run = lines[i..j)：同一段的连续行；行带 = [yPx, yPx+advance)，与分页同一算术
-      let advance: number = 0;
-      for (let k = i; k < j; k++) {
-        advance += lines[k].heightPx + lines[k].padTopPx;
-      }
-      if (this.paintRun(cv, lines, i, j, xPx, yPx, yPx + advance) > 0) {
-        okRuns++;
-      }
-      yPx += advance;
-      i = j;
-      runCount++;
+      yPx += line.heightPx + line.padTopPx;
     }
     // 上屏：像素图（px）1:1 贴到 Canvas（vp 区域）
     this.ctx.clearRect(0, 0, this.containerWvp, this.containerHvp);
     this.ctx.drawImage(pm, 0, 0, this.containerWvp, this.containerHvp);
     hilog.info(DOMAIN, TAG,
-      '[CANVASPROBE] paint lines=%{public}d runs=%{public}d ok=%{public}d yEnd=%{public}s 耗时%{public}dms',
-      lines.length, runCount, okRuns, yPx.toFixed(1), Date.now() - t0);
+      '[CANVASPROBE] paint lines=%{public}d ok=%{public}d just=%{public}d yEnd=%{public}s 耗时%{public}dms',
+      lines.length, painted, justRows, yPx.toFixed(1), Date.now() - t0);
     this.repaintHighlight();
   }
 
   /**
-   * 重画高亮层（阶段 2）：透明底清空后，命中段用 `getRectsForRange` 取字符区间矩形，
-   * 按正文层的段落 paint 落位换算到 vp 叠画。
-   * ⚠️ 矩形与正文字形**同源同位**：同一个 Paragraph 实例 + 同一个 paint 坐标。
+   * 重画高亮层：透明底清空后，遍历**行缓存**，命中段与行区间的交集映射到行内偏移，
+   * 用**该行的 Paragraph** 取矩形叠画（逐行 justify 后矩形与补偿字形同源同位）。
    * 老树高亮色 `rgba(0,125,255,0.20)`；radius 4 在 20% 透明度下不可辨，先 fillRect（记档）。
    */
   private repaintHighlight(): void {
@@ -276,34 +273,45 @@ export struct ReaderPageNoAnimCanvas {
     if (this.hlPara < 0 || this.hlFrom < 0 || this.hlTo <= this.hlFrom) {
       return;
     }
-    const para: text.Paragraph | undefined = this.paraCache.get(this.hlPara);
-    const paintY: number | undefined = this.paraPaintY.get(this.hlPara);
-    const isTitle: boolean | undefined = this.paraTitle.get(this.hlPara);
-    if (para === undefined || paintY === undefined || isTitle === undefined) {
-      return;
-    }
-    // 高亮坐标是段内偏移（不含缩进）；段落文本带 `\u3000\u3000` 前缀 ⇒ 区间 +2（标题无缩进）
-    const prefix: number = isTitle ? 0 : 2;
-    const range: text.Range = { start: this.hlFrom + prefix, end: this.hlTo + prefix };
-    let boxes: text.TextBox[] = [];
-    try {
-      boxes = para.getRectsForRange(range, text.RectWidthStyle.TIGHT, text.RectHeightStyle.TIGHT);
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] getRectsForRange failed para=%{public}d', this.hlPara);
-      return;
-    }
     const xPx: number = this.vp2px(this.sideInsetVp);
     this.hlCtx.fillStyle = 'rgba(0,125,255,0.20)';
-    for (let b = 0; b < boxes.length; b++) {
-      const r: common2D.Rect = boxes[b].rect;
-      const xVp: number = this.px2vp(xPx + r.left);
-      const yVp: number = this.px2vp(paintY + r.top);
-      const wVp: number = this.px2vp(r.right - r.left);
-      const hVp: number = this.px2vp(r.bottom - r.top);
-      this.hlCtx.fillRect(xVp, yVp, wVp, hVp);
-      hilog.info(DOMAIN, TAG,
-        '[CANVASPROBE] hl box%{public}d para=%{public}d vp=[%{public}s,%{public}s %{public}sx%{public}s]',
-        b, this.hlPara, xVp.toFixed(1), yVp.toFixed(1), wVp.toFixed(1), hVp.toFixed(1));
+    let boxSeq: number = 0;
+    for (let i = 0; i < this.rowCache.length; i++) {
+      const entry: RowEntry | null = this.rowCache[i];
+      if (entry === null || entry.line === null || entry.para === null) {
+        continue;
+      }
+      const line: EngineLine = entry.line;
+      if (line.paraIndex !== this.hlPara) {
+        continue;
+      }
+      // 段内偏移交集 → 行内偏移（行文本含缩进前缀：首行 +prefixLen）
+      const from: number = Math.max(this.hlFrom, line.charFrom);
+      const to: number = Math.min(this.hlTo, line.charTo);
+      if (from >= to) {
+        continue;
+      }
+      const rStart: number = from - line.charFrom + line.prefixLen;
+      const rEnd: number = to - line.charFrom + line.prefixLen;
+      let boxes: text.TextBox[] = [];
+      try {
+        boxes = entry.para.getRectsForRange({ start: rStart, end: rEnd },
+          text.RectWidthStyle.TIGHT, text.RectHeightStyle.TIGHT);
+      } catch (e) {
+        continue;
+      }
+      for (let b = 0; b < boxes.length; b++) {
+        const r: common2D.Rect = boxes[b].rect;
+        const xVp: number = this.px2vp(xPx + r.left);
+        const yVp: number = this.px2vp(entry.paintY + r.top);
+        const wVp: number = this.px2vp(r.right - r.left);
+        const hVp: number = this.px2vp(r.bottom - r.top);
+        this.hlCtx.fillRect(xVp, yVp, wVp, hVp);
+        boxSeq++;
+      }
+    }
+    if (boxSeq > 0) {
+      hilog.info(DOMAIN, TAG, '[CANVASPROBE] hl boxes=%{public}d para=%{public}d', boxSeq, this.hlPara);
     }
   }
 
@@ -313,67 +321,59 @@ export struct ReaderPageNoAnimCanvas {
   }
 
   /**
-   * 画一个 run（同段连续行 `[from..to)`）：**整段 paint + 行带裁剪**。
-   *
-   * ⚠️ 为什么不用 `TextLine.paint` 逐行画：真机实测（2026-11-05）`TextLine.paint(cv,x,y)`
-   *    虽然文档写「(x,y) = 行框左上角」，实际字形落在 `painted + 段内自然位置`
-   *    （行距呈 2:1 交替错乱，截图 `_dsh_shots/2026-11-05-stage0/poc-C.png`）。
-   *    `Paragraph.paint` 是整段标准语义（段落顶 = (x,y)），配合裁剪只暴露本页行带。
-   *
-   * 落位算式：段落顶 y = `glyphTop − natY(k1)`，其中 natY(k1) = 段内前 k1 行行高累加。
-   *    该式**自消去**——paint 内部行 k 的字形顶 = y + natY(k)，代回得
-   *    glyphTop − natY(k1) + natY(k1) = glyphTop，与 natY 的取值无关（哪怕它有怪癖）。
-   * 裁剪带 = `[yTopPx, yNextTopPx)`（本 run 的节点带，含首行段前距；与老 Text 树节点带一致）。
-   * 返回画出的行数；≤0 = 匹配失败（PoC 记录并跳过）。
+   * 画一行（直绘逐行 justify 核心）：
+   * · 行文本 = `line.text`（引擎切片，含缩进前缀）——内容不变，只调字距；
+   * · 非段末/非标题行：`addPx = (排版箱 − 引擎行自然宽(widthPx) − 2px) ÷ 全行字符数`
+   *   （分母含前缀：字距作用于全部字符；上限 1.2 字宽）→ 行尾顶到边；
+   * · 行箱 layout 宽 = 排版箱 + SLACK：**单行内容物理上不可能二次折行**（直绘专属安全性）；
+   * · 度量闭环：widthPx 与绘制同属一个引擎，无跨引擎度量差。
+   * paint y = 节点顶 + 段前距（单行段落顶 = 行框顶，无 TextLine.paint 的自然位置坑）。
+   * 返回行缓存条目；null = 段文本缺失/排版失败（跳过该行）。
    */
-  private paintRun(cv: drawing.Canvas, lines: EngineLine[], from: number, to: number,
-    xPx: number, yTopPx: number, yNextTopPx: number): number {
-    const first: EngineLine = lines[from];
-    const raw: string = this.paraText(first.paraIndex);
+  private paintLine(cv: drawing.Canvas, line: EngineLine, xPx: number, yTopPx: number,
+    boxPx: number, isParaEnd: boolean): RowEntry | null {
+    const raw: string = this.paraText(line.paraIndex);
     if (raw.length === 0) {
-      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] 段文本缺失 para=%{public}d', first.paraIndex);
-      return -1;
+      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] 段文本缺失 para=%{public}d', line.paraIndex);
+      return null;
     }
-    const src: string = engineSourceText(raw, first.isTitle);
-    const para: text.Paragraph = buildPaintParagraph(src, this.style, first.isTitle);
-    const metrics: text.LineMetrics[] = para.getLineMetrics();
-    const indentLen: number = first.isTitle ? 0 : 2;
-    // 匹配 k1：页首行的 charFrom（段内偏移，不含缩进）落在重排段落的哪一行
-    const want: number = first.charFrom + indentLen;
-    let k1: number = -1;
-    for (let k = 0; k < metrics.length; k++) {
-      if (want >= metrics[k].startIndex && want < metrics[k].endIndex) {
-        k1 = k;
-        break;
+    // 逐行 justify（基线 = 引擎自量的本行自然宽）
+    let lsFp: number = LETTER_SPACING_FP;
+    let justified: boolean = false;
+    if (!isParaEnd && !line.isTitle && line.widthPx > 0 && line.text.length >= 2) {
+      const deltaPx: number = boxPx - line.widthPx - 2;
+      if (deltaPx > 0) {
+        const limitPx: number = this.style.fontSizePx * 1.2;
+        const addPx: number = Math.min(deltaPx, limitPx) / line.text.length;
+        const d: number = this.fp2px(1);
+        lsFp = LETTER_SPACING_FP + (d > 0 ? addPx / d : addPx);
+        justified = true;
       }
     }
-    const runLen: number = to - from;
-    if (k1 < 0 || k1 + runLen > metrics.length) {
-      hilog.warn(DOMAIN, TAG,
-        '[CANVASPROBE] 行匹配失败 para=%{public}d charFrom=%{public}d runLen=%{public}d 引擎行数=%{public}d k1=%{public}d',
-        first.paraIndex, first.charFrom, runLen, metrics.length, k1);
-      return -1;
+    // 单行样式：同参 clone + 行箱余量 + 行字距
+    const rowStyle: LineStyle = cloneLineStyle(this.style);
+    rowStyle.widthPx = boxPx + ROW_BOX_SLACK_PX;
+    rowStyle.letterSpacingPx = this.fp2px(lsFp);
+    const para: text.Paragraph = buildPaintParagraph(line.text, rowStyle, line.isTitle);
+    if (para.getLineCount() <= 0) {
+      return null;
     }
-    let natY: number = 0;
-    for (let k = 0; k < k1; k++) {
-      natY += para.getLineHeight(k);
-    }
-    // 本 run 首行字形顶 = 节点顶 + 段前距（与老 Text 树：字形在节点顶 + padding 处一致）
-    const glyphTop: number = yTopPx + lines[from].padTopPx;
+    // 字形顶 = 节点顶 + 段前距；裁剪带 = 分页计价的同一个行带（padTop + heightPx）
+    const paintY: number = yTopPx + line.padTopPx;
     cv.save();
-    cv.clipRect({ left: 0, top: yTopPx, right: this.pmWpx, bottom: yNextTopPx });
-    const paintY: number = glyphTop - natY;
+    cv.clipRect({ left: 0, top: yTopPx, right: this.pmWpx, bottom: yTopPx + line.padTopPx + line.heightPx });
     para.paint(cv, xPx, paintY);
     cv.restore();
-    // 写段落缓存（高亮层复用同实例 + 同落位 ⇒ 矩形与字形必然对齐）
-    this.paraCache.set(first.paraIndex, para);
-    this.paraPaintY.set(first.paraIndex, paintY);
-    this.paraTitle.set(first.paraIndex, first.isTitle);
-    hilog.info(DOMAIN, TAG,
-      '[CANVASPROBE] run para=%{public}d k1=%{public}d n=%{public}d band=[%{public}s,%{public}s) glyphTop=%{public}s natY=%{public}s',
-      first.paraIndex, k1, runLen, yTopPx.toFixed(1), yNextTopPx.toFixed(1),
-      glyphTop.toFixed(1), natY.toFixed(1));
-    return runLen;
+    const entry: RowEntry = new RowEntry();
+    entry.para = para;
+    entry.paintY = paintY;
+    entry.line = line;
+    entry.justified = justified;
+    return entry;
+  }
+
+  private fp2px(v: number): number {
+    return this.getUIContext().fp2px(v);
   }
 
   private fillBg(cv: drawing.Canvas): void {
@@ -383,4 +383,38 @@ export struct ReaderPageNoAnimCanvas {
     cv.drawRect({ left: 0, top: 0, right: this.pmWpx, bottom: this.pmHpx });
     cv.detachBrush();
   }
+}
+
+/** 行箱横向余量（px）：layout 宽 = 排版箱 + 此值 ⇒ 单行内容永不折行 */
+const ROW_BOX_SLACK_PX: number = 16;
+
+/** 行缓存条目（高亮层与正文共用同一 Paragraph 实例） */
+class RowEntry {
+  /** 该行的单行 Paragraph（已按补偿后字距 layout；补偿公式见 paintLine） */
+  para: text.Paragraph | null = null;
+  /** 该行的 paint y（px，节点顶 + 段前距） */
+  paintY: number = 0;
+  /** 行对象（高亮映射：charFrom/charTo/prefixLen/isTitle） */
+  line: EngineLine | null = null;
+  /** 本行是否做了字距补偿（段末行/标题行为 false） */
+  justified: boolean = false;
+}
+
+/** LineStyle 逐字段拷贝（class 无结构化克隆；漏字段 = 隐蔽排版分叉，新增字段必须同步） */
+function cloneLineStyle(s: LineStyle): LineStyle {
+  const c: LineStyle = new LineStyle();
+  c.fontSizePx = s.fontSizePx;
+  c.lineHeightPx = s.lineHeightPx;
+  c.indentSlots = s.indentSlots;
+  c.gapPx = s.gapPx;
+  c.widthPx = s.widthPx;
+  c.pageHeightPx = s.pageHeightPx;
+  c.fontFamily = s.fontFamily;
+  c.fontWeight = s.fontWeight;
+  c.fontPath = s.fontPath;
+  c.titleFontScale = s.titleFontScale;
+  c.letterSpacingPx = s.letterSpacingPx;
+  c.titleWeight = s.titleWeight;
+  c.color = s.color;
+  return c;
 }
