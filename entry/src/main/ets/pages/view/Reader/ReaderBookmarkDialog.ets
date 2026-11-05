@@ -177,7 +177,7 @@ export struct ReaderBookmarkDialog {
           .fontSize(12)
           .fontColor(this.dockFg())
       }
-      .padding(5)
+      .padding(3)
       .onClick(() => {
         Haptics.tap();
         if (this.bmRows.length > 0) {
@@ -195,7 +195,7 @@ export struct ReaderBookmarkDialog {
           .fontSize(12)
           .fontColor(this.dockFg())
       }
-      .padding(5)
+      .padding(3)
       .onClick(() => {
         Haptics.tap();
         if (this.bmRows.length > 0) {
@@ -212,7 +212,7 @@ export struct ReaderBookmarkDialog {
           .fontSize(12)
           .fontColor(this.dockFg())
       }
-      .padding(5)
+      .padding(3)
       .onClick(() => {
         Haptics.tap();
         if (this.bmRows.length > 0) {
@@ -220,7 +220,7 @@ export struct ReaderBookmarkDialog {
         }
       })
     }
-    .padding(5)
+    .padding(3)
     // ★ 与目录弹窗 dock 完全同款：跟随主题色的**半透明**材质背板。
     // ⚠️ 2026-10-13 用户反馈「背景不够透明，增加些透明度」⇒ 不透明度 0.82 → 0.55
     //   （alpha 直接写进 `#AARRGGBB` 首字节，见 `ImmersiveMaterialUtil.tint` :233-238）。
@@ -232,7 +232,7 @@ export struct ReaderBookmarkDialog {
       ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55),
       this.colorMode == 0 ? ThemeColorMode.DARK : ThemeColorMode.LIGHT))
     .borderRadius(20)
-    .position({ bottom: '10%', right: '5%' })
+    .position({ bottom: 8, right: 8 })
   }
 
   build() {

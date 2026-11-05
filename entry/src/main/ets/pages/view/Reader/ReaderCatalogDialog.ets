@@ -374,7 +374,7 @@ export struct ReaderCatalogDialog {
             .fontSize(12)
             .fontColor(this.dockFg())
         }
-        .padding(5)
+        .padding(3)
         .onClick(() => {
           Haptics.tap();
           this.scrollerForList.scrollToIndex(0)
@@ -390,7 +390,7 @@ export struct ReaderCatalogDialog {
             .fontSize(12)
             .fontColor(this.dockFg())
         }
-        .padding(5)
+        .padding(3)
         .onClick(() => {
           Haptics.tap();
           this.scrollerForList.scrollToIndex(this.currentChapterIndex)
@@ -405,13 +405,13 @@ export struct ReaderCatalogDialog {
             .fontSize(12)
             .fontColor(this.dockFg())
         }
-        .padding(5)
+        .padding(3)
         .onClick(() => {
           Haptics.tap();
           this.scrollerForList.scrollToIndex(this.catalogItems.length - 1)
         })
       }
-      .padding(5)
+      .padding(3)
       // ★★ 2026-10-09 用户要求：「适配和书架一样的 dock」★★
       //   改造前是一块**写死的蓝色实底**（2026-09-25 用户反馈「不喜欢绿色」时换的）。
       //   现在改成与书架 dock 同源的**沉浸光感材质**：
@@ -434,7 +434,7 @@ export struct ReaderCatalogDialog {
         ImmersiveMaterialUtil.tint(this.theme.mainColor !== undefined ? this.theme.mainColor : '#007DFF', 0.55),
         this.colorMode == 0 ? ThemeColorMode.DARK : ThemeColorMode.LIGHT))
       .borderRadius(20)
-      .position({ bottom: '10%', right: '5%' })
+      .position({ bottom: 8, right: 8 })
     }
     // 弹窗高度是**固定**的（options 里的 height）⇒ 让这个 Stack 吃掉"搜索栏 + 页签"之外的
     // 剩余高度（`layoutWeight` 官方原文：子组件分配父容器**剩余空间**，`common.d.ts:17475`）。
