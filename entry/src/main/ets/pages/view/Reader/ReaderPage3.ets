@@ -4325,6 +4325,16 @@ oAnimInitNode 配套） */
     // 必须在 `migrateReaderSetting()` **之后**（滚动档不改 flipMode，但分页两档要把它
     // 对齐成 '0'/'1'）、在 `startPlay()` **之前**（首帧就要决定渲染谁）。
     this.loadReadMode();
+    // ── 2026-11-06 外屏：**首帧**就落在外屏允许的档位（自绘两档）─────────────
+    //   放在 `loadReadMode()` 之后、`startPlay()` 之前：`loadReadMode()` 会按书持久化值
+    //   恢复内屏档位（可能是仿真/横滑 = ReaderKit），不改的话 ReaderKit 会先在
+    //   326×326vp 的外屏上初始化一次 —— 真机日志实证那正是 `ChapterView loadDataFailed` /
+    //   `initChapterViewListener: load failed` 出现的时机。外屏统一落「无动画」（与 dock 同口径）。
+    if (this.outerMinimal) {
+      this.readMode = this.outerReadMode === 'scroll' ? READ_MODE_SCROLL : READ_MODE_NONE;
+      hilog.info(0x0000, 'testTag',
+        'outerMinimal first frame -> readMode=%{public}d (skip ReaderKit init)', this.readMode);
+    }
     // ── 滚动模式：首屏初始位置 ────────────────────────────────────────────────
     // ⚠️⚠️ 2026-10-24 修「滚动模式接续落点不生效」（真机日志定案）⚠️⚠️
     //
