@@ -97,7 +97,7 @@ const SWIPE_TRIGGER_VP: number = 40;
  * 两套度量对同一行内容的宽度结论可以差几个 px；一旦 ArkUI 侧判"装不下"，
  * 就把末字折到下一行 ⇒ 整页多一行 ⇒ 底部溢出（2026-11-05 真机事故）。
  * 把渲染箱右边比引擎排版宽让出 3vp（**左边缘不动**），度量差被右侧 inset 吸收，
- * "折行"在物理上不可能发生。是否被动用由 [SLACKCANARY] 探针盯守。
+ * "折行"在物理上不可能发生。
  * 只作用于渲染箱：分页口径 `areaW` 仍按 sideInsetVp 两侧对称扣，断行/页边界不变。
  */
 const RENDER_SLACK_VP: number = 3;
@@ -281,8 +281,8 @@ export struct ReaderPageNoAnim {
   /** 当前弹出「从此处听书」气泡的行键（'' = 没有气泡） */
   @State listenPopupKey: string = '';
   @State errText: string = '';
-  /** 渲染路径开关（AppStorage；默认 false = 老 Text 树。是否设默认只由用户决定） */
-  @StorageProp(CANVAS_MODE_KEY) canvasMode: boolean = false;
+  /** 渲染路径开关（AppStorage；2026-11-05 用户裁定转正：true = 引擎直绘为默认路径，老 Text 树留作回退开关） */
+  @StorageProp(CANVAS_MODE_KEY) canvasMode: boolean = true;
   /** [直绘] 听书气泡锚点行（老树气泡挂在行 Text 上；直绘没有行节点 ⇒ 用透明锚点节点） */
   @State popupAnchorLine: EngineLine | null = null;
   /** [直绘] 锚点行相对正文起点的累计 y（vp，`onBodyLongPress` 的 acc） */
@@ -451,35 +451,6 @@ export struct ReaderPageNoAnim {
   }
 
   /** fp → px（字号/行高/缩进都是 fp，必须乘字体缩放） */
-  /** 逐行实测宽的缓存（`slackCanary` 护栏用；原字距补偿已随单引擎化退役，见交接文档 §九） */
-  private rowWidthCache: Map<string, number> = new Map<string, number>();
-
-  private measureLineWidthPx(text: string): number {
-    const key: string = this.fontSize + '|' + this.fontName + '|' + this.fontWeight
-      + '|' + this.weightOffset + '|' + LETTER_SPACING_FP + '|' + text;
-    const hit: number | undefined = this.rowWidthCache.get(key);
-    if (hit !== undefined) {
-      return hit;
-    }
-    let w: number = -1;
-    try {
-      w = this.getUIContext().getMeasureUtils().measureText({
-        textContent: text,
-        fontSize: this.fontSize,
-        fontFamily: this.fontName,
-        fontWeight: scrollFontWeight(this.fontWeight, this.weightOffset),
-        letterSpacing: LETTER_SPACING_FP
-      });
-    } catch (e) {
-      w = -1;
-    }
-    if (this.rowWidthCache.size > 4000) {
-      this.rowWidthCache.clear();
-    }
-    this.rowWidthCache.set(key, w);
-    return w;
-  }
-
   private fp2px(v: number): number {
     return this.getUIContext().fp2px(v);
   }
@@ -1055,39 +1026,6 @@ export struct ReaderPageNoAnim {
     return this.fontSize * TITLE_FONT_SCALE;
   }
 
-  /**
-   * [SLACKCANARY] 探针（收尾必删）：横向松弛是否被吃满的绊线。
-   * 用 ArkUI 自己的 measureText（与渲染同 fontSize/字体/字重/字距）量当前页每行自然宽：
-   *   · measured ≤ 引擎排版宽（vp2px(areaW)）      → 松弛没被动用（健康）
-   *   · 引擎排版宽 < measured ≤ 渲染箱宽（+3vp）   → 度量差已吃进松弛（观察项）
-   *   · measured > 渲染箱宽                        → 即将折行/已被 maxLines 裁尾（必须处理）
-   * 由 `curLines()` 的节流块（每 20 次渲染一次）调用；measureText 结果有缓存，开销可忽略。
-   */
-  private slackCanary(lines: EngineLine[]): void {
-    if (lines.length === 0) {
-      return;
-    }
-    const engineBoxPx: number = this.vp2px(this.areaW);
-    const renderBoxPx: number = engineBoxPx + this.vp2px(RENDER_SLACK_VP);
-    for (let i = 0; i < lines.length; i++) {
-      const line: EngineLine = lines[i];
-      const w: number = this.measureLineWidthPx(line.text);
-      if (!(w > 0)) {
-        continue;
-      }
-      if (w > renderBoxPx) {
-        hilog.warn(DOMAIN, TAG,
-          '[SLACKCANARY] 行超渲染箱 para=%{public}d from=%{public}d w=%{public}s engineBox=%{public}s renderBox=%{public}s text=%{public}s',
-          line.paraIndex, line.charFrom, w.toFixed(1), engineBoxPx.toFixed(1),
-          renderBoxPx.toFixed(1), line.text);
-      } else if (w > engineBoxPx) {
-        hilog.info(DOMAIN, TAG,
-          '[SLACKCANARY] 度量差吃进松弛 para=%{public}d from=%{public}d w=%{public}s engineBox=%{public}s',
-          line.paraIndex, line.charFrom, w.toFixed(1), engineBoxPx.toFixed(1));
-      }
-    }
-  }
-
   // ══════════════════════════════════════════════════════════════════════════
   // 听书状态下「点击任意一行 ⇒ 从此处听书」（2026-10-27）
   // ══════════════════════════════════════════════════════════════════════════
@@ -1506,18 +1444,9 @@ export struct ReaderPageNoAnim {
   }
 
   /** 当前页的行（`pageIdx` 越界时给空数组） */
-  /** [SLACKCANARY] 节流计数（护栏：直绘转正、老路径退役时一并删） */
-  private canaryTick: number = 0
-
   private curLines(): EngineLine[] {
     if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
       return [];
-    }
-    // [SLACKCANARY] 折行绊线（护栏）：节流盯"渲染箱松弛"是否被度量差吃满，
-    // 吃满即说明 Text 树 fallback 的度量漂移超出预算（触发 = 要处理，不能静默）
-    this.canaryTick++
-    if (this.canaryTick % 20 === 1) {
-      this.slackCanary(this.flat[this.pageIdx].lines)
     }
     return this.flat[this.pageIdx].lines;
   }

@@ -26,10 +26,8 @@
  *   · 行 y：逐行累加 `heightPx + padTopPx`（与 `paginateLines` 同一算术），
  *     行内 y 用 `getLineHeight` 累加（不依赖"每行等高"假设）；
  *   · 行 x：左 inset（与 Text 树同锚点）；右松弛对直绘无意义（引擎永不二次折行）；
- *   · 缩进：源文本带 `\u3000\u3000` 前缀（`engineSourceText`，与分页同一条规则）；
- *   · [CANVASPROBE] 打印每次绘制的 run/k1/y，与老渲染 dump 的行 y 对比。
- *
- * ⚠️ PoC 边界：背景图（bgUri）未支持（仅纯色底，打日志说明）；高亮/气泡/手势不接。
+ *   · 缩进：行文本带 `\u3000\u3000` 前缀（分页同一条规则，见 EngineLines）；
+ *   · 失败路径保留 `hilog.warn`（背景解码/段文本缺失），例行绘制日志已删（转正收尾 2026-11-05）。
  */
 
 import { image } from '@kit.ImageKit';
@@ -82,8 +80,6 @@ export struct ReaderPageNoAnimCanvas {
    * 数组下标 = 页内行序（与父页 lines 一一对应）。
    */
   private rowCache: (RowEntry | null)[] = [];
-  /** [CANVASPROBE] 行度量日志节流计数（护栏，转正时随探针一起删） */
-  private justProbeTick: number = 0;
   /** 背景图（bgUri 异步解码产物；null = 无图/加载中/失败 → 纯色底） */
   private bgPixelMap: image.PixelMap | null = null;
   /** 背景图原始尺寸（cover 裁剪算 srcRect 用） */
@@ -161,8 +157,6 @@ export struct ReaderPageNoAnimCanvas {
       pm.getImageInfo().then((info: image.ImageInfo) => {
         this.bgW = info.size.width > 0 ? info.size.width : 0;
         this.bgH = info.size.height > 0 ? info.size.height : 0;
-        hilog.info(DOMAIN, TAG, '[CANVASPROBE] 背景图解码成功 %{public}s → %{public}dx%{public}d',
-          uri, this.bgW, this.bgH);
         this.requestRepaint();
       }).catch((): void => {
         this.requestRepaint();
@@ -262,13 +256,10 @@ export struct ReaderPageNoAnimCanvas {
     if (lines.length === 0) {
       return;
     }
-    const t0: number = Date.now();
     const cv: drawing.Canvas = new drawing.Canvas(pm);
     this.fillBg(cv);
     // 背景图：纯色底之上 cover 居中裁剪（等比放大至覆盖、裁掉溢出边缘），与老树 ImageCover 同观感
     const bg: image.PixelMap | null = this.bgPixelMap;
-    hilog.info(DOMAIN, TAG, '[CANVASPROBE] repaint bgUri=%{public}s pm=%{public}d size=%{public}dx%{public}d',
-      this.bgUri, bg !== null ? 1 : 0, this.bgW, this.bgH);
     if (bg !== null && this.bgW > 0 && this.bgH > 0) {
       const scale: number = Math.max(this.pmWpx / this.bgW, this.pmHpx / this.bgH);
       const srcW: number = this.pmWpx / scale;
@@ -286,8 +277,6 @@ export struct ReaderPageNoAnimCanvas {
     // 排版箱宽（px）：与分页同一个数（style.widthPx = vp2px(areaW)）
     const boxPx: number = this.style.widthPx > 0 ? this.style.widthPx : 1;
     let yPx: number = topPx;
-    let painted: number = 0;
-    let justRows: number = 0;
     for (let i = 0; i < lines.length; i++) {
       const line: EngineLine = lines[i];
       // 段末行判定：下一行不同段 / 页内最后一行 —— 段末行保持自然（不补偿）
@@ -295,19 +284,12 @@ export struct ReaderPageNoAnimCanvas {
       const entry: RowEntry | null = this.paintLine(cv, line, xPx, yPx, boxPx, isParaEnd);
       if (entry !== null) {
         this.rowCache[i] = entry;
-        painted++;
-        if (entry.justified) {
-          justRows++;
-        }
       }
       yPx += line.heightPx + line.padTopPx;
     }
     // 上屏：像素图（px）1:1 贴到 Canvas（vp 区域）
     this.ctx.clearRect(0, 0, this.containerWvp, this.containerHvp);
     this.ctx.drawImage(pm, 0, 0, this.containerWvp, this.containerHvp);
-    hilog.info(DOMAIN, TAG,
-      '[CANVASPROBE] paint lines=%{public}d ok=%{public}d just=%{public}d yEnd=%{public}s 耗时%{public}dms',
-      lines.length, painted, justRows, yPx.toFixed(1), Date.now() - t0);
     this.repaintHighlight();
   }
 
@@ -323,7 +305,6 @@ export struct ReaderPageNoAnimCanvas {
     }
     const xPx: number = this.vp2px(this.sideInsetVp);
     this.hlCtx.fillStyle = 'rgba(0,125,255,0.20)';
-    let boxSeq: number = 0;
     for (let i = 0; i < this.rowCache.length; i++) {
       const entry: RowEntry | null = this.rowCache[i];
       if (entry === null || entry.line === null || entry.para === null) {
@@ -355,11 +336,7 @@ export struct ReaderPageNoAnimCanvas {
         const wVp: number = this.px2vp(r.right - r.left);
         const hVp: number = this.px2vp(r.bottom - r.top);
         this.hlCtx.fillRect(xVp, yVp, wVp, hVp);
-        boxSeq++;
       }
-    }
-    if (boxSeq > 0) {
-      hilog.info(DOMAIN, TAG, '[CANVASPROBE] hl boxes=%{public}d para=%{public}d', boxSeq, this.hlPara);
     }
   }
 
@@ -427,12 +404,6 @@ export struct ReaderPageNoAnimCanvas {
     entry.paintY = paintY;
     entry.line = line;
     entry.justified = justified;
-    if (justified || this.justProbeTick % 20 === 0) {
-      hilog.info(DOMAIN, TAG,
-        '[CANVASPROBE] line para=%{public}d chars=%{public}d widthPx字段=%{public}s natural=%{public}s box=%{public}s just=%{public}d',
-        line.paraIndex, line.text.length, line.widthPx.toFixed(1), natural.toFixed(1), boxPx.toFixed(1), justified ? 1 : 0);
-    }
-    this.justProbeTick++;
     return entry;
   }
 
