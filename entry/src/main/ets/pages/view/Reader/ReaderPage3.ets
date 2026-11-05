@@ -1831,6 +1831,40 @@ oAnimInitNode 配套） */
     return Math.max(bottom, scrollTopInsetVp());
   }
 
+  // ═══ 留白带动态安全区（2026-11-06 用户反馈：留白要避让信息窗与绝对显示区域）═══
+  // 规则：顶带 = [0, min(正文区顶, 信息条上缘) − 4]；底带 = [max(正文区底, 信息条下缘) + 4, 屏底]。
+  // 边框存在时以其外缘（含 insetExtra）为界；可用高度 < 12vp ⇒ 不渲染（不留一条缝）。
+
+  /** 顶带可用高度（vp）；0 = 不渲染 */
+  private bandTopH(): number {
+    let bottomBound: number = scrollTopInsetVp();
+    if (this.skinFrame !== null) {
+      bottomBound = Math.min(bottomBound, scrollTopInsetVp() - this.skinFrameExtra());
+    }
+    if (this.infoWinPos === 0) {
+      bottomBound = Math.min(bottomBound, this.infoWinPadTopVp());
+    }
+    bottomBound -= 4;
+    return bottomBound < 12 ? 0 : bottomBound;
+  }
+
+  /** 底带上缘 y（vp） */
+  private bandBottomY(): number {
+    let topBound: number = this.skinViewportHeightVp() - scrollBottomInsetVp();
+    if (this.skinFrame !== null) {
+      topBound = Math.max(topBound, this.skinFrameBottomY());
+    }
+    if (this.infoWinPos === 1) {
+      topBound = Math.max(topBound, this.skinViewportHeightVp() - this.infoWinPadBottomVp());
+    }
+    return topBound + 4;
+  }
+
+  /** 底带可用高度（vp）；< 12 ⇒ 不渲染 */
+  private bandBottomH(): number {
+    return this.skinViewportHeightVp() - this.bandBottomY();
+  }
+
   /** 视口高（vp，与 debugAreaHeightVp 同一份真源） */
   private skinViewportHeightVp(): number {
     const vhPx: number = this.settingState.viewPortHeight > 0
@@ -1852,13 +1886,13 @@ oAnimInitNode 配套） */
   @Builder
   SkinLayers() {
     Stack() {
-      // ② 顶部留白带（全宽，0..scrollTopInsetVp）
-      if (this.skinBandTop !== null) {
-        this.SkinBand(this.skinBandTop, true)
+      // ② 顶部留白带（动态安全区：避让信息窗与绝对显示区，<12vp 不渲染）
+      if (this.skinBandTop !== null && this.bandTopH() > 0) {
+        this.SkinBand(this.skinBandTop, true, 0, this.bandTopH())
       }
-      // ② 底部留白带（全宽，贴屏底）
-      if (this.skinBandBottom !== null) {
-        this.SkinBand(this.skinBandBottom, false)
+      // ② 底部留白带（同上，镜像）
+      if (this.skinBandBottom !== null && this.bandBottomH() > 0) {
+        this.SkinBand(this.skinBandBottom, false, this.bandBottomY(), this.bandBottomH())
       }
       // ③ 阅读区框（CODE = 1vp 实线边；IMAGE = 九宫格框图，四角固定不变形）
       //    下缘走 skinFrameBottomY()：信息条在底部时自动让路，不压信息条
@@ -1919,15 +1953,15 @@ oAnimInitNode 配套） */
   }
 
   /**
-   * 留白带（②）：全宽矩形；isTop=false 时贴屏底。
-   * CODE = color→colorEnd 纵向渐变（无 colorEnd = 纯色）；IMAGE = 素材图（P2.2）。
+   * 留白带（②）：全宽矩形，渲染进调用方算好的动态安全区（zoneY/zoneH）。
+   * CODE = color→colorEnd 纵向渐变（无 colorEnd = 纯色）；IMAGE = 素材图（整体拉伸）。
    */
   @Builder
-  SkinBand(slot: SkinSlot | null, isTop: boolean) {
+  SkinBand(slot: SkinSlot | null, isTop: boolean, zoneY: number, zoneH: number) {
     if (slot !== null && slot.type === SkinAssetType.CODE) {
       Column()
         .width('100%')
-        .height(isTop ? scrollTopInsetVp() : scrollBottomInsetVp())
+        .height(zoneH)
         .linearGradient({
           angle: 180,
           colors: [
@@ -1935,14 +1969,12 @@ oAnimInitNode 配套） */
             [slot.colorEnd ?? slot.color ?? Color.Transparent, 1]
           ]
         })
-        .position({ x: 0, y: isTop ? 0 : this.skinViewportHeightVp() - scrollBottomInsetVp() })
+        .position({ x: 0, y: zoneY })
         .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
         .hitTestBehavior(HitTestMode.None)
     }
     if (slot !== null && slot.type === SkinAssetType.IMAGE) {
-      this.SkinImage(slot, '100%',
-        isTop ? scrollTopInsetVp() : scrollBottomInsetVp(),
-        0, isTop ? 0 : this.skinViewportHeightVp() - scrollBottomInsetVp())
+      this.SkinImage(slot, '100%', zoneH, 0, zoneY)
     }
   }
 
