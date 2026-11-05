@@ -45,6 +45,9 @@
 import { bundleManager } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { PreferencesUtil } from '@pura/harmony-utils';
+// 系统隐私声明（隐私政策）的签署状态 —— 公告门禁（2026-11-05 新增，见下方 privacyConsentReady）
+import { privacyManager } from '@kit.AppGalleryKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { GONGGAO_ITEMS } from './GonggaoData';
 
 const TAG: string = 'Gonggao';
@@ -68,6 +71,73 @@ export class Gonggao {
    * ⚠️ 提交前必须保持 `false`（与 `FirstRunMode.IGNORE_FLAG_FOR_DEBUG` 同款约定）。
    */
   static readonly IGNORE_FLAG_FOR_DEBUG: boolean = false;
+
+  /**
+   * ★ 系统隐私声明门禁开关（2026-11-05 新增）★
+   *
+   * `true`（当前默认，用户明确要求：「接系统的隐私声明确认状态做门禁，这个体验绝对是最好的」）
+   *  ⇒ 用户还没同意系统隐私声明前**不弹**公告（否则会被那个系统确认框盖住，等于白弹一次）。
+   * `false` ⇒ 退回旧行为（不查系统状态，按 900ms + 重试直接弹）。
+   *
+   * ⚠️ **本路径尚未真机验证**（实现完成后两台设备同时离线）。
+   *    失败方向要说清：若在真机上这个接口在本机一直返回"未同意"，公告会**一直不弹**
+   *    （每 3s 复查、60s 后放弃本次，下次冷启动再来）。遇到这种情况立刻把它改成 `false`。
+   *    验证步骤见 `docs/待办-统一清单-2026-11-03.md` §101.13。
+   */
+  static readonly PRIVACY_GATE_ENABLED: boolean = true;
+
+  /**
+   * 系统「隐私声明 / 用户协议」是否**已经同意** —— 公告的**门禁**（2026-11-05 新增）。
+   *
+   * ── 为什么需要它（真机事故，完整证据见 `pages/Index.ets` 公告那节 + 施工记录 §101.12）
+   * 新装首次启动时，**应用市场（AppGallery）会给用户弹一次系统隐私声明确认框**
+   * （真机日志：`AG/AppGallery [NavigateDisposePrivacyDialog]:aboutToAppear com.jk.reader`）。
+   * 它盖在应用之上：公告这时弹出来用户看不见，而一旦记账就永久丢失这个版本的一次机会。
+   * ⇒ 正确做法不是"猜延时"，而是**问系统"用户同意了没有"**，没同意就先不弹。
+   *
+   * ── 官方接口（SDK 原文，`sdk/default/hms/ets/api/@hms.core.appgalleryservice.privacyManager.d.ts`）
+   *   · `:325 function getAppPrivacyResult(): AppPrivacyResult[];`（@since 5.0.0(12)）
+   *     原文「Queries the privacy agreement signing status.」
+   *   · `:59-87 enum AppPrivacyResultType { DISAGREED = 0, FULL_MODE_AGREED = 1,
+   *     REQUIRE_RESIGNING_VERSION_UPDATE = 2 }`（原文「The user has not agreed…」/
+   *     「The user has agreed…」/「The agreement has changed and needs to be signed again.」）
+   *   · `:124-143 enum AppPrivacyType { PRIVACY_AGREEMENT = 1, USER_AGREEMENT = 2 }`
+   *   · 错误码 `1006700003 - The application does not use privacy manager service.`
+   *   · 模块导出：`@kit.AppGalleryKit.d.ts:18` 的 export 列表里含 `privacyManager`
+   *   · 能力：`SystemCapability.AppGalleryService.PrivacyManager`（`canIUse` 判定；
+   *     `canIUse(syscap: string): boolean` 见 `openharmony/ets/api/@internal/full/global.d.ts:374`）
+   *
+   * ── 三条兜底（宁可放行，也不让公告被永久压死）
+   *   ① 设备没有该 syscap ⇒ 不会有系统协议框 ⇒ 放行；
+   *   ② 结果里没有 `PRIVACY_AGREEMENT` 这一项 ⇒ 本应用没声明协议 ⇒ 放行；
+   *   ③ 接口抛错（含 1006700003 未接入隐私管理服务）⇒ 放行，只记日志。
+   * 只有"明确查到了 PRIVACY_AGREEMENT 且不是 FULL_MODE_AGREED"才返回 false（= 等用户同意）。
+   */
+  static privacyConsentReady(): boolean {
+    if (!Gonggao.PRIVACY_GATE_ENABLED) {
+      return true;
+    }
+    try {
+      if (!canIUse('SystemCapability.AppGalleryService.PrivacyManager')) {
+        return true;
+      }
+      const results: privacyManager.AppPrivacyResult[] = privacyManager.getAppPrivacyResult();
+      for (const one of results) {
+        if (one.type === privacyManager.AppPrivacyType.PRIVACY_AGREEMENT) {
+          const agreed: boolean = one.result === privacyManager.AppPrivacyResultType.FULL_MODE_AGREED;
+          hilog.info(0x0000, TAG,
+            `privacyConsentReady: result=${one.result} agreed=${agreed}`);
+          return agreed;
+        }
+      }
+      return true;
+    } catch (e) {
+      const err = e as BusinessError;
+      // 1006700003 = 应用未接入隐私管理服务（= 不存在系统协议框）⇒ 放行
+      hilog.warn(0x0000, TAG, `privacyConsentReady failed: code=${err.code}, treat as ready`);
+      return true;
+    }
+  }
 
   /**
    * 当前安装包的版本号（`AppScope/app.json5` 的 `versionName`，如 `3.0.13`）。

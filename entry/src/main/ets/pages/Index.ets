@@ -1285,6 +1285,13 @@ struct Main {
     if (!Gonggao.shouldShow()) {
       return
     }
+    // 门禁：系统「隐私声明」还没同意 ⇒ 现在弹必然被那个系统确认框盖住（真机事故见本节开头）
+    // ⇒ 不弹、**不记账**，靠 `scheduleGonggaoRetry` 每 3s 复查一次（用户点完「同意」就会放行）。
+    if (!Gonggao.privacyConsentReady()) {
+      hilog.info(0x0000, 'Gonggao', `waiting for system privacy consent (source=${source})`)
+      this.scheduleGonggaoRetry('privacy-pending')
+      return
+    }
     if (this.gonggaoDialog !== null || this.gonggaoPending) {
       return
     }
