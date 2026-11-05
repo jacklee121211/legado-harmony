@@ -122,7 +122,17 @@ export struct ReaderPageNoAnimCanvas {
       this.requestRepaint();
       return;
     }
-    image.createImageSource(uri).createPixelMap().then((pm: image.PixelMap) => {
+    // ⚠️ createImageSource 对无效路径**不抛异常、返回 undefined**（真机日志 2026-11-05 12:01：
+    //    errno:2 → CreateImageSourceExec error → 链式调用 .createPixelMap 即未捕获 TypeError
+    //    → JS Error 级杀进程）。必须先接住返回值判空，失败回落纯色底。
+    const src: image.ImageSource | undefined = image.createImageSource(uri);
+    if (src === undefined) {
+      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] createImageSource 失败（路径不存在或不支持）: %{public}s', uri);
+      this.bgPixelMap = null;
+      this.requestRepaint();
+      return;
+    }
+    src.createPixelMap().then((pm: image.PixelMap) => {
       // URI 已变（快速切主题/换图）⇒ 丢弃过期解码结果
       if (uri !== this.bgUri) {
         return;
