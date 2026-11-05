@@ -96,6 +96,12 @@ import { LongTakeFlightData, LongTakeGeom } from '../common/utils/LongTakeBook'
 import FirstRunModeDialog from '../componets/common/FirstRunModeDialog'
 import { FirstRunMode } from '../common/utils/FirstRunMode'
 import { OfflineMode } from '../common/utils/OfflineMode'
+// ── 「公告」弹窗（新装 / 版本变更后弹一次）────────────────────────────────────
+// 判定与记账全在 `componets/gonggao/Gonggao.ets`（一键开关 `Gonggao.ENABLED` 在那里）；
+// 内容在 `componets/gonggao/GonggaoData.ets`；本页只负责：① 冷启动判定一次；
+// ② new controller 并打开；③ 打开成功后记账（见 `maybeShowGonggao` 注释）。
+import GonggaoPage from '../componets/gonggao/gonggaopage'
+import { Gonggao } from '../componets/gonggao/Gonggao'
 
 // ── 阅读里程碑主动推广（2026-10-28 新增，用户需求）──────────────────────────
 // 「累计阅读 >1h 弹评分软引导 / >10h 弹 VIP」的**判定与记账**全在 `ReadPromo`；
@@ -182,6 +188,21 @@ struct Main {
    * 弹窗与首帧同拍会和孩子布局抢帧。给一点余量让主界面先立住。
    */
   private static readonly FIRST_RUN_DELAY_MS: number = 600
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 「公告」弹窗（新装 / 版本号变化后弹一次）—— 判定在 `componets/gonggao/Gonggao.ets`
+  // ══════════════════════════════════════════════════════════════════════════
+  /**
+   * 公告弹窗控制器（null = 未弹 / 已关）。
+   * ⚠️ 参数不支持动态更新（SDK `custom_dialog_controller.d.ts:756` NOTE 原文
+   * 「Custom dialog box parameters do not support dynamic updates」）⇒ 每次弹出 new 新实例。
+   */
+  private gonggaoDialog: CustomDialogController | null = null
+  /**
+   * 公告弹出延时。取 900ms 的理由：比首启引导（600ms）晚、比阅读推广（1200ms）早
+   * ⇒ 冷启动时公告先立住，推广弹窗当次让位（见 `maybeShowReadPromo()` 里的闸）。
+   */
+  private static readonly GONGGAO_DELAY_MS: number = 900
 
   // ══════════════════════════════════════════════════════════════════════════
   // 阅读里程碑主动推广（2026-10-28 新增，用户需求）—— 本页是**唯一的弹窗宿主**
@@ -1123,6 +1144,8 @@ struct Main {
     NightMode.sync(this.getUIContext().getHostContext() as common.UIAbilityContext)
     // ★ 首次安装模式选择（2026-10-13）：流程正常启动，主界面立住后再弹引导。
     this.maybeShowFirstRunDialog()
+    // ★ 公告（新装 / 版本号变化后一次）：判定在 `Gonggao.shouldShow()`，本页只负责弹与记账。
+    this.maybeShowGonggao()
     // ★ 阅读里程碑主动推广（2026-10-28）：先灌历史时长，再在首帧稳定后判定一次。
     //   ① `init()` 幂等：只在首次调用时启动 `readDaily` 历史秒数的一次性入账
     //      （老用户"装了新版本一进就弹"的唯一依据，见 `ReadPromo.ets` 头注释）；
@@ -1196,6 +1219,119 @@ struct Main {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // 「公告」弹窗（新装 / 版本号变化后弹一次）—— 判定、controller、记账
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * 冷启动判定并弹出公告。
+   *
+   * ── 判定全在 `Gonggao.shouldShow()`（判定表见 `componets/gonggao/Gonggao.ets` 文件头）
+   *   · `Gonggao.ENABLED === false` ⇒ 永不弹（开发者一键开关）；
+   *   · 内容数组为空 / 取不到版本号 ⇒ 永不弹；
+   *   · 本地"已展示版本"≠ 当前 `versionName` ⇒ 弹（新装时本地没有记录 ⇒ 也弹）。
+   * 用户原话：「新下载软件，或者更新版本后出现，且在版本号未变化时不再重复出现第二次」。
+   */
+  private maybeShowGonggao(): void {
+    if (!Gonggao.shouldShow()) {
+      return
+    }
+    setTimeout((): void => {
+      // 再次判定（防御性）：延迟期间可能已被其它路径记账
+      if (!Gonggao.shouldShow()) {
+        return
+      }
+      // 首启引导是"强制选择"语义，必须让它先走完；公告**不记账**，下次冷启动照常弹，不会丢
+      if (this.firstRunDialog !== null) {
+        return
+      }
+      this.openGonggaoDialog()
+    }, Main.GONGGAO_DELAY_MS)
+  }
+
+  /**
+   * 真正 new controller 并打开公告。任何异常都不许影响主流程（公告是增值功能）。
+   *
+   * ── options 配方逐条对齐 `docs/标准-弹窗与按钮统一规范.md` §2.2 / §2.4
+   *   · `customStyle: false` + `cornerRadius: 20` + `systemMaterial` + SPRING_FAST 开关动画；
+   *   · 内容含 `Scroll` ⇒ **必须给固定高**（§2.4），这里给百分比 `'78%'`。
+   *     官方文档原文（documentId `harmonyos-references/…/ArkTS组件/弹窗/自定义弹窗_(CustomDialog)/自定义弹窗_(CustomDialog)`）：
+   *     「height…弹窗高度默认最大值：0.9 *（窗口高度 - 安全区域）。
+   *       **百分比参数方式：弹窗参考高度为（窗口高度 - 安全区域）**，在此基础上调小或调大。」
+   *     ⇒ 百分比自动跟随窗口/设备，比写死 560vp 安全（小屏不裁、大屏不矮）。
+   *     宽度同文档：「百分比参数方式：弹窗参考宽度为所在窗口的宽度」⇒ 见 `gonggaoWidth()`。
+   *
+   * ── 记账时机 = **open 之后**（不是关闭时）
+   * 用户要的是"不再出现第二次" ⇒ 只要"出现过"就算展示过。放在关闭路径上会被
+   * 点遮罩 / 返回键 / cancel 回调漏接等分支绕过；放在 open 之后只有一种漏记：刚开就被杀进程。
+   */
+  private openGonggaoDialog(): void {
+    try {
+      const dialog: CustomDialogController = new CustomDialogController({
+        builder: GonggaoPage({
+          theme: this.theme,
+          // 本弹窗不自己 close（`RenameBookDialog.ets:27-32` 真机结论）⇒ 关闭权在本页
+          onConfirm: (): void => {
+            this.closeGonggaoDialog()
+          }
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        width: this.gonggaoWidth(),
+        height: '78%',
+        cornerRadius: 20,
+        // ★ 材质生效的必要条件（规范 2.2）
+        customStyle: false,
+        systemMaterial: ImmersiveMaterialUtil.sheetMaterial(),
+        openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
+        cancel: (): void => {
+          // 点遮罩 / 返回键：弹窗已被系统关掉，这里只清引用（记账已在打开时完成）
+          this.gonggaoDialog = null
+        }
+      })
+      this.gonggaoDialog = dialog
+      DialogHost.openIf(dialog)
+      // 「出现过即算展示过」——必须在 open 之后（见方法头注释）
+      Gonggao.markShown()
+    } catch (e) {
+      this.gonggaoDialog = null
+      hilog.warn(0x0000, 'Gonggao', `openGonggaoDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 关闭公告弹窗 —— 「我知道了」的唯一出口。
+   * 必须由**创建 controller 的本页**执行（`RenameBookDialog.ets:27-32`：子组件内 close 无效）。
+   */
+  private closeGonggaoDialog(): void {
+    const dialog: CustomDialogController | null = this.gonggaoDialog
+    this.gonggaoDialog = null
+    if (dialog === null) {
+      return
+    }
+    try {
+      dialog.close()
+    } catch (e) {
+      hilog.warn(0x0000, 'Gonggao', `closeGonggaoDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /**
+   * 公告弹窗宽度：手机（xs/sm/md）按窗口宽 88%，平板 / 2in1（lg/xl）固定 460vp。
+   * 为什么大屏不用百分比：`width` 的百分比口径是"所在窗口宽"（见 `openGonggaoDialog` 注释），
+   * 平板/2in1 上用 88% 会变成"一条横跨整屏的公告"⇒ 固定宽更接近系统弹窗观感。
+   * `currentBreakpoint` 由 `EntryAbility.updateBreakpoint()` 写入，与书架列数（`ShelfPrefs`）同源。
+   * ⚠️ 返回类型必须是 `Dimension`（不是 `string | number`）：SDK `component/units.d.ts:347`
+   * 原文 `declare type Dimension = PX | VP | FP | LPX | Percentage | Resource;`，
+   * 其中 `:289 declare type Percentage = \`${number}%\`;`、`PX/VP` 也是模板字面量类型
+   * ⇒ 裸 `string`/裸 `number` 联合**不可赋值**（MCP check 实测报 2322）。
+   */
+  private gonggaoWidth(): Dimension {
+    const bp: string = AppStorage.get<string>('currentBreakpoint') ?? ''
+    return (bp === 'lg' || bp === 'xl') ? '460vp' : '88%'
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // 阅读里程碑主动推广（2026-10-28 新增）—— 触发、判定、controller、记账
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -1260,6 +1396,11 @@ struct Main {
       // 首启引导还在（`FirstRunMode.ENABLED` 当前是 false ⇒ 正常情况下这条路不会走，
       // 但一旦将来翻 true，两个弹窗会在冷启动时叠弹）⇒ 让位给首启引导。
       if (this.firstRunDialog !== null) {
+        return
+      }
+      // 公告弹窗开着 ⇒ 本次推广让位。公告是"一次性"的（同一版本只出现一次），
+      // 推广则是可重复触发的（评分 30 天一轮 / VIP 90 天一次）⇒ 这次让位由下次触发点补上。
+      if (this.gonggaoDialog !== null) {
         return
       }
       // 阅读器在栈顶 ⇒ 绝不弹（弹窗会盖在阅读页上；退书流程里此时转场还没结束）
