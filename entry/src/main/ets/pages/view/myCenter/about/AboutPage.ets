@@ -40,7 +40,9 @@ export default struct AboutPage {
    * 「更新公告」手动入口的 controller（null = 未打开 / 已关闭）。
    * 每次点都 new 一个新的（SDK NOTE：弹窗参数不支持动态更新）⇒ 与 `Index` 的自动路径同款做法。
    */
-  private gonggaoDialog: CustomDialogController | null = null
+  // 2026-11-06：不再自持 CustomDialogController（全仓预算 46，闸门只许降）
+  //   改为「本地变量 + DialogHost.open / closeCurrent」+ 一个布尔做连点去重。
+  @State private gonggaoOpen: boolean = false
 
   /**
    * 评分引导弹窗（2026-10-13 新增）。
@@ -246,7 +248,7 @@ export default struct AboutPage {
    * 没有公告内容（`GONGGAO_ITEMS = []`）时只提示，不开空弹窗。
    */
   private openGonggaoByHand(): void {
-    if (this.gonggaoDialog !== null) {
+    if (this.gonggaoOpen) {
       // 已经开着（连点两下 / 弹窗尚未消失）⇒ 不重复创建
       return
     }
@@ -261,8 +263,7 @@ export default struct AboutPage {
           // 「我知道了」：先记账，再关自己（关闭权在创建 controller 的本 struct）
           onConfirm: (): void => {
             GonggaoDialog.markShown()
-            GonggaoDialog.close(this.gonggaoDialog)
-            this.gonggaoDialog = null
+            DialogHost.closeCurrent()
           },
           onAction: (action: string): void => {
             GonggaoDialog.dispatchAction(this.hostContext(), action)
@@ -279,17 +280,16 @@ export default struct AboutPage {
         openAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
         closeAnimation: UiMotion.motionParam(UiMotion.SPRING_FAST),
         onDidDisappear: (): void => {
-          // 关掉了（不论谁关的）⇒ 清引用，避免下次点击复用旧 controller
-          this.gonggaoDialog = null
+          // 关掉了（不论谁关的）⇒ 复位去重标记；controller 由 DialogHost 持有
         },
         cancel: (): void => {
           GonggaoDialog.markShown()
         }
       })
-      this.gonggaoDialog = dialog
-      DialogHost.openIf(dialog)
+      this.gonggaoOpen = true
+      DialogHost.open(dialog)
     } catch (err) {
-      this.gonggaoDialog = null
+      this.gonggaoOpen = false
       hilog.warn(0x0000, 'AboutPage', `openGonggaoByHand failed: ${JSON.stringify(err)}`)
       this.toast('公告打开失败')
     }
