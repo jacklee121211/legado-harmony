@@ -586,8 +586,12 @@ export default struct ReaderPage3 {
   // （它们是"建一次"的控制器字段，不能走 @Prop）。全页几十处 `this.colorMode == 0` 无需改动。
   @StorageLink('readerColorMode') colorMode: ConfigurationConstant.ColorMode =
     ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
-  @StorageLink('bottomRectHeight') bottomRectHeight: number = 0
-  @StorageLink('topRectHeight') topRectHeight: number = 0
+  // ⚠️ 2026-11-06 改快照（原 @StorageLink）：进书瞬间从 AppStorage 拷贝一次（见
+  //    aboutToAppear 开头那段），此后**不再跟随** AppStorage —— 沉浸期内这两个键
+  //    被冻结保护，但折叠就地切换实测会被计划外清零，跟随就会把顶栏/dock 排错。
+  //    页内对这两个字段零写入，纯读快照。
+  @State bottomRectHeight: number = 0
+  @State topRectHeight: number = 0
   // `ReaderPadding`（边距）已于 2026-09-21 删除：唯一消费者是 `LayoutMoreDialog()`
   // builder，而它在本文件里不可达（见该处的说明）；且官方 `ReaderSetting` 里
   // 也没有 margin/padding 字段，改它并不会传给 ReaderKit。
@@ -4047,6 +4051,27 @@ oAnimInitNode 配套） */
   //   `this.session.publishLtPageBg(this.readerSetting)` —— 仍**同步**，下一行仍是 `setPageConfig`。
 
   async aboutToAppear() {
+
+    // ── 避让值快照（2026-11-06，PuraX 外屏接续回内屏的顶栏变高一倍事故）──────────
+    //   此刻系统栏还**没**隐藏（隐藏发生在下面 620ms 的沉浸块里），AppStorage 里的
+    //   `topRectHeight` / `bottomRectHeight` 是**当前形态的真值** —— 立刻快照进页内。
+    //   为什么不能继续用 @StorageLink 跟随：沉浸期内这两个键的唯一合法来源是
+    //   `avoidAreaChange`，而它被 freeze 跳过；一旦发生**计划外写入**（实测：折叠
+    //   就地切换期间避让值被清零——顶栏胶囊落进 `== 0` 兜底分支 ⇒ 高了一倍、内容
+    //   沉底，dock 同理贴到屏幕底），存活中的阅读页会立刻跟着错。
+    //   ⇒ 页内改用快照值：进书那一刻是多少，整个阅读生命周期就用多少。
+    //     已核对全文件对这两个字段**零写入**（纯读），快照不影响任何其它路径；
+    //     书架/Header 等其它消费方保持 @StorageLink 不动（它们在阅读期不可见，
+    //     退出时 `restoreTopRect()` 会把冻结的真值还回去）。
+    //   ⚠️ 残留已知边界（记录不顺手改）：就地切换后用的是**进入时那一屏**的避让值
+    //      （内外两屏的状态栏/手势条高度接近，视觉无感）；要精确跟随形态，需要
+    //      "系统栏可见瞬间"才能查到真值（隐藏期间 `getWindowAvoidArea` 恒为 0），
+    //      属独立改造，见 `WindowAbility.freezeTopRect()` 注释。
+    this.topRectHeight = (AppStorage.get<number>('topRectHeight') ?? 0) as number;
+    this.bottomRectHeight = (AppStorage.get<number>('bottomRectHeight') ?? 0) as number;
+    hilog.info(0x0000, 'testTag',
+      'avoid snapshot: top=%{public}s bottom=%{public}s',
+      this.topRectHeight.toFixed(2), this.bottomRectHeight.toFixed(2));
 
     // ── 仅**平板**：阅读页锁定当前方向，禁止自动旋转（2026-10-23 方案 B；2026-10-24 收窄为仅平板）──
     //   根因：ReaderKit 原生 surface 在自动旋转后不重新分配 ⇒ 挤压/空白/行距异常
