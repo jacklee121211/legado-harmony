@@ -82,6 +82,8 @@ export struct ReaderPageNoAnimCanvas {
    * 数组下标 = 页内行序（与父页 lines 一一对应）。
    */
   private rowCache: (RowEntry | null)[] = [];
+  /** [CANVASPROBE] 行度量日志节流计数（护栏，转正时随探针一起删） */
+  private justProbeTick: number = 0;
   /** 背景图（bgUri 异步解码产物；null = 无图/加载中/失败 → 纯色底） */
   private bgPixelMap: image.PixelMap | null = null;
   /** 背景图原始尺寸（cover 裁剪算 srcRect 用） */
@@ -113,6 +115,17 @@ export struct ReaderPageNoAnimCanvas {
     this.loadBg();
   }
 
+  /**
+   * `file://<bundleName>/data/...`（FileUri，ArkUI Image 认）→ `/data/...`（沙箱绝对路径，
+   * `image.createImageSource` 认）。`file:///` 三斜杠标准形态与纯路径原样返回。
+   */
+  private normalizeBgPath(uri: string): string {
+    if (uri.startsWith('file://') && !uri.startsWith('file:///')) {
+      return uri.substring('file://'.length + uri.substring('file://'.length).indexOf('/') + 1);
+    }
+    return uri;
+  }
+
   private loadBg(): void {
     const uri: string = this.bgUri;
     if (uri.length === 0) {
@@ -122,25 +135,34 @@ export struct ReaderPageNoAnimCanvas {
       this.requestRepaint();
       return;
     }
-    // ⚠️ createImageSource 对无效路径**不抛异常、返回 undefined**（真机日志 2026-11-05 12:01：
-    //    errno:2 → CreateImageSourceExec error → 链式调用 .createPixelMap 即未捕获 TypeError
-    //    → JS Error 级杀进程）。必须先接住返回值判空，失败回落纯色底。
-    const src: image.ImageSource | undefined = image.createImageSource(uri);
+    this.decodeBg(uri, 0);
+  }
+
+  /**
+   * 解码背景图，带**延迟重试**：设置背景时目标缓存文件（readerbg/tX_WxH.jpg）由后台
+   * **异步生成**，选图瞬间 `bgUri` 已指向它但文件未就绪（真机日志 2026-11-05 12:17：
+   * errno:2 连续失败，文件就绪后无人再触发 ⇒ 背景永远缺失）。老树 Image 组件靠
+   * "设置后整页重建、重建时文件已就绪"掩盖了该竞态；直绘无重建，必须自己重试。
+   */
+  private decodeBg(uri: string, attempt: number): void {
+    const path: string = this.normalizeBgPath(uri);
+    const src: image.ImageSource | undefined = image.createImageSource(path);
     if (src === undefined) {
-      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] createImageSource 失败（路径不存在或不支持）: %{public}s', uri);
-      this.bgPixelMap = null;
-      this.requestRepaint();
+      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] createImageSource 失败 attempt=%{public}d path=%{public}s',
+        attempt, path);
+      this.retryBg(uri, attempt);
       return;
     }
     src.createPixelMap().then((pm: image.PixelMap) => {
-      // URI 已变（快速切主题/换图）⇒ 丢弃过期解码结果
       if (uri !== this.bgUri) {
-        return;
+        return; // URI 已变（快速切主题/换图）⇒ 丢弃过期解码结果
       }
       this.bgPixelMap = pm;
       pm.getImageInfo().then((info: image.ImageInfo) => {
         this.bgW = info.size.width > 0 ? info.size.width : 0;
         this.bgH = info.size.height > 0 ? info.size.height : 0;
+        hilog.info(DOMAIN, TAG, '[CANVASPROBE] 背景图解码成功 %{public}s → %{public}dx%{public}d',
+          uri, this.bgW, this.bgH);
         this.requestRepaint();
       }).catch((): void => {
         this.requestRepaint();
@@ -149,8 +171,22 @@ export struct ReaderPageNoAnimCanvas {
       hilog.warn(DOMAIN, TAG, '[CANVASPROBE] 背景图解码失败 %{public}s: %{public}s',
         uri, e instanceof Error ? e.message : String(e));
       this.bgPixelMap = null;
-      this.requestRepaint();
+      this.retryBg(uri, attempt);
     });
+  }
+
+  /** 失败重试：最多 3 次、间隔 400ms（覆盖缓存文件的异步生成窗口）；仍失败回落纯色底 */
+  private retryBg(uri: string, attempt: number): void {
+    this.bgPixelMap = null;
+    if (attempt >= 3 || uri !== this.bgUri) {
+      this.requestRepaint();
+      return;
+    }
+    setTimeout((): void => {
+      if (uri === this.bgUri) {
+        this.decodeBg(uri, attempt + 1);
+      }
+    }, 400);
   }
 
   build() {
@@ -231,6 +267,8 @@ export struct ReaderPageNoAnimCanvas {
     this.fillBg(cv);
     // 背景图：纯色底之上 cover 居中裁剪（等比放大至覆盖、裁掉溢出边缘），与老树 ImageCover 同观感
     const bg: image.PixelMap | null = this.bgPixelMap;
+    hilog.info(DOMAIN, TAG, '[CANVASPROBE] repaint bgUri=%{public}s pm=%{public}d size=%{public}dx%{public}d',
+      this.bgUri, bg !== null ? 1 : 0, this.bgW, this.bgH);
     if (bg !== null && this.bgW > 0 && this.bgH > 0) {
       const scale: number = Math.max(this.pmWpx / this.bgW, this.pmHpx / this.bgH);
       const srcW: number = this.pmWpx / scale;
@@ -333,10 +371,12 @@ export struct ReaderPageNoAnimCanvas {
   /**
    * 画一行（直绘逐行 justify 核心）：
    * · 行文本 = `line.text`（引擎切片，含缩进前缀）——内容不变，只调字距；
-   * · 非段末/非标题行：`addPx = (排版箱 − 引擎行自然宽(widthPx) − 2px) ÷ 全行字符数`
-   *   （分母含前缀：字距作用于全部字符；上限 1.2 字宽）→ 行尾顶到边；
+   * · 自然宽**引擎当场自量**（baseline Paragraph 的 `getLineWidth(0)`）——
+   *   ⚠️ 不用 `EngineLine.widthPx`：该记录字段从未被真机验证（2026-11-05 实测 just=0，
+   *   疑似 `LineMetrics.width` 实现为 0，声明与实现不符），记录字段一律不信，当场量；
+   * · 非段末/非标题行且 delta>0：`addPx = (排版箱 − 自然宽 − 2px) ÷ 全行字符数`
+   *   （分母含前缀：字距作用于全部字符；上限 1.2 字宽）→ 按补偿字距**重排一次**；
    * · 行箱 layout 宽 = 排版箱 + SLACK：**单行内容物理上不可能二次折行**（直绘专属安全性）；
-   * · 度量闭环：widthPx 与绘制同属一个引擎，无跨引擎度量差。
    * paint y = 节点顶 + 段前距（单行段落顶 = 行框顶，无 TextLine.paint 的自然位置坑）。
    * 返回行缓存条目；null = 段文本缺失/排版失败（跳过该行）。
    */
@@ -347,26 +387,34 @@ export struct ReaderPageNoAnimCanvas {
       hilog.warn(DOMAIN, TAG, '[CANVASPROBE] 段文本缺失 para=%{public}d', line.paraIndex);
       return null;
     }
-    // 逐行 justify（基线 = 引擎自量的本行自然宽）
-    let lsFp: number = LETTER_SPACING_FP;
+    // baseline：base 字距排一次，引擎自量自然宽
+    const baseStyle: LineStyle = cloneLineStyle(this.style);
+    baseStyle.widthPx = boxPx + ROW_BOX_SLACK_PX;
+    const base: text.Paragraph = buildPaintParagraph(line.text, baseStyle, line.isTitle);
+    if (base.getLineCount() <= 0) {
+      return null;
+    }
+    let natural: number = -1;
+    try {
+      natural = base.getLineWidth(0);
+    } catch (e) {
+      natural = -1;
+    }
+    let para: text.Paragraph = base;
     let justified: boolean = false;
-    if (!isParaEnd && !line.isTitle && line.widthPx > 0 && line.text.length >= 2) {
-      const deltaPx: number = boxPx - line.widthPx - 2;
+    if (!line.isTitle && natural > 0 && line.text.length >= 2 && !isParaEnd) {
+      const deltaPx: number = boxPx - natural - 2;
       if (deltaPx > 0) {
         const limitPx: number = this.style.fontSizePx * 1.2;
         const addPx: number = Math.min(deltaPx, limitPx) / line.text.length;
-        const d: number = this.fp2px(1);
-        lsFp = LETTER_SPACING_FP + (d > 0 ? addPx / d : addPx);
-        justified = true;
+        const justStyle: LineStyle = cloneLineStyle(baseStyle);
+        justStyle.letterSpacingPx = this.fp2px(LETTER_SPACING_FP) + addPx;
+        const just: text.Paragraph = buildPaintParagraph(line.text, justStyle, line.isTitle);
+        if (just.getLineCount() > 0) {
+          para = just;
+          justified = true;
+        }
       }
-    }
-    // 单行样式：同参 clone + 行箱余量 + 行字距
-    const rowStyle: LineStyle = cloneLineStyle(this.style);
-    rowStyle.widthPx = boxPx + ROW_BOX_SLACK_PX;
-    rowStyle.letterSpacingPx = this.fp2px(lsFp);
-    const para: text.Paragraph = buildPaintParagraph(line.text, rowStyle, line.isTitle);
-    if (para.getLineCount() <= 0) {
-      return null;
     }
     // 字形顶 = 节点顶 + 段前距；裁剪带 = 分页计价的同一个行带（padTop + heightPx）
     const paintY: number = yTopPx + line.padTopPx;
@@ -379,6 +427,12 @@ export struct ReaderPageNoAnimCanvas {
     entry.paintY = paintY;
     entry.line = line;
     entry.justified = justified;
+    if (justified || this.justProbeTick % 20 === 0) {
+      hilog.info(DOMAIN, TAG,
+        '[CANVASPROBE] line para=%{public}d chars=%{public}d widthPx字段=%{public}s natural=%{public}s box=%{public}s just=%{public}d',
+        line.paraIndex, line.text.length, line.widthPx.toFixed(1), natural.toFixed(1), boxPx.toFixed(1), justified ? 1 : 0);
+    }
+    this.justProbeTick++;
     return entry;
   }
 

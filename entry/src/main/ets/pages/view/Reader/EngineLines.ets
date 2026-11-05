@@ -106,10 +106,11 @@ export class EngineLine {
    */
   heightPx: number = 0;
   /**
-   * 该行**实际渲染宽度**（px），来自引擎 `LineMetrics.width`。
-   * 官方原文（`@ohos.graphics.text.d.ts`，@since 12）：「Width of a line, in physical pixels (px).」
-   * 用途（2026-11-05，方案 B）：逐行字距自适应 —— 把「可用宽 − 本行宽」按字数摊回字距，
-   * 让每行左右顶到边（替代失效的 JUSTIFY）。
+   * ⚠️ **不可信字段**（2026-11-05 真机定案）：`LineMetrics.width` 声明是"行宽"
+   * （「Width of a line, in physical pixels (px).」），实现返回的却是 **layoutSync 传入的
+   * 排版箱宽**（所有行同值，实测恒 = 1136.5 = box），不是该行自然宽。
+   * 需要行自然宽必须**引擎当场自量**（单行 Paragraph 的 `getLineWidth(0)`，
+   * 见 ReaderPageNoAnimCanvas.paintLine 的 baseline 做法）。此字段仅留作证据，勿消费。
    */
   widthPx: number = 0;
   /** 是否**章标题行**（渲染时用大字号 + 加粗；见 `LineStyle.titleFontScale`） */
