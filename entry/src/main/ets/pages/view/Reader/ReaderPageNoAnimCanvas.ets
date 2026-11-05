@@ -57,12 +57,27 @@ export struct ReaderPageNoAnimCanvas {
   /** 页容器尺寸（vp，父页实测缓存；Canvas 节点 100%×100%，像素图按其 px 尺寸建） */
   @Prop @Watch('onSourceChange') containerWvp: number = 0;
   @Prop @Watch('onSourceChange') containerHvp: number = 0;
+  // ── 阶段 2：TTS 高亮（父页算好"本页是否命中"再传：hlPara = 本页命中的段号，-1 = 无）──
+  @Prop @Watch('onHighlightChange') hlPara: number = -1;
+  @Prop @Watch('onHighlightChange') hlFrom: number = -1;
+  @Prop @Watch('onHighlightChange') hlTo: number = -1;
+  /** 朗读句切换代数：同段内 from/to 不变也要重画高亮 ⇒ 父页每句 +1 */
+  @Prop @Watch('onHighlightChange') hlSerial: number = 0;
 
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
+  /** 高亮层（阶段 2）：独立 Canvas，透明底；句切换只重画这一层，正文不重排不重绘 */
+  private hlCtx: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
   private pixelMap: image.PixelMap | null = null;
   private pmWpx: number = 0;
   private pmHpx: number = 0;
   private pending: boolean = false;
+  /**
+   * 段落缓存（正文 repaint 时填写）：paraIndex → 排好的 Paragraph 与它的 paint 落位（px）。
+   * 高亮层复用同一批实例做 `getRectsForRange` ⇒ 高亮矩形与正文字形**必然同源同位**。
+   */
+  private paraCache: Map<number, text.Paragraph> = new Map();
+  private paraPaintY: Map<number, number> = new Map();
+  private paraTitle: Map<number, boolean> = new Map();
 
   private vp2px(v: number): number {
     return this.getUIContext().vp2px(v);
@@ -72,16 +87,31 @@ export struct ReaderPageNoAnimCanvas {
     this.requestRepaint();
   }
 
+  /** 句切换 / 高亮区间变化 ⇒ 只重画顶层（正文零重排零重绘，双分层的意义） */
+  onHighlightChange(): void {
+    this.repaintHighlight();
+  }
+
   build() {
-    Canvas(this.ctx)
-      .width('100%')
-      .height('100%')
-      .onAreaChange((_old: Area, n: Area) => {
-        this.onSize(Number(n.width), Number(n.height));
-      })
-      .onReady(() => {
-        this.requestRepaint();
-      })
+    Stack() {
+      Canvas(this.ctx)
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
+        .onAreaChange((_old: Area, n: Area) => {
+          this.onSize(Number(n.width), Number(n.height));
+        })
+        .onReady(() => {
+          this.requestRepaint();
+        })
+      Canvas(this.hlCtx)
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
+        .onReady(() => {
+          this.repaintHighlight();
+        })
+    }
   }
 
   /** 容器尺寸变化 ⇒ 重建后备像素图（尺寸没变不重建） */
@@ -141,6 +171,10 @@ export struct ReaderPageNoAnimCanvas {
     const t0: number = Date.now();
     const cv: drawing.Canvas = new drawing.Canvas(pm);
     this.fillBg(cv);
+    // 页内容变化 ⇒ 段落缓存整体重建（高亮层复用同一批实例）
+    this.paraCache.clear();
+    this.paraPaintY.clear();
+    this.paraTitle.clear();
     const topPx: number = this.vp2px(this.topInsetVp);
     const xPx: number = this.vp2px(this.sideInsetVp);
     let yPx: number = topPx;
@@ -171,6 +205,54 @@ export struct ReaderPageNoAnimCanvas {
     hilog.info(DOMAIN, TAG,
       '[CANVASPROBE] paint lines=%{public}d runs=%{public}d ok=%{public}d yEnd=%{public}s 耗时%{public}dms',
       lines.length, runCount, okRuns, yPx.toFixed(1), Date.now() - t0);
+    this.repaintHighlight();
+  }
+
+  /**
+   * 重画高亮层（阶段 2）：透明底清空后，命中段用 `getRectsForRange` 取字符区间矩形，
+   * 按正文层的段落 paint 落位换算到 vp 叠画。
+   * ⚠️ 矩形与正文字形**同源同位**：同一个 Paragraph 实例 + 同一个 paint 坐标。
+   * 老树高亮色 `rgba(0,125,255,0.20)`；radius 4 在 20% 透明度下不可辨，先 fillRect（记档）。
+   */
+  private repaintHighlight(): void {
+    this.hlCtx.clearRect(0, 0, this.containerWvp, this.containerHvp);
+    if (this.hlPara < 0 || this.hlFrom < 0 || this.hlTo <= this.hlFrom) {
+      return;
+    }
+    const para: text.Paragraph | undefined = this.paraCache.get(this.hlPara);
+    const paintY: number | undefined = this.paraPaintY.get(this.hlPara);
+    const isTitle: boolean | undefined = this.paraTitle.get(this.hlPara);
+    if (para === undefined || paintY === undefined || isTitle === undefined) {
+      return;
+    }
+    // 高亮坐标是段内偏移（不含缩进）；段落文本带 `\u3000\u3000` 前缀 ⇒ 区间 +2（标题无缩进）
+    const prefix: number = isTitle ? 0 : 2;
+    const range: text.Range = { start: this.hlFrom + prefix, end: this.hlTo + prefix };
+    let boxes: text.TextBox[] = [];
+    try {
+      boxes = para.getRectsForRange(range, text.RectWidthStyle.TIGHT, text.RectHeightStyle.TIGHT);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] getRectsForRange failed para=%{public}d', this.hlPara);
+      return;
+    }
+    const xPx: number = this.vp2px(this.sideInsetVp);
+    this.hlCtx.fillStyle = 'rgba(0,125,255,0.20)';
+    for (let b = 0; b < boxes.length; b++) {
+      const r: common2D.Rect = boxes[b].rect;
+      const xVp: number = this.px2vp(xPx + r.left);
+      const yVp: number = this.px2vp(paintY + r.top);
+      const wVp: number = this.px2vp(r.right - r.left);
+      const hVp: number = this.px2vp(r.bottom - r.top);
+      this.hlCtx.fillRect(xVp, yVp, wVp, hVp);
+      hilog.info(DOMAIN, TAG,
+        '[CANVASPROBE] hl box%{public}d para=%{public}d vp=[%{public}s,%{public}s %{public}sx%{public}s]',
+        b, this.hlPara, xVp.toFixed(1), yVp.toFixed(1), wVp.toFixed(1), hVp.toFixed(1));
+    }
+  }
+
+  private px2vp(v: number): number {
+    const d: number = this.vp2px(1);
+    return d > 0 ? v / d : v;
   }
 
   /**
@@ -223,8 +305,13 @@ export struct ReaderPageNoAnimCanvas {
     const glyphTop: number = yTopPx + lines[from].padTopPx;
     cv.save();
     cv.clipRect({ left: 0, top: yTopPx, right: this.pmWpx, bottom: yNextTopPx });
-    para.paint(cv, xPx, glyphTop - natY);
+    const paintY: number = glyphTop - natY;
+    para.paint(cv, xPx, paintY);
     cv.restore();
+    // 写段落缓存（高亮层复用同实例 + 同落位 ⇒ 矩形与字形必然对齐）
+    this.paraCache.set(first.paraIndex, para);
+    this.paraPaintY.set(first.paraIndex, paintY);
+    this.paraTitle.set(first.paraIndex, first.isTitle);
     hilog.info(DOMAIN, TAG,
       '[CANVASPROBE] run para=%{public}d k1=%{public}d n=%{public}d band=[%{public}s,%{public}s) glyphTop=%{public}s natY=%{public}s',
       first.paraIndex, k1, runLen, yTopPx.toFixed(1), yNextTopPx.toFixed(1),

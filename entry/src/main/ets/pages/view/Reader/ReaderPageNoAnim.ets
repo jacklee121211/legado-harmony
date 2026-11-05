@@ -67,10 +67,11 @@ import { scrollFontWeight } from './ReaderScrollView';
 import { ReaderPageNoAnimCanvas } from './ReaderPageNoAnimCanvas';
 
 /**
- * 阶段 1 PoC 渲染开关：true = 当前页改由 `ReaderPageNoAnimCanvas`（引擎直绘）画。
- * ⚠️ 只为 A/B 像素对比用（翻转后重装即可），默认必须 false——老路径仍是唯一权威。
+ * 无动画档渲染路径开关（阶段 2）：true = 当前页改由 `ReaderPageNoAnimCanvas`（引擎直绘）画。
+ * ⚠️ AppStorage 键 `READER_NOANIM_CANVAS`，**默认 false**——老 Text 树路径仍是唯一权威；
+ * 设置页/调试入口写这个键即可热切换（切换 = ready 子树重建，无过渡态）。
  */
-const POC_CANVAS_MODE: boolean = false;
+const CANVAS_MODE_KEY: string = 'READER_NOANIM_CANVAS';
 
 const TAG: string = 'NoAnimReader';
 const DOMAIN: number = 0x0000;
@@ -281,6 +282,12 @@ export struct ReaderPageNoAnim {
   /** 当前弹出「从此处听书」气泡的行键（'' = 没有气泡） */
   @State listenPopupKey: string = '';
   @State errText: string = '';
+  /** 渲染路径开关（AppStorage；默认 false = 老 Text 树。是否设默认只由用户决定） */
+  @StorageProp(CANVAS_MODE_KEY) canvasMode: boolean = false;
+  /** [直绘] 听书气泡锚点行（老树气泡挂在行 Text 上；直绘没有行节点 ⇒ 用透明锚点节点） */
+  @State popupAnchorLine: EngineLine | null = null;
+  /** [直绘] 锚点行相对正文起点的累计 y（vp，`onBodyLongPress` 的 acc） */
+  @State popupAnchorY: number = 0;
 
   /** 已载入的章区间（闭区间；-1 = 还没加载） */
   private loadedFirst: number = -1;
@@ -642,6 +649,7 @@ export struct ReaderPageNoAnim {
     const at: number = Math.max(0, this.indexOfNode(flat, target, node, this.pendingSeekChar));
     this.flat = flat;
     this.pageIdx = at;
+    this.clearListenPopup();
     this.ready = flat.length > 0;
     if (this.ready) {
       this.reportAt(flat, at);
@@ -758,6 +766,7 @@ export struct ReaderPageNoAnim {
       return;
     }
     this.pageIdx = next;
+    this.clearListenPopup();
     this.reportAt(this.flat, next);
   }
 
@@ -1171,6 +1180,10 @@ export struct ReaderPageNoAnim {
     }
     Haptics.tap();
     this.listenPopupKey = this.lineKey(hit);
+    // [直绘] 气泡锚点：老树挂在行 Text 上，直绘没有行节点 ⇒ 记下命中行与累计 y，
+    // 由 Canvas 分支的透明锚点节点承载 bindPopup（acc = 命中行之前的累计 vp）
+    this.popupAnchorLine = hit;
+    this.popupAnchorY = acc;
     hilog.info(DOMAIN, TAG,
       'listen: long-press y=%{public}s topInset=%{public}s acc=%{public}s → para=%{public}d',
       localY.toFixed(1), this.topInsetVp.toFixed(1), acc.toFixed(1), hit.paraIndex);
@@ -1194,6 +1207,36 @@ export struct ReaderPageNoAnim {
       return '';
     }
     return texts[paraIndex];
+  }
+
+  /** 关掉听书气泡（翻页/重定位后旧锚点已失效；直绘模式下锚点节点会残留，必须一并清） */
+  private clearListenPopup(): void {
+    this.listenPopupKey = '';
+    this.popupAnchorLine = null;
+  }
+
+  /**
+   * [直绘] 当前页是否承载朗读段（高亮层用）：命中返回段号，否则 -1。
+   * 复用 `isHlLine` 的双条件（spine + 段号），但只判到**段级**——
+   * 行级裁剪由 `getRectsForRange` 天然完成（区间外字形不产生矩形）。
+   */
+  private curHlPara(): number {
+    if (this.hlFrom < 0 || this.hlNode < 0) {
+      return -1;
+    }
+    if (this.pageIdx < 0 || this.pageIdx >= this.flat.length) {
+      return -1;
+    }
+    if (this.flat[this.pageIdx].spine !== this.hlSpine) {
+      return -1;
+    }
+    const lines: EngineLine[] = this.flat[this.pageIdx].lines;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].paraIndex === this.hlNode) {
+        return this.hlNode;
+      }
+    }
+    return -1;
   }
 
   /**
@@ -1355,9 +1398,8 @@ export struct ReaderPageNoAnim {
         .height('100%')
         .justifyContent(FlexAlign.Center)
       } else if (this.ready) {
-        if (POC_CANVAS_MODE) {
-          // ── 阶段 1 PoC：引擎直绘（只画字；点击/长按/横滑手势仍由下方触摸分区承担）──
-          // 验收：[CANVASPROBE] 的行 y 与老渲染 dump 的 Text 节点 y 逐行一致、截图逐像素对齐。
+        if (this.canvasMode) {
+          // ── 引擎直绘路径（阶段 2）：正文 + 高亮双 Canvas；点击/长按/横滑手势仍由下方触摸分区承担──
           ReaderPageNoAnimCanvas({
             lines: this.curLines(),
             style: this.buildLineStyle(),
@@ -1369,8 +1411,22 @@ export struct ReaderPageNoAnim {
             topInsetVp: this.topInsetVp,
             bottomInsetVp: this.bottomInsetVp,
             containerWvp: this.containerW,
-            containerHvp: this.containerH
+            containerHvp: this.containerH,
+            hlPara: this.curHlPara(),
+            hlFrom: this.hlFrom,
+            hlTo: this.hlTo,
+            hlSerial: this.hlSerial
           })
+          // [直绘] 听书气泡锚点：透明节点定位到命中行，承载 bindPopup
+          if (this.popupAnchorLine !== null) {
+            Column()
+              .position({ x: this.sideInsetVp, y: this.topInsetVp + this.popupAnchorY })
+              .width(this.areaW > 0 ? this.areaW : 100)
+              .height(this.px2vp(this.popupAnchorLine.heightPx > 0
+                ? this.popupAnchorLine.heightPx : this.fp2px(this.lineHeightFp)))
+              .hitTestBehavior(HitTestMode.None)
+              .bindPopup(this.popupShown(this.popupAnchorLine), this.popupOpts(this.popupAnchorLine))
+          }
         } else {
         // ── 正文：**只渲染当前这一页** ─────────────────────────────────────────
         // 为什么不用 List/LazyForEach：一页最多十几段，直接 ForEach 更快；
