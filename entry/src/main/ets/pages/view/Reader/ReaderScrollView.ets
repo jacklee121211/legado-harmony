@@ -47,7 +47,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { display } from '@kit.ArkUI';
 import { buildChapterNodes } from '../../../tts/ChapterNodes';
 import { Haptics } from '../../../common/utils/Haptics';
-import { buildEngineLines, EngineLine, LineStyle, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP } from './EngineLines';
+import { buildEngineLines, EngineLine, LineStyle, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP, parseHexColor } from './EngineLines';
 
 const TAG: string = 'ScrollReader';
 const DOMAIN: number = 0x0000;
@@ -618,6 +618,8 @@ export struct ReaderScrollView {
     s.fontFamily = this.fontName;
     s.fontWeight = scrollFontWeight(this.fontWeight, this.weightOffset);
     s.fontPath = this.fontPath;
+    // 字色显式传（引擎默认白；本档当前走 Text 树用不到，同源设置防未来直绘化踩坑）
+    s.color = parseHexColor(this.fontColor);
     return s;
   }
 

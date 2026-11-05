@@ -59,7 +59,7 @@ import { bookParser } from '@kit.ReaderKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { buildChapterNodes } from '../../../tts/ChapterNodes';
 import { Haptics } from '../../../common/utils/Haptics';
-import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP } from './EngineLines';
+import { buildEngineLines, paginateLines, EngineLine, LineStyle, PageSlice, TITLE_FONT_SCALE, TITLE_FONT_WEIGHT, LETTER_SPACING_FP, parseHexColor } from './EngineLines';
 // 字重补偿与滚动层**必须共用同一个函数**（否则两档互切时字会突然变粗/变细）
 import { scrollFontWeight } from './ReaderScrollView';
 // 阶段 1 PoC：引擎直绘组件（见其文件头；默认关，验收后阶段 2 才切默认）
@@ -510,6 +510,8 @@ export struct ReaderPageNoAnim {
     //    否则"引擎按 A 断行、ArkUI 按 B 渲染" ⇒ 溢出或换行错位。
     //    没有它就每行多塞 1 个字 ⇒ 页边界与 ReaderKit 系统性错位。
     s.letterSpacingPx = this.fp2px(LETTER_SPACING_FP);
+    // ⚠️ 字色必须显式传：引擎默认白（LineStyle.color 注释），日间浅底会"文字消失"
+    s.color = parseHexColor(this.fontColor);
     return s;
   }
 

@@ -35,7 +35,7 @@
 import { image } from '@kit.ImageKit';
 import { drawing, text, common2D } from '@kit.ArkGraphics2D';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { EngineLine, LineStyle, buildPaintParagraph, engineSourceText } from './EngineLines';
+import { EngineLine, LineStyle, buildPaintParagraph, engineSourceText, parseHexColor } from './EngineLines';
 
 const TAG: string = 'NoAnimCanvas';
 const DOMAIN: number = 0x0000;
@@ -50,7 +50,8 @@ export struct ReaderPageNoAnimCanvas {
   paraText: (paraIndex: number) => string = (paraIndex: number): string => '';
   @Prop @Watch('onSourceChange') fontColor: string = '#000000';
   @Prop @Watch('onSourceChange') bgColor: string = '#FFFFFF';
-  @Prop bgUri: string = '';
+  /** 背景图 URI（'' = 纯色底）；异步加载，完成后重绘（cover 居中裁剪，与老树 ImageCover 同观感） */
+  @Prop @Watch('onBgUriChange') bgUri: string = '';
   @Prop @Watch('onSourceChange') topInsetVp: number = 0;
   @Prop @Watch('onSourceChange') bottomInsetVp: number = 0;
   @Prop @Watch('onSourceChange') sideInsetVp: number = 20;
@@ -78,9 +79,21 @@ export struct ReaderPageNoAnimCanvas {
   private paraCache: Map<number, text.Paragraph> = new Map();
   private paraPaintY: Map<number, number> = new Map();
   private paraTitle: Map<number, boolean> = new Map();
+  /** 背景图（bgUri 异步解码产物；null = 无图/加载中/失败 → 纯色底） */
+  private bgPixelMap: image.PixelMap | null = null;
+  /** 背景图原始尺寸（cover 裁剪算 srcRect 用） */
+  private bgW: number = 0;
+  private bgH: number = 0;
 
   private vp2px(v: number): number {
     return this.getUIContext().vp2px(v);
+  }
+
+  aboutToAppear(): void {
+    // @Prop 初值不触发 @Watch：挂载时若已带背景图 URI，这里补一次加载
+    if (this.bgUri.length > 0) {
+      this.loadBg();
+    }
   }
 
   onSourceChange(): void {
@@ -90,6 +103,41 @@ export struct ReaderPageNoAnimCanvas {
   /** 句切换 / 高亮区间变化 ⇒ 只重画顶层（正文零重排零重绘，双分层的意义） */
   onHighlightChange(): void {
     this.repaintHighlight();
+  }
+
+  /** 背景图 URI 变化 ⇒ 异步解码（完成/失败都重绘：失败回落纯色底） */
+  onBgUriChange(): void {
+    this.loadBg();
+  }
+
+  private loadBg(): void {
+    const uri: string = this.bgUri;
+    if (uri.length === 0) {
+      this.bgPixelMap = null;
+      this.bgW = 0;
+      this.bgH = 0;
+      this.requestRepaint();
+      return;
+    }
+    image.createImageSource(uri).createPixelMap().then((pm: image.PixelMap) => {
+      // URI 已变（快速切主题/换图）⇒ 丢弃过期解码结果
+      if (uri !== this.bgUri) {
+        return;
+      }
+      this.bgPixelMap = pm;
+      pm.getImageInfo().then((info: image.ImageInfo) => {
+        this.bgW = info.size.width > 0 ? info.size.width : 0;
+        this.bgH = info.size.height > 0 ? info.size.height : 0;
+        this.requestRepaint();
+      }).catch((): void => {
+        this.requestRepaint();
+      });
+    }).catch((e: Object): void => {
+      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] 背景图解码失败 %{public}s: %{public}s',
+        uri, e instanceof Error ? e.message : String(e));
+      this.bgPixelMap = null;
+      this.requestRepaint();
+    });
   }
 
   build() {
@@ -165,12 +213,21 @@ export struct ReaderPageNoAnimCanvas {
     if (lines.length === 0) {
       return;
     }
-    if (this.bgUri.length > 0) {
-      hilog.warn(DOMAIN, TAG, '[CANVASPROBE] bgUri 未支持（PoC 只画纯色底）');
-    }
     const t0: number = Date.now();
     const cv: drawing.Canvas = new drawing.Canvas(pm);
     this.fillBg(cv);
+    // 背景图：纯色底之上 cover 居中裁剪（等比放大至覆盖、裁掉溢出边缘），与老树 ImageCover 同观感
+    const bg: image.PixelMap | null = this.bgPixelMap;
+    if (bg !== null && this.bgW > 0 && this.bgH > 0) {
+      const scale: number = Math.max(this.pmWpx / this.bgW, this.pmHpx / this.bgH);
+      const srcW: number = this.pmWpx / scale;
+      const srcH: number = this.pmHpx / scale;
+      const srcX: number = (this.bgW - srcW) / 2;
+      const srcY: number = (this.bgH - srcH) / 2;
+      cv.drawImageRectWithSrc(bg,
+        { left: srcX, top: srcY, right: srcX + srcW, bottom: srcY + srcH },
+        { left: 0, top: 0, right: this.pmWpx, bottom: this.pmHpx });
+    }
     // 页内容变化 ⇒ 段落缓存整体重建（高亮层复用同一批实例）
     this.paraCache.clear();
     this.paraPaintY.clear();
@@ -326,38 +383,4 @@ export struct ReaderPageNoAnimCanvas {
     cv.drawRect({ left: 0, top: 0, right: this.pmWpx, bottom: this.pmHpx });
     cv.detachBrush();
   }
-}
-
-/** '#RGB' / '#RRGGBB' / '#AARRGGBB' → common2D.Color；非法输入回退白底 */
-function parseHexColor(s: string): common2D.Color {
-  const fail: common2D.Color = { alpha: 255, red: 255, green: 255, blue: 255 };
-  if (s.length < 4 || s.charAt(0) !== '#') {
-    return fail;
-  }
-  const hex: string = s.substring(1);
-  if (hex.length === 3) {
-    const r = parseInt(hex.charAt(0) + hex.charAt(0), 16);
-    const g = parseInt(hex.charAt(1) + hex.charAt(1), 16);
-    const b = parseInt(hex.charAt(2) + hex.charAt(2), 16);
-    if (isNaN(r) || isNaN(g) || isNaN(b)) {
-      return fail;
-    }
-    return { alpha: 255, red: r, green: g, blue: b };
-  }
-  if (hex.length !== 6 && hex.length !== 8) {
-    return fail;
-  }
-  let alpha = 255;
-  let idx = 0;
-  if (hex.length === 8) {
-    alpha = parseInt(hex.substring(0, 2), 16);
-    idx = 2;
-  }
-  const r2 = parseInt(hex.substring(idx, idx + 2), 16);
-  const g2 = parseInt(hex.substring(idx + 2, idx + 4), 16);
-  const b2 = parseInt(hex.substring(idx + 4, idx + 6), 16);
-  if (isNaN(alpha) || isNaN(r2) || isNaN(g2) || isNaN(b2)) {
-    return fail;
-  }
-  return { alpha: alpha, red: r2, green: g2, blue: b2 };
 }

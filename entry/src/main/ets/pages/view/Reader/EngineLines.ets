@@ -37,7 +37,7 @@
  *   减宽度会改变换行计算（整段少 2 字），实测断点全错。
  */
 
-import { text } from '@kit.ArkGraphics2D';
+import { text, common2D } from '@kit.ArkGraphics2D';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const TAG: string = 'EngineLines';
@@ -152,6 +152,13 @@ export class LineStyle {
   letterSpacingPx: number = 0;
   /** 章标题字重（ReaderKit 的标题明显更粗，取 600） */
   titleWeight: number = TITLE_FONT_WEIGHT;
+  /**
+   * 文字颜色（直绘用；分页度量与颜色无关，不影响断行）。
+   * ⚠️ 必须显式设置：引擎 `TextStyle.color` 默认**白色**
+   * （SDK `@ohos.graphics.text.d.ts`「The default color is white.」）——
+   * 不传则日间浅底上白字白底"文字消失"（2026-11-05 真机事故）。
+   */
+  color: common2D.Color = { alpha: 255, red: 0, green: 0, blue: 0 };
 }
 
 /** 一页 = 行索引区间 `[from, to)` */
@@ -235,7 +242,9 @@ function layoutLines(src: string, style: LineStyle): text.Paragraph {
     // ⚠️ 字距（**px**）。必须与渲染端 `Text.letterSpacing(fp)` 严格对应换算，
     //    否则引擎断行与 ArkUI 渲染不一致 ⇒ 溢出/换行错位。
     //    没有它就每行多塞 1 个字 ⇒ 页边界与 ReaderKit 系统性错位（见 LETTER_SPACING_FP 注释）。
-    letterSpacing: Math.max(0, style.letterSpacingPx)
+    letterSpacing: Math.max(0, style.letterSpacingPx),
+    // ⚠️ 字色必须显式传：引擎默认白（见 LineStyle.color 注释），日间浅底会"文字消失"
+    color: style.color
   };
   // ⚠️⚠️ 行高只能走 StrutStyle，而且**只给 `height` 不生效**（2026-10-27 真机定案）：
   //   实测 `getLineMetrics().height` 只返回字体自然高度（32px 字 → 95px），
@@ -287,7 +296,46 @@ function titleStyleOf(s: LineStyle): LineStyle {
   t.letterSpacingPx = 0;
   // 标题不是自定义字体路径的重点，沿用正文字体
   t.fontPath = s.fontPath;
+  // 标题与正文同色（ReaderKit 的 <h1> 也用正文字色）
+  t.color = s.color;
   return t;
+}
+
+/**
+ * '#RGB' / '#RRGGBB' / '#AARRGGBB' → `common2D.Color`；非法输入回退黑色。
+ * （自 Canvas 组件收口至此：直绘样式与渲染字色共用同一个解析，单一通路。）
+ */
+export function parseHexColor(s: string): common2D.Color {
+  const fail: common2D.Color = { alpha: 255, red: 0, green: 0, blue: 0 };
+  if (s.length < 4 || s.charAt(0) !== '#') {
+    return fail;
+  }
+  const hex: string = s.substring(1);
+  if (hex.length === 3) {
+    const r = parseInt(hex.charAt(0) + hex.charAt(0), 16);
+    const g = parseInt(hex.charAt(1) + hex.charAt(1), 16);
+    const b = parseInt(hex.charAt(2) + hex.charAt(2), 16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) {
+      return fail;
+    }
+    return { alpha: 255, red: r, green: g, blue: b };
+  }
+  if (hex.length !== 6 && hex.length !== 8) {
+    return fail;
+  }
+  let alpha = 255;
+  let idx = 0;
+  if (hex.length === 8) {
+    alpha = parseInt(hex.substring(0, 2), 16);
+    idx = 2;
+  }
+  const r2 = parseInt(hex.substring(idx, idx + 2), 16);
+  const g2 = parseInt(hex.substring(idx + 2, idx + 4), 16);
+  const b2 = parseInt(hex.substring(idx + 4, idx + 6), 16);
+  if (isNaN(alpha) || isNaN(r2) || isNaN(g2) || isNaN(b2)) {
+    return fail;
+  }
+  return { alpha: alpha, red: r2, green: g2, blue: b2 };
 }
 
 /**
