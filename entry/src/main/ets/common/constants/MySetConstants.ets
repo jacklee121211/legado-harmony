@@ -66,6 +66,20 @@ export default class MySetConstants {
    *    落盘键 `setReaderTextAreaDebug`（Preferences），阅读页进场读一次。
    */
   static readonly SET_READER_TEXT_AREA_DEBUG: string = 'setReaderTextAreaDebug';
+
+  /**
+   * 阅读器主题皮肤层总开关（2026-11-06 新增，主题皮肤系统 P1）。
+   *
+   * 打开后阅读页按「元素注册表」渲染皮肤层（留白带/阅读区框/信息条底板，code 通道起步），
+   * 规范：`docs/主题皮肤系统-设计规范与交接-2026-11-06.md` §3/§4/§5；
+   * 皮肤内容由 `SkinStore` 解析（逐元素缺省回落默认外观，无皮肤包 = 全默认）。
+   *
+   * ⚠️ **默认 = 关**（AGENTS §3：未真机验证的新路径不得设为默认）。
+   *    一键回退：关掉本开关 ⇒ 皮肤层零渲染，阅读页恢复改动前渲染。
+   *    落盘键 `setReaderSkinOn`（Preferences），阅读页进场读一次；
+   *    仅暗门解锁后出现在「听书引擎（进阶）」组（与调试浮层同组）。
+   */
+  static readonly SET_READER_SKIN_ON: string = 'setReaderSkinOn';
   /** 书架书名是否显示文件拓展名（2026-09-27，默认关=隐藏 .txt 等后缀；Preferences 落盘） */
   static readonly SET_EXT_NAME: string = 'setExtName';
 
