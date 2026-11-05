@@ -515,8 +515,10 @@ export struct ReaderScrollView {
     if (row.isTitle) {
       return base;
     }
-    // 有效字数：扣掉段首缩进前缀（前缀是空格，也会被字距拉开，不能算进补偿分母）
-    const chars: number = row.text.length - row.prefixLen;
+    // ⚠️ 分母必须用**全行字符数**（含段首缩进前缀）：`.letterSpacing` 作用于全部字符，
+    //    缩进空格照样吃字距 ⇒ 分母扣掉前缀会让总增宽超预算 2×addPx ⇒ 行被撑折行
+    //    （2026-11-05 无动画档真机事故的同一颗雷，此处同步修正）。
+    const chars: number = row.text.length;
     if (chars < 2) {
       return base;
     }
@@ -526,7 +528,8 @@ export struct ReaderScrollView {
     }
     const limitPx: number = this.fp2px(this.fontSize) * 1.2;
     const availPx: number = this.contentWidthPx();
-    const deltaPx: number = availPx - measuredPx;
+    // ⚠️ 2px 安全余量：补偿后若刚好等于可用宽，ArkUI 会把末字折到下一行（真机实测）
+    const deltaPx: number = availPx - measuredPx - 2;
     if (deltaPx <= 0) {
       return base;
     }
@@ -561,6 +564,9 @@ export struct ReaderScrollView {
         textContent: text,
         fontSize: this.fontSize,
         fontFamily: this.fontName,
+        // ⚠️ 必须与渲染端 `.fontWeight(scrollFontWeight(...))` 同值：
+        //    粗体实测更宽，漏传会高估 deltaPx ⇒ 补偿过量 ⇒ 折行（2026-11-05 定案）
+        fontWeight: scrollFontWeight(this.fontWeight, this.weightOffset),
         letterSpacing: LETTER_SPACING_FP
       });
     } catch (e) {
@@ -606,63 +612,8 @@ export struct ReaderScrollView {
     s.indentSlots = 2;
     s.gapPx = this.fp2px(scrollParaGapFp(this.fontSize));
     s.letterSpacingPx = this.fp2px(LETTER_SPACING_FP);
-    // 流式不需要切页：宽度 = 屏幕宽(px) − 左右 inset(px)，与渲染宽度一致即可保证断行准确
-    const screenPx: number = display.getDefaultDisplaySync().width;
+    // 流式不需要切页：宽度 = 容器实测宽(px) − 左右 inset(px)，与渲染宽度一致即可保证断行准确
     s.widthPx = this.contentWidthPx();
-    // [SCROLLPROBE] 探针（收尾必删）：定位「自绘两档排版异常：文字贴左 / 右侧留白」。
-    //   ⚠️ 本档的引擎宽用的是 **整机屏宽** `display.getDefaultDisplaySync().width`，
-    //   不是本组件自己的容器宽 ⇒ 只要"屏宽 ≠ 本层可用宽"（分屏/窗口化/视口未跟上），
-    //   引擎断行宽就会和渲染宽分叉。这里把两边的量都打出来对齐。
-    //   ★ 2026-11-05 追加判决字段（谁是"每行几个字"的真凶）：
-    //     · uiCharPx     = ArkUI `measureText` 量 10 个「国」再 /10 ⇒ **渲染端认的每字宽**
-    //     · engineCharPx = fontSizePx + letterSpacingPx      ⇒ **引擎认的每字宽**
-    //     · capacityUi   = floor(widthPx / uiCharPx)         ⇒ 按渲染宽度"应该"能放几个字
-    //   若 engineCharPx > uiCharPx ⇒ 引擎以为字更宽 ⇒ 每行少放字、行尾空一大块；
-    //   若两者相等但 capacityUi > 实际每行字数 ⇒ 问题在缩进槽位/字距累加规则。
-    let uiCharPx: number = -1;
-    try {
-      const mw: number = this.getUIContext().getMeasureUtils().measureText({
-        textContent: '国国国国国国国国国国', fontSize: this.fontSize, fontFamily: this.fontName
-      });
-      uiCharPx = mw / 10;
-    } catch (e) {
-      uiCharPx = -1;
-    }
-    // ★★ 判决实验（2026-11-05）：letterSpacing 到底有没有被 ArkUI 算进推进？
-    //   A = 不带字距量 10 个「国」；B = 带 letterSpacing 再量一次。
-    //   B ≈ A       ⇒ 字距被忽略（或单位不是 fp）⇒ 自绘每字比引擎少 5.5px，行填不满
-    //   B ≈ A+10×ls ⇒ 字距生效，那差异在"末字是否计入"的口径
-    let mNoLs: number = -1;
-    let mWithLs: number = -1;
-    try {
-      const mu = this.getUIContext().getMeasureUtils();
-      mNoLs = mu.measureText({ textContent: '国国国国国国国国国国', fontSize: this.fontSize });
-      mWithLs = mu.measureText({
-        textContent: '国国国国国国国国国国', fontSize: this.fontSize,
-        letterSpacing: LETTER_SPACING_FP
-      });
-    } catch (e) {
-      mNoLs = -1;
-      mWithLs = -1;
-    }
-    hilog.info(DOMAIN, TAG,
-      '[LSPROBE] fontSizeFp=%{public}s lsFp=%{public}s tenNoLs=%{public}s tenWithLs=%{public}s'
-        + ' perCharNoLs=%{public}s perCharWithLs=%{public}s deltaExpect=%{public}s',
-      this.fontSize.toFixed(2), LETTER_SPACING_FP.toFixed(2),
-      mNoLs.toFixed(1), mWithLs.toFixed(1),
-      (mNoLs > 0 ? (mNoLs / 10).toFixed(2) : '?'), (mWithLs > 0 ? (mWithLs / 10).toFixed(2) : '?'),
-      (10 * this.fp2px(LETTER_SPACING_FP)).toFixed(1));
-    const engineCharPx: number = s.fontSizePx + s.letterSpacingPx;
-    const capacityUi: number = uiCharPx > 0 ? Math.floor(s.widthPx / uiCharPx) : -1;
-    hilog.info(DOMAIN, TAG,
-      '[SCROLLPROBE] screenPx=%{public}d sideInsetVp=%{public}s widthPx=%{public}s'
-        + ' fontSizeFp=%{public}s fontSizePx=%{public}s lineHeightFp=%{public}s'
-        + ' letterSpacingPx=%{public}s indentFp=%{public}s'
-        + ' uiCharPx=%{public}s engineCharPx=%{public}s capacityUi=%{public}d',
-      screenPx, this.sideInsetVp.toFixed(2), s.widthPx.toFixed(1),
-      this.fontSize.toFixed(2), s.fontSizePx.toFixed(1), this.lineHeightFp.toFixed(2),
-      s.letterSpacingPx.toFixed(2), this.indentFp.toFixed(2),
-      uiCharPx.toFixed(2), engineCharPx.toFixed(2), capacityUi);
     s.pageHeightPx = 1e9; // 流式不用切页，给个大值避免误用
     s.fontFamily = this.fontName;
     s.fontWeight = scrollFontWeight(this.fontWeight, this.weightOffset);
