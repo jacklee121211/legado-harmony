@@ -14,11 +14,31 @@
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { SkinAssetType, SkinElementKey, SkinPack, SkinSlot,
+import { SkinAssetType, SkinElementKey, SkinPack, SkinSlice, SkinSlot,
   findDarkSlot, findSlot, SKIN_FORMAT_VERSION } from './SkinCore';
 
-/** AppStorage/PersistentStorage 键：当前皮肤包 id（'' = 未启用皮肤） */
+/** AppStorage/PersistentStorage 键：当前皮肤包 id（v2 起仅作兼容保留，渲染不再消费） */
 const SKIN_ID_KEY: string = 'readerSkinPackId';
+
+/** AppStorage/PersistentStorage 键：按元素选择表（v2 模型，JSON 字符串） */
+const SKIN_ELEM_KEY: string = 'readerSkinElemSel';
+
+/**
+ * 单元素皮肤选择（2026-11-06 v2 按元素模型：正文区/信息窗/顶部留白/底部留白各自独立）。
+ * · 预制元素：sourcePack + asset（深浅档在渲染期按包内 light/dark 自动取，规范 §4.1 回落链）；
+ * · 自定义导入：customPath（file:// 沙箱路径，亮暗共用同一张，走整体拉伸）；
+ * · 「无」= 表中不存在该 key ⇒ 该元素零渲染（透出真实背景）。
+ */
+export interface SkinElemSel {
+  key: string;
+  type: string;
+  asset?: string;
+  sourcePack?: string;
+  customPath?: string;
+  color?: string;
+  colorEnd?: string;
+  slice?: SkinSlice;
+}
 
 /** 兜底皮肤包 id（用户没选过包但总开关打开 ⇒ 用它，否则开关是死的；2026-11-06 P1.7 验证前置） */
 const SKIN_FALLBACK_PACK_ID: string = 'warm-paper-lite';
@@ -38,6 +58,7 @@ export class SkinStore {
    */
   static init(context?: common.UIAbilityContext): void {
     PersistentStorage.persistProp<string>(SKIN_ID_KEY, '');
+    PersistentStorage.persistProp<string>(SKIN_ELEM_KEY, '[]');
     SkinStore.registerBuiltin(SkinStore.builtinCodePack());
     if (context !== undefined && context !== null) {
       SkinStore.appContext = context;
@@ -178,6 +199,134 @@ export class SkinStore {
       }
     }
     return null;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // v2 按元素选择模型（2026-11-06 UI 层改版：正文区/信息窗/顶部留白/底部留白各自独立）
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 全部元素选择（每次从 AppStorage 解析；表很小，不做缓存） */
+  static elemSels(): SkinElemSel[] {
+    const raw: string | undefined = AppStorage.get<string>(SKIN_ELEM_KEY);
+    if (raw === undefined || raw === null || raw === '') {
+      return [];
+    }
+    const arr = JSON.parse(raw) as SkinElemSel[];
+    return arr !== undefined && arr !== null ? arr : [];
+  }
+
+  /** 读单个元素的当前选择；无 = 该元素「无」⇒ 零渲染透出真实背景 */
+  static elemSel(key: string): SkinElemSel | null {
+    const arr: SkinElemSel[] = SkinStore.elemSels();
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i].key === key) {
+        return arr[i];
+      }
+    }
+    return null;
+  }
+
+  /** 写/清单个元素选择（null = 删除该项）；写后由 AppStorage 持久化链路自动落盘 */
+  static setElemSel(sel: SkinElemSel | null): void {
+    const arr: SkinElemSel[] = SkinStore.elemSels();
+    const out: SkinElemSel[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      if (sel === null || arr[i].key !== sel.key) {
+        out.push(arr[i]);
+      }
+    }
+    if (sel !== null) {
+      out.push(sel);
+    }
+    AppStorage.setOrCreate<string>(SKIN_ELEM_KEY, JSON.stringify(out));
+  }
+
+  /**
+   * 一键整套方案：把某个包的 四组元素 写进选择表（信息窗一个选择写 top+bottom 两个键）。
+   * packId = '' ⇒ 全清（默认外观）。
+   */
+  static applyPresetPack(packId: string): void {
+    if (packId === '') {
+      SkinStore.setElemSel(null);
+      return;
+    }
+    const pack: SkinPack | null = SkinStore.activePackById(packId);
+    if (pack === null) {
+      return;
+    }
+    const keys: string[] = [
+      SkinElementKey.BAND_TOP, SkinElementKey.BAND_BOTTOM,
+      SkinElementKey.TEXT_FRAME, SkinElementKey.INFOBAR_BG_TOP
+    ];
+    for (let i = 0; i < keys.length; i++) {
+      const slot: SkinSlot | null = findSlot(pack, keys[i]);
+      if (slot === null) {
+        SkinStore.setElemSel(null); // 包里没配这个元素 = 无（透出真实背景）
+        continue;
+      }
+      const sel: SkinElemSel = {
+        key: keys[i], type: slot.type,
+        asset: slot.asset, sourcePack: pack.id,
+        color: slot.color, colorEnd: slot.colorEnd, slice: slot.slice
+      };
+      SkinStore.setElemSel(sel);
+      if (keys[i] === SkinElementKey.INFOBAR_BG_TOP) {
+        const mirror: SkinElemSel = {
+          key: SkinElementKey.INFOBAR_BG_BOTTOM, type: slot.type,
+          asset: slot.asset, sourcePack: pack.id,
+          color: slot.color, colorEnd: slot.colorEnd, slice: slot.slice
+        };
+        SkinStore.setElemSel(mirror);
+      }
+    }
+  }
+
+  /** 按 id 直查注册表里的包（activePack 依赖当前选中 id，这里独立查） */
+  static activePackById(packId: string): SkinPack | null {
+    for (let i = 0; i < SkinStore.packs.length; i++) {
+      if (SkinStore.packs[i].id === packId) {
+        return SkinStore.packs[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 选择 → 渲染槽位（ReaderPage3.resolveSkinSlots 消费）。
+   * · 预制：按 dark 从来源包取 light/dark 变体（规范 §4.1 回落链），resolvedPath =
+   *   `skins/<包id>/<素材>`；
+   * · 自定义：resolvedPath = customPath（file://，亮暗同图）；
+   * · sel = null 或来源包已不存在 ⇒ null（零渲染）。
+   */
+  static selToSlot(sel: SkinElemSel | null, dark: boolean): SkinSlot | null {
+    if (sel === null) {
+      return null;
+    }
+    if (sel.customPath !== undefined && sel.customPath !== '') {
+      const custom: SkinSlot = {
+        key: sel.key, type: SkinAssetType.IMAGE,
+        resolvedPath: sel.customPath, slice: sel.slice
+      };
+      return custom;
+    }
+    if (sel.sourcePack === undefined || sel.sourcePack === '') {
+      return null;
+    }
+    const pack: SkinPack | null = SkinStore.activePackById(sel.sourcePack);
+    if (pack === null) {
+      return null;
+    }
+    const slot: SkinSlot | null = dark ? findDarkSlot(pack, sel.key) : findSlot(pack, sel.key);
+    if (slot === null) {
+      return null;
+    }
+    const out: SkinSlot = {
+      key: slot.key, type: slot.type, color: slot.color, colorEnd: slot.colorEnd,
+      slice: slot.slice, insetExtraVp: slot.insetExtraVp,
+      resolvedPath: slot.asset !== undefined && slot.asset !== ''
+        ? SkinStore.rawfilePath(pack.id, slot) : undefined
+    };
+    return out;
   }
 
   /**

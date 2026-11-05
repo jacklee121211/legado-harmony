@@ -92,6 +92,12 @@ export interface SkinSlot {
   insetExtraVp?: number;
   /** SYMBOL_TTF 通道：unicode 码位（如 '0x100016'，写进 string.json 后经 $r 引用） */
   glyph?: string;
+  /**
+   * 渲染期解析好的素材路径（2026-11-06 v2）：SkinStore.selToSlot 按选择来源计算——
+   * 预制 = `skins/<包id>/<素材>`（配 $rawfile）；自定义 = file:// 沙箱路径（直接作 Image src）。
+   * 渲染层**只认这个字段**，不再自行拼包路径。
+   */
+  resolvedPath?: string;
 }
 
 /**

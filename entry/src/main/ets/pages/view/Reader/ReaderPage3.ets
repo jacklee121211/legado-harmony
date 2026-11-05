@@ -1792,7 +1792,7 @@ oAnimInitNode 配套） */
   // 回退：`SET_READER_SKIN_ON` 关（默认）⇒ skinOn=false ⇒ 零渲染。
   // ⚠️ reader.text.fill 本期不渲染：它必须垫在正文之下（规范 §5.2 方案 A），RK 档由 themeColor 承担。
 
-  /** 皮肤槽位解析（进场一次；深浅档按 NightMode，规范 §4.1 回落链 + §5.3 优先级） */
+  /** 皮肤槽位解析（进场一次；v2 按元素模型：每元素独立选择，深浅档按 NightMode 取变体） */
   private resolveSkinSlots(): void {
     this.skinBandTop = null;
     this.skinBandBottom = null;
@@ -1802,17 +1802,13 @@ oAnimInitNode 配套） */
     if (!this.skinOn) {
       return;
     }
-    // 开关开但用户没选过包 ⇒ 用内置兜底包（SkinStore.activeOrFallbackPack，2026-11-06）
-    const pack: SkinPack | null = SkinStore.activeOrFallbackPack();
-    if (pack === null) {
-      return;
-    }
     const dark: boolean = NightMode.isDarkSurface();
-    this.skinBandTop = SkinStore.resolve(pack, SkinElementKey.BAND_TOP, dark);
-    this.skinBandBottom = SkinStore.resolve(pack, SkinElementKey.BAND_BOTTOM, dark);
-    this.skinFrame = SkinStore.resolve(pack, SkinElementKey.TEXT_FRAME, dark);
-    this.skinInfoBgTop = SkinStore.resolve(pack, SkinElementKey.INFOBAR_BG_TOP, dark);
-    this.skinInfoBgBottom = SkinStore.resolve(pack, SkinElementKey.INFOBAR_BG_BOTTOM, dark);
+    this.skinBandTop = SkinStore.selToSlot(SkinStore.elemSel(SkinElementKey.BAND_TOP), dark);
+    this.skinBandBottom = SkinStore.selToSlot(SkinStore.elemSel(SkinElementKey.BAND_BOTTOM), dark);
+    this.skinFrame = SkinStore.selToSlot(SkinStore.elemSel(SkinElementKey.TEXT_FRAME), dark);
+    // 信息窗一个选择写 top+bottom 两个键（面板侧镜像），这里分别读
+    this.skinInfoBgTop = SkinStore.selToSlot(SkinStore.elemSel(SkinElementKey.INFOBAR_BG_TOP), dark);
+    this.skinInfoBgBottom = SkinStore.selToSlot(SkinStore.elemSel(SkinElementKey.INFOBAR_BG_BOTTOM), dark);
   }
 
   /** 阅读区框的四周冗余（vp）：槽位给了用槽位，否则取规范默认 16（≥15.1 实测偏差 + 余量） */
@@ -1934,15 +1930,21 @@ oAnimInitNode 配套） */
     }
   }
 
+  /** 素材源：file:// 沙箱路径直接作 src；rawfile 相对路径包 $rawfile（v2 resolvedPath 单源） */
+  private skinSrc(slot: SkinSlot): string | Resource {
+    const p: string = slot.resolvedPath ?? '';
+    return p.startsWith('file://') ? p : $rawfile(p);
+  }
+
   /**
-   * IMAGE 通道通用渲染（P2.2）：素材来自 `rawfile/skins/<包id>/`（SkinStore.rawfilePath）。
+   * IMAGE 通道通用渲染（P2.2 + v2 resolvedPath 单源）。
    * slice 有值 = 九宫格 `.resizable`（SDK `image.d.ts`：EdgeWidths 单位 vp，四角固定边拉伸）；
    * 无 slice = 整体拉伸 + `ImageFit.Cover`。全部 HitTestMode.None + READER_ZOOM 钩子。
    */
   @Builder
   SkinImage(slot: SkinSlot | null, w: Length, h: Length, x: number, y: number) {
-    if (slot !== null && slot.asset !== undefined && slot.slice !== undefined) {
-      Image($rawfile(SkinStore.rawfilePath(this.skinPackId, slot)))
+    if (slot !== null && slot.resolvedPath !== undefined && slot.slice !== undefined) {
+      Image(this.skinSrc(slot))
         .width(w)
         .height(h)
         .objectFit(ImageFit.Fill)
@@ -1956,8 +1958,8 @@ oAnimInitNode 配套） */
         .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
         .hitTestBehavior(HitTestMode.None)
     }
-    if (slot !== null && slot.asset !== undefined && slot.slice === undefined) {
-      Image($rawfile(SkinStore.rawfilePath(this.skinPackId, slot)))
+    if (slot !== null && slot.resolvedPath !== undefined && slot.slice === undefined) {
+      Image(this.skinSrc(slot))
         .width(w)
         .height(h)
         .objectFit(ImageFit.Cover)

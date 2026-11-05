@@ -1,8 +1,9 @@
 import { ThemeStorageKey } from '../../../common/constants/Theme'
 import { ThemeItem } from '../../../common/model/Theme'
 import { MyThemeConfigComp } from './MyThemeConfigComp'
-import { SkinPickerSection } from './SkinPickerSection'
+import { ReaderSkinPanel } from './ReaderSkinPanel'
 import { NightMode, ShelfColors } from '../../../common/utils/NightMode'
+import { Haptics } from '../../../common/utils/Haptics'
 import { common } from '@kit.AbilityKit'
 import ImmersiveMaterialUtil from '../../../common/utils/ImmersiveMaterialUtil'
 import { TabHeader } from '../../../componets/common/TabHeader'
@@ -29,6 +30,12 @@ export default struct MyThemeConfig {
    * ⇒ 把下标提升成 `@State`：`pickMode()` 里显式同步，`@Prop` 才能收到变化。
    */
   @State modeSel: number = 1
+
+  /**
+   * 主题页内层页签（2026-11-06 v2，用户拍板）：0 = 设置主题（现有全部内容）
+   * / 1 = 阅读器（阅读皮肤按元素面板）。样式 = 书架「全部/最近/分组」同款 GlassSegment。
+   */
+  @State sectionSel: number = 0
 
   aboutToAppear(): void {
     this.themeMode = NightMode.getMode()
@@ -138,35 +145,50 @@ export default struct MyThemeConfig {
       .width('90%')
       .margin({ bottom: 12 })
 
-      // ── 阅读皮肤选择区（2026-11-06，主题皮肤系统 UI 层）────────────────────
-      // 固定区段挂载（主题网格零改动）：GlassSegment 之下、色板网格之上；
-      // 点选即生效（写 skinPackId + 同步 SET_READER_SKIN_ON），「默认外观」= 一键回退。
-      SkinPickerSection()
+      // ── 内层页签（2026-11-06 v2，用户拍板）：设置主题 / 阅读器 ────────────────
+      // 「设置主题」= 现有内容原样；「阅读器」= 阅读皮肤按元素面板（ReaderSkinPanel）。
+      GlassSegment({
+        labels: ['设置主题', '阅读器'],
+        selected: this.sectionSel,
+        fontColor: NightMode.isDarkSurface()
+          ? 'rgba(248, 249, 250, 0.72)'
+          : 'rgba(0, 0, 0, 0.62)',
+        selectedFontColor: this.theme.mainColor,
+        onChange: (index: number): void => {
+          Haptics.tap();
+          this.sectionSel = index
+        }
+      })
+      .width('90%')
       .margin({ bottom: 12 })
 
-      // ── 内容区（2026-09-23：**去掉原来那层 Tabs**）────────────────────────────
-      // 原页签有三项「个性主题 / 桌面图标 / 启动页」，后两项的 TabContent **都是空的**（样子货）：
-      //   · 「启动页」随启动动画页一起删除（用户：「直接去掉启动动画页，毫无意义」）
-      //   · 「桌面图标」经用户确认也删除
-      // ⇒ 只剩一项，再套一层页签没有意义 ⇒ 直接渲染内容，并移除 navList / activeNavIndex /
-      //   `tabBarBuilder()`（否则就是死代码）。
-      Column() {
-        MyThemeConfigComp()
+      // ── 内容区 ──────────────────────────────────────────────────────────────
+      if (this.sectionSel === 0) {
+        Column() {
+          MyThemeConfigComp()
+        }
+        .padding({
+          left: 20,
+          right: 20,
+          top: 24,
+          // 底部 dock 让位（2026-10-01）：主题格子滚到底要停在悬浮 dock 之上（自适应）
+          bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
+        })
+        .borderRadius({
+          topLeft: 12,
+          topRight: 12
+        })
+        // 2026-09-25 用户反馈：主题格子下面还有个白色蒙版 ⇒ 去掉卡片底色，背景一色
+        .width('100%')
+        .layoutWeight(1)
+      } else {
+        // 「阅读器」页签：阅读皮肤按元素面板（自带滚动容器与内边距）
+        Column() {
+          ReaderSkinPanel()
+        }
+        .width('100%')
+        .layoutWeight(1)
       }
-      .padding({
-        left: 20,
-        right: 20,
-        top: 24,
-        // 底部 dock 让位（2026-10-01）：主题格子滚到底要停在悬浮 dock 之上（自适应）
-        bottom: ImmersiveMaterialUtil.dockContentEndOffset(this.bottomRectHeight)
-      })
-      .borderRadius({
-        topLeft: 12,
-        topRight: 12
-      })
-      // 2026-09-25 用户反馈：主题格子下面还有个白色蒙版 ⇒ 去掉卡片底色，背景一色
-      .width('100%')
-      .layoutWeight(1)
     }
     .height('100%')
     .width('100%')
