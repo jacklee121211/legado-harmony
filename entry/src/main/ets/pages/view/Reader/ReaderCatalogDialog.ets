@@ -1,3 +1,4 @@
+import { display } from '@kit.ArkUI'
 import { bookParser } from '@kit.ReaderKit'
 import BasicDataSource from '../../../common/LazyIDataSource/BasicDataSource'
 import { MaterialDockModifier, default as ImmersiveMaterialUtil, READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
@@ -187,8 +188,13 @@ export struct ReaderCatalogDialog {
    * 外屏 326×326vp 时面板不再超出屏幕（官方回执 #1 要求"最大高度 ≤ 90%"）。
    */
   private panelHeightVp(): number {
+    // ⚠️ 2026-11-06 真机（外屏截图）：折叠瞬间 AppStorage('windowHeight') 可能仍是**内屏**高度，
+    //   照它算 90% 会得到 988vp >> 外屏 326vp ⇒ 弹窗顶部依旧被裁。
+    //   ⇒ 取「windowHeight 与 当前 display 实际高」的**较小值**（display 随折叠实时变）。
     const winHpx: number = AppStorage.get<number>('windowHeight') ?? 0
-    return catalogPanelHeightVp(winHpx, this.getUIContext().vp2px(1), this.typing)
+    const disp: number = display.getDefaultDisplaySync().height
+    const hpx: number = winHpx > 0 && disp > 0 ? Math.min(winHpx, disp) : (winHpx > 0 ? winHpx : disp)
+    return catalogPanelHeightVp(hpx, this.getUIContext().vp2px(1), this.typing)
   }
 
   aboutToAppear(): void {

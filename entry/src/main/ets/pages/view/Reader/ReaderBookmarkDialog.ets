@@ -28,6 +28,7 @@
  *   由**阅读器自己的** `colorMode` 决定），options 里**不再有** `systemMaterial`
  *   —— 沉浸光感由系统按整机模式渲染，「系统暗 + 阅读器亮」时会把面板带成暗色。
  */
+import { display } from '@kit.ArkUI'
 import BookmarkPorts from '../../../common/reader/BookmarkPorts';
 import { MaterialDockModifier, default as ImmersiveMaterialUtil, READER_PANEL_NIGHT_BG, READER_PANEL_DAY_BG } from '../../../common/utils/ImmersiveMaterialUtil'
 import { ThemeStorageKey } from '../../../common/constants/Theme'
@@ -309,7 +310,12 @@ export struct ReaderBookmarkDialog {
     //   options 不写 height ⇒ 弹窗高度 = 本节点高度；高度常量从目录弹窗 import ⇒ 两窗等高。
     .width('100%')
     // 2026-11-06 官方回执 #1：与目录弹窗同口径「min(560, 90%窗口高 − 24vp)」，外屏不再溢出
-  .height(catalogPanelHeightVp(AppStorage.get<number>('windowHeight') ?? 0, this.getUIContext().vp2px(1), false))
+    //   ⚠️ 高度由 `ReaderCatalogDialog.catalogPanelHeightVp()` 统一算，并且**同时看
+    //   `windowHeight` 与 `display` 实际高取小值**（折叠瞬间 windowHeight 可能还是内屏高度，
+    //   只看它会算出 988vp >> 外屏 326vp ⇒ 顶部被裁，真机截图实证）。
+    .height(catalogPanelHeightVp(
+      Math.min(AppStorage.get<number>('windowHeight') ?? 0, display.getDefaultDisplaySync().height),
+      this.getUIContext().vp2px(1), false))
     .borderRadius(20)
     .clip(true)
     // 内保护边距：底部给 dock 留位（dock 是绝对定位在 Stack 右下角，不留会被裁一半）
