@@ -303,15 +303,59 @@ function titleStyleOf(s: LineStyle): LineStyle {
 }
 
 /**
- * '#RGB' / '#RRGGBB' / '#AARRGGBB' → `common2D.Color`；非法输入回退黑色。
+ * '#RGB' / '#RRGGBB' / '#AARRGGBB' / `rgb(r,g,b)` / `rgba(r,g,b,a)` → `common2D.Color`；非法输入回退黑色。
  * （自 Canvas 组件收口至此：直绘样式与渲染字色共用同一个解析，单一通路。）
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ * ★ 2026-11-05 真机事故修复：「无动画」黑屏无字
+ * ══════════════════════════════════════════════════════════════════════════
+ * 【症状】手机/平板上从 ReaderKit（横滑/仿真）切到「无动画」⇒ 整页变黑、一个字也没有。
+ * 【真机证据】临时探针 `[CANVASPROBE]`（ReaderPageNoAnimCanvas.repaint 入口）原文：
+ *     repaint pm=1320x2848 lines=5 bg=rgba(248, 249, 250, 1) fg=#000000 …
+ *     painted=5/5 firstPaintY=… textLen=297
+ *   ⇒ 行都画了（5/5），但 `bg` 是 **CSS 形式 `rgba(...)`** 而不是 `#hex`。
+ *   ReaderKit 侧同一份主题色的原文（`pushConfigTask config`）：
+ *     "themeColor":"rgba(248, 249, 250, 1)","fontColor":"#000000"
+ * 【根因】旧实现只认 `#`：`s.charAt(0) !== '#'` ⇒ 直接返回 `fail`，
+ *   而 `fail` 是 **alpha=255 的不透明黑** ⇒ `fillBg()` 先把整页刷成黑，
+ *   正文又是 `#000000` ⇒ **黑底黑字**，看起来就是"黑屏、没有文字"。
+ *   （上下/滚动档不中招：它的底色走 ArkUI `.backgroundColor(bgColor)`，ArkUI 认 rgba。）
+ * 【修法】这里补上 `rgb()/rgba()` 解析；返回结构仍是 `common2D.Color`，调用点无需改动。
+ *   ⚠️ 别再用"首字符不是 # 就当黑色"这种兜底：底色兜错一次 = 整页黑。
  */
 export function parseHexColor(s: string): common2D.Color {
   const fail: common2D.Color = { alpha: 255, red: 0, green: 0, blue: 0 };
-  if (s.length < 4 || s.charAt(0) !== '#') {
+  const raw: string = s.trim();
+  // ── CSS 形式：rgba(248, 249, 250, 1) / rgb(248,249,250)（主题色其实就是这一种）──
+  const css: RegExp = new RegExp('^rgba?\\(\\s*([0-9.]+)\\s*,\\s*([0-9.]+)\\s*,\\s*([0-9.]+)\\s*(?:,\\s*([0-9.]+)\\s*)?\\)$', 'i');
+  const m: RegExpMatchArray | null = raw.match(css);
+  if (m !== null) {
+    const clamp255 = (v: number): number => {
+      if (isNaN(v)) {
+        return 0;
+      }
+      return Math.round(Math.max(0, Math.min(255, v)));
+    };
+    const r: number = clamp255(Number(m[1]));
+    const g: number = clamp255(Number(m[2]));
+    const b: number = clamp255(Number(m[3]));
+    // 省略 alpha（rgb() 形式）= 1；这里 alpha 取 0..1 浮点，按 255 换算
+    let a: number = m[4] === undefined ? 1 : Number(m[4]);
+    if (isNaN(a)) {
+      a = 1;
+    } else if (a > 1) {
+      // 容错：万一传的是 0..255 的 alpha
+      a = a / 255;
+    }
+    return { alpha: Math.round(Math.max(0, Math.min(1, a)) * 255), red: r, green: g, blue: b };
+  }
+  if (raw.length < 4 || raw.charAt(0) !== '#') {
+    // 兜底也留证据：颜色格式不认识时**底色会变成不透明黑**（就是 2026-11-05 那次黑屏的成因），
+    // 静默回退等于把事故藏起来 ⇒ 这里必须打一条 warn。
+    hilog.warn(0x0000, 'EngineLines', 'parseHexColor 无法识别颜色: %{public}s -> 不透明黑', raw);
     return fail;
   }
-  const hex: string = s.substring(1);
+  const hex: string = raw.substring(1);
   if (hex.length === 3) {
     const r = parseInt(hex.charAt(0) + hex.charAt(0), 16);
     const g = parseInt(hex.charAt(1) + hex.charAt(1), 16);
