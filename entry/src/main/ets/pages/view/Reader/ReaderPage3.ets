@@ -137,6 +137,8 @@ import { ChapterRatio, percentToChapter, chapterToPercent, formatProgressPercent
 // 不自己判断形态；`true` 时按用户口径裁掉：听书 / 上一章下一章进度条 / 顶栏 / 设置 / 系统状态栏，
 // 保留：目录 / 书签 / 日间夜间自由 / 信息窗（顶部信息窗 + 底部 3 个 dock 图标）。
 import { KEY_OUTER_MINIMAL } from '../../../common/utils/OuterScreen';
+// 2026-11-06：外屏固定版式常量（字号/行距/留白），只在投影出口覆盖一次
+import { OuterStyle } from '../../../common/reader/OuterStyle';
 // 2026-11-02 第 25 轮（P3 弹窗收口 B3）：弹窗打开统一走唯一出口 DialogHost
 import { DialogHost } from '../../../common/dialog/DialogHost'
 // 2026-11-04（P3 批 A-5）：本页**不再** import `ReaderPorts` —— 它在本页最后一个写点
@@ -1914,7 +1916,15 @@ oAnimInitNode 配套） */
     //   ArkTS 禁止结构化类型互赋，写窄了会报 `arkts-no-structural-typing`
     //   （与 `settingForBoundary()` 同一处坑，见那里的注释）。
     const picked: Object | null = pickReadSettingFields(snap);
-    return (picked === null ? snap : picked) as readerCore.ReaderSetting;
+    const rs: readerCore.ReaderSetting = (picked === null ? snap : picked) as readerCore.ReaderSetting;
+    // ── 外屏：**只在投影里**覆盖版式字段（模型不动，切回内屏立刻恢复用户设置）──────────
+    //   外屏 326×326vp，用户内屏的字号/行距搬过来会撑爆页高 ⇒ 固定成 OuterStyle 那一套。
+    //   日夜 / 字体 / 字色 / 背景**不覆盖** ⇒ 两种形态天然同步、天然互相接续。
+    if (this.outerMinimal) {
+      rs.fontSize = OuterStyle.FONT_SIZE;
+      rs.lineHeight = OuterStyle.LINE_HEIGHT;
+    }
+    return rs;
   }
   private screenDensityCallBack: Callback<number> | null = null;
   private BookHandler: bookParser.BookParserHandler | null = null;
@@ -7972,11 +7982,11 @@ oAnimInitNode 配套） */
           indentFp: scrollIndentFp(this.projectSetting()),
           bgColor: this.settingState.themeColor,
           bgUri: this.scrollBgUri(),
-          sideInsetVp: textAreaLeftVp(this.projectSetting(), this.windowWidth, this.calibWidthRatio),
+          sideInsetVp: this.outerMinimal ? OuterStyle.SIDE_INSET_VP : textAreaLeftVp(this.projectSetting(), this.windowWidth, this.calibWidthRatio),
           // 顶部：与分页模式正文首行严格对齐（同时让出阅读器信息窗）
           // 底部：只让出手势条 ⇒ 整块正文区域整体下移（见两个方法的注释）
-          topInsetVp: scrollTopInsetVp(),
-          bottomInsetVp: scrollBottomInsetVp(),
+          topInsetVp: this.outerMinimal ? OuterStyle.TOP_INSET_VP : scrollTopInsetVp(),
+          bottomInsetVp: this.outerMinimal ? OuterStyle.BOTTOM_INSET_VP : scrollBottomInsetVp(),
           initSpine: this.scrollInitSpine,
           initNode: this.scrollInitNode,
           initChar: this.scrollInitChar,
@@ -8043,9 +8053,9 @@ oAnimInitNode 配套） */
           gapEm: SCROLL_PARA_GAP_EM,
           bgColor: this.settingState.themeColor,
           bgUri: this.scrollBgUri(),
-          sideInsetVp: textAreaLeftVp(this.projectSetting(), this.windowWidth, this.calibWidthRatio),
-          topInsetVp: scrollTopInsetVp(),
-          bottomInsetVp: scrollBottomInsetVp(),
+          sideInsetVp: this.outerMinimal ? OuterStyle.SIDE_INSET_VP : textAreaLeftVp(this.projectSetting(), this.windowWidth, this.calibWidthRatio),
+          topInsetVp: this.outerMinimal ? OuterStyle.TOP_INSET_VP : scrollTopInsetVp(),
+          bottomInsetVp: this.outerMinimal ? OuterStyle.BOTTOM_INSET_VP : scrollBottomInsetVp(),
           initSpine: this.noAnimInitSpine,
           // ★ 章节内容缓存（2026-10-31）：父页持有，跨组件重挂保留；只有缓存未命中
           //   才让自绘层去调 `getSpineItemContent`（见 ReaderPageNoAnim.loadChapter 注释）。
