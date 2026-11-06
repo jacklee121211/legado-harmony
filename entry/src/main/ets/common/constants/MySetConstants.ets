@@ -80,6 +80,21 @@ export default class MySetConstants {
    *    仅暗门解锁后出现在「听书引擎（进阶）」组（与调试浮层同组）。
    */
   static readonly SET_READER_SKIN_ON: string = 'setReaderSkinOn';
+
+  /**
+   * 阅读皮肤 · 留白带「等比平铺」渲染开关（2026-11-06 新增，A/B 试验开关）。
+   *
+   * 背景：留白带素材是 1200×360 的横向纹样，渲染时被 `ImageFit.Fill` **整图拉进**
+   * 一个只有 42~84vp 高的区域 ⇒ 纵向被压扁 1.7~5.5 倍（屏越宽压得越狠），纹样会变形。
+   * 打开本开关后改为**按原始宽高比横向平铺**（Row 内多张瓦片 + 裁切），比例不再失真，
+   * 代价是一屏能看到的纹样单元变少。
+   *
+   * ⚠️ **默认 = 关**（AGENTS §3：未真机验证的新路径不得设为默认）。
+   *    关 = 与改动前完全一致的整图拉伸；开 = 平铺。随时可切回，无需重装。
+   *    落盘键 `setReaderSkinTile`（Preferences），阅读页进场读一次；
+   *    只作用于「留白带」（框/信息窗仍是九宫格，不受影响）；自定义导入的图片忽略本开关。
+   */
+  static readonly SET_READER_SKIN_TILE: string = 'setReaderSkinTile';
   /** 书架书名是否显示文件拓展名（2026-09-27，默认关=隐藏 .txt 等后缀；Preferences 落盘） */
   static readonly SET_EXT_NAME: string = 'setExtName';
 

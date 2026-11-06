@@ -1394,6 +1394,12 @@ oAnimInitNode 配套） */
    * 槽位解析 `resolveSkinSlots()` → 渲染 `SkinLayers()`（规范 §5.1 层序 ②③⑤）。
    */
   @State skinOn: boolean = false
+  /**
+   * 留白带「等比平铺」开关（2026-11-06，A/B 试验，`SET_READER_SKIN_TILE`，默认关）。
+   * 关 = 素材整图 `ImageFit.Fill` 拉进带区（现状，纵向压扁 1.7~5.5 倍）；
+   * 开 = 按素材原始宽高比（1200:360）横向铺 N 张瓦片再裁切（比例不失真，一屏单元更少）。
+   */
+  @State skinTile: boolean = false
   @State skinPackId: string = ''
   /** 解析后的皮肤槽位（null = 该元素无皮肤 ⇒ 零渲染走默认外观；进场解析一次，规范 §4.1 回落链） */
   @State skinBandTop: SkinSlot | null = null
@@ -1818,13 +1824,17 @@ oAnimInitNode 配套） */
 
   /**
    * 阅读区框的下缘 y（vp，2026-11-06 用户反馈修正）。
-   * 默认 = 模型底边（屏高−62vp）+ 冗余；**信息条在底部时边框让路**——
+   * 默认 = 模型底边（屏高−62vp）+ 冗余；**信息条在底部且正在显示时**边框让路——
    * 下缘上抬到信息条上缘 −4vp，不许边框压到信息条（「信息条下移迁就边框」是被否决的方向）。
    * 信息条上缘 = 屏高 − infoWinRowPadding().bottom − infoWinHeightVp()（与底板同一套函数）。
+   *
+   * ⚠️ 2026-11-06 修：避让条件必须 `infoWinOn && infoWinPos === 1`。
+   *    `infoWinPos` 只是"位置偏好"（Preferences 里的上/下），**信息窗关掉时它仍然有值**；
+   *    旧写法只判位置 ⇒ 关态也白让出空间（框下缘凭空虚抬 ~12vp）。
    */
   private skinFrameBottomY(): number {
     let bottom: number = this.skinViewportHeightVp() - scrollBottomInsetVp() + this.skinFrameExtra();
-    if (this.infoWinPos === 1) {
+    if (this.infoWinOn && this.infoWinPos === 1) {
       const infoTop: number = this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp();
       bottom = Math.min(bottom, infoTop - 4);
     }
@@ -1834,6 +1844,9 @@ oAnimInitNode 配套） */
   // ═══ 留白带动态安全区（2026-11-06 用户反馈：留白要避让信息窗与绝对显示区域）═══
   // 规则：顶带 = [0, min(正文区顶, 信息条上缘) − 4]；底带 = [max(正文区底, 信息条下缘) + 4, 屏底]。
   // 边框存在时以其外缘（含 insetExtra）为界；可用高度 < 12vp ⇒ 不渲染（不留一条缝）。
+  // ⚠️ 2026-11-06 修：三处避让都必须 `infoWinOn &&`（关态不该让位，否则顶带被砍到 8vp ⇒ 整条不渲染、
+  //    底带少 ~18vp、框下缘虚抬）。证据：`infoWinOn` 与 `infoWinPos` 是两个独立状态
+  //    （`ReaderPage3.ets` 的 `@State infoWinOn` / `@State infoWinPos`，后者从 Preferences 读）。
 
   /** 顶带可用高度（vp）；0 = 不渲染 */
   private bandTopH(): number {
@@ -1841,7 +1854,7 @@ oAnimInitNode 配套） */
     if (this.skinFrame !== null) {
       bottomBound = Math.min(bottomBound, scrollTopInsetVp() - this.skinFrameExtra());
     }
-    if (this.infoWinPos === 0) {
+    if (this.infoWinOn && this.infoWinPos === 0) {
       bottomBound = Math.min(bottomBound, this.infoWinPadTopVp());
     }
     bottomBound -= 4;
@@ -1854,7 +1867,7 @@ oAnimInitNode 配套） */
     if (this.skinFrame !== null) {
       topBound = Math.max(topBound, this.skinFrameBottomY());
     }
-    if (this.infoWinPos === 1) {
+    if (this.infoWinOn && this.infoWinPos === 1) {
       topBound = Math.max(topBound, this.skinViewportHeightVp() - this.infoWinPadBottomVp());
     }
     return topBound + 4;
@@ -1881,6 +1894,47 @@ oAnimInitNode 配套） */
   private infoWinPadBottomVp(): number {
     const v: Length | undefined = this.infoWinRowPadding().bottom;
     return typeof v === 'number' ? v : 0;
+  }
+
+  // ═══ 留白带「等比平铺」渲染（2026-11-06 A/B 试验，开关 SET_READER_SKIN_TILE）═══
+  // 为什么需要：带素材是 1200×360，整图 Fill 进 42~84vp 的带区 ⇒ 纵向被压 1.7~5.5 倍。
+  // 平铺模式：每张瓦片保持素材原始比例（宽 = 带高 × 1200/360），横向排满后由 Row 裁切，
+  // 单元比例永远正确；代价是一屏看到的单元数变少。开关关 = 与改动前逐像素一致。
+
+  /** 留白带素材画布宽高比（1200×360，规范 §4.3 锁死的画布，不是阅读器对齐常量） */
+  private readonly SKIN_BAND_ASPECT: number = 1200 / 360;
+
+  /** 视口宽（vp）—— 与 skinViewportHeightVp 同一份真源（px → vp） */
+  private skinViewportWidthVp(): number {
+    const vwPx: number = this.settingState.viewPortWidth > 0
+      ? this.settingState.viewPortWidth : this.windowWidth;
+    return vwPx / densityVp();
+  }
+
+  /**
+   * 该带槽位是否走平铺：开关开 **且** 是预制包素材。
+   * 自定义导入的图片比例未知（用户相册图），平铺会强行按 1200:360 裁 ⇒ 一律仍走整图拉伸。
+   */
+  private skinTileOn(slot: SkinSlot): boolean {
+    if (!this.skinTile) {
+      return false;
+    }
+    const p: string = slot.resolvedPath ?? '';
+    return p !== '' && !p.startsWith('file://');
+  }
+
+  /** 平铺模式下本带要铺几张瓦片（返回索引数组给 ForEach；Tile 数量 +1 保证右缘无缝） */
+  private bandTileIdx(zoneH: number): number[] {
+    const out: number[] = [];
+    const tileW: number = zoneH * this.SKIN_BAND_ASPECT;
+    if (tileW <= 0) {
+      return out;
+    }
+    const n: number = Math.ceil(this.skinViewportWidthVp() / tileW) + 1;
+    for (let i = 0; i < n; i++) {
+      out.push(i);
+    }
+    return out;
   }
 
   @Builder
@@ -1974,7 +2028,27 @@ oAnimInitNode 配套） */
         .hitTestBehavior(HitTestMode.None)
     }
     if (slot !== null && slot.type === SkinAssetType.IMAGE) {
-      this.SkinImage(slot, '100%', zoneH, 0, zoneY)
+      if (this.skinTileOn(slot)) {
+        // 等比平铺：瓦片宽 = 带高 × 1200/360（素材原比例），横向排满由 Row 裁切。
+        // 全部 HitTestMode.None（与 SkinImage 同口径，不挡翻页/点按）。
+        Row() {
+          ForEach(this.bandTileIdx(zoneH), (idx: number) => {
+            Image(this.skinSrc(slot))
+              .width(zoneH * this.SKIN_BAND_ASPECT)
+              .height(zoneH)
+              .objectFit(ImageFit.Fill)
+              .draggable(false)
+          }, (idx: number) => 'tile_' + idx)
+        }
+        .width('100%')
+        .height(zoneH)
+        .clip(true)
+        .position({ x: 0, y: zoneY })
+        .scale({ x: READER_ZOOM, y: READER_ZOOM, centerX: '50%', centerY: 0 })
+        .hitTestBehavior(HitTestMode.None)
+      } else {
+        this.SkinImage(slot, '100%', zoneH, 0, zoneY)
+      }
     }
   }
 
@@ -4737,6 +4811,8 @@ oAnimInitNode 配套） */
     }
     // 主题皮肤层（2026-11-06 P1.4）：进场读一次 + 槽位解析（默认关 ⇒ 默认外观零变化）
     this.skinOn = PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_ON, false) as boolean;
+    // 留白带等比平铺（2026-11-06 A/B，默认关 = 与改动前一致）
+    this.skinTile = PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_TILE, false) as boolean;
     this.skinPackId = SkinStore.activePackId();
     this.resolveSkinSlots();
     this.syncInfoTicker();

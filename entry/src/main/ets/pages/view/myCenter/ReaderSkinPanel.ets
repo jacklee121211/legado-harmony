@@ -74,6 +74,12 @@ interface SkinGroupDef {
 export struct ReaderSkinPanel {
   /** 总开关（与设置页暗门组同一 Preferences 键） */
   @State skinOn: boolean = false
+  /**
+   * 留白带「等比平铺」开关（2026-11-06 A/B，与设置页暗门组同一 Preferences 键）。
+   * 关（默认）= 素材整图拉进带区（现状）；开 = 按原比例横向平铺（不变形、一屏单元更少）。
+   * 放在这里是为了**试用时不用去解锁暗门组**；两处读写同一个键，改一边即同步。
+   */
+  @State skinTile: boolean = false
   /** 按元素选择表（原始 JSON；@StorageProp 驱动重渲染，选中态读 SkinStore.elemSel） */
   @StorageProp('readerSkinElemSel') selsRaw: string = '[]'
   /** 手势条高度：滚动内容底部让位悬浮 dock（2026-11-06 用户反馈「底部留白卡到 dock 点不到」） */
@@ -81,6 +87,7 @@ export struct ReaderSkinPanel {
 
   aboutToAppear(): void {
     this.skinOn = PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_ON, false) as boolean;
+    this.skinTile = PreferencesUtil.getSync(MySetConstants.SET_READER_SKIN_TILE, false) as boolean;
   }
 
   /** 元素组定义（信息窗一组映射 top+bottom 两个存储键） */
@@ -367,6 +374,32 @@ export struct ReaderSkinPanel {
               Haptics.tap();
               this.skinOn = on;
               PreferencesUtil.putSync(MySetConstants.SET_READER_SKIN_ON, on);
+            })
+        }
+        .width('100%')
+        .padding(12)
+        .borderRadius(12)
+        .backgroundColor(NightMode.isDarkSurface() ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.55)')
+
+        // ── 留白带等比平铺（2026-11-06 A/B，与设置页暗门组同一个键）──────────────
+        Row() {
+          Column({ space: 3 }) {
+            Text('留白带等比平铺')
+              .fontSize(15)
+              .fontColor(this.textColor())
+            Text('开 = 纹样按原比例横向平铺（不被压扁，但一屏看到的纹样更少）；关 = 整图拉伸（默认，与之前一致）')
+              .fontSize(11)
+              .fontColor(this.subTextColor())
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.skinTile })
+            .selectedColor('rgba(0,0,0,0.55)')
+            .onChange((on: boolean) => {
+              Haptics.tap();
+              this.skinTile = on;
+              PreferencesUtil.putSync(MySetConstants.SET_READER_SKIN_TILE, on);
             })
         }
         .width('100%')
