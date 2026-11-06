@@ -1970,31 +1970,35 @@ oAnimInitNode 配套） */
           .hitTestBehavior(HitTestMode.None)
       }
       // ⑤ 信息窗底板（P1.5：按 infoWinPos 二选一；y 从 infoWinRowPadding() 派生，不抄 padding 数）
+      // ⚠️ 2026-11-06 用户反馈「信息条太宽」：底板横向改为**与正文绝对显示区同源**
+      //    （x = debugAreaLeftVp()，宽 = debugAreaWidthVp()），不再 width('100%') 铺到屏幕两边。
       if (this.infoWinPos === 0 && this.skinInfoBgTop !== null) {
         if (this.skinInfoBgTop.type === SkinAssetType.IMAGE) {
-          this.SkinImage(this.skinInfoBgTop, '100%', this.infoWinHeightVp(), 0, this.infoWinPadTopVp())
+          this.SkinImage(this.skinInfoBgTop, this.debugAreaWidthVp(), this.infoWinHeightVp(),
+            this.debugAreaLeftVp(), this.infoWinPadTopVp())
         }
         if (this.skinInfoBgTop.type === SkinAssetType.CODE) {
           Column()
-            .width('100%')
+            .width(this.debugAreaWidthVp())
             .height(this.infoWinHeightVp())
             .backgroundColor(this.skinInfoBgTop.color ?? Color.Transparent)
-            .position({ x: 0, y: this.infoWinPadTopVp() })
+            .position({ x: this.debugAreaLeftVp(), y: this.infoWinPadTopVp() })
             .hitTestBehavior(HitTestMode.None)
         }
       }
       if (this.infoWinPos === 1 && this.skinInfoBgBottom !== null) {
         if (this.skinInfoBgBottom.type === SkinAssetType.IMAGE) {
-          this.SkinImage(this.skinInfoBgBottom, '100%', this.infoWinHeightVp(), 0,
+          this.SkinImage(this.skinInfoBgBottom, this.debugAreaWidthVp(), this.infoWinHeightVp(),
+            this.debugAreaLeftVp(),
             this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp())
         }
         if (this.skinInfoBgBottom.type === SkinAssetType.CODE) {
           Column()
-            .width('100%')
+            .width(this.debugAreaWidthVp())
             .height(this.infoWinHeightVp())
             .backgroundColor(this.skinInfoBgBottom.color ?? Color.Transparent)
             .position({
-              x: 0,
+              x: this.debugAreaLeftVp(),
               y: this.skinViewportHeightVp() - this.infoWinPadBottomVp() - this.infoWinHeightVp()
             })
             .hitTestBehavior(HitTestMode.None)
@@ -11223,12 +11227,22 @@ oAnimInitNode 配套） */
     return 18
   }
 
-  /** 信息窗行的内边距：顶部贴状态栏，底部贴手势条上方 + 8vp（2026-10-31 用户拍板） */
+  /**
+   * 信息窗行的内边距：顶部贴状态栏，底部贴手势条上方 + 8vp（2026-10-31 用户拍板）。
+   *
+   * ⚠️ 2026-11-06 用户反馈「信息条太宽」⇒ 左右不再写死 20vp，改为**与正文绝对显示区同源**：
+   *   左右 = `debugAreaLeftVp()`（= textAreaLeftVp()）**+ 6vp 内嵌**。
+   *   含义：信息条内容与正文列左对齐；6vp 内嵌让最左/最右的图标不贴到圆角描边上。
+   *   皮肤底板用同一组函数（x = debugAreaLeftVp()、宽 = debugAreaWidthVp()），
+   *   ⇒ 视觉上信息条与调试红框（绝对显示区）等宽，不再横穿到屏幕两边。
+   *   ⚠️ 单一通路：改对齐只改这里 + 底板的 x/width 两处，别在别处再抄一份数字。
+   */
   private infoWinRowPadding(): Padding {
+    const side: number = this.debugAreaLeftVp() + 6;
     if (this.infoWinPos === 0) {
-      return { top: this.readerTopInset() + 12, left: 20, right: 20 }
+      return { top: this.readerTopInset() + 12, left: side, right: side }
     }
-    return { bottom: this.bottomRectHeight + 8, left: 20, right: 20 }
+    return { bottom: this.bottomRectHeight + 8, left: side, right: side }
   }
 
   /**
